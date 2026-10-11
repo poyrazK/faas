@@ -10,12 +10,14 @@
 //
 // Formula:
 //
-//	GB-h/mo = (RAMMB + PerVMOverheadMB) × min × 30 days / 1024
+//	GB-h/mo = (RAMMB + PerVMOverheadMB) × min × 30 days × 24 h / 1024
 //
 // The 30-day month matches pkg/meter/math.go GBHours rounding and is
 // close enough to a calendar month (< 2 %) for budget planning. The
 // actual monthly bill uses real resident seconds; this is a
-// planning estimate, not an invoice.
+// planning estimate, not an invoice. The hours factor was missing until
+// production-us hunt #7 (H5-67): `--min 2` on a 1024 MB Scale app echoed
+// ~60.5 GB-h/mo for what bills as ~1,451.
 
 package main
 
@@ -24,6 +26,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// residentHoursPerMonth is the 30-day month the estimate uses, in hours.
+const residentHoursPerMonth = 30 * 24
 
 // ResidentGBHoursPerMonth estimates the always-resident GB-h/month
 // bill for keeping `min` instances of an app with `ramMB` always warm
@@ -38,7 +43,7 @@ func ResidentGBHoursPerMonth(plan api.Plan, ramMB, min int) float64 {
 	if !ok || !limits.MinInstancesAllowed {
 		return 0
 	}
-	return float64((ramMB+api.PerVMOverheadMB)*min*30) / 1024.0
+	return float64((ramMB+api.PerVMOverheadMB)*min*residentHoursPerMonth) / 1024.0
 }
 
 // limitsFor is the lookup half of api.LimitsFor without the ok-bool

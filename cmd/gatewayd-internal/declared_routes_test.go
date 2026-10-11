@@ -112,3 +112,30 @@ func TestDeclaredRoutesMatcher_TTL(t *testing.T) {
 		t.Fatalf("reads after TTL expiry = %d, want 2", store.reads)
 	}
 }
+
+func TestDeclaredRoutesLifecycle(t *testing.T) {
+	store := &declaredRouteDocStoreStub{doc: []byte(`{"openapi":"3.0.0","paths":{"/items/{id}":{"get":{"deprecated":true,"x-gregale-deprecated-at":"2026-10-01T00:00:00Z","x-gregale-sunset-at":"2026-12-01T00:00:00Z","x-gregale-successor":"https://example.com/v2"}},"/items/current":{"get":{},"head":{}}}}`)}
+	matcher := newDeclaredRoutesMatcher(store)
+	app := gateway.App{ID: "app", AccountID: "acct"}
+	for _, tc := range []struct {
+		path, method string
+		want         bool
+	}{
+		{"/items/42", "GET", true}, {"/items/42", "HEAD", true}, {"/items/42", "POST", false}, {"/items/current", "GET", false}, {"/items/current", "HEAD", false},
+	} {
+		m, err := matcher.ResolveRouteLifecycle(context.Background(), app, tc.path, tc.method)
+		if err != nil || (!m.DeprecatedAt.IsZero()) != tc.want {
+			t.Fatalf("%+v: %+v %v", tc, m, err)
+		}
+	}
+	app.PinnedDeploymentID = "deployment"
+	if m, err := matcher.ResolveRouteLifecycle(context.Background(), app, "/items/42", "GET"); err != nil || !m.DeprecatedAt.IsZero() {
+		t.Fatalf("pinned leaked: %+v %v", m, err)
+	}
+	app.PinnedDeploymentID = ""
+	store.doc = []byte(`{"openapi":"3.0.0","paths":{}}`)
+	matcher.Invalidate(app.ID)
+	if m, err := matcher.ResolveRouteLifecycle(context.Background(), app, "/items/42", "GET"); err != nil || !m.DeprecatedAt.IsZero() {
+		t.Fatalf("stale metadata: %+v %v", m, err)
+	}
+}

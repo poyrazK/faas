@@ -20,7 +20,6 @@
 #   - host.hmac.key (apid reads it via LoadCredential)
 #   - host.age + host.age.previous (apid + githubd on fsn-1)
 #   - archive-creds.json + apid log-archive drop-in (issue #562)
-#   - trusted-publishers/ (apid writes per-publisher PEMs)
 #   - /etc/faas/tls/ca/ + per-daemon leaves (Tier 1)
 # imaged's tripwires (sign.key, sign-pub.pem, imaged's ReadWritePaths=,
 # /srv/fc/snap, /srv/fc/sigs) are now in compute_only_service.
@@ -341,6 +340,18 @@
   ansible.builtin.template:
     src: zz-faas-api-contract-diff.conf.j2
     dest: /etc/systemd/system/faas-apid.service.d/zz-faas-api-contract-diff.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: (faas_box_role | default('single-box')) == 'control-plane'
+
+# ADR-847: synthetic route probes stay off until route_probes_enabled is set;
+# the drop-in then points apid at the public gateway origin.
+- name: control_plane_service — configure synthetic route probes
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-route-probes.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-route-probes.conf
     owner: root
     group: root
     mode: "0644"
@@ -710,25 +721,6 @@
     state: absent
   register: faas_log_archive_dropin_removed
   when: not faas_archive_creds_stat.stat.exists
-
-# Issue #472 / ADR-058 — per-app cosign trusted-publisher directory.
-# imaged reads /etc/faas/secrets/trusted-publishers/ at startup and
-# on every pg_notify('trusted_signer_changed'). The dir is created
-# by this task (mode 0755 root:root) so imaged's first read never
-# ENOENTs; per-file perms are 0444 root:root (enforced by the Go
-# loader at read time — see pkg/cosign/keys.go). Operator onboards
-# publishers via `gregale trusted-publishers add <slug> <name> <pub>`,
-# which PUTs base64(DER) to apid; apid writes the mirror .pem here.
-# Missing dir on a deploy attempt is fail-closed at the apid
-# pre-flight gate (handlers.go::createDeployment), so a never-
-# populated install is non-fatal at startup.
-- name: control_plane_service — ensure trusted-publishers dir exists with mode 0755 root:root (issue # 472)
-  ansible.builtin.file:
-    path: /etc/faas/secrets/trusted-publishers
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
 
 # PR-C+D cert directory migration: pre-PR-C deployments kept the
 # egress server leaf at /etc/faas/tls/gatewayd/egress.{crt,key}.

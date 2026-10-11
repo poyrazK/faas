@@ -184,6 +184,7 @@ func TestMemStoreDeploymentOutcomeActivity(t *testing.T) {
 			t.Parallel()
 			store := NewMemStore()
 			orgID, appID, actorID := uuid.New(), uuid.New(), uuid.New()
+			store.accounts[actorID.String()] = Account{ID: actorID.String(), Status: AccountActive, Plan: api.PlanPro}
 			store.apps[appID.String()] = App{ID: appID.String(), AccountID: actorID.String(), Slug: "payments", Status: AppActive}
 			entry := OrgActivity{
 				OrgID: orgID, Kind: "deploy.requested", ActorType: OrgActivityActorUser,

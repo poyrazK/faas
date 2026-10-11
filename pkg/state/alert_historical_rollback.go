@@ -14,6 +14,9 @@ type HistoricalAlertRollbackStore interface {
 }
 
 func validAlertRollbackWindow(r AlertRule) bool {
+	if !validEventConsumerAlertRule(r) {
+		return false
+	}
 	n := r.PostDeployRollbackWindowSeconds
 	return n >= 0 && n <= api.AlertRollbackMaxWindowSeconds && (n == 0 || r.Action == AlertActionRollback && r.AppID != "")
 }

@@ -119,6 +119,17 @@ func (s *PgStore) ReplayPlainInvocation(ctx context.Context, accountID, parentID
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	inv, err := replayPlainInvocationTx(ctx, tx, parent, opts)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, fmt.Errorf("commit plain replay: %w", err)
+	}
+	return inv, nil
+}
+
+func replayPlainInvocationTx(ctx context.Context, tx pgx.Tx, parent Invocation, opts PlainInvocationReplayOptions) (Invocation, error) {
 	child, err := existingPgPlainReplay(ctx, tx, parent)
 	if !errors.Is(err, ErrNotFound) {
 		return child, err
@@ -130,9 +141,6 @@ func (s *PgStore) ReplayPlainInvocation(ctx context.Context, accountID, parentID
 	params := sqlc.PlainReplayRecordChildParams{ParentInvocationID: mustPgUUID(parent.ID), ReplayInvocationID: mustPgUUID(inv.ID), ReplayCreatedAt: pgtype.Timestamptz{Time: inv.CreatedAt, Valid: true}}
 	if err := sqlc.New().PlainReplayRecordChild(ctx, tx, params); err != nil {
 		return Invocation{}, fmt.Errorf("record plain replay: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Invocation{}, fmt.Errorf("commit plain replay: %w", err)
 	}
 	return inv, nil
 }
@@ -198,6 +206,9 @@ func (m *MemStore) ExistingPlainInvocationReplay(_ context.Context, accountID, p
 func (m *MemStore) ReplayPlainInvocation(_ context.Context, accountID, parentID string, opts PlainInvocationReplayOptions) (Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.replayPlainInvocationLocked(accountID, parentID, opts)
+}
+func (m *MemStore) replayPlainInvocationLocked(accountID, parentID string, opts PlainInvocationReplayOptions) (Invocation, error) {
 	parent, err := m.plainReplayParentLocked(accountID, parentID)
 	if err != nil {
 		return Invocation{}, err

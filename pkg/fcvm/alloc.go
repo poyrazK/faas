@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -89,6 +90,7 @@ func SetHostIPBase(addr netip.Addr) {
 // returned by Allocator.Acquire and must be handed back via Allocator.Release
 // (by instance id) on teardown or the slot leaks.
 type Lease struct {
+	profileStartedAt time.Time
 	// processGeneration distinguishes a failed restore from the replacement
 	// cold boot using the same instance ID and allocator slot.
 	processGeneration uint64

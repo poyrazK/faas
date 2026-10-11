@@ -47,10 +47,27 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		result.RejectionReason = "prime_main_dependencies_invalid"
 		return result, fmt.Errorf("sched: prime: load primary workload dependencies: %w", err)
 	}
+	// A qualification graph must route reviewed service bindings through its
+	// private, attempt-scoped listener. The ordinary release-set alias is
+	// injected only for real deployment boots; adding both values would either
+	// shadow the qualification route or reject the same reviewed key as a
+	// collision.
+	if graphID, graphQualification := ctx.Value(qualificationGraphContextKey{}).(string); !graphQualification || graphID == "" {
+		runtimeValues.APIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, sealedEnv.Entries, dep)
+		if err != nil {
+			result.RejectionReason = "prime_gitops_service_bindings_invalid"
+			return result, fmt.Errorf("sched: prime: load GitOps service bindings: %w", err)
+		}
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, primeLayer)
+	if err != nil {
+		result.RejectionReason = "prime_runtime_release_unavailable"
+		return result, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
+		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
@@ -92,11 +109,13 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// deployment, so it must use the same resolved guest port as later
 		// wakes. Without this field vmmd falls back to guest :8080 while the
 		// inferred profile starts Node/Python apps on their framework port.
-		Port:                   deploymentRuntimePort(dep),
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
+		Port:                     deploymentRuntimePort(dep),
+		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckGRPC:          healthcheckGRPC,
+		HealthcheckGRPCService:   healthcheckGRPCService,
+		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
+		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
+		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

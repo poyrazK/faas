@@ -47,6 +47,7 @@ import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
 import type { ObjectVersionDeleteResult } from '../models/ObjectVersionDeleteResult.js';
 import type { ObjectVersionLegalHoldRequest } from '../models/ObjectVersionLegalHoldRequest.js';
 import type { ObjectVersionLegalHoldResult } from '../models/ObjectVersionLegalHoldResult.js';
+import type { ObjectVersionList } from '../models/ObjectVersionList.js';
 import type { ObjectVersionProtection } from '../models/ObjectVersionProtection.js';
 import type { ObjectVersionRetentionRequest } from '../models/ObjectVersionRetentionRequest.js';
 import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetentionResult.js';
@@ -904,6 +905,67 @@ export class StorageService {
       query: {
         'key': key,
         'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * List retained object versions and delete markers
+   * Requires storage read scope and a bucket read grant. Returns owned public version selectors, never native generations or physical placement. Both continuation markers belong to this bucket and exact key. Each provider page consumes the existing request safety budget.
+   * @returns ObjectVersionList A page of versions and common prefixes; Cache-Control no-store
+   * @returns Problem Invalid continuation, access denied, unsupported provider, stale accounting or exhausted safety budget
+   * @throws ApiError
+   */
+  public static listObjectBucketVersions({
+    slug,
+    bucket,
+    prefix,
+    delimiter,
+    limit = 1000,
+    keyMarker,
+    versionIdMarker,
+  }: {
+    /**
+     * App owning the logical bucket.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the selected version.
+     */
+    bucket: string,
+    /**
+     * Restrict returned versions to matching logical keys.
+     */
+    prefix?: string,
+    /**
+     * Optional single Unicode character grouping matching keys.
+     */
+    delimiter?: string,
+    /**
+     * Maximum versions and common prefixes in this page.
+     */
+    limit?: number,
+    /**
+     * Exact continuation key returned by the previous page.
+     */
+    keyMarker?: string,
+    /**
+     * Public continuation version; requires its matching key_marker.
+     */
+    versionIdMarker?: string,
+  }): CancelablePromise<ObjectVersionList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/versions',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'prefix': prefix,
+        'delimiter': delimiter,
+        'limit': limit,
+        'key_marker': keyMarker,
+        'version_id_marker': versionIdMarker,
       },
     });
   }

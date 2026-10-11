@@ -30,6 +30,7 @@ type ProjectPreviewAffected struct {
 	ActionLabel  string
 	ID           string // existing app ID, empty for create
 	ExistingRoot string // populated only on root_dir drift
+	Image        string // selected prebuilt image, empty for source builds
 	Excluded     bool   // true iff this row came from operator --exclude (Skipped)
 }
 

@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
@@ -612,6 +613,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
+	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
@@ -620,6 +626,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
 	engine.WithNodeRegistry(nodeRegistry)
+	engine.WithEnvironmentQualificationServiceProxyForTransport(environmentQualificationServiceProxyResolver(store, ownerNodeID,
+		os.Getenv(environmentQualificationServiceProxyHTTPEnv), os.Getenv(environmentQualificationServiceProxyHTTPSEnv)))
+	// Qualification execution recovery is cleanup-only. Run it on the durable
+	// owner that created each frame so an abandoned VM remains charged until
+	// vmmd confirms attempt-bound native retirement.
+	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -835,7 +847,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	engine.WithVerifier(verifier)
 	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
 	defer cancelAttestationWarm()
-	startLayerAttestationWarm(attestationWarmCtx, store, verifier, log)
+	(&layerAttestationWarm{
+		store:       store,
+		verifier:    verifier,
+		ownerNodeID: ownerNodeID,
+		owns:        engine.OwnsApp,
+		interval:    api.AttestationWarmInterval,
+		log:         log,
+	}).start(attestationWarmCtx)
 	// Issue #561 — wire the spend-cap pause-workload seam. Engine
 	// consults the checker inside admitGate AFTER the existing
 	// min-floor branch; a cap-reached app refuses new wakes with
@@ -928,12 +947,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
-
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
+	seedLedgerReady := true
 	if err := engine.SeedLedger(ctx); err != nil {
+		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
 	}
+	qualificationDispatchValue := os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")
+	qualificationDispatchRequested := environmentQualificationDispatchEnabled(qualificationDispatchValue)
+	qualificationDispatchEnabled := environmentQualificationDispatchAllowed(qualificationDispatchValue, seedLedgerReady)
+	if qualificationDispatchEnabled {
+		log.Info("schedd: environment GitOps qualification dispatch enabled by explicit gate")
+	} else if qualificationDispatchRequested {
+		log.Warn("schedd: environment GitOps qualification dispatch withheld because admission ledger seeding failed")
+	} else {
+		log.Info("schedd: environment GitOps qualification dispatch disabled; native acceptance is still required")
+	}
+	startEnvironmentQualificationDispatch(ctx, engine, store, ownerNodeID, qualificationDispatchEnabled, log)
 
 	// gRPC surface for gatewayd-internal (ADR-018): unix socket by default;
 	// tcp requires the tls_* cluster and is issue #95.
@@ -1573,6 +1604,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// returns an empty list.
 	grpcHandler := scheddgrpc.NewWithStats(engine, reader, ops, log).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
+		WithAppOwnership(engine.OwnsApp).
 		WithForeignReportRelay(engine)
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
@@ -1638,7 +1670,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
-		WithEventRecipientClaims(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED") == "1").
+		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
@@ -1817,6 +1849,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	trigger.WithOwnerNodeID(ownerNodeID)
+	trigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithScaleUp(trigger)
 	// The target trigger consumes the optional instance-stats reader for
 	// concurrent_requests, and the store queue reader for queue_depth.
@@ -1841,6 +1874,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	targetsTrigger.WithOwnerNodeID(ownerNodeID)
+	targetsTrigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithTargets(targetsTrigger)
 	log.Info("reactive target trigger enabled",
 		"interval", cfg.ScaleUpInterval,
@@ -1887,6 +1921,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	floorTrigger.WithOwnerNodeID(ownerNodeID)
+	floorTrigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithFloor(floorTrigger)
 	log.Info("min-instances floor reconciler enabled",
 		"interval", floorInterval,
@@ -2384,6 +2419,13 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// eventRecipientClaimsEnabled defaults to independent routing. Explicit values
+// other than 1 pause adoption without abandoning already adopted receipts.
+func eventRecipientClaimsEnabled(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || value == "1"
 }
 
 // jobsDispatchEnabled is intentionally an exact opt-in. Treating any

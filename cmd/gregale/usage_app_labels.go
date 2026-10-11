@@ -26,11 +26,15 @@ func appSlugsByID(client *api.Client) map[string]string {
 	return slugs
 }
 
-// appLabel is the app's slug when known, else its ID (a deleted app keeps
-// usage rows).
+// appLabel is the app's slug when known. A deleted app keeps its usage rows;
+// once the app list loaded, an ID it lacks is labelled deleted so the row is
+// not mistaken for a live app (H5-4). A failed list leaves the bare ID.
 func appLabel(slugs map[string]string, appID string) string {
 	if slug, ok := slugs[appID]; ok {
 		return slug
+	}
+	if slugs != nil && appID != "" {
+		return "(deleted) " + appID
 	}
 	return appID
 }

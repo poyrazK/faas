@@ -31,6 +31,8 @@ class AutomationResponse:
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
     queue while all action slots are occupied."""
     enabled: bool
+    failure_paused: bool | Unset = UNSET
+    """Runtime failure guard blocks automatic admissions independently of configured enabled intent."""
     published: WorkflowSpec | Unset = UNSET
     """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances
     for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
@@ -49,6 +51,8 @@ class AutomationResponse:
         draft = self.draft.to_dict()
 
         enabled = self.enabled
+
+        failure_paused = self.failure_paused
 
         published: dict[str, Any] | Unset = UNSET
         if not isinstance(self.published, Unset):
@@ -71,6 +75,8 @@ class AutomationResponse:
                 "enabled": enabled,
             }
         )
+        if failure_paused is not UNSET:
+            field_dict["failure_paused"] = failure_paused
         if published is not UNSET:
             field_dict["published"] = published
         if published_version is not UNSET:
@@ -95,6 +101,8 @@ class AutomationResponse:
 
         enabled = d.pop("enabled")
 
+        failure_paused = d.pop("failure_paused", UNSET)
+
         _published = d.pop("published", UNSET)
         published: WorkflowSpec | Unset
         if isinstance(_published, Unset):
@@ -117,6 +125,7 @@ class AutomationResponse:
             source=source,
             draft=draft,
             enabled=enabled,
+            failure_paused=failure_paused,
             published=published,
             published_version=published_version,
             updated_at=updated_at,

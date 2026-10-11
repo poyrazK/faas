@@ -25,6 +25,9 @@ import (
 // The doc on testOnlyTTY in output.go promises the atomic upgrade; this
 // is the matching implementation.
 func stdoutIsTTY() bool {
+	if nonInteractive {
+		return false
+	}
 	if testOnlyTTY != nil {
 		return *testOnlyTTY
 	}
@@ -49,6 +52,9 @@ func stdoutIsTTY() bool {
 // input. cmdDeployTarball's --yes flag now needs to know whether a
 // TTY is available for the new confirmPlan caller in commands_decompose.go.
 func stdinIsTTY() bool {
+	if nonInteractive {
+		return false
+	}
 	if testOnlyTTY != nil {
 		return *testOnlyTTY
 	}

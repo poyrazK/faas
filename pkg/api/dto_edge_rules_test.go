@@ -122,7 +122,7 @@ func TestEdgeRuleValidateAction_Validate_Rejects(t *testing.T) {
 			mutate: func(a *EdgeRuleValidateAction) {
 				a.Schema = json.RawMessage(nil)
 			},
-			wantSub: "schema is required",
+			wantSub: "schema or parameters is required",
 		},
 		{
 			name: "schema-exceeds-64KiB",
@@ -689,6 +689,10 @@ func TestEdgeRuleThrottleAction_Validate_PinBackCompat(t *testing.T) {
 		{
 			name: "key_by=country",
 			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByCountry},
+		},
+		{
+			name: "key_by=ip",
+			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByIP},
 		},
 		{
 			name: "strict missing JWT claim",

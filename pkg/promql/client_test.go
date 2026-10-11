@@ -3,6 +3,7 @@ package promql
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -178,5 +179,22 @@ func TestQueryScalarContextTimeout(t *testing.T) {
 	c.SetTimeout(50 * time.Millisecond)
 	if _, err := c.QueryScalar(context.Background(), "foo"); err == nil {
 		t.Fatal("expected timeout error")
+	}
+}
+
+// An empty vector is the ErrNoData sentinel, so counter readers can treat an
+// app that never emitted the series as zero instead of logging a failure.
+func TestQueryScalarEmptyVectorIsErrNoData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data":   map[string]any{"resultType": "vector", "result": []map[string]any{}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	_, err := NewClient(srv.URL, srv.Client()).QueryScalar(context.Background(), "sum(foo)")
+	if !errors.Is(err, ErrNoData) {
+		t.Fatalf("QueryScalar(empty) = %v, want ErrNoData", err)
 	}
 }

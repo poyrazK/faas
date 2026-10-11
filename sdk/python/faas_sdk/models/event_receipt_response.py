@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_receipt_recipient_response import EventReceiptRecipientResponse
+    from ..models.event_receipt_response_backfill_routing_summary import EventReceiptResponseBackfillRoutingSummary
     from ..models.event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
 
 
@@ -22,7 +23,10 @@ T = TypeVar("T", bound="EventReceiptResponse")
 
 @_attrs_define
 class EventReceiptResponse:
-    """Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle."""
+    """Acceptance and routing evidence with a bounded page of captured and backfilled consumers; execution is a separate
+    lifecycle.
+
+    """
 
     event_id: str
     event_source: str
@@ -45,8 +49,13 @@ class EventReceiptResponse:
     """All routing candidates settled, including filtered and failed outcomes; absent while routing is active."""
     retain_until: datetime.datetime | Unset = UNSET
     """Settled receipt retention boundary, 30 days after routing settled. Absent for active routing."""
+    backfill_recipient_count: int | Unset = UNSET
+    """Additional backfilled consumers across all pages; excluded from recipient_count."""
+    backfill_routing_summary: EventReceiptResponseBackfillRoutingSummary | Unset = UNSET
+    """Counts across added backfill consumers, separate from the immutable acceptance snapshot."""
     next_after: str | Unset = UNSET
-    """Opaque cursor for the next acceptance-ordered recipient page."""
+    """Opaque cursor for captured recipients followed by append-only backfill additions. Delivery order is not
+    guaranteed."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = self.event_id
@@ -82,6 +91,12 @@ class EventReceiptResponse:
         if not isinstance(self.retain_until, Unset):
             retain_until = self.retain_until.isoformat()
 
+        backfill_recipient_count = self.backfill_recipient_count
+
+        backfill_routing_summary: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.backfill_routing_summary, Unset):
+            backfill_routing_summary = self.backfill_routing_summary.to_dict()
+
         next_after = self.next_after
 
         field_dict: dict[str, Any] = {}
@@ -107,6 +122,10 @@ class EventReceiptResponse:
             field_dict["routing_settled_at"] = routing_settled_at
         if retain_until is not UNSET:
             field_dict["retain_until"] = retain_until
+        if backfill_recipient_count is not UNSET:
+            field_dict["backfill_recipient_count"] = backfill_recipient_count
+        if backfill_routing_summary is not UNSET:
+            field_dict["backfill_routing_summary"] = backfill_routing_summary
         if next_after is not UNSET:
             field_dict["next_after"] = next_after
 
@@ -115,6 +134,7 @@ class EventReceiptResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.event_receipt_recipient_response import EventReceiptRecipientResponse
+        from ..models.event_receipt_response_backfill_routing_summary import EventReceiptResponseBackfillRoutingSummary
         from ..models.event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
 
         d = dict(src_dict)
@@ -159,6 +179,15 @@ class EventReceiptResponse:
         else:
             retain_until = datetime.datetime.fromisoformat(_retain_until)
 
+        backfill_recipient_count = d.pop("backfill_recipient_count", UNSET)
+
+        _backfill_routing_summary = d.pop("backfill_routing_summary", UNSET)
+        backfill_routing_summary: EventReceiptResponseBackfillRoutingSummary | Unset
+        if isinstance(_backfill_routing_summary, Unset):
+            backfill_routing_summary = UNSET
+        else:
+            backfill_routing_summary = EventReceiptResponseBackfillRoutingSummary.from_dict(_backfill_routing_summary)
+
         next_after = d.pop("next_after", UNSET)
 
         event_receipt_response = cls(
@@ -175,6 +204,8 @@ class EventReceiptResponse:
             schema_version=schema_version,
             routing_settled_at=routing_settled_at,
             retain_until=retain_until,
+            backfill_recipient_count=backfill_recipient_count,
+            backfill_routing_summary=backfill_routing_summary,
             next_after=next_after,
         )
 

@@ -434,6 +434,10 @@ type Instance struct {
 	// one command. It retains normal app networking but cannot be used as an
 	// ordinary routed app instance or by the source-execution API.
 	AppTaskOnly bool
+	// QualificationOnly marks an isolated GitOps candidate execution. Its
+	// node-local service-proxy route is the only guest egress path; live app
+	// network reconciles must not widen that private assessment policy.
+	QualificationOnly bool
 	// Paused marks a resident warm-pool restore. Paused instances are kept in
 	// vmmd's live map but do not start liveness/framework monitors until the
 	// scheduler explicitly resumes them.
@@ -441,6 +445,9 @@ type Instance struct {
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
+	// JobStartGateEnabled marks a held Job whose command can only begin after
+	// the scheduler publishes runtime identity and calls ReleaseJobStart.
+	JobStartGateEnabled bool
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
@@ -544,10 +551,15 @@ type Instance struct {
 	// WakeRequest. It remains empty for either gRPC readiness or legacy
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
-	HealthcheckPath string
+	HealthcheckPath          string
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
+	// ExecutionMode is the declared ADR-137 lifecycle mode from WakeRequest.
+	// Worker and job instances have no HTTP contract, so the plan-default
+	// /healthz liveness probe does not apply to them.
+	ExecutionMode string
 
 	// WorkloadNames (issue #463 / ADR-069 / PR-B) is the set of
 	// workload names whose cgroup child scopes vmmd wrote under
@@ -667,6 +679,9 @@ func (m *Manager) SnapshotLiveEgress() map[string]LiveEgressInstance {
 	defer m.mu.Unlock()
 	out := make(map[string]LiveEgressInstance, len(m.live))
 	for instance, live := range m.live {
+		if live.QualificationOnly {
+			continue
+		}
 		out[instance] = LiveEgressInstance{AppID: live.AppID, AccountID: live.AccountID, Netns: live.Net.Netns}
 	}
 	return out
@@ -757,6 +772,15 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// qualificationInstances owns isolated qualification targets without
+	// making them discoverable through serving lookups, CID routing, health
+	// loops, or app policy fan-out. Guarded by mu.
+	qualificationInstances map[string]*Instance
+	// qualificationConfigReceiptWaiters binds the guest-init environment
+	// acknowledgement to one private qualification boot attempt. The key is
+	// the reserved instance ID; the random token and per-instance vsock channel
+	// fence stale acknowledgements from other boots.
+	qualificationConfigReceiptWaiters map[string]*qualificationConfigReceiptWaiter
 	// appResolved is each app's recently resolved addresses on this node
 	// with their expiry (ADR-373), used to seed a new instance's
 	// egress_resolved set: a restored snapshot may reconnect to addresses
@@ -1172,20 +1196,22 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:                NewAllocator(),
-		run:                  run,
-		vmm:                  vmm,
-		paths:                paths,
-		fcVersion:            fcVersion,
-		log:                  log,
-		live:                 make(map[string]*Instance),
-		readinessLoopCancels: make(map[string]context.CancelFunc),
-		appCPUPolicies:       make(map[string]appCPUPolicy),
-		instanceFlights:      make(map[string]*instanceFlight),
-		pendingProcessExits:  make(map[string]int),
-		processGenerations:   make(map[string]uint64),
-		waking:               make(map[string]struct{}),
-		exportDirs:           make(map[string]string),
+		alloc:                             NewAllocator(),
+		run:                               run,
+		vmm:                               vmm,
+		paths:                             paths,
+		fcVersion:                         fcVersion,
+		log:                               log,
+		live:                              make(map[string]*Instance),
+		qualificationInstances:            make(map[string]*Instance),
+		qualificationConfigReceiptWaiters: make(map[string]*qualificationConfigReceiptWaiter),
+		readinessLoopCancels:              make(map[string]context.CancelFunc),
+		appCPUPolicies:                    make(map[string]appCPUPolicy),
+		instanceFlights:                   make(map[string]*instanceFlight),
+		pendingProcessExits:               make(map[string]int),
+		processGenerations:                make(map[string]uint64),
+		waking:                            make(map[string]struct{}),
+		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
 		// cidToID field comment for the lifecycle.
@@ -1331,7 +1357,7 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	var rules []netns.SMTPAllowlistRule
 	m.mu.Lock()
 	for _, inst := range m.live {
-		if inst.AppID == "" || !inst.Lease.HostIP.IsValid() || !inst.Lease.HostIP.Is4() {
+		if inst.QualificationOnly || inst.AppID == "" || !inst.Lease.HostIP.IsValid() || !inst.Lease.HostIP.Is4() {
 			continue
 		}
 		allowlist, ok := perApp[inst.AppID]
@@ -1654,7 +1680,7 @@ func (m *Manager) WithTailTerminalStamper(s TailTerminalStamper) *Manager {
 //
 // Reason is a stable short string from the probe set {timeout,
 // conn_refused, conn_err, non_200, unauthorized}, or one of the
-// source classifications {liveness_infrastructure,
+// source classifications {image_healthcheck_unhealthy, liveness_infrastructure,
 // liveness_process_exited}. The probe set is the same closed set the
 // vmmd_guest_liveness_probe_seconds histogram emits. Process-exit
 // reconciliation also uses the process_exited classification. The schedd
@@ -1994,15 +2020,16 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 // Surfaced as a boolean here so the schedd side encodes the policy
 // without vmmd hard-coding it.
 type LivenessProbeConfig struct {
-	Path                string
-	GRPC                bool
-	GRPCService         string
-	Port                int
-	PeriodSeconds       int
-	TimeoutSeconds      int
-	ConsecutiveFailures int
-	CooldownSeconds     int
-	IdleResetOnDestroy  bool
+	ImageHealthcheckRequired bool
+	Path                     string
+	GRPC                     bool
+	GRPCService              string
+	Port                     int
+	PeriodSeconds            int
+	TimeoutSeconds           int
+	ConsecutiveFailures      int
+	CooldownSeconds          int
+	IdleResetOnDestroy       bool
 }
 
 // LivenessRegistry owns the per-instance liveness-probe poll
@@ -2197,6 +2224,19 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 // returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
+// instanceHasNoHTTPContract reports whether the instance is a declared
+// worker/job (ADR-137), or a legacy undeclared app the guest characterized
+// as a worker, so no port answers the plan-default HTTP liveness probe.
+func instanceHasNoHTTPContract(inst *Instance) bool {
+	switch inst.ExecutionMode {
+	case api.ExecutionModeWorker, api.ExecutionModeJob:
+		return true
+	case "":
+		return inst.Characterization.ObservedClass == api.ExecutionModeWorker
+	}
+	return false
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
@@ -2249,7 +2289,27 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 			}
 		}
 	}
-	if cfg.PeriodSeconds <= 0 {
+	noHTTPContract := false
+	m.mu.Lock()
+	if inst := m.live[instance]; inst != nil {
+		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
+		noHTTPContract = instanceHasNoHTTPContract(inst)
+	}
+	m.mu.Unlock()
+	// A declared image command is its liveness contract. Do not invent the
+	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
+	// liveness overrides remain additional independent probes.
+	if cfg.ImageHealthcheckRequired && len(override) == 0 {
+		cfg.PeriodSeconds = 0
+	}
+	// A worker never listens, so the plan-default /healthz probe fails three
+	// times and destroys a healthy worker ~10 s after every boot (H8-16).
+	// Process exit still reports through ProcessExited, and an explicit
+	// override or image HEALTHCHECK remains the worker's liveness contract.
+	if noHTTPContract && len(override) == 0 {
+		cfg.PeriodSeconds = 0
+	}
+	if cfg.PeriodSeconds <= 0 && !cfg.ImageHealthcheckRequired {
 		return
 	}
 	m.log.Debug("liveness: starting probe loop",
@@ -2683,7 +2743,7 @@ func (m *Manager) HasInstanceOwnership(instance string) bool {
 	_, waking := m.waking[instance]
 	// A stop reservation alone can exist for an unknown ID and does not
 	// establish ownership of any process, lease or resource identity.
-	return m.live[instance] != nil || waking || m.pendingCleanup[instance] != nil
+	return m.live[instance] != nil || m.qualificationInstances[instance] != nil || waking || m.pendingCleanup[instance] != nil
 }
 
 // ExecutionOutboundIdentity returns the current lease-fenced Runs principal
@@ -3162,6 +3222,12 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
+		if len(entries) == 0 && len(secretEntries) == 0 && len(req.Sidecars[i].preparedEnvJSON) > 0 {
+			// Qualification prepares these projections before registering its
+			// guest receipt. Keep the exact prepared bytes and grants when Wake
+			// reaches its ordinary preparation point.
+			continue
+		}
 		req.Sidecars[i].GrantedEnvNames = req.Sidecars[i].GrantedEnvNames[:0]
 		for _, entry := range secretEntries {
 			req.Sidecars[i].GrantedEnvNames = append(req.Sidecars[i].GrantedEnvNames, entry.Key)
@@ -3315,6 +3381,8 @@ type WakeRequest struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -3638,6 +3706,8 @@ type ColdBootRequest struct {
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget forwarded to
 	// WakeRequest. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -3692,12 +3762,13 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// ADR-057 / PR-D: forward the per-deployment override
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
-		HealthcheckPath:        req.HealthcheckPath,
-		HealthcheckGRPC:        req.HealthcheckGRPC,
-		HealthcheckGRPCService: req.HealthcheckGRPCService,
-		StartupDeadlineS:       req.StartupDeadlineS,
-		DisableStartupCPUBoost: req.DisableStartupCPUBoost,
-		ExecutionMode:          req.ExecutionMode,
+		HealthcheckPath:          req.HealthcheckPath,
+		HealthcheckGRPC:          req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		StartupDeadlineS:         req.StartupDeadlineS,
+		DisableStartupCPUBoost:   req.DisableStartupCPUBoost,
+		ExecutionMode:            req.ExecutionMode,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
 		// WakeRequest.Runtime for the contract.
@@ -3739,6 +3810,21 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance, err error) {
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
+	}
+	// Unseal only inside vmmd. The scheduler-to-vmmd envelope carries
+	// ciphertext; plaintext exists only long enough to stage the private
+	// per-task secrets.env file before Firecracker starts.
+	var secretsEnvJSON []byte
+	if len(req.SealedEnvEntries) > 0 {
+		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries})
+		if err != nil {
+			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
+		}
+	}
+	qualification, qualificationOnly := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord)
+	if qualificationOnly && (qualification.Execution.InstanceID != req.Instance || qualification.Execution.NodeID != req.NodeID ||
+		qualification.Execution.RAMMB != req.MemSizeMiB || qualification.Execution.Artifact.RootfsKey != req.ImageRef) {
+		return nil, fmt.Errorf("manager: BootJob %s: qualification frame differs from job payload", req.Instance)
 	}
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("boot job %s: invalid plan %q", req.Instance, req.Plan)
@@ -3813,6 +3899,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	}
 	nc.ConntrackCap = m.conntrackCap
 	applyTenantEgressPolicy(&nc, req.Plan, nil)
+	if qualificationOnly {
+		// Qualification runs only through the node-local qualification proxy
+		// and pinned DNS. It must never inherit customer tenant egress policy.
+		nc = isolateQualificationJobNetwork(nc)
+	}
 	if err = m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: network setup: %w", req.Instance, err)
 	}
@@ -3830,10 +3921,12 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		ImageRef:       req.ImageRef,
 		Command:        req.Command,
 		Env:            req.Env,
+		SecretsEnvJSON: secretsEnvJSON,
 		VcpuCount:      req.VcpuCount,
 		MemSizeMiB:     req.MemSizeMiB,
 		Tap:            "tap0",
 		TaskTimeoutSec: req.TaskTimeoutSec,
+		StartHeld:      req.StartHeld,
 		LeaseToken:     req.LeaseToken,
 		AccountID:      req.AccountID,
 		RunID:          req.RunID,
@@ -3849,14 +3942,18 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// stream arrival. Mirrors the Wake path's struct literal at
 	// vmm.go:3003.
 	inst := &Instance{
-		Lease:           lease,
-		Net:             nc,
-		Method:          WakeColdBoot, // jobs are always cold-boot
-		IsJob:           true,
-		AccountID:       req.AccountID,
-		Plan:            req.Plan,
-		Port:            0,  // no listener port
-		HealthcheckPath: "", // no readiness probe
+		Lease:               lease,
+		Net:                 nc,
+		Method:              WakeColdBoot, // jobs are always cold-boot
+		IsJob:               true,
+		JobStartGateEnabled: req.StartHeld,
+		QualificationOnly:   qualificationOnly,
+		AppID:               qualification.Execution.AppID,
+		DeploymentID:        qualification.Execution.DeploymentID,
+		AccountID:           req.AccountID,
+		Plan:                req.Plan,
+		Port:                0,  // no listener port
+		HealthcheckPath:     "", // no readiness probe
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: original launch identity: %w", req.Instance, err)
@@ -3866,8 +3963,12 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		m.mu.Unlock()
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
 	}
-	m.live[req.Instance] = inst
-	m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
+	if qualificationOnly {
+		m.qualificationInstances[req.Instance] = inst
+	} else {
+		m.live[req.Instance] = inst
+		m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
+	}
 	m.mu.Unlock()
 	// MarkInstanceFrameworkReady isn't called here — the
 	// supervisor doesn't emit a framework-ready receipt. The
@@ -3895,6 +3996,40 @@ func (m *Manager) WaitJobExit(ctx context.Context, instance string, deadline tim
 	return m.vmm.WaitJobExit(ctx, lease, deadline)
 }
 
+// ReleaseJobStart opens the guest start gate only for a live Job whose cold
+// boot explicitly requested a held start. The guest treats duplicate release
+// frames as success, so a lost RPC acknowledgement is safe to retry.
+func (m *Manager) ReleaseJobStart(ctx context.Context, instance string) error {
+	if m == nil || instance == "" {
+		return fmt.Errorf("manager: ReleaseJobStart: invalid manager or instance")
+	}
+	m.mu.Lock()
+	inst := m.live[instance]
+	if inst == nil {
+		inst = m.qualificationInstances[instance]
+	}
+	if inst == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("manager: ReleaseJobStart %s: not live", instance)
+	}
+	if !inst.IsJob || !inst.JobStartGateEnabled {
+		m.mu.Unlock()
+		return fmt.Errorf("manager: ReleaseJobStart %s: job start gate is not enabled", instance)
+	}
+	lease := inst.Lease
+	m.mu.Unlock()
+	releaser, ok := m.vmm.(interface {
+		ReleaseJobStart(context.Context, Lease) error
+	})
+	if !ok {
+		return fmt.Errorf("manager: ReleaseJobStart %s: VMM does not support held jobs", instance)
+	}
+	if err := releaser.ReleaseJobStart(ctx, lease); err != nil {
+		return fmt.Errorf("manager: ReleaseJobStart %s: %w", instance, err)
+	}
+	return nil
+}
+
 // JobBootRequest is the Manager.BootJob payload. Mirrors JobVmmSpec
 // in pkg/sched/jobs.go (the schedd-side wire) plus the Manager-side
 // fields every Wake needs (Instance, NodeID, Plan).
@@ -3906,21 +4041,25 @@ func (m *Manager) WaitJobExit(ctx context.Context, instance string, deadline tim
 // type add Manager-specific fields (Plan, NodeID) without
 // re-exposing them to schedd.
 type JobBootRequest struct {
-	Instance       string
-	AccountID      string
-	NodeID         string
-	Plan           api.Plan
-	RunID          string
-	TaskIndex      int
-	ImageRef       string
-	KernelKey      string
-	BaseKey        string
-	Command        []string
-	Env            map[string]string
-	VcpuCount      int
-	MemSizeMiB     int
-	TaskTimeoutSec int
-	LeaseToken     string
+	Instance  string
+	AccountID string
+	NodeID    string
+	Plan      api.Plan
+	RunID     string
+	TaskIndex int
+	ImageRef  string
+	KernelKey string
+	BaseKey   string
+	Command   []string
+	Env       map[string]string
+	// SealedEnvEntries are selected ciphertext rows. They are opened only by
+	// vmmd and are never copied into job/run records or the guest manifest.
+	SealedEnvEntries []SealedEnvEntry
+	VcpuCount        int
+	MemSizeMiB       int
+	TaskTimeoutSec   int
+	StartHeld        bool
+	LeaseToken       string
 }
 
 // Wake prefers snapshot restore with cold-boot fallback. Failed attempts unwind;
@@ -3937,6 +4076,17 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	qualificationOnly := false
+	if permit, authorized := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord); authorized {
+		if permit.Execution.InstanceID != req.Instance {
+			return nil, fmt.Errorf("wake %s: qualification execution identity differs", req.Instance)
+		}
+		req, err = isolateQualificationWakeRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		qualificationOnly = true
+	}
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -4055,6 +4205,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	if qualificationOnly {
+		nc.QualificationOnly = true
+		if err := validateQualificationHostBridge(nc.HostBridgeIP); err != nil {
+			return nil, err
+		}
+	}
 	if req.ExecutionOnly {
 		// Keep the allocator-derived identity on Instance for diagnostics, but
 		// never pass a tenant network plan to setup/teardown or host policy.
@@ -4087,6 +4243,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if req.ExecutionOnly && req.AppTaskOnly {
 		err = fmt.Errorf("wake %s: execution-only and app-task-only modes are mutually exclusive", req.Instance)
 		return nil, err
+	}
+	if req.ImageHealthcheckRequired && (req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly) {
+		return nil, fmt.Errorf("image healthcheck requires an application boot")
 	}
 	if req.KeepPaused && req.Snapshot == nil {
 		err = fmt.Errorf("wake %s: keep_paused requires a snapshot", req.Instance)
@@ -4254,7 +4413,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// reload. The merge happens after this snapshot; the
 	// per-app cache is the only place the unaugmented slice
 	// survives a SIGHUP-driven operator-bundle change.
-	if req.AppID != "" {
+	if req.AppID != "" && !qualificationOnly {
 		m.perAppAllowlistMu.Lock()
 		if m.perAppAllowlist == nil {
 			m.perAppAllowlist = make(map[string][]netip.Prefix)
@@ -4290,7 +4449,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// merge dedups across per-app + operator (an entry that's
 	// already in the per-app set doesn't get a duplicate row
 	// in the rendered anonymous daddr-set).
-	nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
+	if !qualificationOnly {
+		nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
+	}
 
 	// ADR-098 C11: capture the per-boundary timings (netns+TAP /
 	// restore / guest-ready) on a private struct that bringUp
@@ -4304,49 +4465,82 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
-	netnsStart := time.Now()
-	preparedHit := false
-	var networkErr error
-	if !req.ExecutionOnly {
-		preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
-	}
-	err = networkErr
-	if err != nil {
-		// Issue #1059 / ADR-127: closed-reason counter on the
-		// setupNetwork path. The error wrap "network setup: %w"
-		// surfaces every netns / TAP / nft failure under one
-		// umbrella, so per ADR §3 we hardcode reason="netns_fail"
-		// rather than rely on inner-error typed-sentinel matching
-		// (which would require pkg/netns/config.go callers to
-		// wrap with %w ErrNetnsFail — a follow-up extension). The
-		// reason literal is load-bearing for the §12
-		// "vmmd_wake_failure_total" panel legend — operators
-		// triaging a netns_fail spike do not need to know which
-		// inner step (netns add, TAP create, nft apply) failed.
-		// nil-safe: the receiver guards on m.wakeFailureMetrics.
-		if m.wakeFailureMetrics != nil {
-			m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
-		}
-		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
-	}
-	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
-	if networkReady != nil && !req.ExecutionOnly {
-		networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
-	}
-	if m.preparedNetworks != nil && !req.ExecutionOnly {
-		m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
-		defer func() {
-			if err == nil {
-				if policy, ok := m.preparedPolicy(req); ok {
-					m.preparedNetworks.observe(policy)
-				}
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly {
+		// See wake_network.go: build the namespace while bringUp stages the
+		// jail; the VMM joins it before startJailer.
+		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
+			if networkReady != nil {
+				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
 			}
-		}()
-	}
+		})
+		// Registered after the cleanup defer, so it runs first: cleanup
+		// never races a namespace that is still being built.
+		defer func() { _ = network.join() }()
+		phases.mark("setup_network")
+		timings.prepare = phases.prepareTimings()
+		method, err = m.bringUp(withWakeNetwork(ctx, network), lease, nc, req, &timings)
+		if netErr := network.join(); netErr != nil {
+			if m.wakeFailureMetrics != nil {
+				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
+			}
+			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+		}
+		timings.netnsTapMs = network.duration.Milliseconds()
+		if m.preparedNetworks != nil {
+			m.log.Info("wake network cache", "instance", req.Instance, "hit", network.hit)
+			defer func() {
+				if err == nil {
+					if policy, ok := m.preparedPolicy(req); ok {
+						m.preparedNetworks.observe(policy)
+					}
+				}
+			}()
+		}
+	} else {
+		netnsStart := time.Now()
+		preparedHit := false
+		var networkErr error
+		if !req.ExecutionOnly {
+			preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
+		}
+		err = networkErr
+		if err != nil {
+			// Issue #1059 / ADR-127: closed-reason counter on the
+			// setupNetwork path. The error wrap "network setup: %w"
+			// surfaces every netns / TAP / nft failure under one
+			// umbrella, so per ADR §3 we hardcode reason="netns_fail"
+			// rather than rely on inner-error typed-sentinel matching
+			// (which would require pkg/netns/config.go callers to
+			// wrap with %w ErrNetnsFail — a follow-up extension). The
+			// reason literal is load-bearing for the §12
+			// "vmmd_wake_failure_total" panel legend — operators
+			// triaging a netns_fail spike do not need to know which
+			// inner step (netns add, TAP create, nft apply) failed.
+			// nil-safe: the receiver guards on m.wakeFailureMetrics.
+			if m.wakeFailureMetrics != nil {
+				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
+			}
+			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+		}
+		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
+		if networkReady != nil && !req.ExecutionOnly {
+			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
+		}
+		if m.preparedNetworks != nil && !req.ExecutionOnly {
+			m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
+			defer func() {
+				if err == nil {
+					if policy, ok := m.preparedPolicy(req); ok {
+						m.preparedNetworks.observe(policy)
+					}
+				}
+			}()
+		}
 
-	phases.mark("setup_network")
-	timings.prepare = phases.prepareTimings()
-	method, err = m.bringUp(ctx, lease, nc, req, &timings)
+		phases.mark("setup_network")
+		timings.prepare = phases.prepareTimings()
+		method, err = m.bringUp(ctx, lease, nc, req, &timings)
+	}
 	// Marked before the error check so a FAILED bringUp still reports
 	// how long it burned — that is the phase most likely to hold a
 	// hung Firecracker, and the one the defer most needs to name.
@@ -4556,15 +4750,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	inst := &Instance{
 		Lease: lease, Net: nc, Method: method,
-		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
-		LivenessProbe:    append(json.RawMessage(nil), req.LivenessProbe...),
-		ReadinessProbe:   append(json.RawMessage(nil), req.ReadinessProbe...),
-		StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
+		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
+		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		ExecutionMode:    req.ExecutionMode,
 		Characterization: report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
@@ -4781,6 +4977,15 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		return WakeColdBoot, scanErr
 	}
 	restorable := PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
+	// A paused wake is a restore contract, not an ordinary wake preference.
+	// If the snapshot is stale, version-mismatched, incomplete, or has a
+	// companion-memory shape that cannot be loaded, a cold boot would start a
+	// running VM and violate the caller's explicit paused-state requirement.
+	// Refuse before either VMM path starts; callers can reconcile or retry with
+	// a compatible captured snapshot.
+	if req.KeepPaused && !restorable {
+		return WakeRestore, fmt.Errorf("warm-pool paused restore requires a usable snapshot matching the requested memory shape")
+	}
 	if restorable {
 		// ADR-510: never load a snapshot's RAM onto kernel/base images other
 		// than the ones it was captured with. The refusal happens before any
@@ -4828,10 +5033,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			VsockDevice: NewVsockDevice(lease.Slot),
 			// Per-deployment readiness action. The HTTP path and gRPC
 			// mode/service are forwarded together; both target :8080.
-			HealthcheckPath:        req.HealthcheckPath,
-			HealthcheckGRPC:        req.HealthcheckGRPC,
-			HealthcheckGRPCService: req.HealthcheckGRPCService,
-			StartupDeadlineS:       req.StartupDeadlineS,
+			HealthcheckPath:          req.HealthcheckPath,
+			HealthcheckGRPC:          req.HealthcheckGRPC,
+			HealthcheckGRPCService:   req.HealthcheckGRPCService,
+			ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+			StartupDeadlineS:         req.StartupDeadlineS,
 			// One-shot guests use a vsock dispatch protocol rather than the app
 			// HTTP listener. App tasks remain networked; executions do not.
 			SkipReady:         req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
@@ -4877,6 +5083,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				// returning the restore error preserves the paused-state
 				// contract and lets the normal cleanup release the lease.
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", rErr)
+			}
+			if errors.Is(rErr, errWakeNetwork) {
+				// The overlapped wake network failed; a cold boot would
+				// need the same namespace (wake_network.go).
+				return WakeRestore, rErr
 			}
 			// Fall back to cold boot into the same netns; kill any half-restored VM.
 			// The wrapped rErr names the failure mode (vsock dial timeout vs
@@ -4938,11 +5149,12 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		Tap:        nc.Tap,
 		// Per-deployment readiness action. The HTTP path and gRPC
 		// mode/service are forwarded together; both target :8080.
-		HealthcheckPath:        req.HealthcheckPath,
-		HealthcheckGRPC:        req.HealthcheckGRPC,
-		HealthcheckGRPCService: req.HealthcheckGRPCService,
-		StartupDeadlineS:       req.StartupDeadlineS,
-		ExecutionMode:          req.ExecutionMode,
+		HealthcheckPath:          req.HealthcheckPath,
+		HealthcheckGRPC:          req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		StartupDeadlineS:         req.StartupDeadlineS,
+		ExecutionMode:            req.ExecutionMode,
 		// One-shot guests use a vsock dispatch protocol rather than the app
 		// HTTP listener. App tasks remain networked; executions do not.
 		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
@@ -5130,6 +5342,7 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	}
 	m.nextProcessGeneration++
 	lease.processGeneration = m.nextProcessGeneration
+	lease.profileStartedAt = time.Now()
 	m.processGenerations[lease.Instance] = lease.processGeneration
 	delete(m.pendingProcessExits, lease.Instance)
 	return lease
@@ -5365,6 +5578,10 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
+		// The migration destination verifies this capture's backing identity
+		// like any restore (ADR-510). Without it every live migration was
+		// refused and cold-booted on the destination (H5-12).
+		m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
 		return info, nil
 	}
 	// Preserve best-effort recovery after an expired RPC, but let Destroy
@@ -5410,6 +5627,15 @@ func (m *Manager) TriggerExtensionHook(ctx context.Context, instance, phase stri
 	return hooker.TriggerExtensionHook(ctx, inst.Lease, phase, metadata)
 }
 
+// ImageHealthcheckRequiredFor reads the stored boot contract for warm-resume
+// acknowledgement. A caller cannot upgrade an older instance by setting a flag.
+func (m *Manager) ImageHealthcheckRequiredFor(instance string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.live[instance]
+	return inst != nil && inst.ImageHealthcheckRequired
+}
+
 // ResumeVM resumes a migration-prepared instance and restarts its liveness
 // monitor. It is idempotent at the VMM layer, which lets cancel and lease
 // expiry safely race with a late acknowledgement.
@@ -5433,6 +5659,20 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	if inst.ImageHealthcheckRequired {
+		checker, ok := m.vmm.(interface {
+			WaitImageHealthcheck(context.Context, Lease, int) error
+		})
+		if !ok {
+			return fmt.Errorf("resume_vm %s: image healthcheck capability unavailable", instance)
+		}
+		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+			return fmt.Errorf("resume_vm %s: resume hook: %w", instance, err)
+		}
+		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
@@ -6164,7 +6404,7 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	var targets []patchTarget
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID {
+		if inst.AppID != appID || inst.QualificationOnly {
 			continue
 		}
 		prior := make([]netip.Prefix, len(inst.Net.EgressAllowlist))
@@ -6335,7 +6575,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID {
+		if inst.AppID != appID || inst.QualificationOnly {
 			continue
 		}
 		if originalTargets != nil && originalTargets[id] != inst {
@@ -6596,7 +6836,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID == appID {
+		if inst.AppID == appID && !inst.QualificationOnly {
 			targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
 		}
 	}
@@ -7616,7 +7856,7 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID || inst.Net.Netns == "" {
+		if inst.AppID != appID || inst.QualificationOnly || inst.Net.Netns == "" {
 			continue
 		}
 		ports := tenantEgressPorts(inst.Plan, extra)

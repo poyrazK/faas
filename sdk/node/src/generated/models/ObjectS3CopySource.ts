@@ -8,7 +8,7 @@
 export type ObjectS3CopySource = {
   source_bucket_id: string;
   /**
-   * Literal allowed source key prefix
+   * Literal allowed source key prefix, bounded to 1024 UTF-8 bytes.
    */
   prefix: string;
   created_at: string;

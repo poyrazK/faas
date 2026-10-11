@@ -10,22 +10,29 @@ import (
 )
 
 type operationMemory struct {
-	deliveryRetries map[string]api.OperationDeliveryRetryResponse
-	definitions     map[string]OperationDefinition
-	operations      map[string]Operation
-	events          map[string][]api.OperationEvent
-	receipts        map[string]operationIdentityReceipt
-	executions      map[string]string
-	generations     map[string]int
-	reports         map[string]string
-	recoveries      map[string]string
-	streams         map[string]operationStreamLease
-	blobs           map[string]OperationResultBlob
+	deliveryRetries      map[string]api.OperationDeliveryRetryResponse
+	definitions          map[string]OperationDefinition
+	operations           map[string]Operation
+	events               map[string][]api.OperationEvent
+	receipts             map[string]operationIdentityReceipt
+	executions           map[string]string
+	generations          map[string]int
+	reports              map[string]string
+	recoveries           map[string]string
+	recoveryDecisions    map[string]api.OperationRecoveryDecision
+	streams              map[string]operationStreamLease
+	jobOwners            map[string]string
+	jobExecutions        map[string]map[int]api.OperationExecution
+	workflowExecutions   map[string]map[int]api.OperationExecution
+	blobs                map[string]OperationResultBlob
+	milestones           map[string]map[string]operationMilestoneReceipt
+	workflowStates       map[string]operationWorkflowStateRecord
+	workflowStateReports map[string]operationWorkflowStateReceipt
 }
 
 func (m *MemStore) operationMemoryLocked() *operationMemory {
 	if m.operationData == nil {
-		m.operationData = &operationMemory{definitions: map[string]OperationDefinition{}, operations: map[string]Operation{}, events: map[string][]api.OperationEvent{}, receipts: map[string]operationIdentityReceipt{}, executions: map[string]string{}, generations: map[string]int{}, reports: map[string]string{}, recoveries: map[string]string{}, blobs: map[string]OperationResultBlob{}}
+		m.operationData = &operationMemory{milestones: map[string]map[string]operationMilestoneReceipt{}, workflowStates: map[string]operationWorkflowStateRecord{}, workflowStateReports: map[string]operationWorkflowStateReceipt{}, definitions: map[string]OperationDefinition{}, operations: map[string]Operation{}, events: map[string][]api.OperationEvent{}, receipts: map[string]operationIdentityReceipt{}, executions: map[string]string{}, generations: map[string]int{}, reports: map[string]string{}, recoveries: map[string]string{}, blobs: map[string]OperationResultBlob{}}
 	}
 	return m.operationData
 }
@@ -60,6 +67,11 @@ func (m *MemStore) PutOperationDefinition(ctx context.Context, def OperationDefi
 		}
 	}
 	def.Spec, def.Revision = contract.Spec, contract.Revision
+	if def.Spec.Workflow != "" {
+		if _, err := operationWorkflowDefinition(def, dep.Workflows, acct.Plan); err != nil {
+			return OperationDefinition{}, err
+		}
+	}
 	data := m.operationMemoryLocked()
 	count := 0
 	names := map[string]bool{}
@@ -181,6 +193,10 @@ func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmiss
 	if err := validateNewOperationInput(def, admission.Input, limits); err != nil {
 		return Operation{}, false, err
 	}
+	op.Subject, err = operations.ExtractOperationSubject(def.Spec.Subject, inv.Payload)
+	if err != nil {
+		return Operation{}, false, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
 	pending := 0
 	for _, existing := range data.operations {
 		if existing.AccountID == admission.AccountID && !existing.State.Terminal() {
@@ -190,13 +206,34 @@ func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmiss
 	if pending >= limits.Operations.PendingPerAccount {
 		return Operation{}, false, NewOperationLimitError("pending_per_account", int64(limits.Operations.PendingPerAccount), int64(pending)+1)
 	}
+	var jobRun JobRun
+	if def.Spec.Job != "" {
+		jobRun, err = m.prepareOperationJobLocked(&op, inv, def, acct.Plan)
+		if err != nil {
+			return Operation{}, false, err
+		}
+	}
+	var run WorkflowRun
+	var steps []*WorkflowStep
+	if def.Spec.Workflow != "" {
+		run, steps, err = m.prepareOperationWorkflowLocked(&op, inv, def, acct.Plan)
+		if err != nil {
+			return Operation{}, false, err
+		}
+	}
 	m.operationPinsLocked(op)
 	data.operations[op.ID] = cloneOperation(op)
 	data.events[op.ID] = []api.OperationEvent{initialOperationEvent(op)}
 	data.receipts[key] = operationIdentityReceipt{AccountID: op.AccountID, AppID: op.AppID, OperationID: op.ID, Fingerprint: fingerprint, ExpiresAt: now.Add(time.Duration(limits.Operations.IdempotencyRetentionSeconds) * time.Second)}
-	m.invocations[inv.ID] = inv
-	data.executions[inv.ID] = op.ID
-	data.generations[inv.ID] = op.Generation
+	if op.JobRunID != "" {
+		m.insertOperationJobLocked(op, jobRun)
+	} else if op.WorkflowRunID != "" {
+		m.insertOperationWorkflowLocked(op, run, steps)
+	} else {
+		m.invocations[inv.ID] = inv
+		data.executions[inv.ID] = op.ID
+		data.generations[inv.ID] = op.Generation
+	}
 	return cloneOperation(op), true, nil
 }
 

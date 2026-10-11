@@ -126,7 +126,10 @@ const slow = controllers.map(async controller => {
   process.exitCode = 1;
 });
 `, slowRequests)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Go package tests and the Node subprocess share a busy CI runner; allow
+	// Node startup, request scheduling, and the guest latency assertion while
+	// keeping a hung child bounded.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, node, "-e", script, bridge.URL).CombinedOutput()
 	if err != nil {

@@ -48,6 +48,6 @@ func CertificateIssuanceFailedBody(f CertificateIssuanceFailure) (subject, body 
 	if dashboard := safe(f.DashboardURL); dashboard != "" {
 		fmt.Fprintf(&b, "Review the domain in the dashboard:\n%s\n\n", dashboard)
 	}
-	b.WriteString("Verify the domain's DNS-01 records and try again.\n\n— onebox faas\n")
+	b.WriteString("Verify the domain's DNS-01 records and try again.\n\n— Gregale\n")
 	return subject, b.String()
 }

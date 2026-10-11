@@ -53,6 +53,9 @@ func (j *nativeCheckpointWakeJournal) preparePhysicalDigest(ctx context.Context,
 	if out.Dispatch != frame || !out.Claimed || out.Revoked || out.NativeGeneration != "" {
 		return out, errors.New("native checkpoint wake: original request changed, revoked or already bound")
 	}
+	if err = q.requireProfileAbsent(frame.InstanceID, true); err != nil {
+		return out, err
+	}
 	qualificationPath, pathErr := q.path(frame.InstanceID)
 	if pathErr != nil {
 		return out, pathErr

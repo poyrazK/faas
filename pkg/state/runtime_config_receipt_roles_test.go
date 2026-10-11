@@ -4,6 +4,7 @@ package state
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -66,5 +67,27 @@ func TestRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 		if fresh, err := store.RuntimeConfigInputsFresh(ctx, app.ID, forged); err != nil || fresh {
 			t.Fatalf("sidecar evidence elevated migration credential alias=%v fresh=%v err=%v", alias, fresh, err)
 		}
+	}
+}
+
+func TestRuntimeConfigInputsFreshUsesPersistedTimestampPrecision(t *testing.T) {
+	store := NewMemStore()
+	changedAt := time.Date(2026, 10, 8, 12, 0, 0, 123456789, time.UTC)
+	store.mu.Lock()
+	store.environmentRuntimeConfigChangedAt = make(map[environmentRuntimeKey]time.Time)
+	store.environmentRuntimeConfigChangedAt[environmentRuntimeKey{AppID: "app", Scope: "default"}] = changedAt
+	store.mu.Unlock()
+
+	inputs := RuntimeConfigInputs{Scope: "default", Boundary: changedAt.Truncate(time.Microsecond),
+		Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}}
+	fresh, err := store.RuntimeConfigInputsFresh(t.Context(), "app", inputs)
+	if err != nil || !fresh {
+		t.Fatalf("microsecond-persisted boundary fresh=%v err=%v", fresh, err)
+	}
+
+	inputs.Boundary = inputs.Boundary.Add(-time.Microsecond)
+	fresh, err = store.RuntimeConfigInputsFresh(t.Context(), "app", inputs)
+	if err != nil || fresh {
+		t.Fatalf("boundary before persisted change fresh=%v err=%v", fresh, err)
 	}
 }

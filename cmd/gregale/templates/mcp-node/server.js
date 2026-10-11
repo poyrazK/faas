@@ -15,10 +15,11 @@ let stopping = false;
 async function shutdown() {
   if (stopping) return;
   stopping = true;
+  const servicesClosing = taskServices.close();
   closeTaskSubscriptions();
   await new Promise(resolve => listener.close(resolve));
   await handler.close();
-  await taskServices.close();
+  await servicesClosing;
 }
 process.once('SIGTERM', () => { void shutdown(); });
 process.once('SIGINT', () => { void shutdown(); });

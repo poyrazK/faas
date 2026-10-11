@@ -304,6 +304,39 @@ func TestRouteConsumerThrottle_OverCapCollapse(t *testing.T) {
 	}
 }
 
+// adr: 104 — the per-rule consumer set must not fill permanently. Once the
+// first cap clients have gone idle (their buckets refilled), a new client
+// gets its own bucket instead of sharing __other__, where one drained client
+// would throttle every newcomer for the life of the process. Consumers that
+// are still mid-drain are never reclaimed, so a saturated cap still collapses.
+func TestRouteConsumerThrottle_IdleConsumersFreeTheirSlots(t *testing.T) {
+	l := NewLimiterWithLRU(0)
+	clk := newFakeClock(time.Unix(1_700_000_000, 0))
+	l.now = clk.Now
+	ruleKey := "app-1\x00rule-1"
+	const rps, burst, cap = 1.0, 2.0, 3
+
+	for i := 0; i < cap; i++ {
+		l.AllowWithConsumerKey(ruleKey, fmt.Sprintf("early-%d", i), rps, burst, cap)
+	}
+	// Mid-drain: nothing has refilled, so the newcomer collapses.
+	l.AllowWithConsumerKey(ruleKey, "drainer", rps, burst, cap)
+	if l.ConsumerIsTracked(ruleKey, "drainer") {
+		t.Fatal("newcomer took a slot from a consumer that was still mid-drain")
+	}
+	// The drainer empties __other__ ...
+	for l.AllowWithConsumerKey(ruleKey, "drainer", rps, burst, cap) {
+	}
+	// ... and the early consumers go idle long enough to refill.
+	clk.Advance(time.Duration(burst/rps) * time.Second)
+	if !l.AllowWithConsumerKey(ruleKey, "newcomer", rps, burst, cap) {
+		t.Fatal("newcomer was throttled by the drained __other__ bucket")
+	}
+	if !l.ConsumerIsTracked(ruleKey, "newcomer") {
+		t.Fatal("newcomer did not reclaim an idle consumer's slot")
+	}
+}
+
 // TestRouteConsumerThrottle_NoBackCompatRegression guarantees
 // Phase 3 doesn't break the PR #887 wire shape. A rule with
 // KeyBy == "" (the pre-Phase-3 default) continues to use

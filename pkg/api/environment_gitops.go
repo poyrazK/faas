@@ -44,9 +44,42 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	Source   EnvironmentGitSource            `json:"source"`
-	Runs     []EnvironmentGitOpsRun          `json:"runs"`
-	Approval *EnvironmentGitRevisionApproval `json:"approval,omitempty"`
+	Source           EnvironmentGitSource                   `json:"source"`
+	Runs             []EnvironmentGitOpsRun                 `json:"runs"`
+	Approval         *EnvironmentGitRevisionApproval        `json:"approval,omitempty"`
+	WorkloadEvidence *EnvironmentWorkloadActivationEvidence `json:"workload_evidence,omitempty"`
+}
+
+// EnvironmentWorkloadActivationEvidence summarizes the current reviewed
+// candidate graph. It reports committed evidence only; it grants no activation
+// or serving authority.
+type EnvironmentWorkloadActivationEvidence struct {
+	GraphID                                string `json:"graph_id"`
+	SourceID                               string `json:"source_id"`
+	EnvironmentID                          string `json:"environment_id"`
+	RevisionID                             string `json:"revision_id"`
+	DefinitionDigest                       string `json:"definition_digest"`
+	Generation                             int64  `json:"generation"`
+	IntentVersion                          int64  `json:"intent_version"`
+	PlanHash                               string `json:"plan_hash"`
+	GraphPhase                             string `json:"graph_phase"`
+	GraphErrorCode                         string `json:"graph_error_code,omitempty"`
+	ArtifactsPrepared                      bool   `json:"artifacts_prepared"`
+	Candidates                             int    `json:"candidates"`
+	RetainedWorkloadsRecorded              int    `json:"retained_workloads_recorded"`
+	CapturesRecorded                       int    `json:"captures_recorded"`
+	GuestConfigAcknowledgementsRecorded    int    `json:"guest_config_acknowledgements_recorded"`
+	RestoresRecorded                       int    `json:"restores_recorded"`
+	SmokesRecorded                         int    `json:"smokes_recorded"`
+	JobSmokesRecorded                      int    `json:"job_smokes_recorded"`
+	FrameworkReadyAcknowledgementsRecorded int    `json:"framework_ready_acknowledgements_recorded"`
+	Qualified                              bool   `json:"qualified"`
+	// Activated reflects exact active release-set membership for every graph
+	// member; it does not prove that serving has converged.
+	Activated bool `json:"activated"`
+	// Serving requires its own committed convergence evidence.
+	Serving         bool     `json:"serving"`
+	BlockingReasons []string `json:"blocking_reasons"`
 }
 
 type EnvironmentGitRevisionApproval struct {

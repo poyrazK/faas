@@ -49,7 +49,9 @@ func (m *MemStore) SetRouteHealthGate(_ context.Context, accountID, appID string
 	if req.Mode == "enforce" && (!plan.TrafficSplitAllowed() || !plan.DebugTelemetryEnabled()) {
 		return g, ErrRouteHealthPlan
 	}
-	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
+	// The first explicit save records intent even when it matches the default,
+	// so an empty selector list opts out of default seeding (ADR-844).
+	if g.Revision > 0 && g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, nil
 	}
 	if g.Revision >= api.RouteRequirementsMaxRevision {

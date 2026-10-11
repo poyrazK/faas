@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -143,22 +142,7 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 }
 
 func workflowOutboundRetryAfter(raw string, now time.Time) time.Time {
-	if seconds, err := strconv.ParseUint(raw, 10, 64); err == nil {
-		if seconds >= uint64(time.Hour/time.Second) {
-			return now.Add(time.Hour)
-		}
-		return now.Add(time.Duration(seconds) * time.Second)
-	}
-	if at, err := http.ParseTime(raw); err == nil && at.After(now) {
-		return minTime(at, now.Add(time.Hour))
-	}
-	return time.Time{}
-}
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
+	return api.WorkflowRetryAfter(raw, now)
 }
 
 func workflowHasOutbound(steps []api.WorkflowStepSpec) bool {

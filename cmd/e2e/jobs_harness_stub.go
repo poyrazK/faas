@@ -59,7 +59,7 @@ func (h *MetalJobHarness) Close() {
 // newMetalHarness boots the apid → schedd → vmmd path and meterd. Jobs do not
 // use gatewayd or builderd, but imaged is started so this acceptance retains
 // the same image/signing environment as the other metal tests.
-func newMetalHarness(t *testing.T) *MetalJobHarness {
+func newMetalHarness(t *testing.T, extraEnv ...string) *MetalJobHarness {
 	t.Helper()
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping metal jobs acceptance")
@@ -111,10 +111,11 @@ func newMetalHarness(t *testing.T) *MetalJobHarness {
 			t.Fatalf("write Jobs test age key %s: %v", path, err)
 		}
 	}
-	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.VMMD|e2etest.Imaged|e2etest.Meterd,
-		"FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath,
-		"FAAS_HOST_AGE_IDENTITY_PATH="+hostIdentityPath,
-	)
+	env := append([]string{
+		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
+		"FAAS_HOST_AGE_IDENTITY_PATH=" + hostIdentityPath,
+	}, extraEnv...)
+	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.VMMD|e2etest.Imaged|e2etest.Meterd, env...)
 	jh := &MetalJobHarness{
 		t: t, Harness: h, registry: registry,
 		imageRefs: make(map[string]string), accountKeys: make(map[string]string),

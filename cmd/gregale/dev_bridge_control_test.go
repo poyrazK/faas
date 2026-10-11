@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -21,6 +22,8 @@ func TestDevBridgeControlCommands(t *testing.T) {
 	stdout, restore := captureStdout(t)
 	defer restore()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	session, credentials, err := devbridge.NewSession(devbridge.Scope{AccountID: "account", ProjectID: "shop", EnvironmentID: "development", TargetAppID: "payments", DeveloperID: "alice"}, time.Now(), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)

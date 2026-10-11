@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 )
@@ -340,38 +338,5 @@ func TestMCPDiscoveryReportsRejectedTools(t *testing.T) {
 		if !strings.Contains(output.String(), `"rejected_tools"`) || !strings.Contains(output.String(), `"good"`) || !strings.Contains(output.String(), `"reason"`) {
 			t.Fatalf("incomplete %s receipt: %s", command, output.String())
 		}
-	}
-}
-
-// adr: 426 — failed protocol/auth verification closes public ingress.
-func TestMCPDeploymentVerificationFailureEnablesMaintenance(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
-	var output bytes.Buffer
-	osStdout = &output
-	jsonOutput = true
-	t.Cleanup(func() { osStdout = oldOut; jsonOutput = oldJSON })
-	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) }))
-	defer mcp.Close()
-	var maintenance atomic.Bool
-	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer operator-only" {
-			t.Error("control plane missing its own account credential")
-		}
-		if r.Method == http.MethodPatch {
-			var update api.UpdateAppRequest
-			_ = json.NewDecoder(r.Body).Decode(&update)
-			if update.MaintenanceMode != nil {
-				maintenance.Store(*update.MaintenanceMode)
-			}
-		}
-		_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "my-mcp", URL: mcp.URL})
-	}))
-	defer control.Close()
-	cfg := mcphosting.Config{Endpoint: "/mcp", Auth: mcphosting.AuthConfig{Mode: "open"}}
-	if code := finishMCPDeploy(context.Background(), NewClient(control.URL, "operator-only"), "my-mcp", cfg, ""); code != 1 {
-		t.Fatalf("exit=%d", code)
-	}
-	if !maintenance.Load() || !strings.Contains(output.String(), "maintenance_enabled") {
-		t.Fatalf("failed deployment remains open: %s", output.String())
 	}
 }

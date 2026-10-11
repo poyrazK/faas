@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "migrations": "migrations",
+  "seed": "seed.sql",
+  "output": "database.types.ts",
+  "identities": {
+    "alice": {
+      "subject": "alice",
+      "claims": {
+        "tenant": "team-a"
+      }
+    },
+    "otherTenant": {
+      "subject": "alice",
+      "claims": {
+        "tenant": "team-b"
+      }
+    },
+    "bob": {
+      "subject": "bob",
+      "claims": {
+        "tenant": "team-a"
+      }
+    },
+    "worker": {
+      "subject": "alice",
+      "claims": {
+        "tenant": "team-a",
+        "outbox_worker": true
+      }
+    }
+  },
+  "verify": {
+    "collection": "data-api.requests.json",
+    "scenarios": [
+      "outbox-delivery"
+    ]
+  }
+}

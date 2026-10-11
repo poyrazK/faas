@@ -18,17 +18,22 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|run|status|steps|attempts|retry|resume|resumes|cancel|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
 		return 1
 	}
-	switch args[0] {
-	case "list":
+	subcommand := args[0]
+	switch subcommand {
+	case "list", "ls", "runs":
 		return cmdWorkflowsList(args[1:])
 	case "schedules":
 		return cmdWorkflowSchedules(args[1:])
+	case "schedule-history":
+		return cmdWorkflowScheduleHistory(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
-	case "status":
+	case "diagnose":
+		return cmdWorkflowsDiagnose(args[1:])
+	case "status", "get", "show":
 		return cmdWorkflowsStatus(args[1:])
 	case "steps":
 		return cmdWorkflowsSteps(args[1:])
@@ -42,10 +47,18 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowsResumes(args[1:])
 	case "cancel":
 		return cmdWorkflowsCancel(args[1:])
+	case "cancel-queued-preview":
+		return cmdWorkflowsQueuedCancel(args[1:], false)
+	case "cancel-queued":
+		return cmdWorkflowsQueuedCancel(args[1:], true)
 	case "events":
 		return cmdWorkflowsEvents(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", args[0]), "workflows")
+		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", subcommand), "workflows")
+		if parent, ok := lookupCliCommand("workflows"); ok {
+			sug, _ := suggestSubcommand(subcommand, parent)
+			maybeSuggestSub(sug)
+		}
 		return 1
 	}
 }
@@ -209,6 +222,7 @@ func cmdWorkflowsStatus(args []string) int {
 
 	_, _ = fmt.Fprintf(osStdout, "Run ID:       %s\n", run.ID)
 	_, _ = fmt.Fprintf(osStdout, "Workflow:     %s\n", run.WorkflowName)
+	_, _ = fmt.Fprintf(osStdout, "Deployment:   %s\n", workflowRunDeploymentLabel(run))
 	_, _ = fmt.Fprintf(osStdout, "Status:       %s\n", run.Status)
 	_, _ = fmt.Fprintf(osStdout, "Resume Count: %d\n", run.ResumeCount)
 	if run.CurrentStep != nil {
@@ -413,19 +427,21 @@ func cmdWorkflowsRetry(args []string) int {
 }
 
 func cmdWorkflowsEvents(args []string) int {
-	if len(args) == 0 || args[0] != "send" {
-		PrintUsage(os.Stderr, "usage: gregale workflows events send <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
-		return 1
+	// The documented form is `workflows events <run_id> <event_name>`; the
+	// older `workflows events send ...` spelling keeps working. Requiring
+	// "send" made the documented command fail (production-us hunt #5, H5-46).
+	if len(args) > 0 && args[0] == "send" {
+		args = args[1:]
 	}
 
 	fs := newFlagSet("workflows-events-send", flag.ContinueOnError)
 	payloadStr := fs.String("payload", "{}", "JSON payload for the event")
-	flags, posArgs := splitArgsForFlags(args[1:])
+	flags, posArgs := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events send <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
 		return 1
 	}
 
@@ -465,9 +481,9 @@ func renderWorkflowRunsTable(w io.Writer, runs []api.WorkflowRunResponse) {
 		_, _ = fmt.Fprintln(w, "No workflow runs found.")
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", "RUN ID", "WORKFLOW", "STATUS", "CREATED AT")
+	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-36s  %-20s\n", "RUN ID", "WORKFLOW", "STATUS", "DEPLOYMENT", "CREATED AT")
 	for _, r := range runs {
-		_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-20s\n", r.ID, r.WorkflowName, r.Status, r.CreatedAt)
+		_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-15s  %-36s  %-20s\n", r.ID, r.WorkflowName, r.Status, workflowRunDeploymentLabel(r), r.CreatedAt)
 	}
 }
 
@@ -521,4 +537,11 @@ func renderWorkflowResumesTable(w io.Writer, resumes []api.WorkflowResumeRespons
 	for _, resume := range resumes {
 		_, _ = fmt.Fprintf(w, "%-8d  %-15s  %-32s  %-25s\n", resume.ResumeNumber, resume.PreviousStatus, strings.Join(resume.ResumedSteps, ","), resume.CreatedAt)
 	}
+}
+
+func workflowRunDeploymentLabel(r api.WorkflowRunResponse) string {
+	if r.DeploymentID == "" {
+		return "legacy (unpinned)"
+	}
+	return r.DeploymentID
 }

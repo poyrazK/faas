@@ -19,6 +19,8 @@ def _get_kwargs(
     app_id: UUID,
     scope: str,
     name: str | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     state: ListPlatformTenantSelfOperationsState | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
@@ -32,6 +34,10 @@ def _get_kwargs(
     params["scope"] = scope
 
     params["name"] = name
+
+    params["subject_type"] = subject_type
+
+    params["subject_id"] = subject_id
 
     json_state: str | Unset = UNSET
     if not isinstance(state, Unset):
@@ -110,6 +116,8 @@ def sync_detailed(
     app_id: UUID,
     scope: str,
     name: str | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     state: ListPlatformTenantSelfOperationsState | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
@@ -128,6 +136,8 @@ def sync_detailed(
         app_id (UUID):
         scope (str):
         name (str | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         state (ListPlatformTenantSelfOperationsState | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
@@ -144,6 +154,8 @@ def sync_detailed(
         app_id=app_id,
         scope=scope,
         name=name,
+        subject_type=subject_type,
+        subject_id=subject_id,
         state=state,
         limit=limit,
         cursor=cursor,
@@ -162,6 +174,8 @@ def sync(
     app_id: UUID,
     scope: str,
     name: str | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     state: ListPlatformTenantSelfOperationsState | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
@@ -180,6 +194,8 @@ def sync(
         app_id (UUID):
         scope (str):
         name (str | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         state (ListPlatformTenantSelfOperationsState | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
@@ -197,6 +213,8 @@ def sync(
         app_id=app_id,
         scope=scope,
         name=name,
+        subject_type=subject_type,
+        subject_id=subject_id,
         state=state,
         limit=limit,
         cursor=cursor,
@@ -209,6 +227,8 @@ async def asyncio_detailed(
     app_id: UUID,
     scope: str,
     name: str | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     state: ListPlatformTenantSelfOperationsState | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
@@ -227,6 +247,8 @@ async def asyncio_detailed(
         app_id (UUID):
         scope (str):
         name (str | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         state (ListPlatformTenantSelfOperationsState | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
@@ -243,6 +265,8 @@ async def asyncio_detailed(
         app_id=app_id,
         scope=scope,
         name=name,
+        subject_type=subject_type,
+        subject_id=subject_id,
         state=state,
         limit=limit,
         cursor=cursor,
@@ -259,6 +283,8 @@ async def asyncio(
     app_id: UUID,
     scope: str,
     name: str | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     state: ListPlatformTenantSelfOperationsState | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
@@ -277,6 +303,8 @@ async def asyncio(
         app_id (UUID):
         scope (str):
         name (str | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         state (ListPlatformTenantSelfOperationsState | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
@@ -295,6 +323,8 @@ async def asyncio(
             app_id=app_id,
             scope=scope,
             name=name,
+            subject_type=subject_type,
+            subject_id=subject_id,
             state=state,
             limit=limit,
             cursor=cursor,

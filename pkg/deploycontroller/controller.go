@@ -22,6 +22,12 @@ type Runtime interface {
 	Healthy(context.Context, releasebundle.Manifest) error
 }
 
+// ReleaseRunner is an optional Runtime capability: it reports whether every
+// daemon of the release currently runs a binary from releaseRoot.
+type ReleaseRunner interface {
+	RunningFrom(ctx context.Context, manifest releasebundle.Manifest, releaseRoot string) (bool, error)
+}
+
 type Config struct {
 	ReleasesRoot string
 	CurrentPath  string
@@ -74,7 +80,26 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 		// The immutable bundle was verified above before we trusted the
 		// current pointer. Treat an exact active release as converged so a CD
 		// rerun can continue with its independent post-activation gates after
-		// one of those gates failed on the first attempt.
+		// one of those gates failed on the first attempt — unless a daemon
+		// still runs an older binary. The pointer is published before the
+		// restart, so a cancelled activation leaves exactly that state:
+		// production-us rc.252 kept apid, schedd, meterd, githubd and
+		// gatewayd-public on rc.251 (and outboundd on rc.249) behind a
+		// current pointer that named rc.252, through two reruns.
+		if runner, ok := c.runtime.(ReleaseRunner); ok {
+			running, err := runner.RunningFrom(ctx, manifest, releaseRoot)
+			if err != nil {
+				return fmt.Errorf("deploycontroller: inspect running daemons for %q: %w", releaseID, err)
+			}
+			if !running {
+				if err := c.runtime.Restart(ctx, manifest); err != nil {
+					return fmt.Errorf("deploycontroller: restart active release %q: %w", releaseID, err)
+				}
+				if err := c.runtime.Healthy(ctx, manifest); err != nil {
+					return fmt.Errorf("deploycontroller: active release %q unhealthy after restart: %w", releaseID, err)
+				}
+			}
+		}
 		return nil
 	}
 	rollbackTarget := previous

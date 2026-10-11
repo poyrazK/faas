@@ -112,6 +112,7 @@ var Registry = []Entry{
 	{Name: "githubd", Unit: UnitGithubd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:8083/readyz"}},
 	{Name: "outboundd", Unit: UnitOutboundd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:8095/readyz"}},
 	{Name: "imaged", Unit: UnitImaged, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9102", ReadyzURL: "http://127.0.0.1:9102/readyz"}},
+	{Name: "profiled", Unit: UnitProfiled, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/profiled.sock", ReadyzURL: "http://127.0.0.1:9160/readyz"}},
 	// Mega-PR-C (issue #911 / ADR-110): builderd is the build
 	// orchestrator on fsn-2 (compute-only). Spawns ephemeral
 	// builder microVMs through vmmd (ADR-003) — no KVM direct

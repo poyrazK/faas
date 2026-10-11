@@ -28,8 +28,10 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,6 +68,9 @@ type RequestTelemetryPublisherConfig struct {
 	// They are optional hooks for daemon metrics.
 	OnDropped func(int64)
 	OnShipped func(int64)
+
+	// OnCoverage runs even when idle, after every delivery attempt.
+	OnCoverage func(context.Context, RequestTelemetryCoverage) error
 }
 
 func (c *RequestTelemetryPublisherConfig) setDefaults() {
@@ -151,6 +156,7 @@ func NewRequestTelemetryPublisher(cfg RequestTelemetryPublisherConfig, recorder 
 // subsequent calls are no-ops.
 func (p *requestTelemetryPublisher) Start(ctx context.Context) {
 	p.startOnce.Do(func() {
+		p.reportCoverage(ctx)
 		go p.run(ctx)
 	})
 }
@@ -222,51 +228,68 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
+	defer p.reportCoverage(ctx)
 	rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
 	if len(rows) == 0 {
 		return
 	}
-	rawCount := requestTelemetryCount(rows)
+	pending := collapseRequestTelemetry(rows)
 	if p.ship == nil {
-		// ship not wired (test-only or boot race); drop the
-		// drained rows on the floor and make the loss visible.
-		p.recordDropped(rawCount)
-		p.log.Warn("request telemetry ship unavailable; dropping batch",
-			slog.Int("batch_size", len(rows)),
-			slog.Int64("request_count", rawCount))
+		p.recordDroppedRows(pending)
 		return
 	}
-	collapsed := collapseRequestTelemetry(rows)
-
-	var lastErr error
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 100ms, 200ms, 400ms...
-			backoff := time.Duration(1<<attempt) * 100 * time.Millisecond
 			select {
 			case <-ctx.Done():
-				p.recordDropped(rawCount)
+				p.recordDroppedRows(pending)
 				return
-			case <-time.After(backoff):
+			case <-time.After(time.Duration(1<<attempt) * 100 * time.Millisecond):
 			}
 		}
-		lastErr = p.ship(ctx, collapsed)
-		if lastErr == nil {
-			p.recordShipped(rawCount)
+		err := p.ship(ctx, pending)
+		if err == nil {
+			p.recordShipped(requestTelemetryCount(pending))
 			return
 		}
-		// Transient — log + retry.
-		p.log.Warn("request telemetry ship failed; retrying",
-			slog.Int("attempt", attempt+1),
-			slog.Int("batch_size", len(collapsed)),
-			slog.Any("error", lastErr))
+		var partial *RequestTelemetryDeliveryError
+		if errors.As(err, &partial) {
+			remaining := make([]RequestTelemetryRow, 0, len(pending))
+			var shipped int64
+			for _, row := range pending {
+				if partial.Accepted[row.EventID] {
+					shipped += int64(normalizedRequestTelemetryCount(row.Count))
+				} else {
+					remaining = append(remaining, row)
+				}
+			}
+			p.recordShipped(shipped)
+			pending = remaining
+			if len(pending) == 0 {
+				return
+			}
+		}
+		p.log.Warn("request telemetry delivery incomplete", "attempt", attempt+1, "err", err)
 	}
-	// Out of retries — drop the batch.
-	p.recordDropped(rawCount)
-	p.log.Warn("request telemetry ship exhausted retries; dropping batch",
-		slog.Int("batch_size", len(collapsed)),
-		slog.Int64("request_count", rawCount),
-		slog.Any("last_error", lastErr))
+	p.recordDroppedRows(pending)
+}
+
+// Partial responses preserve accepted rows when another app is rejected.
+type RequestTelemetryDeliveryError struct {
+	Accepted map[uuid.UUID]bool
+	Cause    error
+}
+
+func (e *RequestTelemetryDeliveryError) Error() string { return e.Cause.Error() }
+func (e *RequestTelemetryDeliveryError) Unwrap() error { return e.Cause }
+
+func (p *requestTelemetryPublisher) recordDroppedRows(rows []RequestTelemetryRow) {
+	p.recorder.ringMu.Lock()
+	for _, row := range rows {
+		p.recorder.recordAppLossLocked(row)
+	}
+	p.recorder.ringMu.Unlock()
+	p.recordDropped(requestTelemetryCount(rows))
 }
 
 // requestTelemetryCount returns the number of original requests represented
@@ -554,4 +577,66 @@ func requestTelemetryLatencyBucketUpperBound(latencyMS int) int {
 		return latencyMS
 	}
 	return latencyMS + (width - rem)
+}
+
+// RequestTelemetryAppGap is a loss delta plus a complete backlog snapshot.
+type RequestTelemetryAppGap struct {
+	AppID        uuid.UUID
+	DroppedCount int64
+	PendingCount int
+}
+
+// RequestTelemetryCoverage describes completed-request delivery, not client migration.
+type RequestTelemetryCoverage struct {
+	Enabled                  bool
+	SamplingBasisPoints      int
+	DroppedTotal             int64
+	PendingCount             int
+	SourceAt                 time.Time
+	AppScoped                bool
+	UnattributedDroppedTotal int64
+	AppGaps                  []RequestTelemetryAppGap
+}
+
+func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
+	if p.cfg.OnCoverage == nil {
+		return
+	}
+	p.recorder.ringMu.Lock()
+	coverage := RequestTelemetryCoverage{Enabled: p.recorder.cfg.Enabled, SamplingBasisPoints: 10000,
+		DroppedTotal: p.DroppedTotal() + p.recorder.OverwrittenTotal(), PendingCount: p.recorder.len, SourceAt: p.cfg.Now().UTC(),
+		AppScoped: true, UnattributedDroppedTotal: p.recorder.unattributedLosses}
+	gaps := make(map[uuid.UUID]RequestTelemetryAppGap)
+	for app, n := range p.recorder.appLosses {
+		gaps[app] = RequestTelemetryAppGap{AppID: app, DroppedCount: n}
+	}
+	for i := 0; i < p.recorder.len; i++ {
+		row := p.recorder.ring[(p.recorder.head+i)%len(p.recorder.ring)]
+		if row.AppID == uuid.Nil {
+			continue
+		}
+		gap := gaps[row.AppID]
+		gap.AppID = row.AppID
+		gap.PendingCount++
+		gaps[row.AppID] = gap
+	}
+	for _, gap := range gaps {
+		coverage.AppGaps = append(coverage.AppGaps, gap)
+	}
+	p.recorder.ringMu.Unlock()
+	sort.Slice(coverage.AppGaps, func(i, j int) bool { return coverage.AppGaps[i].AppID.String() < coverage.AppGaps[j].AppID.String() })
+	if err := p.cfg.OnCoverage(ctx, coverage); err != nil {
+		p.log.Warn("request telemetry coverage heartbeat failed", "err", err)
+		return
+	}
+	// Subtract only acknowledged deltas; concurrent losses remain in the journal.
+	p.recorder.ringMu.Lock()
+	for _, gap := range coverage.AppGaps {
+		if n := p.recorder.appLosses[gap.AppID] - gap.DroppedCount; n > 0 {
+			p.recorder.appLosses[gap.AppID] = n
+		} else {
+			delete(p.recorder.appLosses, gap.AppID)
+		}
+	}
+	p.recorder.ringMu.Unlock()
 }

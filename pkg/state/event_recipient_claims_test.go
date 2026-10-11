@@ -13,10 +13,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 type recipientClaimTestStore interface {
 	state.Store
+	state.AppWorkPolicyStore
+	state.EventWorkBindingStore
 	state.EventSubscriptionStore
 	state.PublishedEventWorkStore
 	state.PublishedEventRecipientWorkStore
@@ -29,6 +32,119 @@ type recipientClaimTestStore interface {
 	state.EventReceiptReplayStore
 	state.EventReceiptAcceptanceStore
 	state.WorkCancellationStore
+}
+
+func TestEventRecipientOrderedKeyBlocksYoungerUntilRetrySettles(t *testing.T) {
+	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
+		ctx := context.Background()
+		account, err := store.CreateAccount(ctx, "ordered-events-"+uuid.NewString()+"@example.test", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID,
+			Slug: "ordered-events", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy := workpolicy.Policy{Name: "event-order", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll}
+		if _, err := store.UpsertAppWorkPolicy(ctx, account.ID, app.ID, policy); err != nil {
+			t.Fatal(err)
+		}
+		subscription, _, err := store.UpsertEventSubscription(ctx, account.ID, app.ID, "orders", "order.changed", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, policy.Name, "data.order_id",
+			state.EventWorkBindingOptions{Ordered: true}); err != nil {
+			t.Fatal(err)
+		}
+		append := func(id, key string) {
+			t.Helper()
+			envelope, err := (events.Envelope{ID: id, Source: "orders", Type: "order.changed",
+				Data: json.RawMessage(`{"order_id":"` + key + `"}`)}).Normalize(account.ID, time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, payload); err != nil {
+				t.Fatal(err)
+			}
+		}
+		append("ordered-1", "order-a")
+		append("ordered-2", "order-a")
+		append("ordered-other-key", "order-b")
+
+		now := time.Now().UTC()
+		first, err := store.ClaimDuePublishedEvent(ctx, now)
+		if err != nil || receiptEventID(t, first) != "ordered-1" || first.RecipientSnapshot[0].Work == nil || !first.RecipientSnapshot[0].Work.Ordered {
+			t.Fatalf("first ordered receipt = %+v, %v", first, err)
+		}
+		if err := store.InitializePublishedEventRecipients(ctx, first, now); err != nil {
+			t.Fatal(err)
+		}
+		otherKey, err := store.ClaimDuePublishedEvent(ctx, now)
+		if err != nil || receiptEventID(t, otherKey) != "ordered-other-key" {
+			t.Fatalf("independent key receipt = %+v, %v", otherKey, err)
+		}
+		if err := store.InitializePublishedEventRecipients(ctx, otherKey, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimDuePublishedEvent(ctx, now); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("younger same-key receipt routed early: %v", err)
+		}
+
+		firstDelivery, err := store.ClaimDuePublishedEventRecipient(ctx, now)
+		if err != nil || firstDelivery.OutboxID != first.ID {
+			t.Fatalf("first same-key delivery = %+v, %v", firstDelivery, err)
+		}
+		otherDelivery, err := store.ClaimDuePublishedEventRecipient(ctx, now)
+		if err != nil || otherDelivery.OutboxID != otherKey.ID {
+			t.Fatalf("different-key delivery did not proceed independently: %+v, %v", otherDelivery, err)
+		}
+		if _, err := store.ClaimDuePublishedEventRecipient(ctx, now); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("younger same-key recipient claimed while earlier delivery active: %v", err)
+		}
+		finishRecipient(t, store, firstDelivery, state.PublishedEventRecipientPending)
+		finishRecipient(t, store, otherDelivery, state.PublishedEventRecipientEnqueued)
+
+		retryAt := now.Add(2 * time.Minute)
+		if _, err := store.ClaimDuePublishedEvent(ctx, retryAt); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("younger receipt routed while earlier delivery awaited retry: %v", err)
+		}
+		retry, err := store.ClaimDuePublishedEventRecipient(ctx, retryAt)
+		if err != nil || retry.OutboxID != first.ID {
+			t.Fatalf("earlier delivery retry = %+v, %v", retry, err)
+		}
+		finishRecipient(t, store, retry, state.PublishedEventRecipientEnqueued)
+
+		younger, err := store.ClaimDuePublishedEvent(ctx, retryAt)
+		if err != nil || receiptEventID(t, younger) != "ordered-2" {
+			t.Fatalf("younger receipt after prior admission = %+v, %v", younger, err)
+		}
+		if err := store.InitializePublishedEventRecipients(ctx, younger, retryAt); err != nil {
+			t.Fatal(err)
+		}
+		youngerDelivery, err := store.ClaimDuePublishedEventRecipient(ctx, retryAt)
+		if err != nil || youngerDelivery.OutboxID != younger.ID {
+			t.Fatalf("younger same-key delivery after retry = %+v, %v", youngerDelivery, err)
+		}
+		finishRecipient(t, store, youngerDelivery, state.PublishedEventRecipientEnqueued)
+	})
+}
+
+func receiptEventID(t *testing.T, receipt *state.PublishedEventWork) string {
+	t.Helper()
+	if receipt == nil {
+		t.Fatal("event receipt is nil")
+	}
+	var envelope events.Envelope
+	if err := json.Unmarshal(receipt.Payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	return envelope.ID
 }
 
 // ADR-606: adopting a replayed legacy receipt starts a new routing budget;

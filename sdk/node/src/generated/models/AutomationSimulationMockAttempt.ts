@@ -8,7 +8,7 @@
 export type AutomationSimulationMockAttempt = {
   outcome: 'success' | 'failure' | 'timeout';
   /**
-   * Successful result; any JSON value, including null.
+   * Successful action result or received event/callback payload; any JSON value, including null.
    */
   output?: any;
   /**

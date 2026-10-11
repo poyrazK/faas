@@ -155,7 +155,7 @@ func buildDebugTraceRoots(spans []api.DebugTelemetrySpan) []*debugTraceNode {
 
 func renderDebugRequestTrace(w io.Writer, resp api.DebugRequestEvidenceResponse) {
 	request := resp.Request
-	_, _ = fmt.Fprintf(w, "%s %s · HTTP %d · %d ms\n", request.Method, request.Route, request.Status, request.LatencyMS)
+	_, _ = fmt.Fprintf(w, "%s · HTTP %d · %d ms\n", requestLine(request.Method, request.Route), request.Status, request.LatencyMS)
 	_, _ = fmt.Fprintf(w, "telemetry row %s", request.ID)
 	if traceID := debugRequestTraceID(request); traceID != "" {
 		_, _ = fmt.Fprintf(w, " · public request %s", traceID)

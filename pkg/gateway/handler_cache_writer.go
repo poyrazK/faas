@@ -57,6 +57,7 @@ import (
 // 413 — the cacheability predicate below would correctly skip
 // the Put.
 type cacheWriter struct {
+	servedDeploymentID string
 	http.ResponseWriter
 	inner *statusRecorder // the next-in-chain recorder (for header copy + status)
 	rule  *EdgeRuleCacheResolved
@@ -184,6 +185,9 @@ func (c *cacheWriter) WriteHeader(code int) {
 			continue
 		}
 		for _, v := range vs {
+			if isCachedRouteLifecycleHeader(k, v) {
+				continue
+			}
 			if strings.EqualFold(k, "Set-Cookie") {
 				if _, managed := c.managedPlatformCookies[v]; managed && !excludedManagedCookies[v] {
 					excludedManagedCookies[v] = true
@@ -292,6 +296,42 @@ func (c *cacheWriter) shouldStore() bool {
 			return false
 		}
 	}
+	return c.varyCoveredByKey()
+}
+
+// varyCoveredByKey honours the origin's Vary header. The cache key only
+// distinguishes the request headers listed in the rule's vary_on, so a
+// response the app varies on anything else (Origin, Authorization,
+// Accept-Language, a tenant header, ...) would be replayed to clients that
+// sent different values — e.g. one origin's CORS grant or one locale's body
+// served to everyone. Such responses are not stored. Vary: * is never
+// cacheable. Accept-Encoding is tolerated when the stored body is not
+// content-encoded: an identity body is valid for every client.
+func (c *cacheWriter) varyCoveredByKey() bool {
+	keyed := map[string]struct{}{}
+	if c.rule != nil {
+		for _, name := range c.rule.VaryOn {
+			keyed[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+		}
+	}
+	encoded := c.header.Get("Content-Encoding")
+	identity := encoded == "" || strings.EqualFold(encoded, "identity")
+	for _, value := range c.header.Values("Vary") {
+		for _, field := range strings.Split(value, ",") {
+			name := strings.ToLower(strings.TrimSpace(field))
+			switch {
+			case name == "":
+				continue
+			case name == "*":
+				return false
+			case name == "accept-encoding" && identity:
+				continue
+			}
+			if _, ok := keyed[name]; !ok {
+				return false
+			}
+		}
+	}
 	return true
 }
 
@@ -321,7 +361,7 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 	staleWhileRevalidate := time.Duration(c.rule.StaleWhileRevalidateSeconds) * time.Second
 	staleIfError := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
 	freshUntil := now.Add(maxAge)
-	return cache.PutWithWindowsAndTags(
+	return cache.PutWithDeployment(
 		key,
 		c.status,
 		c.header,
@@ -331,5 +371,6 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 		freshUntil.Add(staleIfError),
 		c.ruleAction,
 		c.tags,
+		c.servedDeploymentID,
 	)
 }

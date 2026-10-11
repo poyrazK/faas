@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -39,6 +41,8 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 	switch request.Access {
 	case managedpostgres.CredentialReadOnly:
 		prefix = "gregale_ro_"
+	case managedpostgres.CredentialDataAPI:
+		prefix = "gregale_api_"
 	case managedpostgres.CredentialMigration:
 		prefix = "gregale_mig_"
 	}
@@ -123,6 +127,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 				return err
 			}
 		}
+		if role.access == managedpostgres.CredentialDataAPI {
+			if _, err := tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(role.name)+" SET statement_timeout = "+strconv.Itoa(api.DataAPIQueryTimeoutMS)); err != nil {
+				return err
+			}
+		}
 		info, err = credentialRoleInfo(ctx, tx, role.name)
 		if err != nil {
 			return err
@@ -183,6 +192,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			return managedpostgres.ErrConflict
 		}
 	}
+	if role.access == managedpostgres.CredentialDataAPI {
+		if err := ensureDataAPICredential(ctx, tx, role); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -238,6 +252,9 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 	}
 	if role.access == managedpostgres.CredentialMigration {
 		return len(i.memberships) == 1 && i.memberships[0] == role.schemaOwner && len(i.configuration) == 1 && i.configuration[0] == "role="+role.schemaOwner
+	}
+	if role.access == managedpostgres.CredentialDataAPI {
+		return len(i.memberships) == 0 && len(i.configuration) == 1 && i.configuration[0] == "statement_timeout="+strconv.Itoa(api.DataAPIQueryTimeoutMS)
 	}
 	return len(i.memberships) == 0 && len(i.configuration) == 0
 }

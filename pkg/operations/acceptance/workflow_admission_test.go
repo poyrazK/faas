@@ -17,14 +17,15 @@ import (
 
 // These tests exercise private SQL seams. They do not enable native admission
 // or claim that the separate public workflow runtime has acquired their guards.
-func workflowAdmissionFixture(t *testing.T, ctx context.Context, db sqlc.DBTX, operation, run, app, tenant string) {
+func workflowAdmissionFixture(t *testing.T, ctx context.Context, db sqlc.DBTX, run, app, tenant string) {
 	t.Helper()
 	q := sqlc.New()
 	now := pgtype.Timestamptz{Time: time.Now().UTC().Add(-time.Minute), Valid: true}
-	if err := q.InsertCustomerOperationWorkflowRun(ctx, db, sqlc.InsertCustomerOperationWorkflowRunParams{
-		ID: backendUUID(run), AppID: backendUUID(app), PlatformTenantID: backendUUID(tenant), OperationID: backendUUID(operation),
-		WorkflowName: "export-flow", Input: []byte(`{"customer":"owned"}`), DefinitionSnapshot: []byte(retainedWorkflowSnapshot), CreatedAt: now,
-	}); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO workflow_runs(
+		id,app_id,platform_tenant_id,workflow_name,status,input,definition_snapshot,scheduled_for,created_at,updated_at
+	) VALUES($1::uuid,$2::uuid,$3::uuid,'export-flow','pending',$4::jsonb,$5::jsonb,$6::timestamptz,$6::timestamptz,$6::timestamptz)`,
+		backendUUID(run), backendUUID(app), backendUUID(tenant), []byte(`{"customer":"owned"}`), []byte(retainedWorkflowSnapshot), now,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.InsertCustomerOperationWorkflowStep(ctx, db, sqlc.InsertCustomerOperationWorkflowStepParams{
@@ -52,8 +53,11 @@ func TestPgOperationWorkflowAdmissionLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	workflowAdmissionFixture(t, ctx, tx, run, app.ID, tenant.ID)
 	insertBackendOperation(t, ctx, tx, operation, run, "workflow", account.ID, app.ID, def.ID, tenant.ID)
-	workflowAdmissionFixture(t, ctx, tx, operation, run, app.ID, tenant.ID)
+	if n, err := markBackend(ctx, q, tx, "workflow", operation, run); err != nil || n != 1 {
+		t.Fatalf("owned workflow identity: %d %v", n, err)
+	}
 	if n, err := bindBackend(ctx, q, tx, "workflow", operation, run); err != nil || n != 1 {
 		t.Fatalf("owned binding: %d %v", n, err)
 	}
@@ -109,8 +113,11 @@ func TestPgOperationWorkflowLegacyIsolationAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	workflowAdmissionFixture(t, ctx, tx, owned, app.ID, tenant.ID)
 	insertBackendOperation(t, ctx, tx, operation, owned, "workflow", account.ID, app.ID, def.ID, tenant.ID)
-	workflowAdmissionFixture(t, ctx, tx, operation, owned, app.ID, tenant.ID)
+	if n, err := markBackend(ctx, q, tx, "workflow", operation, owned); err != nil || n != 1 {
+		t.Fatalf("owned workflow identity: %d %v", n, err)
+	}
 	if n, err := bindBackend(ctx, q, tx, "workflow", operation, owned); err != nil || n != 1 {
 		t.Fatalf("binding: %d %v", n, err)
 	}

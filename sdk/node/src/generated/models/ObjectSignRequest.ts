@@ -10,6 +10,18 @@ import type { ObjectWriteProtection } from './ObjectWriteProtection.js';
 export type ObjectSignRequest = {
   method: 'GET' | 'HEAD' | 'PUT';
   key: string;
+  /**
+   * GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object.
+   */
+  version_id?: string;
+  /**
+   * PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are fixed in the signed capability.
+   */
+  if_match?: string;
+  /**
+   * PUT only. Create only if no live object exists. Mutually exclusive with if_match.
+   */
+  if_none_match?: '*';
   expires_in?: number;
   /**
    * Required for PUT; forbidden for GET.

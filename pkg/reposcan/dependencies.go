@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // DependencyValidationReasons returns stable, user-facing graph errors for a
@@ -26,6 +28,19 @@ func DependencyValidationReasons(workloads []Workload, managed []Managed) []stri
 		byName[key] = w
 	}
 	for _, w := range workloads {
+		if err := api.ValidateComposeDependencyConditions(w.DependsOnConditions, w.DependsOn); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: %s", w.Name, err))
+		}
+		for name, condition := range w.DependsOnConditions {
+			if condition == api.ComposeDependencyHealthy {
+				if target, exists := byName[name]; exists && target.Class == ClassJob {
+					reasons = append(reasons, fmt.Sprintf("workload %q: service_healthy cannot target job %q; job completion gates are unsupported", w.Name, name))
+				}
+				if _, managed := managedNames[name]; managed {
+					reasons = append(reasons, fmt.Sprintf("workload %q: service_healthy requires a deployable project dependency; managed service %q is unsupported", w.Name, name))
+				}
+			}
+		}
 		for _, dep := range w.DependsOn {
 			depKey := strings.ToLower(strings.TrimSpace(dep))
 			if depKey == "" {

@@ -1,0 +1,35 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies.
+ */
+export type OperationWorkflowAttentionStats = {
+  sla_at_risk_workflow_count: number;
+  sla_breached_workflow_count: number;
+  sla_unknown_workflow_count: number;
+  escalated_workflow_count: number;
+  awaiting_verification_workflow_count: number;
+  awaiting_verification_resolution_count: number;
+  low_blocker_count: number;
+  normal_blocker_count: number;
+  high_blocker_count: number;
+  urgent_blocker_count: number;
+  unacknowledged_blocker_count: number;
+  follow_up_overdue_blocker_count: number;
+  escalated_blocker_count: number;
+  dependency_workflow_count: number;
+  dependency_count: number;
+  overdue_workflow_count: number;
+  earliest_overdue_deadline_at?: string;
+  longest_overdue_seconds?: number;
+  workflow_count: number;
+  blocked_workflow_count: number;
+  stale_workflow_count: number;
+  blocker_count: number;
+  unknown_age_blockers: number;
+  oldest_blocker_at?: string;
+  oldest_blocker_age_seconds?: number;
+};
+

@@ -218,6 +218,9 @@ func (j *nativeCheckpointWakeJournal) update(ctx context.Context, frame state.Pr
 		}
 	} else if errors.Is(err, os.ErrNotExist) {
 		// Another incoming owner cannot share this instance, even without a VM.
+		if err = q.requireProfileAbsent(frame.InstanceID, true); err != nil {
+			return out, err
+		}
 		qualificationPath, pathErr := q.path(frame.InstanceID)
 		if pathErr != nil {
 			return out, pathErr

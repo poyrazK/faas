@@ -95,7 +95,7 @@ func TestHandleInvocationDispatch_WorkflowRequiresAuthenticatedActiveStep(t *tes
 		}
 		w := httptest.NewRecorder()
 		srv.handleInvocationDispatch(w, newRequest("tenant-1"))
-		if w.Code != http.StatusOK || len(dispatcher.invs) != 1 || dispatcher.invs[0].PlatformTenantID != "tenant-1" {
+		if w.Code != http.StatusOK || len(dispatcher.invs) != 1 || dispatcher.invs[0].PlatformTenantID != "tenant-1" || dispatcher.invs[0].WorkflowRunID != "run-1" {
 			t.Fatalf("status=%d dispatched=%+v body=%s", w.Code, dispatcher.invs, w.Body.String())
 		}
 	})

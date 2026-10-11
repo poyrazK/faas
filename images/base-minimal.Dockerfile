@@ -10,9 +10,9 @@
 # Debian backport without dpkg metadata leaves binary scanners seeing 1.35.0.
 # The musl variant is statically linked, so it does not replace the glibc ABI
 # supplied below for Bash and customer applications.
-FROM busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox
+FROM public.ecr.aws/docker/library/busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox
 
-FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build
+FROM public.ecr.aws/docker/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build
 # Issue #197 B3.5 (extension): base-minimal shares the same `debian:12-slim`
 # digest as builder-base; the lock entry covers both. The `scratch` FROM
 # below is the empty canonical image (no upstream repo) and is exempt

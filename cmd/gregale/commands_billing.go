@@ -29,8 +29,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 const (
@@ -177,7 +175,7 @@ func cmdBillingPortal(args []string) int {
 	}
 
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", url)
-	if err := browser.Open(url); err != nil {
+	if err := openBrowser(url); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", url)
 		return 0

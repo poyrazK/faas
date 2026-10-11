@@ -168,7 +168,9 @@ func TestSamplerScheduledFloorClosedMinute(t *testing.T) {
 			}
 			var got int64
 			for _, row := range rows {
-				got += row.MBSeconds
+				if row.Minute.Equal(now.Add(-time.Minute)) {
+					got += row.MBSeconds
+				}
 			}
 			if got != tc.want {
 				t.Fatalf("closed minute %s: billed %d MB-seconds, want %d", now.Add(-time.Minute), got, tc.want)

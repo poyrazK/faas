@@ -139,22 +139,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	}
 	dep, err := client.DeployFromSourceRef(deployCtx, slug, req)
 	if err != nil {
-		// errors.As (not type-assert) so a future wrapping in
-		// the SDK chain (e.g. fmt.Errorf("%w: …")) still surfaces
-		// the APIError. The SDK currently returns *APIError
-		// directly, but the assertion-via-As is the lint-clean
-		// shape (errorlint) and future-proof.
-		var apiErr *api.APIError
-		if errors.As(err, &apiErr) {
-			// Surface the Retry-After hint on transient githubd
-			// / codeload blips so the operator doesn't have to
-			// reach for the audit log to figure out the backoff.
-			if ra := apiErr.Problem.HasHeader("Retry-After"); len(ra) > 0 {
-				return printErr("Source-ref unavailable",
-					fmt.Errorf("%s (Retry-After: %ss)", apiErr.Problem.Code, ra[0]))
-			}
-		}
-		return printErr("Deploy failed", err)
+		return printDeploySubmissionError("Source-ref submission failed", err, slug, idempotencyKey, "submission", dep.ID)
 	}
 	if jsonOutput && !jsonWait {
 		// Issue #1182 §P1 follow-up: source-ref path has no

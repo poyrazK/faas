@@ -1,0 +1,29 @@
+{
+  "protocol_version": 2,
+  "event": "invoke",
+  "entity": {
+    "account_id": "159414db-faa3-436c-b50b-0c6b11e16ee9",
+    "app_id": "fd0b721d-ec7c-44a0-a368-d4e769d996c9",
+    "environment_id": "91b40df9-02eb-456e-bc56-2726847583f9",
+    "tenant_id": "6bbc0b40-4da3-4b65-936c-59a2bc0db9de",
+    "namespace": "reservations",
+    "key": "reservation:123"
+  },
+  "request_id": "reserve-123",
+  "payload": {
+    "action": "reserve",
+    "quantity": 2
+  },
+  "state": {
+    "data": {},
+    "version": 0
+  },
+  "deployment_id": "c5cbb16d-b633-4d19-9603-84be32fb812c",
+  "limits": {
+    "transition_bytes": 1048576,
+    "identity_bytes": 256,
+    "outbox_messages": 16,
+    "outbox_payload_bytes": 65536,
+    "outbox_bytes": 262144
+  }
+}

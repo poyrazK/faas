@@ -130,6 +130,158 @@ func TestProjectReleaseSetKeepsServiceGraphConsistent(t *testing.T) {
 	}
 }
 
+func TestProjectReleaseSetRejectsHeldGitOpsCandidateUntilGraphActivation(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	account, err := m.CreateAccount(ctx, "held-release-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "held-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "held-app", Status: AppActive,
+		Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:held-candidate",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	candidate.EnvironmentWorkloadRuntime = "{}"
+	m.deployments[candidate.ID] = candidate
+	m.mu.Unlock()
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ordinary promotion of held candidate = %v, want conflict", err)
+	}
+	if err := m.MarkDeploymentLiveDark(ctx, candidate.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("individual dark promotion of held candidate = %v, want conflict", err)
+	}
+	if err := m.UpdateDeploymentStatus(ctx, candidate.ID, DeployLive, ""); !errors.Is(err, ErrInvalidStateTransition) {
+		t.Fatalf("direct status promotion of held candidate = %v, want invalid transition", err)
+	}
+	if current, err := m.DeploymentByID(ctx, candidate.ID); err != nil || current.Status != DeployPending {
+		t.Fatalf("held candidate changed after rejected promotion: %+v, %v", current, err)
+	}
+
+	// Once graph activation lifts the temporary hold, individual promotion and
+	// rollback APIs must still not take ownership back from the GitOps graph.
+	m.mu.Lock()
+	candidate = m.deployments[candidate.ID]
+	candidate.Status = DeployLive
+	candidate.TrafficPercent = 0
+	candidate.TrafficPercentExplicit = true
+	candidate.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(false)
+	m.deployments[candidate.ID] = candidate
+	m.mu.Unlock()
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ordinary promotion of activated candidate = %v, want conflict", err)
+	}
+	if err := m.MarkDeploymentLiveDark(ctx, candidate.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("individual dark promotion of activated candidate = %v, want conflict", err)
+	}
+	if _, err := m.PrepareDeploymentRollback(ctx, app.ID, candidate.ID); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("rollback preparation of activated candidate = %v, want invalid argument", err)
+	}
+	if err := m.UpdateDeploymentStatus(ctx, candidate.ID, DeploySuperseded, ""); !errors.Is(err, ErrInvalidStateTransition) {
+		t.Fatalf("status update superseded an activated candidate: %v", err)
+	}
+
+	// Ordinary release-set publication still rejects a held GitOps candidate.
+	m.mu.Lock()
+	candidate = m.deployments[candidate.ID]
+	candidate.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(true)
+	m.deployments[candidate.ID] = candidate
+	m.mu.Unlock()
+	if _, err := m.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: candidate.ID}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("release set accepted held GitOps candidate = %v, want conflict", err)
+	}
+	if _, err := m.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", "", nil, 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: candidate.ID}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("compare-and-swap release set accepted held GitOps candidate = %v, want conflict", err)
+	}
+	if _, err := m.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rejected candidate became active in a release set: %v", err)
+	}
+}
+
+func TestProjectReleaseSetPreservesActivatedGitOpsMembers(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	account, err := m.CreateAccount(ctx, "managed-release-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "managed-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "managed-app", Status: AppActive,
+		Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:managed",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLiveDark(ctx, managed.ID); err != nil {
+		t.Fatal(err)
+	}
+	alternate, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:alternate",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLiveDark(ctx, alternate.ID); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	managed = m.deployments[managed.ID]
+	managed.EnvironmentWorkloadRuntime = "{}"
+	managed.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(false)
+	m.deployments[managed.ID] = managed
+	m.mu.Unlock()
+	active, err := m.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: managed.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateDeploymentTraffic(ctx, managed.ID, 100); !errors.Is(err, ErrConflict) {
+		t.Fatalf("traffic update changed the managed workload: %v", err)
+	}
+	if _, err := m.UpdateDeploymentTraffic(ctx, alternate.ID, 50); !errors.Is(err, ErrConflict) {
+		t.Fatalf("traffic update on sibling changed managed workload weights: %v", err)
+	}
+	if _, err := m.UpdateDeploymentMinInstances(ctx, managed.ID, managed.MinInstances+1); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("minimum-instance update changed managed workload: %v", err)
+	}
+	if err := m.SetDeploymentSourceURL(ctx, managed.ID, "unapproved-source", "unapproved"); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("source update changed managed workload: %v", err)
+	}
+	if _, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production", Status: DeployLive, ImageDigest: "sha256:unreviewed",
+		TrafficPercent: 100}); !errors.Is(err, ErrInvalidStateTransition) {
+		t.Fatalf("direct live deployment bypassed the managed graph: %v", err)
+	}
+	if _, err := m.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", active.ID, nil, 1800,
+		[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: alternate.ID}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ordinary release publication replaced the GitOps member: %v", err)
+	}
+	if err := m.DeactivateProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", active.ID, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ordinary release deactivation removed the GitOps graph: %v", err)
+	}
+	current, err := m.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production")
+	if err != nil || current.ID != active.ID || releaseMemberForApp(current, app.ID) != managed.ID {
+		t.Fatalf("rejected update changed active GitOps graph: %+v, %v", current, err)
+	}
+}
+
 func TestProjectReleaseSetActivatesDarkDeploymentWithoutTrafficShift(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()

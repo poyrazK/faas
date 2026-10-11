@@ -3,7 +3,7 @@ import { startMcpTaskRuntime } from './task-runtime.js';
 
 const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
 const taskServices = await startMcpTaskRuntime(config, { role: 'worker' });
-console.log(JSON.stringify({ event: 'mcp_task_worker_started' }));
+console.log(JSON.stringify({ event: 'mcp_task_worker_started', workerID: taskServices.taskRuntime.workerID, claimFence: true }));
 
 let shutdownPromise;
 async function shutdown(signal) {
@@ -13,7 +13,8 @@ async function shutdown(signal) {
     process.exitCode = 1;
     console.error(JSON.stringify({ event: 'mcp_task_worker_shutdown_error' }));
   });
-  return shutdownPromise;
+  await shutdownPromise;
+  process.exit(process.exitCode ?? 0);
 }
 
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });

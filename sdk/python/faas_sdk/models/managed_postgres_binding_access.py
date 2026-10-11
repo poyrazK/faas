@@ -1,8 +1,9 @@
 from typing import Literal
 
-ManagedPostgresBindingAccess = Literal["migration", "read_only", "read_write"]
+ManagedPostgresBindingAccess = Literal["data_api", "migration", "read_only", "read_write"]
 
 MANAGED_POSTGRES_BINDING_ACCESS_VALUES: set[ManagedPostgresBindingAccess] = {
+    "data_api",
     "migration",
     "read_only",
     "read_write",

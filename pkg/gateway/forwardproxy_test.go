@@ -416,11 +416,25 @@ func (f *fakeVmmdClient) RetireEnvironmentQualification(context.Context, *vmmdpb
 	panic("RetireEnvironmentQualification: not stubbed")
 }
 
+func (f *fakeVmmdClient) RestoreEnvironmentQualification(context.Context, *vmmdpb.RestoreEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RestoreEnvironmentQualificationResponse, error) {
+	panic("RestoreEnvironmentQualification: not stubbed")
+}
+
+func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context, *vmmdpb.RetireEnvironmentQualificationArtifactsRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationArtifactsResponse, error) {
+	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }
 func (f *fakeVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
 	panic("JobColdBoot: not stubbed")
+}
+func (f *fakeVmmdClient) JobColdBootHeld(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
+	panic("JobColdBootHeld: not stubbed")
+}
+func (f *fakeVmmdClient) ReleaseJobStart(context.Context, *vmmdpb.ReleaseJobStartRequest, ...grpc.CallOption) (*vmmdpb.ReleaseJobStartResponse, error) {
+	panic("ReleaseJobStart: not stubbed")
 }
 func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (*vmmdpb.ExecuteExecutionResponse, error) {
 	panic("ExecuteExecution: not stubbed")
@@ -836,6 +850,44 @@ func TestForwardingReverseProxy_InvocationSourceOnlyForSyntheticWork(t *testing.
 				t.Errorf("untrusted service caller assertion leaked: %q", value)
 			}
 		})
+	}
+}
+
+// production-us hunt #5 (H5-44): workflow steps never saw the documented
+// X-Faas-Workflow-* headers; the guest boundary dropped every x-faas-* header
+// it did not list. Scheduler-marked synthetic work now carries them, and a
+// public request still cannot.
+func TestForwardingReverseProxy_WorkflowHeadersOnlyForSyntheticWork(t *testing.T) {
+	for _, synthetic := range []bool{false, true} {
+		stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusOK}}},
+		}}
+		lookup := &fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set(api.WorkflowRunIDHeader, "run-1")
+		req.Header.Set(api.WorkflowStepHeader, "charge")
+		req.Header.Set(api.WorkflowAttemptHeader, "3")
+		if synthetic {
+			req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+		}
+		rec := httptest.NewRecorder()
+		gateway.ForwardingReverseProxy(lookup, nil)(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+			t.Fatalf("synthetic=%v: status %d, no init frame", synthetic, rec.Code)
+		}
+		got := make(http.Header)
+		for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+			got.Add(h.GetName(), h.GetValue())
+		}
+		want := map[string]string{api.WorkflowRunIDHeader: "run-1", api.WorkflowStepHeader: "charge", api.WorkflowAttemptHeader: "3"}
+		for name, value := range want {
+			if !synthetic {
+				value = ""
+			}
+			if got.Get(name) != value {
+				t.Errorf("synthetic=%v: %s = %q, want %q", synthetic, name, got.Get(name), value)
+			}
+		}
 	}
 }
 

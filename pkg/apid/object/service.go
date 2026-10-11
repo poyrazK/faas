@@ -1,0 +1,58 @@
+// Package object is apid's customer object storage surface: buckets, objects
+// and versions, multipart uploads, signed URLs, upload routes, S3 credentials,
+// compute bindings, encryption/object-lock/versioning/lifecycle settings,
+// usage accounting and the recovery workers that finish provider operations.
+// It was lifted out of cmd/apid by ADR-977.
+//
+// The package holds no state of its own. Everything it needs from apid goes
+// through Host, which cmd/apid implements by reading its own fields at call
+// time.
+package object
+
+import (
+	"context"
+	"log/slog"
+
+	"filippo.io/age"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+// Host is what the object storage surface needs from apid.
+type Host interface {
+	httpkit.AppLoader
+	Store() state.Store
+	Logger() *slog.Logger
+	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
+	Notify(ctx context.Context, channel, payload string) error
+	// Ops is nil when apid runs without operational metrics.
+	Ops() *wire.OpsMetrics
+	// ObjectStorage is nil when no object storage backend is configured.
+	ObjectStorage() *objectstorage.Registry
+	BillingProvider() billing.Provider
+	// S3RuntimeEnabled is the operator's runtime switch for the S3 surface.
+	S3RuntimeEnabled() bool
+	AdminAllows(acct state.Account) (bool, *api.Problem)
+	// RequireScope wraps next in apid's scope check, for handlers that pick
+	// the required scope from the request body.
+	RequireScope(allowed ...string) func(httpkit.AccountHandler) httpkit.AccountHandler
+	NotifyRuntimeConfigChange(ctx context.Context, channel string, acct state.Account, app state.App, kind, scope, key string)
+	ClaimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error)
+	ReleaseAppRestartClaim(ctx context.Context, store state.Store, appID string) error
+	CleanupDevSessionBucket(ctx context.Context, store state.ObjectBucketStore, bucket state.ObjectBucket) error
+	// SecretRecipient, HostHMACKey and MFAIdentities return empty values when
+	// the host secrets are not installed.
+	SecretRecipient() *age.X25519Recipient
+	HostHMACKey() []byte
+	MFAIdentities() []*age.X25519Identity
+}
+
+// Service is the object storage surface.
+type Service struct {
+	Host Host
+}

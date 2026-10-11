@@ -1,7 +1,10 @@
 import pg from 'pg';
-import { createPostgresMcpTaskStore } from './task-store.js';
-import { createMcpTaskRuntime, mcpTaskHandlers } from './tasks.js';
+import { checkMcpTaskSchema } from './task-schema.js';
+import { parseMcpTaskEncryptionKeys } from './task-crypto.js';
+import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from './task-store.js';
+import { createMcpTaskRuntime, mcpTaskHandlers, validateMcpTaskRetryPolicy } from './tasks.js';
 import { resolveMcpTaskMetricsSettings, startMcpTaskMetricsPublisher } from './task-metrics.js';
+import defaults from './task-limits.json' with { type: 'json' };
 
 function envName(value) {
   if (typeof value !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(value)) {
@@ -11,10 +14,10 @@ function envName(value) {
 }
 
 export function resolveMcpTaskSettings(config, { env = process.env, role = 'combined' } = {}) {
-  if (!['combined', 'web', 'worker'].includes(role)) throw new Error('MCP task role must be combined, web, or worker');
+  if (!['combined', 'web', 'worker', 'observer'].includes(role)) throw new Error('MCP task role must be combined, web, worker, or observer');
   const settings = config?.tasks;
   if (settings?.enabled !== true) {
-    if (role === 'worker') throw new Error('The MCP Tasks worker requires tasks.enabled=true');
+    if (role === 'worker' || role === 'observer') throw new Error('The MCP Tasks worker or observer requires tasks.enabled=true');
     return { enabled: false, role };
   }
 
@@ -27,7 +30,7 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
   const configuredNamespace = settings.namespace_env ? env[envName(settings.namespace_env)] : '';
   const namespace = namespaceOverride || configuredNamespace;
   if (!databaseURL) throw new Error('MCP Tasks are enabled but the configured PostgreSQL binding is unavailable');
-  if (!ownerKey) throw new Error('MCP Tasks are enabled but the configured owner key is unavailable');
+  if (!ownerKey && role !== 'observer') throw new Error('MCP Tasks are enabled but the configured owner key is unavailable');
   if (typeof namespace !== 'string' || !namespace.trim()) throw new Error('MCP Tasks require a stable namespace');
 
   return {
@@ -35,10 +38,17 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
     role,
     databaseURL,
     ownerKey,
+    encryptionKeys: role !== 'observer' && settings.encryption_keys_env ? parseMcpTaskEncryptionKeys(env[envName(settings.encryption_keys_env)]) : undefined,
     namespace: namespace.trim(),
     ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
     pollIntervalMs: settings.poll_interval_ms ?? 2000,
     workerConcurrency: settings.worker_concurrency ?? 1,
+    shutdownTimeoutMs: settings.shutdown_timeout_ms ?? 30_000,
+    ...validateMcpTaskRetryPolicy({ maxAttempts: settings.max_attempts ?? 3, retryBaseDelayMs: settings.retry_base_delay_ms ?? 1000, retryMaxDelayMs: settings.retry_max_delay_ms ?? 60_000 }),
+    maxRunning: settings.max_running || defaults.maxRunning,
+    maxRunningPerOwner: settings.max_running_per_owner || defaults.maxRunningPerOwner,
+    maxOutstanding: settings.max_outstanding || defaults.maxOutstanding,
+    maxOutstandingPerOwner: settings.max_outstanding_per_owner || defaults.maxOutstandingPerOwner,
   };
 }
 
@@ -47,6 +57,8 @@ export async function startMcpTaskRuntime(config, {
   role = 'combined',
   createPool = options => new pg.Pool(options),
   createStore = createPostgresMcpTaskStore,
+  createObserver = createMcpTaskQueueObserver,
+  checkSchema = checkMcpTaskSchema,
   createRuntime = createMcpTaskRuntime,
   createMetricsPublisher = startMcpTaskMetricsPublisher,
   handlers = mcpTaskHandlers,
@@ -54,23 +66,35 @@ export async function startMcpTaskRuntime(config, {
   const settings = resolveMcpTaskSettings(config, { env, role });
   if (!settings.enabled) return { taskRuntime: undefined, async close() {} };
   const metricsSettings = resolveMcpTaskMetricsSettings({ env, role: settings.role });
+  if (role === 'observer' && !metricsSettings) throw new Error('MCP task observer requires scaling metric credentials');
 
-  const pool = createPool({ connectionString: settings.databaseURL, max: 4, application_name: 'gregale-mcp-tasks' });
+  const pool = createPool({ connectionString: settings.databaseURL, max: 4, connectionTimeoutMillis: 5000, statement_timeout: 10_000, application_name: 'gregale-mcp-tasks' });
   let taskRuntime;
   let metricsPublisher;
   try {
-    const store = createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, ttlMs: settings.ttlMs });
-    taskRuntime = createRuntime({
+    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, encryptionKeys: settings.encryptionKeys, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
+    if (role === 'observer') {
+      await checkSchema({ pool, namespace: settings.namespace, role: 'observer' });
+      await store.queueMetrics();
+    }
+    else taskRuntime = createRuntime({
       store,
       handlers,
       pollIntervalMs: settings.pollIntervalMs,
       workerConcurrency: settings.workerConcurrency,
+      shutdownTimeoutMs: settings.shutdownTimeoutMs,
+      maxAttempts: settings.maxAttempts,
+      retryBaseDelayMs: settings.retryBaseDelayMs,
+      retryMaxDelayMs: settings.retryMaxDelayMs,
       workerEnabled: settings.role !== 'web',
       keepAlive: settings.role === 'worker',
       onError: () => console.error(JSON.stringify({ event: 'mcp_task_runtime_error' })),
     });
-    await taskRuntime.start();
-    if (metricsSettings) metricsPublisher = createMetricsPublisher({ store, ...metricsSettings });
+    await taskRuntime?.start();
+    if (metricsSettings) metricsPublisher = createMetricsPublisher({ store, ...metricsSettings, role: settings.role,
+      keepAlive: role === 'observer',
+      onError: () => console.error(JSON.stringify({ event: 'mcp_task_metrics_publish_failed' })),
+    });
   } catch {
     await metricsPublisher?.close().catch(() => {});
     await taskRuntime?.stop().catch(() => {});
@@ -85,8 +109,8 @@ export async function startMcpTaskRuntime(config, {
       if (closing) return closing;
       closing = (async () => {
         try {
+          await taskRuntime?.stop();
           await metricsPublisher?.close();
-          await taskRuntime.stop();
         } finally {
           await pool.end();
         }

@@ -313,10 +313,12 @@ func equalWorkflowValue(left, right any) bool {
 
 // WorkflowRun is one row of public.workflow_runs.
 type WorkflowRun struct {
-	ResumeCount        int             `json:"resume_count"`
-	CancelledAt        *time.Time      `json:"cancelled_at,omitempty"`
-	ID                 string          `json:"id"`
-	AppID              string          `json:"app_id"`
+	ResumeCount int        `json:"resume_count"`
+	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
+	ID          string     `json:"id"`
+	AppID       string     `json:"app_id"`
+	// DeploymentID is immutable private code identity; empty only for legacy runs.
+	DeploymentID       string          `json:"deployment_id,omitempty"`
 	PlatformTenantID   string          `json:"platform_tenant_id,omitempty"`
 	WorkflowName       string          `json:"workflow_name"`
 	Status             string          `json:"status"`
@@ -445,6 +447,8 @@ type WorkflowStore interface {
 	// ClaimNextDueWorkflowRun claims a pending run or a parked wait whose
 	// scheduled_for deadline has arrived. A due timer completes; a due
 	// event wait takes its timeout path.
+	// Eligible apps and tenant scopes are served least recently claimed first,
+	// subject to live-lease dispatch caps and definition concurrency limits.
 	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
 	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
 	// SetWorkflowRunWake replaces the scheduler wake after active waits and

@@ -194,9 +194,13 @@ func defaultOperation() *Operation {
 	op := &Operation{Responses: map[string]*Response{}}
 	op.Responses["200"] = &Response{Content: map[string]*Schema{
 		"application/json": {
-			Type: "object",
+			Type:                    "object",
+			UnsupportedFacetsSHA256: emptyUnsupportedFacetsSHA256,
 			Properties: map[string]*Schema{
-				"status": {Type: "integer"},
+				"status": {
+					Type:                    "integer",
+					UnsupportedFacetsSHA256: emptyUnsupportedFacetsSHA256,
+				},
 			},
 			Required: []string{"status"},
 		},
@@ -226,15 +230,17 @@ func shallowCopySchema(in *Schema) *Schema {
 		return nil
 	}
 	out := &Schema{
-		Type:        in.Type,
-		Properties:  in.Properties,
-		Required:    append([]string(nil), in.Required...),
-		Items:       in.Items,
-		Nullable:    in.Nullable,
-		OneOf:       in.OneOf,
-		AnyOf:       in.AnyOf,
-		Ref:         in.Ref,
-		Description: in.Description,
+		Raw:                     in.Raw,
+		UnsupportedFacetsSHA256: in.UnsupportedFacetsSHA256,
+		Type:                    in.Type,
+		Properties:              in.Properties,
+		Required:                append([]string(nil), in.Required...),
+		Items:                   in.Items,
+		Nullable:                in.Nullable,
+		OneOf:                   in.OneOf,
+		AnyOf:                   in.AnyOf,
+		Ref:                     in.Ref,
+		Description:             in.Description,
 	}
 	return out
 }

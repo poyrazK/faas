@@ -42,6 +42,9 @@ func (h *Handler) boundURLRequest(w http.ResponseWriter, r *http.Request, c stat
 func boundURLQuery(r *http.Request, u *state.ObjectURLCapability) bool {
 	q := operationQuery(r.URL.Query())
 	if u.Multipart == nil {
+		if u.Request.VersionID != "" {
+			return len(q) == 1 && len(q["versionId"]) == 1 && q.Get("versionId") == u.Request.VersionID
+		}
 		return len(q) == 0
 	}
 	return len(q) == 2 && len(q["uploadId"]) == 1 && q.Get("uploadId") == u.Multipart.UploadID && len(q["partNumber"]) == 1 && q.Get("partNumber") == strconv.FormatInt(int64(u.Multipart.PartNumber), 10)
@@ -51,8 +54,8 @@ func fixedURLHeaders(r *http.Request, expected http.Header) bool {
 	seen := map[string]bool{}
 	for name, values := range r.Header {
 		lower := strings.ToLower(name)
-		bound := strings.HasPrefix(lower, "x-amz-") && lower != "x-amz-content-sha256" || slices.Contains([]string{"content-type", "cache-control", "content-disposition", "content-encoding", "content-language"}, lower)
-		if r.Method == http.MethodPut && slices.Contains([]string{"if-match", "if-none-match", "if-modified-since", "if-unmodified-since", "range"}, lower) {
+		bound := strings.HasPrefix(lower, "x-amz-") && lower != "x-amz-content-sha256" || slices.Contains([]string{"content-type", "cache-control", "content-disposition", "content-encoding", "content-language"}, lower) || r.Method == http.MethodPut && slices.Contains([]string{"if-match", "if-none-match"}, lower)
+		if r.Method == http.MethodPut && slices.Contains([]string{"if-modified-since", "if-unmodified-since", "range"}, lower) {
 			return false
 		}
 		if !bound {

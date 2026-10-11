@@ -10,6 +10,10 @@ from ..models.route_health_finding_error_status import (
     RouteHealthFindingErrorStatus,
     check_route_health_finding_error_status,
 )
+from ..models.route_health_finding_evidence_window import (
+    RouteHealthFindingEvidenceWindow,
+    check_route_health_finding_evidence_window,
+)
 from ..models.route_health_finding_latency_status import (
     RouteHealthFindingLatencyStatus,
     check_route_health_finding_latency_status,
@@ -57,6 +61,16 @@ class RouteHealthFinding:
     latency_status: RouteHealthFindingLatencyStatus | Unset = UNSET
     """Independently confirmed latency verdict across both windows when selected."""
     latency_reason: str | Unset = UNSET
+    evidence_window: RouteHealthFindingEvidenceWindow | Unset = UNSET
+    """pooled when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846);
+    synthetic when it comes from synthetic_windows because organic evidence stayed sparse (ADR-847). Thresholds are
+    unchanged."""
+    pooled_windows: list[RouteHealthWindowEvidence] | Unset = UNSET
+    """Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute
+    windows were sparse."""
+    synthetic_windows: list[RouteHealthWindowEvidence] | Unset = UNSET
+    """Synthetic probe results over the pooled bounds for probed selectors that organic evidence left sparse. They
+    settle the 5xx signal only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +114,24 @@ class RouteHealthFinding:
 
         latency_reason = self.latency_reason
 
+        evidence_window: str | Unset = UNSET
+        if not isinstance(self.evidence_window, Unset):
+            evidence_window = self.evidence_window
+
+        pooled_windows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.pooled_windows, Unset):
+            pooled_windows = []
+            for pooled_windows_item_data in self.pooled_windows:
+                pooled_windows_item = pooled_windows_item_data.to_dict()
+                pooled_windows.append(pooled_windows_item)
+
+        synthetic_windows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.synthetic_windows, Unset):
+            synthetic_windows = []
+            for synthetic_windows_item_data in self.synthetic_windows:
+                synthetic_windows_item = synthetic_windows_item_data.to_dict()
+                synthetic_windows.append(synthetic_windows_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -127,6 +159,12 @@ class RouteHealthFinding:
             field_dict["latency_status"] = latency_status
         if latency_reason is not UNSET:
             field_dict["latency_reason"] = latency_reason
+        if evidence_window is not UNSET:
+            field_dict["evidence_window"] = evidence_window
+        if pooled_windows is not UNSET:
+            field_dict["pooled_windows"] = pooled_windows
+        if synthetic_windows is not UNSET:
+            field_dict["synthetic_windows"] = synthetic_windows
 
         return field_dict
 
@@ -189,6 +227,31 @@ class RouteHealthFinding:
 
         latency_reason = d.pop("latency_reason", UNSET)
 
+        _evidence_window = d.pop("evidence_window", UNSET)
+        evidence_window: RouteHealthFindingEvidenceWindow | Unset
+        if isinstance(_evidence_window, Unset):
+            evidence_window = UNSET
+        else:
+            evidence_window = check_route_health_finding_evidence_window(_evidence_window)
+
+        _pooled_windows = d.pop("pooled_windows", UNSET)
+        pooled_windows: list[RouteHealthWindowEvidence] | Unset = UNSET
+        if _pooled_windows is not UNSET:
+            pooled_windows = []
+            for pooled_windows_item_data in _pooled_windows:
+                pooled_windows_item = RouteHealthWindowEvidence.from_dict(pooled_windows_item_data)
+
+                pooled_windows.append(pooled_windows_item)
+
+        _synthetic_windows = d.pop("synthetic_windows", UNSET)
+        synthetic_windows: list[RouteHealthWindowEvidence] | Unset = UNSET
+        if _synthetic_windows is not UNSET:
+            synthetic_windows = []
+            for synthetic_windows_item_data in _synthetic_windows:
+                synthetic_windows_item = RouteHealthWindowEvidence.from_dict(synthetic_windows_item_data)
+
+                synthetic_windows.append(synthetic_windows_item)
+
         route_health_finding = cls(
             method=method,
             path=path,
@@ -203,6 +266,9 @@ class RouteHealthFinding:
             error_reason=error_reason,
             latency_status=latency_status,
             latency_reason=latency_reason,
+            evidence_window=evidence_window,
+            pooled_windows=pooled_windows,
+            synthetic_windows=synthetic_windows,
         )
 
         route_health_finding.additional_properties = d

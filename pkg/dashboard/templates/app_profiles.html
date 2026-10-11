@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">
+body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} form {display:flex;gap:1rem;flex-wrap:wrap;padding:1rem;background:#f1f5f9;color:#0f172a} label {display:grid;gap:.25rem} input,select,button {padding:.4rem} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} svg {width:100%;font-size:12px} svg rect {stroke:white;stroke-width:1;cursor:pointer} svg text {pointer-events:none} .muted {color:#64748b} .annotation {white-space:pre-wrap}
+.coverage {display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem} .coverage div {padding:.8rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:.4rem} .coverage dt {color:#64748b;font-size:.9rem} .coverage dd {margin:.4rem 0 0} #cpu-chart a:focus rect,#cpu-chart a:hover rect {fill:#fbbf24}
+.diff-legend {display:flex;gap:1rem;flex-wrap:wrap} .diff-legend span {padding:.3rem .6rem;border-radius:.3rem} .diff-increase {background:#dc2626;color:white} .diff-decrease {background:#2563eb;color:white} .diff-unchanged {background:#e2e8f0} .diff-unknown {background:#64748b;color:white} #diff-frame-details {padding:1rem;background:#f8fafc;border:1px solid #e2e8f0;margin:.8rem 0} #diff-flamegraph rect[data-search-match="true"],#diff-flamegraph g:focus rect {stroke:#0f172a;stroke-width:3}
+</style></head><body>
+<nav><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> · <a href="/dashboard/apps/{{.Data.AppSlug}}/debug">Production debugger</a></nav>
+<h1>CPU profiles</h1>
+{{with .Data.RouteView}}{{template "profile_routes" .}}{{end}}
+{{with .Data.CanaryFinding}}{{template "profile_route_checks" .Signal.RouteChecks}}{{with .Signal.Attribution}}{{template "profile_attribution_comparison" .}}{{end}}<section aria-label="Canary stage traffic context"><h2>Canary stage {{.Signal.CanaryStep}} comparison</h2>{{template "profile_request_mix" .RequestMix}}{{if not .HasEvidence}}{{template "profile_traffic" .Traffic}}{{end}}</section>{{if .HasEvidence}}<section aria-label="Selected canary finding"><h2>Canary stage {{.Signal.CanaryStep}} finding</h2><p>Policy revision {{.Signal.PolicyRevision}}; stage started {{.Signal.CanaryStepStartedAt.Format "2006-01-02T15:04:05Z07:00"}}. {{.Evidence.Kind}}: {{range .Evidence.Frames}}{{.Name}} → {{end}}</p><p>Recorded sampled CPU: stable {{printf "%.6f" .Evidence.Metric.BaselineCPUPerSecond}} CPU/s; canary {{printf "%.6f" .Evidence.Metric.CandidateCPUPerSecond}} CPU/s. Function findings measure self CPU; call paths measure inclusive CPU.</p>{{with .Evidence.Metric.CPUPerRequest}}<p>CPU/request: stable {{printf "%.8f" .BaselineCPUSecondsPerRequest}}; canary {{printf "%.8f" .CandidateCPUSecondsPerRequest}}.</p>{{end}}<p>Thresholds: relative increase {{.Signal.Options.RelativeIncreasePercent}}%; absolute increase {{.Signal.Options.AbsoluteIncreaseCPUPerSecond}} CPU/s; absolute CPU/request increase {{.Signal.Options.AbsoluteIncreaseCPUSecondsPerRequest}}. Checked metric: {{.Signal.Metric}}.</p>{{template "profile_traffic" .Traffic}}<h3>{{.Attribution.Status}}</h3><p>{{.Attribution.Reason}}{{if .Attribution.Path}} File: <code>{{.Attribution.Path}}</code>.{{end}} {{with .Attribution.DiffURL}}<a href="{{.}}" target="_blank" rel="noopener noreferrer">Inspect source diff</a>{{end}}</p><p>CPU increase: {{printf "%.6f" .Attribution.CPUIncrease}} CPU/s. {{with .Attribution.SharePercent}}Share of the net total CPU increase: {{printf "%.1f" .}}%.{{else}}Share unavailable because the total increase is unavailable or nonpositive.{{end}} Inclusive caller paths overlap; shares can exceed 100% when other code consumes less CPU and must not be added together.</p><p id="canary-finding-status" role="status">Profile data must be available to locate this finding. Select a highlighted frame to save its call path with your notes.</p></section>{{end}}{{end}}
+<p>Find functions and call paths consuming application CPU. Compare captures before and after a deployment to investigate regressions.</p>
+{{with .Data.Automatic}}
+<section id="automatic-profile-checks" aria-label="Automatic deployment profiling checks"><h2>Automatic deployment checks</h2>
+<p>Compare each new successful deployment with the previous successful deployment in the same environment. Checks use the selected runtime and equal capture windows before deployment creation and after rollout warm-up.</p>
+{{if .Error}}<p class="notice">{{.Error}}</p>{{end}}
+<p>Policy: {{if .Policy.Config.Enabled}}enabled{{else}}disabled{{end}}. Changes apply to future rollout completions and cancel pending checks.</p>
+{{if .CanEdit}}{{$c := .Policy.Config}}{{$limits := .Limits}}
+<form id="automatic-profile-policy" method="post" action="/dashboard/apps/{{$.Data.AppSlug}}/profiles/deployment-policy">
+<input type="hidden" name="csrf_token" value="{{.CSRF}}">
+<input type="hidden" name="expected_revision" value="{{.Policy.Revision}}">
+<label><input type="checkbox" name="enabled" {{if $c.Enabled}}checked{{end}}> Enable automatic checks</label>
+<fieldset><legend>Canary profiling gate</legend>
+<label><input type="checkbox" name="canary_gate_enabled" {{if $c.CanaryGate}}checked{{end}}> Require qualified route CPU/request evidence before advancing canaries</label>
+<label>Consecutive qualified windows<input type="number" name="canary_gate_confirmations" min="1" max="{{$limits.gate_confirmations_max}}" value="{{if $c.CanaryGate}}{{$c.CanaryGate.Confirmations}}{{else}}{{$limits.gate_confirmations_default}}{{end}}"></label>
+<label>Evidence timeout (seconds; must cover warmup and all confirmation windows)<input type="number" name="canary_gate_timeout_seconds" min="60" max="{{$limits.gate_timeout_max}}" value="{{if $c.CanaryGate}}{{$c.CanaryGate.TimeoutSeconds}}{{else}}{{$limits.gate_timeout_default}}{{end}}"></label>
+<label>When evidence times out<select name="canary_gate_on_timeout"><option value="hold" {{if $c.CanaryGate}}{{if eq $c.CanaryGate.OnTimeout "hold"}}selected{{end}}{{end}}>Hold for manual review</option><option value="continue" {{if $c.CanaryGate}}{{if eq $c.CanaryGate.OnTimeout "continue"}}selected{{end}}{{end}}>Continue with inconclusive profile evidence</option></select></label>
+<label><input type="checkbox" name="canary_gate_auto_rollback" {{if $c.CanaryGate}}{{if $c.CanaryGate.AutoRollback}}checked{{end}}{{end}}> Automatically roll back a confirmed route regression to the recorded stable deployment (request-mode canaries)</label>
+<p>Requires explicit routes and enabled collection. Missing evidence is inconclusive. Confirmed regressions hold regardless of timeout; automatic rollback is optional. Other rollout checks still apply.</p></fieldset>
+<fieldset><legend>Periodic route checks</legend>
+<label><input type="checkbox" name="periodic_enabled" {{if $c.Periodic}}checked{{end}}> Check running deployments periodically</label>
+<label>Interval (seconds, whole minutes, at least the capture window)<input type="number" name="periodic_interval_seconds" min="{{$limits.periodic_interval_min}}" max="{{$limits.periodic_interval_max}}" step="{{$limits.periodic_interval_min}}" value="{{if $c.Periodic}}{{$c.Periodic.IntervalSeconds}}{{else}}{{$limits.periodic_interval_default}}{{end}}"></label>
+<label>Consecutive supported results to open or recover an incident<input type="number" name="periodic_confirmations" min="1" max="{{$limits.periodic_confirmations_max}}" value="{{if $c.Periodic}}{{$c.Periodic.Confirmations}}{{else}}{{$limits.periodic_confirmations_default}}{{end}}"></label>
+<p>Each route pins its first sufficiently covered window. Missing evidence does not recover an incident. Replaced deployments and policy revisions stop their old monitors.</p></fieldset>
+<label><input type="checkbox" name="notify_route_regressions" {{if $c.NotifyRouteRegressions}}checked{{end}}> Notify app webhooks when advisory routes regress or recover</label>
+<label>CPU metric<select name="metric"><option value="cpu_per_second" {{if eq $c.Options.Metric "cpu_per_second"}}selected{{end}}>CPU per second</option><option value="cpu_per_request" {{if eq $c.Options.Metric "cpu_per_request"}}selected{{end}}>CPU per request</option></select></label>
+<label>Runtime<input name="runtime" required value="{{$c.Runtime}}"></label>
+<label>Capture window (seconds)<input type="number" name="window_seconds" min="{{$limits.window_min}}" max="{{$limits.window_max}}" required value="{{$c.WindowSeconds}}"></label>
+<label>Warm-up after rollout (seconds)<input type="number" name="warmup_seconds" min="0" max="{{$limits.warmup_max}}" required value="{{$c.WarmupSeconds}}"></label>
+<label>Minimum increase (%)<input type="number" name="relative_increase_percent" min="0" max="{{$limits.relative}}" step="any" required value="{{$c.Options.RelativeIncreasePercent}}"></label>
+<label>Minimum increase (CPU/s)<input type="number" name="absolute_increase_cpu_per_second" min="0" max="{{$limits.absolute}}" step="any" required value="{{$c.Options.AbsoluteIncreaseCPUPerSecond}}"></label>
+<label>Minimum increase (CPU seconds/request)<input type="number" name="absolute_increase_cpu_seconds_per_request" min="0" max="{{$limits.absolute_per_request}}" step="any" required value="{{$c.Options.AbsoluteIncreaseCPUSecondsPerRequest}}"></label>
+<label>Minimum profiles per window<input type="number" name="minimum_profiles" min="1" max="{{$limits.profiles}}" required value="{{$c.Options.MinimumProfiles}}"></label>
+<label>Minimum capture ratio<input type="number" name="minimum_coverage_ratio" min="{{$limits.coverage}}" max="1" step="any" required value="{{$c.Options.MinimumCoverageRatio}}"></label>
+<label>Minimum observed requests per window<input type="number" name="minimum_requests" min="1" max="{{$limits.requests}}" required value="{{$c.Options.MinimumRequests}}"></label>
+<label>Advisory routes (one METHOD /pattern per line, up to {{$limits.routes}})<textarea name="routes" rows="3">{{range $c.Options.Routes}}{{.}}{{"\n"}}{{end}}</textarea></label>
+<p>Route checks always use CPU/request and the request thresholds above, independently of the aggregate metric. They gate canary advancement only when the canary profiling gate above is enabled.</p>
+<button type="submit">Save automatic check policy</button></form>{{end}}
+<p class="muted">Enable collection on your deployments first. CPU-per-request uses weighted request telemetry recorded for the same deployment windows and needs the minimum observed request count on both sides. Telemetry uses minute-bucket timestamps, so counts near window boundaries can be approximate. Missing or sparse telemetry is inconclusive. Checks wait for profile ingestion and retry using the original windows. Idle applications can produce inconclusive results.</p>
+{{if .Checks}}<table id="automatic-profile-results"><thead><tr><th>Deployment / environment</th><th>Result</th><th>Details</th></tr></thead><tbody>{{range .Checks}}<tr><td><a href="/dashboard/apps/{{$.Data.AppSlug}}/deployments/{{.DeploymentID}}"><code>{{.DeploymentID}}</code></a><br>{{.Scope}}</td><td>{{.Status}}{{if .NextAttemptAt}}<br>Next attempt: {{.NextAttemptAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}{{if .CompletedAt}}<br>{{.CompletedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}</td><td>{{.Reason}}{{if .ComparisonURL}}<br><a href="{{.ComparisonURL}}">Open comparison{{if .InvestigationID}} and saved investigation{{end}}</a>{{end}}</td></tr>{{end}}</tbody></table>{{else}}<p>No automatic checks have been recorded yet.</p>{{end}}
+{{if .Monitors}}<h3 id="periodic-profile-history">Periodic route incident history</h3>
+{{range .Monitors}}<h4><code>{{.Route}}</code> · {{.Scope}} · Deployment <code>{{.DeploymentID}}</code> · Policy {{.PolicyRevision}}</h4>
+<p>{{if .Active}}Next scheduled window ends {{.Candidate.End.Format "2006-01-02T15:04:05Z07:00"}}.{{else}}Monitor inactive; retained history remains available.{{end}} {{if .Baseline}}Baseline: {{.Baseline.Start.Format "2006-01-02T15:04:05Z07:00"}} → {{.Baseline.End.Format "2006-01-02T15:04:05Z07:00"}}{{else}}Waiting for an evidence-qualified baseline.{{end}}</p>
+{{if .History}}<table><thead><tr><th>Checked</th><th>Result</th><th>Incident / evidence</th></tr></thead><tbody>{{range .History}}<tr><td>{{.CheckedAt.Format "2006-01-02T15:04:05Z07:00"}}</td><td>{{.Status}}<br>{{.Reason}}</td><td>{{if .IncidentID}}<code>{{.IncidentID}}</code><br>{{end}}{{.Transition}}{{with .RouteCheck}}{{with .CodeReason}}<p>{{.}}</p>{{end}}{{range .CodeEvidence}}<p>{{.Kind}}: {{range .Frames}}<code>{{.Name}}</code> → {{end}}{{with .Metric.CPUPerRequest}}CPU/request increase {{printf "%+.8f" .DeltaCPUSecondsPerRequest}}{{end}}</p>{{end}}{{end}}{{if .ComparisonURL}}<br><a href="{{.ComparisonURL}}">Open profile comparison</a>{{end}}</td></tr>{{end}}</tbody></table>{{else}}<p>No periodic results yet.</p>{{end}}{{end}}{{end}}
+</section>{{end}}
+{{with .Data.Investigations}}
+<section aria-label="Saved profiling investigations"><h2>Saved investigations</h2>
+<p class="muted">Keep comparison selections, findings and notes. Shared links require access to this app. Profile samples expire under your current plan's retention policy.</p>
+{{if .Error}}<p class="notice">{{.Error}}</p>{{end}}
+{{if .Items}}<ul>{{range .Items}}<li><a class="saved-investigation" href="{{.URL}}">{{.Saved.Investigation.Title}}</a> · {{.Saved.UpdatedAt.Format "2006-01-02T15:04:05Z07:00"}} · Baseline: {{.BaselineStatus.Status}} · Candidate: {{.CandidateStatus.Status}}</li>{{end}}</ul>{{else}}<p>No saved investigations yet. Load a baseline and candidate to save a comparison.</p>{{end}}
+{{with .Saved}}<h3>{{.Saved.Investigation.Title}}</h3>
+<p><a id="investigation-share" href="{{.URL}}">Authenticated link to this investigation</a></p>
+<p>Baseline: <code>{{.Saved.Investigation.Baseline.DeploymentID}}</code>, {{.Saved.Investigation.Baseline.Start.Format "2006-01-02T15:04:05.999999999Z07:00"}} → {{.Saved.Investigation.Baseline.End.Format "2006-01-02T15:04:05.999999999Z07:00"}}.<br>Candidate: <code>{{.Saved.Investigation.Candidate.DeploymentID}}</code>, {{.Saved.Investigation.Candidate.Start.Format "2006-01-02T15:04:05.999999999Z07:00"}} → {{.Saved.Investigation.Candidate.End.Format "2006-01-02T15:04:05.999999999Z07:00"}}. Runtime: <code>{{.Saved.Investigation.Candidate.Runtime}}</code>.</p>
+<p>Baseline: {{.BaselineStatus.Detail}} Candidate: {{.CandidateStatus.Detail}}</p>
+{{if not $.Data.Investigations.CanSave}}<h4>Findings</h4><p class="annotation">{{.Saved.Investigation.Findings}}</p><h4>Notes</h4><p class="annotation">{{.Saved.Investigation.Notes}}</p>{{end}}
+{{end}}
+<p id="investigation-path-status" class="muted" aria-live="polite">{{if .SelectedPath}}Saved {{.SelectedPath.View}} call path: {{range .SelectedPath.Frames}}<code>{{.Name}}</code> {{end}}{{else}}Select a flamegraph frame to include its complete call path.{{end}}</p>
+{{if .CanSave}}
+<form id="investigation-save" method="post" action="/dashboard/apps/{{$.Data.AppSlug}}/profiles/investigations">
+{{with $.Data.CanaryFinding}}<input type="hidden" name="canary_deployment" value="{{.Signal.Candidate.DeploymentID}}"><input type="hidden" name="canary_step" value="{{.Signal.CanaryStep}}"><input type="hidden" name="canary_revision" value="{{.Signal.PolicyRevision}}"><input type="hidden" name="canary_started_at" value="{{.Signal.CanaryStepStartedAt.Format "2006-01-02T15:04:05.999999999Z07:00"}}">{{end}}
+<input type="hidden" name="csrf_token" value="{{.CSRF}}">
+<input type="hidden" name="id" value="{{with .Saved}}{{.Saved.ID}}{{end}}">
+<input type="hidden" name="expected_revision" value="{{with .Saved}}{{.Saved.Revision}}{{else}}0{{end}}">
+<input type="hidden" name="route" value="{{$.Data.Query.Route}}"><input type="hidden" name="deployment_id" value="{{$.Data.Query.DeploymentID}}"><input type="hidden" name="runtime" value="{{$.Data.Query.Runtime}}">
+<input type="hidden" name="start" value="{{$.Data.Query.Start.Format "2006-01-02T15:04:05.999999999Z07:00"}}"><input type="hidden" name="end" value="{{$.Data.Query.End.Format "2006-01-02T15:04:05.999999999Z07:00"}}">
+<input type="hidden" name="baseline_id" value="{{$.Data.Baseline.DeploymentID}}"><input type="hidden" name="baseline_start" value="{{$.Data.Baseline.Start.Format "2006-01-02T15:04:05.999999999Z07:00"}}"><input type="hidden" name="baseline_end" value="{{$.Data.Baseline.End.Format "2006-01-02T15:04:05.999999999Z07:00"}}">
+<input type="hidden" name="selected_path" value="{{.SelectedPathJSON}}">
+<label>Investigation title<input name="title" required maxlength="{{.TitleMaxBytes}}" value="{{with .Saved}}{{.Saved.Investigation.Title}}{{else}}{{with $.Data.CanaryFinding}}Canary stage {{.Signal.CanaryStep}} CPU {{if .HasEvidence}}finding{{else}}comparison{{end}}{{end}}{{end}}"></label>
+<label>Findings<textarea name="findings" rows="3" maxlength="{{.TextMaxBytes}}">{{with .Saved}}{{.Saved.Investigation.Findings}}{{else}}{{with $.Data.CanaryFinding}}{{if .HasEvidence}}{{range .Evidence.Frames}}{{.Name}}; {{end}}Stable {{printf "%.6f" .Evidence.Metric.BaselineCPUPerSecond}} CPU/s; canary {{printf "%.6f" .Evidence.Metric.CandidateCPUPerSecond}} CPU/s.{{else}}{{.Signal.Reason}}{{end}}{{end}}{{end}}</textarea></label>
+<label>Notes<textarea name="notes" rows="3" maxlength="{{.TextMaxBytes}}">{{with .Saved}}{{.Saved.Investigation.Notes}}{{else}}{{with $.Data.CanaryFinding}}Canary stage {{.Signal.CanaryStep}}, started {{.Signal.CanaryStepStartedAt.Format "2006-01-02T15:04:05Z07:00"}}, policy revision {{.Signal.PolicyRevision}}. Metric {{.Signal.Metric}}; thresholds: {{.Signal.Options.RelativeIncreasePercent}}% relative increase, {{.Signal.Options.AbsoluteIncreaseCPUPerSecond}} CPU/s absolute increase, {{.Signal.Options.AbsoluteIncreaseCPUSecondsPerRequest}} CPU/request absolute increase. Request mix: {{.RequestMix.Message}}. {{with .RequestMix.RouteDifference}}Route mix difference {{printf "%.1f" .}} pp. {{end}}{{with .RequestMix.StatusDifference}}Status mix difference {{printf "%.1f" .}} pp. {{end}} {{range .RequestMix.Warnings}}{{.}} {{end}}Traffic analysis: {{.Traffic.Status}}. {{range .Traffic.Warnings}}{{.}} {{end}}{{if .HasEvidence}}Source attribution: {{.Attribution.Status}}. {{.Attribution.Reason}}{{if .Attribution.Path}} File: {{.Attribution.Path}}.{{end}}{{if .Attribution.DiffURL}} Diff: {{.Attribution.DiffURL}}{{end}}{{end}}{{end}}{{end}}</textarea></label>
+<button type="submit" name="action" value="save">{{if .Saved}}Save investigation changes{{else}}Save investigation{{end}}</button>
+{{if .Saved}}<button type="submit" name="action" value="delete" formnovalidate>Delete investigation</button>{{end}}
+</form><p class="muted">Saves the loaded comparison and selected call path. To investigate different windows, load profiles using the selections below and save a new investigation. Notes can still be edited when profiles expire.</p>
+{{end}}
+{{with .Saved}}
+<section aria-label="Profiling regression assessment"><h3>Regression check</h3>
+{{with .Saved.Assessment}}
+{{template "profile_route_checks" .RouteChecks}}{{with .Attribution}}{{template "profile_attribution_comparison" .}}{{end}}
+<p id="regression-status"><strong>{{.Status}}</strong> · {{.CheckedAt.Format "2006-01-02T15:04:05Z07:00"}}</p>
+{{with $.Data.Investigations.RequestMix}}{{template "profile_request_mix" .}}{{end}}
+{{if ne .InvestigationRevision $.Data.Investigations.Saved.Saved.Revision}}<p class="notice" id="regression-stale">This assessment is stale: the investigation has changed. Check again to assess the current revision.</p>{{end}}
+{{if or (ne $.Data.Investigations.Saved.BaselineStatus.Status "retained") (ne $.Data.Investigations.Saved.CandidateStatus.Status "retained")}}<p class="notice">Historical assessment. Profile history is currently unavailable for one or both saved windows.</p>{{end}}
+<p>{{.Reason}}</p>
+<p>Checked metric: {{if eq .Options.Metric "cpu_per_request"}}sampled CPU per request, requiring at least {{.Options.MinimumRequests}} observed requests and an absolute increase of {{printf "%.6f" .Options.AbsoluteIncreaseCPUSecondsPerRequest}} CPU seconds/request{{else}}sampled CPU per second, requiring an absolute increase of {{printf "%.6f" .Options.AbsoluteIncreaseCPUPerSecond}} CPU/s{{end}} and a relative increase of {{printf "%.2f" .Options.RelativeIncreasePercent}}%. Required {{.Options.MinimumProfiles}} profiles and capture ratio {{printf "%.2f" .Options.MinimumCoverageRatio}} in each window.</p>
+{{if eq .Options.Metric "cpu_per_request"}}<p>Observed request counts: baseline {{with .BaselineRequests}}{{.}}{{else}}unavailable{{end}}, candidate {{with .CandidateRequests}}{{.}}{{else}}unavailable{{end}}. Counts come from retained request telemetry, use minute-bucket timestamps near window boundaries, and may be incomplete.</p>{{end}}
+<p>Baseline recorded collection: {{with .BaselineCoverage}}{{if .Available}}{{.ReceivedProfiles}} profiles, {{printf "%.3f" .CoveredSeconds}} / {{printf "%.3f" .WindowSeconds}} seconds; at least {{.RecordedFailedUploads}} failed uploads{{else}}unavailable{{end}}{{else}}unavailable{{end}}. Candidate recorded collection: {{with .CandidateCoverage}}{{if .Available}}{{.ReceivedProfiles}} profiles, {{printf "%.3f" .CoveredSeconds}} / {{printf "%.3f" .WindowSeconds}} seconds; at least {{.RecordedFailedUploads}} failed uploads{{else}}unavailable{{end}}{{else}}unavailable{{end}}.</p>
+{{with .Total}}<p>Total sampled CPU rate: {{printf "%.6f" .BaselineCPUPerSecond}} → {{printf "%.6f" .CandidateCPUPerSecond}} CPU/s ({{printf "%+.6f" .DeltaCPUPerSecond}} CPU/s).{{with .CPUPerRequest}} CPU/request: {{printf "%.9f" .BaselineCPUSecondsPerRequest}} → {{printf "%.9f" .CandidateCPUSecondsPerRequest}} seconds/request.{{end}}</p>{{end}}
+{{if .Evidence}}<table id="regression-evidence"><thead><tr><th>Observed increase</th><th>Baseline CPU/s</th><th>Candidate CPU/s</th><th>Delta CPU/s</th><th>CPU seconds/request</th></tr></thead><tbody>{{range .Evidence}}<tr><td>{{.Kind}}: {{range $i, $frame := .Frames}}{{if $i}} → {{end}}<code>{{.Name}}</code>{{if .File}} <small>{{.File}}{{if .Line}}:{{.Line}}{{end}}</small>{{end}}{{end}}</td><td>{{printf "%.6f" .Metric.BaselineCPUPerSecond}}</td><td>{{printf "%.6f" .Metric.CandidateCPUPerSecond}}</td><td>{{printf "%+.6f" .Metric.DeltaCPUPerSecond}}</td><td>{{with .Metric.CPUPerRequest}}{{printf "%.9f" .BaselineCPUSecondsPerRequest}} → {{printf "%.9f" .CandidateCPUSecondsPerRequest}}{{else}}—{{end}}</td></tr>{{end}}</tbody></table>{{end}}
+<p>{{.UncomparableEntries}} CPU comparisons have unknown deltas or relative changes. Evidence shows up to {{$.Data.Investigations.RegressionLimits.evidence}} of the largest observed increases; inclusive call paths overlap and must not be added together.</p>
+{{else}}<p id="regression-status">This investigation has not been checked.</p>{{end}}
+<p><a id="regression-comparison" href="{{.URL}}#diff-flamegraph">Open this saved differential flamegraph</a></p>
+{{if $.Data.Investigations.CanSave}}
+{{$options := $.Data.Investigations.RegressionOptions}}{{$limits := $.Data.Investigations.RegressionLimits}}
+<form id="regression-check" method="post" action="/dashboard/apps/{{$.Data.AppSlug}}/profiles/investigations/{{.Saved.ID}}/check">
+<input type="hidden" name="csrf_token" value="{{$.Data.Investigations.CSRF}}"><input type="hidden" name="expected_revision" value="{{.Saved.Revision}}">
+<label>CPU metric<select name="metric"><option value="cpu_per_second" {{if eq $options.Metric "cpu_per_second"}}selected{{end}}>CPU per second</option><option value="cpu_per_request" {{if eq $options.Metric "cpu_per_request"}}selected{{end}}>CPU per request</option></select></label>
+<label>Minimum increase (%)<input type="number" name="relative_increase_percent" min="0" max="{{$limits.relative}}" step="any" required value="{{$options.RelativeIncreasePercent}}"></label>
+<label>Minimum increase (CPU/s)<input type="number" name="absolute_increase_cpu_per_second" min="0" max="{{$limits.absolute}}" step="any" required value="{{$options.AbsoluteIncreaseCPUPerSecond}}"></label>
+<label>Minimum increase (CPU seconds/request)<input type="number" name="absolute_increase_cpu_seconds_per_request" min="0" max="{{$limits.absolute_per_request}}" step="any" required value="{{$options.AbsoluteIncreaseCPUSecondsPerRequest}}"></label>
+<label>Minimum recorded profiles per window<input type="number" name="minimum_profiles" min="1" max="{{$limits.profiles}}" required value="{{$options.MinimumProfiles}}"></label>
+<label>Minimum capture ratio (0.1–1)<input type="number" name="minimum_coverage_ratio" min="{{$limits.coverage}}" max="1" step="any" required value="{{$options.MinimumCoverageRatio}}"></label>
+<label>Minimum observed requests per window<input type="number" name="minimum_requests" min="1" max="{{$limits.requests}}" required value="{{$options.MinimumRequests}}"></label>
+<label>Advisory routes (one METHOD /pattern per line, up to {{$limits.routes}})<textarea name="routes" rows="3">{{range $options.Routes}}{{.}}{{"\n"}}{{end}}</textarea></label>
+<button type="submit">Check for regression</button></form>
+{{end}}
+<p class="muted">CPU/request divides sampled CPU seconds by weighted request counts from retained telemetry for the same deployment windows. Traffic mix and missing telemetry can affect this observed average. Capture coverage does not measure instrumentation completeness; unrecorded loss remains unknown.</p>
+</section>{{end}}
+</section>{{end}}
+<form id="profile-query" method="get">
+{{with .Data.CPUChart}}{{if .Start}}<input type="hidden" name="chart_start" value="{{.Start}}"><input type="hidden" name="chart_end" value="{{.End}}">{{end}}{{end}}
+<label>Deployment<select name="deployment_id">{{range .Data.Deployments}}<option value="{{.ID}}" {{if eq .ID $.Data.Query.DeploymentID}}selected{{end}}>{{.ID}} {{.CommitSHA}}</option>{{end}}</select></label>
+<label>Runtime<input name="runtime" required value="{{.Data.Query.Runtime}}" placeholder="node22, python312, go124, custom"></label>
+<label>Route label<input name="route" value="{{.Data.Query.Route}}" placeholder="All CPU, GET /orders/{id}, or [unattributed]"></label>
+<label>Start (RFC3339)<input name="start" required value="{{.Data.Query.Start.Format "2006-01-02T15:04:05Z07:00"}}"></label>
+<label>End (RFC3339)<input name="end" required value="{{.Data.Query.End.Format "2006-01-02T15:04:05Z07:00"}}"></label>
+<label>Baseline deployment<select name="baseline_id"><option value="">No comparison</option>{{range .Data.Deployments}}<option value="{{.ID}}" {{if eq .ID $.Data.Baseline.DeploymentID}}selected{{end}}>{{.ID}} {{.CommitSHA}}</option>{{end}}</select></label>
+<label>Baseline start<input name="baseline_start" value="{{if not .Data.Baseline.Start.IsZero}}{{.Data.Baseline.Start.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" placeholder="2026-10-07T10:00:00Z"></label>
+<label>Baseline end<input name="baseline_end" value="{{if not .Data.Baseline.End.IsZero}}{{.Data.Baseline.End.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" placeholder="2026-10-07T11:00:00Z"></label>
+<button type="submit">Load profiles</button></form>
+{{with .Data.CPUChart}}
+<section aria-label="App CPU drill-down"><h2>App CPU — all deployments</h2>
+<p class="muted">Average CPU seconds per second across this app's instances. Click an interval to open its functions and call paths for the deployment and runtime selected above. This graph includes all deployments and scopes of the app.</p>
+{{if .Error}}<p class="notice">{{.Error}}</p>{{else}}
+<p>Peak interval: {{printf "%.3f" .PeakCores}} CPU seconds per second.</p>
+<svg id="cpu-chart" viewBox="0 0 1100 165" role="group" aria-label="CPU intervals; each bar opens a profile">
+{{range .Points}}<a href="{{.URL}}" tabindex="0" aria-label="Open profile for {{.Start}} to {{.End}}, {{printf "%.3f" .Cores}} CPU seconds per second"><title>{{.Start}} → {{.End}} · {{printf "%.3f" .Cores}} CPU seconds per second</title><rect x="{{printf "%.3f" .X}}" y="{{printf "%.3f" .Y}}" width="{{printf "%.3f" .Width}}" height="{{printf "%.3f" .Height}}" fill="{{if .Selected}}#f59e0b{{else}}#2563eb{{end}}"></rect></a>{{end}}
+</svg><p class="muted">{{.Start}} → {{.End}}. Missing CPU measurements remain gaps in the graph. A measured zero has a small bar so its interval can still be opened.</p>
+{{end}}</section>{{end}}
+{{if .Data.Error}}<p class="notice">{{.Data.Error}}</p>{{end}}
+{{with .Data.Compare}}{{if .Comparable}}<h2>Deployment comparison</h2><p class="muted">CPU seconds per second of each selected window. Changes in traffic, replicas or CPU allocation can also change this rate.</p>
+<p class="muted" aria-label="Comparison collection coverage">Baseline collection: {{if and .Baseline.Coverage .Baseline.Coverage.Available}}{{printf "%.3f" .Baseline.Coverage.CoveredSeconds}} of {{printf "%.3f" .Baseline.Coverage.WindowSeconds}} seconds, {{.Baseline.Coverage.ContributingCollectors}} collectors{{else}}unavailable{{end}}. Candidate collection: {{if and .Candidate.Coverage .Candidate.Coverage.Available}}{{printf "%.3f" .Candidate.Coverage.CoveredSeconds}} of {{printf "%.3f" .Candidate.Coverage.WindowSeconds}} seconds, {{.Candidate.Coverage.ContributingCollectors}} collectors{{else}}unavailable{{end}}. Sampling gaps can bias this comparison.</p>
+{{if .Flamegraph}}<section aria-label="Differential flamegraph"><h3>Differential flamegraph</h3>
+<p class="muted">Each frame compares inclusive CPU for its complete caller path. Width combines the observed baseline and candidate rates. Named functions match across sampled line changes; unknown and anonymous frames keep their line identity. A path not observed on one side has an unknown delta.</p>
+<p class="diff-legend" aria-label="CPU change legend"><span class="diff-increase">Red: increased CPU/s</span><span class="diff-decrease">Blue: decreased CPU/s</span><span class="diff-unchanged">Unchanged</span><span class="diff-unknown">Not observed on both sides</span></p>
+<button type="button" id="diff-reset">Reset comparison zoom</button> <label>Search comparison functions<input id="diff-search" placeholder="Function name"></label>
+<div id="diff-frame-details" aria-live="polite">Select a frame to compare CPU rates and inspect both source revisions.</div>
+<svg id="diff-flamegraph" role="group" aria-label="Differential CPU flamegraph"></svg></section>
+{{else}}<p class="notice">{{if .FlamegraphReason}}{{.FlamegraphReason}}{{else}}Differential call-path data is unavailable.{{end}}</p>{{end}}
+<h3>Function self CPU comparison</h3>
+<p class="muted">Source links use each deployment's recorded commit. For functions sampled at several lines, each side opens its hottest mapped line.</p>
+<table><thead><tr><th>Function</th><th>Baseline CPU/s</th><th>Candidate CPU/s</th><th>Delta CPU/s</th></tr></thead><tbody>{{range .Functions}}<tr><td><code>{{.Name}}</code><br><small>{{.File}}:{{.Line}}</small></td><td>{{if .BaselineObserved}}{{printf "%.6f" .BaselineCPUPerSecond}}{{else}}Not observed{{end}}<br>{{with .BaselineSource}}<a class="profile-source baseline-source" href="{{.URL}}" target="_blank" rel="noopener noreferrer">Baseline source · line {{.Line}}</a>{{else}}<small class="muted">Source unavailable</small>{{end}}</td><td>{{if .CandidateObserved}}{{printf "%.6f" .CandidateCPUPerSecond}}{{else}}Not observed{{end}}<br>{{with .CandidateSource}}<a class="profile-source candidate-source" href="{{.URL}}" target="_blank" rel="noopener noreferrer">Candidate source · line {{.Line}}</a>{{else}}<small class="muted">Source unavailable</small>{{end}}</td><td>{{if .DeltaKnown}}{{printf "%+.6f" .DeltaCPUPerSecond}}{{else}}Unknown{{end}}</td></tr>{{end}}</tbody></table>{{else}}<p class="notice">{{.Reason}}</p>{{end}}{{end}}
+{{with .Data.Profile}}
+<section aria-label="Deployment source"><h2>Deployment source</h2>
+{{with .Source}}{{if .Available}}<p>Recorded source: <code>{{.Repository}}</code> at <a href="{{.CommitURL}}" target="_blank" rel="noopener noreferrer"><code>{{.CommitSHA}}</code></a>.</p>{{else}}<p class="notice">{{.Reason}}</p>{{end}}{{else}}<p class="notice">Source navigation is unavailable for this deployment.</p>{{end}}
+<p class="muted">Open a function's source or select a flamegraph frame to inspect its sampled line. Links use the recorded commit; local changes and generated files can differ. Unmapped paths and missing symbols have no source link. GitHub requires your repository access for private code.</p></section>
+<section aria-label="Collection coverage"><h2>Collection coverage</h2>
+{{with .Coverage}}{{if .Available}}
+<dl class="coverage"><div><dt>Recorded profiles</dt><dd>{{.ReceivedProfiles}}</dd></div><div><dt>Contributing collectors</dt><dd>{{.ContributingCollectors}}</dd></div><div><dt>Last received profile in this window</dt><dd>{{if .LastReceivedAt}}{{.LastReceivedAt.Format "2006-01-02T15:04:05Z07:00"}}{{else}}No recorded profiles{{end}}</dd></div><div><dt>Observed capture intervals</dt><dd>{{printf "%.3f" .CoveredSeconds}} of {{printf "%.3f" .WindowSeconds}} seconds</dd></div><div><dt>Time without recorded captures</dt><dd>{{printf "%.3f" .GapSeconds}} seconds</dd></div><div><dt>Recorded upload failures</dt><dd>At least {{.RecordedFailedUploads}}. Total upload loss is unknown.</dd></div></dl>
+{{else}}<p class="notice">Collection coverage is unavailable for this window. CPU samples may still be present.</p>{{end}}{{else}}<p class="notice">Collection coverage is unavailable for this window. CPU samples may still be present.</p>{{end}}
+<p class="muted">Overlapping collectors count once toward captured time. Gaps can include idle or parked time, uninstrumented processes, and lost uploads. Failure records are limited; losses before ingestion are unknown. Coverage does not measure the proportion of VM CPU instrumented, and sampling gaps can bias deployment comparisons.</p></section>
+{{if .Empty}}<p class="notice">No CPU samples in this deployment window. Enable profiling and redeploy, then capture an active workload. Missing samples do not mean zero CPU usage.</p>{{else}}
+<h2>Flamegraph</h2><p>Sampled CPU: {{printf "%.6f" .CPUSeconds}} seconds. Click a frame to focus its call path.</p><button type="button" id="reset">Reset zoom</button> <label>Search functions<input id="search" placeholder="Function name"></label><p id="frame-source" aria-live="polite">Select a frame to inspect its source.</p><svg id="flamegraph" role="group" aria-label="CPU flamegraph"></svg>
+<h2>Functions</h2><table><thead><tr><th>Function / source</th><th>Self CPU (s)</th><th>Total CPU (s)</th></tr></thead><tbody>{{range .Functions}}<tr><td><code>{{.Name}}</code><br><small>{{.File}}:{{.Line}}</small><br>{{with .Source}}<a class="profile-source function-source" href="{{.URL}}" target="_blank" rel="noopener noreferrer">Open source · line {{.Line}}</a>{{else}}<small class="muted">Source unavailable</small>{{end}}</td><td>{{printf "%.6f" .SelfCPUSeconds}}</td><td>{{printf "%.6f" .TotalCPUSeconds}}</td></tr>{{end}}</tbody></table>
+{{end}}{{end}}
+<p class="muted">Profiles cover instrumented application processes and sampled CPU time. They are separate from metered VM usage. Idle or parked instances have no collection activity. Source locations depend on runtime symbols and debug information.</p>
+<script nonce="{{.Nonce}}">
+const cpuChart=document.getElementById('cpu-chart'), profileForm=document.getElementById('profile-query');
+if(cpuChart && profileForm){
+ function updateProfileLinks(){for(const link of cpuChart.querySelectorAll('a[href]')){
+  const target=new URL(link.getAttribute('href'),window.location.origin);
+  target.searchParams.set('deployment_id',profileForm.elements.namedItem('deployment_id').value);
+  target.searchParams.set('runtime',profileForm.elements.namedItem('runtime').value.trim());
+  target.searchParams.set('route',profileForm.elements.namedItem('route').value.trim());
+  link.setAttribute('href',target.pathname+target.search);
+ }}
+ profileForm.addEventListener('input',updateProfileLinks);profileForm.addEventListener('change',updateProfileLinks);
+ updateProfileLinks();
+}
+const savedPath = {{with .Data.Investigations}}{{.SelectedPath}}{{else}}null{{end}};
+const saveForm=document.getElementById('investigation-save'),pathStatus=document.getElementById('investigation-path-status');
+function pathFrame(node,view){const line=view==='comparison'?(node.baseline_line||node.candidate_line||0):(node.line||0);return {name:node.name,file:node.file||'',line}}
+function setSavedPath(view,frames){if(saveForm)saveForm.elements.namedItem('selected_path').value=JSON.stringify({view,frames});if(pathStatus)pathStatus.textContent='Selected '+view+' call path: '+frames.map(frame=>frame.name).join(' → ')}
+function findSavedPath(root,view,selection=savedPath){
+ if(!selection||selection.view!==view)return null;
+ let current=root;const found=[];
+ for(const [index,frame] of selection.frames.entries()){
+  const matches=node=>{const value=pathFrame(node,view);return value.name===frame.name&&value.file===(frame.file||'')&&(view==='comparison'&&!['','[unknown]','(anonymous)'].includes(frame.name)||value.line===(frame.baseline_line||frame.candidate_line||frame.line||0))};
+  if(index===0){if(!matches(current))return null}else{current=(current.children||[]).find(matches);if(!current)return null}
+  found.push(pathFrame(current,view));
+ }return {node:current,path:found};
+}
+const profile = {{.Data.Profile}};
+const comparison = {{.Data.Compare}};
+let canaryFinding = {{with .Data.CanaryFinding}}{{.Evidence}}{{else}}null{{end}};
+try { const raw = new URLSearchParams(window.location.search).get('route_finding'); if(raw && raw.length <= 32768){ const finding=JSON.parse(raw); if(finding.kind==='call_path' && Array.isArray(finding.frames) && finding.frames.length<=257 && finding.frames.every(f=>typeof f.name==='string' && (!f.file || typeof f.file==='string')))canaryFinding=finding; } } catch {}
+const findingStatus=document.getElementById('canary-finding-status');
+function findingMatches(node){const frame=canaryFinding?.frames?.[0];if(canaryFinding?.kind!=='function'||!frame)return false;const value=pathFrame(node,'comparison');return value.name===frame.name&&value.file===(frame.file||'')&&(!['','[unknown]','(anonymous)'].includes(frame.name)||value.line===(frame.baseline_line||frame.candidate_line||frame.line||0))}
+if(savedPath&&pathStatus&&((savedPath.view==='comparison'&&!comparison?.flamegraph)||(savedPath.view==='candidate'&&(!profile||profile.empty)))){pathStatus.textContent='Saved call path cannot be reopened because profile data is unavailable. The saved selection is preserved.'}
+if(comparison && comparison.comparable && comparison.flamegraph){
+ const svg=document.getElementById('diff-flamegraph'),ns='http://www.w3.org/2000/svg',root=comparison.flamegraph;
+ let focus=root,focusPath=[pathFrame(root,'comparison')];
+ function rate(value){return typeof value==='number'?value.toFixed(6)+' CPU/s':'Not observed'}
+ function delta(value){return typeof value==='number'?(value>0?'+':'')+value.toFixed(6)+' CPU/s':'Unknown'}
+ function kind(node){if(typeof node.delta_cpu_per_second!=='number')return 'unknown';return node.delta_cpu_per_second>0?'increase':node.delta_cpu_per_second<0?'decrease':'unchanged'}
+ function showDetails(node,path){
+  const panel=document.getElementById('diff-frame-details');panel.replaceChildren();
+  const heading=document.createElement('p');heading.textContent=path.map(frame=>frame.name).join(' → ');panel.append(heading);
+  const values=document.createElement('dl');values.className='coverage';
+  for(const [label,value] of [['Baseline inclusive CPU/s',rate(node.baseline_cpu_per_second)],['Candidate inclusive CPU/s',rate(node.candidate_cpu_per_second)],['Delta CPU/s',delta(node.delta_cpu_per_second)]]){
+   const group=document.createElement('div'),term=document.createElement('dt'),detail=document.createElement('dd');term.textContent=label;detail.textContent=value;group.append(term,detail);values.append(group);
+  }panel.append(values);
+  for(const side of ['baseline','candidate']){const row=document.createElement('p'),source=node[side+'_source'];row.textContent=(side==='baseline'?'Baseline':'Candidate')+' source: ';
+   if(source){const link=document.createElement('a');link.className='diff-'+side+'-source';link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=source.path+':'+source.line;row.append(link)}
+   else{row.append(document.createTextNode(typeof node[side+'_cpu_per_second']==='number'?'Unavailable':'Not observed'))}panel.append(row);
+  }
+ }
+ function draw(){svg.replaceChildren();let height=24;const search=document.getElementById('diff-search').value.toLowerCase();
+  function frame(node,x,width,depth,path){
+   height=Math.max(height,(depth+1)*24);const group=document.createElementNS(ns,'g'),rect=document.createElementNS(ns,'rect'),title=document.createElementNS(ns,'title'),state=kind(node);
+   const colors={increase:'#dc2626',decrease:'#2563eb',unchanged:'#e2e8f0',unknown:'#64748b'};
+   rect.setAttribute('x',x);rect.setAttribute('y',depth*24);rect.setAttribute('width',width);rect.setAttribute('height',23);rect.setAttribute('fill',colors[state]);rect.setAttribute('data-change',state);rect.setAttribute('data-search-match',Boolean(findingMatches(node)||(search&&node.name.toLowerCase().includes(search))));
+   title.textContent=node.name+' — baseline '+rate(node.baseline_cpu_per_second)+', candidate '+rate(node.candidate_cpu_per_second)+', delta '+delta(node.delta_cpu_per_second);group.append(rect,title);
+   if(width>50){const text=document.createElementNS(ns,'text');text.setAttribute('x',x+4);text.setAttribute('y',depth*24+16);text.setAttribute('fill',state==='unchanged'?'#0f172a':'white');text.textContent=node.name.slice(0,Math.floor(width/7));group.append(text)}
+   group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label',title.textContent);
+   function select(){focus=node;focusPath=path;setSavedPath('comparison',path);showDetails(node,path);draw();svg.firstElementChild?.focus()}
+   group.addEventListener('click',select);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select()}});svg.append(group);
+   let offset=x;for(const child of node.children||[]){const w=node.width_cpu_per_second>0?width*child.width_cpu_per_second/node.width_cpu_per_second:0;if(w>0){frame(child,offset,w,depth+1,path.concat(pathFrame(child,'comparison')));offset+=w}}
+  }frame(focus,0,1100,0,focusPath);svg.setAttribute('viewBox','0 0 1100 '+height);
+ }
+ document.getElementById('diff-reset').addEventListener('click',()=>{focus=root;focusPath=[pathFrame(root,'comparison')];setSavedPath('comparison',focusPath);showDetails(root,focusPath);draw()});document.getElementById('diff-search').addEventListener('input',draw);
+ const restored=findSavedPath(root,'comparison');if(restored){focus=restored.node;focusPath=restored.path;if(pathStatus)pathStatus.textContent='Restored comparison call path: '+focusPath.map(frame=>frame.name).join(' → ')}else if(savedPath?.view==='comparison'&&pathStatus){pathStatus.textContent='Saved comparison call path is not observed in the current profiles. The saved selection is preserved.'}
+ if(canaryFinding?.kind==='call_path'){
+  const found=findSavedPath(root,'comparison',{view:'comparison',frames:canaryFinding.frames});
+  if(found){focus=found.node;focusPath=found.path;setSavedPath('comparison',focusPath);if(findingStatus)findingStatus.textContent='Located the recorded call path. Save it with your investigation notes.'}
+  else if(findingStatus)findingStatus.textContent='The recorded call path is not observed in the available profiles.';
+ }else if(canaryFinding?.kind==='function'){
+  const pending=[root];let count=0;while(pending.length){const node=pending.pop();if(findingMatches(node))count++;pending.push(...(node.children||[]))}
+  if(findingStatus)findingStatus.textContent=count?'Highlighted '+count+' matching function frame(s). Select a frame to save its caller path with your notes.':'The recorded function is not observed in the available profiles.';
+ }
+ showDetails(focus,focusPath);draw();
+}
+if (profile && !profile.empty) {
+ const svg=document.getElementById('flamegraph'),ns='http://www.w3.org/2000/svg';let focus=profile.flamegraph,focusPath=[pathFrame(profile.flamegraph,'candidate')];
+ function showSource(node){const panel=document.getElementById('frame-source');panel.replaceChildren();
+  if(node.source){const link=document.createElement('a');link.href=node.source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open '+node.name+' source · '+node.source.path+':'+node.source.line;panel.append(link)}
+  else{panel.textContent=node.name==='all'?'Select a frame to inspect its source.':'Source unavailable for '+node.name+'.'}
+ }
+ function draw(){svg.replaceChildren();let height=24;const search=document.getElementById('search').value.toLowerCase();
+  function frame(node,x,width,depth,path){height=Math.max(height,(depth+1)*24);const group=document.createElementNS(ns,'g'),rect=document.createElementNS(ns,'rect'),title=document.createElementNS(ns,'title');
+   rect.setAttribute('x',x);rect.setAttribute('y',depth*24);rect.setAttribute('width',width);rect.setAttribute('height',23);rect.setAttribute('fill',search&&node.name.toLowerCase().includes(search)?'#fbbf24':'hsl('+((depth*29+node.name.length*7)%60)+',85%,72%)');
+   title.textContent=node.name+' — '+node.cpu_seconds.toFixed(6)+' CPU s';group.append(rect,title);
+   if(width>50){const text=document.createElementNS(ns,'text');text.setAttribute('x',x+4);text.setAttribute('y',depth*24+16);text.textContent=node.name.slice(0,Math.floor(width/7));group.append(text)}
+   group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label','Focus '+node.name+' and inspect source');
+   function select(){focus=node;focusPath=path;setSavedPath('candidate',path);showSource(node);draw()}
+   group.addEventListener('click',select);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select()}});svg.append(group);let offset=x;
+   for(const child of node.children||[]){const w=node.cpu_seconds>0?width*child.cpu_seconds/node.cpu_seconds:0;if(w>0){frame(child,offset,w,depth+1,path.concat(pathFrame(child,'candidate')));offset+=w}}
+  }frame(focus,0,1100,0,focusPath);svg.setAttribute('viewBox','0 0 1100 '+height);
+ }document.getElementById('reset').addEventListener('click',()=>{focus=profile.flamegraph;focusPath=[pathFrame(focus,'candidate')];setSavedPath('candidate',focusPath);showSource(focus);draw()});document.getElementById('search').addEventListener('input',draw);const restored=findSavedPath(profile.flamegraph,'candidate');if(restored){focus=restored.node;focusPath=restored.path;showSource(focus);if(pathStatus)pathStatus.textContent='Restored candidate call path: '+focusPath.map(frame=>frame.name).join(' → ')}else if(savedPath?.view==='candidate'&&pathStatus){pathStatus.textContent='Saved candidate call path is not observed in the current profiles. The saved selection is preserved.'}draw();
+}
+</script></body></html>

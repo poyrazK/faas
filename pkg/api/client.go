@@ -22,8 +22,10 @@
 //     header (UUIDv4) on the way out when the caller didn't supply one.
 //     The server's replay middleware (apid/server.go::idempotent) keeps
 //     responses for 24h; SDK callers who want deterministic retry
-//     semantics should pass their own key. DeleteAccount accepts an
-//     explicit key argument for this reason.
+//     semantics should pass their own key. Live realtime channel publishes
+//     are high volume and opt in with ContextWithIdempotencyKey or the
+//     explicit PublishManagedRealtimeChannelWithIdempotencyKey method.
+//     DeleteAccount accepts an explicit key argument for this reason.
 //
 //   - Errors — every 4xx/5xx with a Problem-shaped body returns an
 //     *APIError wrapping the canonical Problem. Bodies that fail JSON
@@ -141,7 +143,7 @@ func NewClient(baseURL, token string) *Client {
 		baseURL: baseURL,
 		token:   token,
 		http:    &http.Client{Timeout: DefaultClientTimeout, Transport: newClientTransport()},
-		cache:   NewCompletionCache(),
+		cache:   NewCompletionCacheForCredential(baseURL, token),
 	}
 }
 
@@ -227,7 +229,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
-	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+	cli := c.http
+	if strings.HasPrefix(path, "/v1/runtime/job-operations/") || headers.Get(OperationJobCapabilityHeader) != "" {
+		clone := *cli
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		cli = &clone
+	}
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, "", headers)
 }
 
 // doWithIdempotencyKey is the same request path as do, with an optional
@@ -246,6 +254,14 @@ func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Cl
 }
 
 func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header) error {
+	return c.doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx, cli, method, path, body, out, idempotencyKey, headers, true)
+}
+
+func (c *Client) doWithoutIdempotencyKey(ctx context.Context, method, path string, body, out any) error {
+	return c.doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx, c.http, method, path, body, out, "", nil, false)
+}
+
+func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header, addDefaultIdempotencyKey bool) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -288,11 +304,11 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cl
 	// so a retried deploy/park/wake/rollback/etc. never double-charges
 	// or double-creates. We never override an explicit key the caller
 	// already set.
-	if method != http.MethodGet && method != http.MethodHead {
-		if idempotencyKey == "" {
+	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
 			idempotencyKey = IdempotencyKeyFromContext(ctx)
 		}
-		if idempotencyKey == "" {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
 			idempotencyKey = newUUIDv4()
 		}
 		req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -886,6 +902,41 @@ func (c *Client) PutDevSessionsProject(ctx context.Context, project string, req 
 	return out, c.do(ctx, "PUT", "/v1/dev/sessions/"+project, req, &out)
 }
 
+// GetDevSession reads a developer environment without renewing its lease.
+// Pass an empty workspaceID only for a legacy account+project session.
+func (c *Client) GetDevSession(ctx context.Context, project, workspaceID string) (DevSessionResponse, error) {
+	return c.GetDevSessionsProject(ctx, project, workspaceID)
+}
+
+// GetDevPatchStatus reports whether a published developer live patch reached
+// the running environment (GET /v1/dev/sessions/{project}/patches/{generation}).
+func (c *Client) GetDevPatchStatus(ctx context.Context, project, workspaceID string, generation int64) (DevPatchStatusResponse, error) {
+	return c.GetDevSessionsProjectPatchesGeneration(ctx, project, generation, workspaceID)
+}
+
+// GetDevSessionsProjectPatchesGeneration is the path-shaped SDK method for
+// GET /v1/dev/sessions/{project}/patches/{generation}.
+func (c *Client) GetDevSessionsProjectPatchesGeneration(ctx context.Context, project string, generation int64, workspaceID ...string) (DevPatchStatusResponse, error) {
+	path := "/v1/dev/sessions/" + project + "/patches/" + strconv.FormatInt(generation, 10)
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		path += "?" + url.Values{"workspace_id": {workspaceID[0]}}.Encode()
+	}
+	var out DevPatchStatusResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetDevSessionsProject is the path-shaped SDK method for
+// GET /v1/dev/sessions/{project}.
+func (c *Client) GetDevSessionsProject(ctx context.Context, project string, workspaceID ...string) (DevSessionResponse, error) {
+	path := "/v1/dev/sessions/" + project
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		query := url.Values{"workspace_id": {workspaceID[0]}}
+		path += "?" + query.Encode()
+	}
+	var out DevSessionResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // DestroyDevSession tears down the developer preview for a project. Passing a
 // workspace ID targets an isolated developer workspace; omission retains the
 // legacy account+project behavior.
@@ -910,10 +961,22 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
 }
 
-// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+// InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
 func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
 	var out InjectScenarioTestChaosResponse
 	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
+// ClearScenarioTestChaos removes the active fault plan from a live scenario run.
+func (c *Client) ClearScenarioTestChaos(ctx context.Context, runID string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+}
+
+// ScenarioTestChaosMatches returns bounded per-rule match counts for the
+// current or most recently cleared plan in one isolated run.
+func (c *Client) ScenarioTestChaosMatches(ctx context.Context, runID string) (ScenarioTestChaosMatchesResponse, error) {
+	var out ScenarioTestChaosMatchesResponse
+	return out, c.do(ctx, "GET", "/v1/dev/test-runs/"+runID+"/chaos/matches", nil, &out)
 }
 
 func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
@@ -950,6 +1013,13 @@ func (c *Client) GetDevSyncHistory(ctx context.Context, project, workspaceID str
 func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deployments", req, &out)
+}
+
+// PublishAppImage deploys a published digest from the configured project image
+// repository. Repeated app/scope/digest deliveries return the original row.
+func (c *Client) PublishAppImage(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/image-published", req, &out)
 }
 
 // RetryDeploymentFromStage (ADR-117 §Production-ready follow-on,
@@ -2246,6 +2316,7 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 
 // PatchDeploymentTrafficIfServing updates traffic only if the named live
 // sibling still owns all production traffic at the transaction boundary.
+// An empty servingID requires no live sibling with positive traffic.
 func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
@@ -2291,17 +2362,25 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 
 // Park and Wake toggle the app between cold-parked and live.
 func (c *Client) Park(ctx context.Context, slug string) error {
-	return c.park(ctx, slug, "/v1/apps/"+slug+"/park")
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park", nil)
 }
 
 // ParkPreviewFresh drains an isolated preview and invalidates its snapshots
 // after the drain. The next customer request must take the artifact boot path.
 // The server rejects production apps before changing their state.
 func (c *Client) ParkPreviewFresh(ctx context.Context, slug string) error {
-	return c.park(ctx, slug, "/v1/apps/"+slug+"/park?fresh=true")
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park?fresh=true", nil)
 }
 
-func (c *Client) park(ctx context.Context, slug, path string) error {
+// ParkIfDeployment refuses to park a newer deployment, including on drain retries.
+func (c *Client) ParkIfDeployment(ctx context.Context, slug, deploymentID string) error {
+	if deploymentID == "" {
+		return errors.New("expected deployment ID is required")
+	}
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park/conditional", map[string]string{"expected_deployment_id": deploymentID})
+}
+
+func (c *Client) park(ctx context.Context, slug, path string, body any) error {
 	// The first POST commits evicted_cold before schedd snapshots the live
 	// instances. A multi-revision app can need more than the API's five-second
 	// drain wait; the resulting retryable 503 does not mean the park failed.
@@ -2311,7 +2390,7 @@ func (c *Client) park(ctx context.Context, slug, path string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, maxDrainWait)
 	defer cancel()
 	for {
-		err := c.do(waitCtx, "POST", path, nil, nil)
+		err := c.do(waitCtx, "POST", path, body, nil)
 		if err == nil {
 			return nil
 		}
@@ -2716,8 +2795,24 @@ func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, r
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
 // garbage input. For a wider, cross-source view use ListInvocations.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
+	return c.ListJobRunsPage(ctx, name, 0, 0)
+}
+
+// ListJobRunsPage requests one offset page; zero limit uses the server default.
+func (c *Client) ListJobRunsPage(ctx context.Context, name string, limit, offset int) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs"
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobScheduleOccurrences returns the durable decision history for each
@@ -2802,14 +2897,45 @@ func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (Jo
 // is intentionally OMITTED from the wire response (internal
 // dispatch primitive).
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
+	return c.ListJobRunTasksPage(ctx, name, runID, 0, 0)
+}
+
+// ListJobRunTasksPage reads one offset page of task rows.
+func (c *Client) ListJobRunTasksPage(ctx context.Context, name, runID string, limit, offset int) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobTaskAttempts returns the retained terminal outcomes for a task.
 func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	return c.ListJobTaskAttemptsPage(ctx, name, runID, taskIndex, 0, 0)
+}
+
+// ListJobTaskAttemptsPage reads one offset page of retained task attempts.
+func (c *Client) ListJobTaskAttemptsPage(ctx context.Context, name, runID string, taskIndex, limit, offset int) (ListJobTaskAttemptsResponse, error) {
 	var out ListJobTaskAttemptsResponse
 	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/attempts"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -3221,6 +3347,87 @@ func (c *Client) UpdateEdgeRule(ctx context.Context, id string, req UpdateEdgeRu
 // DeleteEdgeRule removes the rule and returns nil on 204.
 func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/edge-rules/"+id, nil, nil)
+}
+
+// GetEdgeRuleStats returns per-rule match counts over window (1h, 24h or 7d;
+// empty means 24h) (ADR-960).
+func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
+	path := "/v1/apps/" + slug + "/edge-rules/stats"
+	if window != "" {
+		path += "?window=" + url.QueryEscape(window)
+	}
+	var out EdgeRuleStatsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
+// first (ADR-964). Pass the response's NextCursor to continue.
+func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
+	v := url.Values{}
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/events"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeRuleEventsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListEdgeRuleLists returns the account's reusable edge-rule lists, without
+// items (ADR-963).
+func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
+	var out ListEdgeRuleListsResponse
+	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
+}
+
+// GetEdgeRuleList returns one list with its items (ADR-963).
+func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
+}
+
+// CreateEdgeRuleList creates a list (ADR-963).
+func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
+}
+
+// UpdateEdgeRuleList edits a list (ADR-963).
+func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+	var out EdgeRuleListResponse
+	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
+}
+
+// DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
+func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
+	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
+}
+
+// ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
+// newest first, without rule bodies (ADR-961).
+func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {
+	var out []EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions", nil, &out)
+}
+
+// GetEdgeRuleSetVersion returns one recorded version with its rules.
+func (c *Client) GetEdgeRuleSetVersion(ctx context.Context, slug string, version int) (EdgeRuleSetVersionResponse, error) {
+	var out EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions/"+strconv.Itoa(version), nil, &out)
+}
+
+// RollbackEdgeRules restores the app's edge rules to a recorded version and
+// returns the rules now in force. The restore is recorded as a new version.
+func (c *Client) RollbackEdgeRules(ctx context.Context, slug string, version int) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/edge-rules/rollback", RollbackEdgeRulesRequest{Version: version}, &out)
 }
 
 // CreateCORSEdgeRuleOpts is the typed CORS convenience shape used by
@@ -4482,6 +4689,19 @@ func (c *Client) GetAppMetrics(ctx context.Context, slug, rng string) (AppMetric
 func (c *Client) GetAppPreAuthObservations(ctx context.Context, slug, rng string) (PreAuthObservationsResponse, error) {
 	var out PreAuthObservationsResponse
 	path := "/v1/apps/" + slug + "/pre-auth-observations"
+	if rng != "" {
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppEdgeProtection summarizes edge rejections for slug over rng. An empty
+// range uses the server's one-hour default.
+func (c *Client) GetAppEdgeProtection(ctx context.Context, slug, rng string) (EdgeProtectionResponse, error) {
+	var out EdgeProtectionResponse
+	path := "/v1/apps/" + slug + "/edge-protection"
 	if rng != "" {
 		q := url.Values{}
 		q.Set("range", rng)
@@ -5982,6 +6202,24 @@ func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpoi
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/send", req, nil)
 }
 
+// SendManagedRealtimePrincipal sends a live-only message to active connections
+// for one verified OIDC principal on the endpoint.
+func (c *Client) SendManagedRealtimePrincipal(ctx context.Context, slug, endpointID string, req ManagedRealtimePrincipalMessageRequest) (ManagedRealtimePrincipalSendResponse, error) {
+	var out ManagedRealtimePrincipalSendResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals:send"
+	err := c.do(ctx, "POST", path, req, &out)
+	return out, err
+}
+
+// GetManagedRealtimePrincipalReceipt returns the per-connection queue and
+// acknowledgement state for a receipt-enabled principal message.
+func (c *Client) GetManagedRealtimePrincipalReceipt(ctx context.Context, slug, endpointID, messageID string) (ManagedRealtimePrincipalReceiptResponse, error) {
+	var out ManagedRealtimePrincipalReceiptResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals/messages/" + url.PathEscape(messageID) + "/receipt"
+	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
 // CloseManagedRealtimeConnection asks the realtime owner to close one live
 // connection. A missing or already-closed connection returns an API 410.
 func (c *Client) CloseManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeCloseRequest) error {
@@ -6000,11 +6238,45 @@ func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug,
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
 }
 
-// PublishManagedRealtimeChannel publishes a message to subscribed live
-// connections on an endpoint channel.
+// PublishManagedRealtimeChannel publishes a live-only message to subscribed
+// raw-frame connections on an endpoint channel. Supply a stable key with
+// ContextWithIdempotencyKey or PublishManagedRealtimeChannelWithIdempotencyKey
+// when retries must replay the original queue outcome. Unkeyed publishes avoid
+// creating one durable idempotency receipt per high-volume event.
 func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
+	return c.PublishManagedRealtimeChannelWithIdempotencyKey(ctx, slug, endpointID, channel, req, IdempotencyKeyFromContext(ctx))
+}
+
+// PublishManagedRealtimeChannelWithIdempotencyKey publishes a live-only
+// message using a caller-stable key. Reuse the key only for the same decoded
+// payload and binary flag; the server replays the original queue outcome for
+// 24 hours.
+func (c *Client) PublishManagedRealtimeChannelWithIdempotencyKey(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest, idempotencyKey string) (ManagedRealtimePublishResponse, error) {
+	return c.PublishManagedRealtimeChannelWithDelivery(ctx, slug, endpointID, channel, req, ManagedRealtimeDeliveryLive, idempotencyKey)
+}
+
+// PublishManagedRealtimeChannelWithDelivery publishes a live-only message or
+// commits a retained message before fan-out. Retained delivery requires a
+// stable Idempotency-Key because it assigns a durable channel sequence.
+func (c *Client) PublishManagedRealtimeChannelWithDelivery(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest, delivery ManagedRealtimeDelivery, idempotencyKey string) (ManagedRealtimePublishResponse, error) {
 	var out ManagedRealtimePublishResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+	path := "/v1/apps/" + slug + "/realtime/endpoints/" + endpointID + "/channels/" + channel + "/publish"
+	switch delivery {
+	case "", ManagedRealtimeDeliveryLive:
+	case ManagedRealtimeDeliveryRetained:
+		query := url.Values{"delivery": {string(ManagedRealtimeDeliveryRetained)}}
+		path += "?" + query.Encode()
+	default:
+		return out, fmt.Errorf("unsupported managed realtime delivery mode %q", delivery)
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if delivery == ManagedRealtimeDeliveryRetained && idempotencyKey == "" {
+		return out, fmt.Errorf("retained realtime publishing requires an Idempotency-Key")
+	}
+	if idempotencyKey == "" {
+		return out, c.doWithoutIdempotencyKey(ctx, http.MethodPost, path, req, &out)
+	}
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
 }
 
 // AppendManagedRealtimeRetainedMessage commits a message to ordered channel
@@ -6346,7 +6618,45 @@ func (c *Client) ClearObsoleteDeployments(ctx context.Context, appSlug string, o
 // on errors.Is(err, api.ErrNotFound).
 func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployment string) (OpenAPIDocResponse, error) {
 	var out OpenAPIDocResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, &out)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/apps/"+url.PathEscape(slug)+"/deployments/"+url.PathEscape(deployment)+"/openapi", nil)
+	if err != nil {
+		return out, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	var raw json.RawMessage
+	err = c.doReqWithSuccess(c.http, req, &raw, func(resp *http.Response) bool {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return false
+		}
+		out.DeploymentID = resp.Header.Get("X-OpenAPI-Doc-Deployment-ID")
+		out.AppID = resp.Header.Get("X-OpenAPI-Doc-App-ID")
+		out.Source = resp.Header.Get("X-OpenAPI-Doc-Source")
+		out.DocSHA256 = resp.Header.Get("X-OpenAPI-Doc-SHA256")
+		out.CapturedAt = resp.Header.Get("X-OpenAPI-Doc-Captured-At")
+		out.UpdatedAt = resp.Header.Get("X-OpenAPI-Doc-Updated-At")
+		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-OpenAPI-Doc-Byte-Size"))
+		out.Truncated = resp.Header.Get("X-OpenAPI-Doc-Truncated") == "1"
+		return true
+	})
+	if err != nil {
+		return out, err
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		return out, err
+	}
+	if _, rawDocument := document["openapi"]; rawDocument {
+		// GET serves the captured OpenAPI body unchanged. Identity and digest
+		// come from server metadata, never inferred from requested selectors.
+		out.Doc = document
+		return out, nil
+	}
+	// Accept the historical wrapped response used by alternate API versions.
+	// Callers still reject an incomplete identity or capture source.
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }
 
 // GetAppsDeploymentRoutePolicySnapshot returns the gateway edge-rule policy
@@ -7066,6 +7376,13 @@ func (c *Client) SendPlatformTenantSelfWorkflowEvent(ctx context.Context, runID,
 
 // PublishEvent durably accepts one tenant-scoped internal event envelope.
 // Matching and delivery are asynchronous consumers of the accepted event.
+// PublishEventBatch returns one result per input; callers inspect each status.
+func (c *Client) PublishEventBatch(ctx context.Context, req PublishEventBatchRequest) (PublishEventBatchResponse, error) {
+	var resp PublishEventBatchResponse
+	err := c.do(ctx, "POST", "/v1/events:publish-batch", req, &resp)
+	return resp, err
+}
+
 func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {
 	var resp PublishEventResponse
 	err := c.do(ctx, "POST", "/v1/events:publish", req, &resp)
@@ -7286,5 +7603,44 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
 	var out EventStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}
+
+// ReadManagedRealtimeInbox inspects retained principal messages and, optionally,
+// a device checkpoint. A negative after uses the checkpoint (or zero).
+func (c *Client) ReadManagedRealtimeInbox(ctx context.Context, slug, endpointID, principal, consumer string, after int64, limit int) (ManagedRealtimeInboxResponse, error) {
+	var out ManagedRealtimeInboxResponse
+	query := url.Values{"principal": {principal}}
+	if consumer != "" {
+		query.Set("consumer", consumer)
+	}
+	if after >= 0 {
+		query.Set("after", fmt.Sprint(after))
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals/inbox?" + query.Encode()
+	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
+// GetAppHealth reads the default-scope HTTP health evidence without waking the app.
+func (c *Client) GetAppHealth(ctx context.Context, slug string) (AppHealthResponse, error) {
+	var out AppHealthResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health", nil, &out)
+	return out, err
+}
+
+func (c *Client) ListAppHealthHistory(ctx context.Context, slug string, limit int, before string) (AppHealthHistoryPage, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	if before != "" {
+		query.Set("before", before)
+	}
+	var out AppHealthHistoryPage
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health/history?"+query.Encode(), nil, &out)
 	return out, err
 }

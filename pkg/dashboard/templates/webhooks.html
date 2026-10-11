@@ -102,7 +102,7 @@
               · retry policy <code>{{.RetryPolicy}}</code>
               · secret <code>***</code>
             </p>
-            <p class="muted">Events: {{if .EventFilter}}<code>{{range .EventFilter}}{{.}} {{end}}</code>{{else}}all events{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
+            <p class="muted">Events: {{if .EventFilter}}<code>{{range .EventFilter}}{{.}} {{end}}</code>{{else}}standard platform events{{end}} · created {{.CreatedAt}} · updated {{.UpdatedAt}}</p>
             {{with .Health}}
               <p role="status">Queue: <strong>{{.PendingCount}} pending</strong> · {{.InFlightCount}} in flight · {{.DeadCount}} dead
                 {{if eq .ReceiverState "cooling_down"}}· receiver cooldown until {{.ReceiverCooldownUntil}}{{else if eq .ReceiverState "probing"}}· receiver recovery probe in flight{{else if eq .ReceiverState "awaiting_probe"}}· receiver waiting for recovery probe{{else}}· receiver ready{{end}}
@@ -154,8 +154,9 @@
             <select name="enabled"><option value="true" selected>enabled</option><option value="false">disabled</option></select>
           </label>
           <fieldset>
-            <legend>Events (leave all unchecked for all events)</legend>
+            <legend>Events (leave all unchecked for standard platform events)</legend>
             <div class="event-list">{{range .Data.Events}}<label><input type="checkbox" name="event_filter" value="{{.}}"> {{.}}</label>{{end}}</div>
+            <p class="muted">Select app.health.changed explicitly for sampled health changes. Changes within five minutes are combined; returning to the last announced status cancels the pending notification. First observations and evidence gaps stay quiet.</p>
           </fieldset>
           <p><button type="submit">Create webhook</button></p>
         </form>

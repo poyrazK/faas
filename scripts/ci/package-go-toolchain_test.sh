@@ -7,7 +7,7 @@ trap 'rm -rf "$test_root"' EXIT
 
 # Match the host-specific layout used by actions/setup-go. The archive must
 # not leak the final "x64" directory into the compute-node path.
-go_root="$test_root/hostedtoolcache/go/1.25.13/x64"
+go_root="$test_root/hostedtoolcache/go/1.26.9/x64"
 mkdir -p "$go_root/bin" "$go_root/pkg/tool/linux_amd64"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$go_root/bin/go"
 chmod 0755 "$go_root/bin/go"

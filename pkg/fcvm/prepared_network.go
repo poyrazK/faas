@@ -23,6 +23,7 @@ const (
 	maxPreparedNetworks    = api.MaxPreparedNetworkCacheSize
 	preparedNetworkTTL     = api.PreparedNetworkCacheTTLSeconds * time.Second
 	preparedNetworkTimeout = api.PreparedNetworkOperationTimeoutSeconds * time.Second
+	preparedNetworkRefill  = api.PreparedNetworkRefillDelayMillis * time.Millisecond
 )
 
 type preparedNetworkPolicy struct {
@@ -60,6 +61,8 @@ type preparedNetworkPool struct {
 	ready    []preparedNetworkEntry
 	retired  []preparedNetworkEntry // failed teardown; retain the slot until removal succeeds
 	closed   bool
+	// refillDelay settles a wake-triggered refill; zero refills at once.
+	refillDelay time.Duration
 	// Injected only by tests; production uses the native namespace binding.
 	move    func(string, string) error
 	removed func(netns.Config) bool
@@ -90,7 +93,7 @@ func (m *Manager) EnablePreparedNetworks(ctx context.Context, capacity int) erro
 		return pinErr
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	p := &preparedNetworkPool{m: m, capacity: capacity, ctx: ctx, cancel: cancel,
+	p := &preparedNetworkPool{m: m, capacity: capacity, ctx: ctx, cancel: cancel, refillDelay: preparedNetworkRefill,
 		done: make(chan struct{}), notify: make(chan struct{}, 1), move: movePreparedNetns, removed: preparedNetworkRemoved}
 	m.preparedNetworks = p
 	go p.run() //nolint:contextcheck // The worker owns the daemon context; teardown must outlive its cancellation.
@@ -222,6 +225,18 @@ func (p *preparedNetworkPool) run() {
 			return
 		case <-ticker.C:
 		case <-p.notify:
+			// observe fires as a wake returns, while schedd publishes and
+			// the gateway proxies the first byte. Let that tail finish
+			// first; wakes arriving meanwhile coalesce into one refill.
+			if p.refillDelay > 0 {
+				settle := time.NewTimer(p.refillDelay)
+				select {
+				case <-p.ctx.Done():
+					settle.Stop()
+					return
+				case <-settle.C:
+				}
+			}
 		}
 		p.fill()
 	}

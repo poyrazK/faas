@@ -973,6 +973,36 @@ type AppEdgeRulesData struct {
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
+	// Protection summarizes what the edge rejected over the last hour.
+	Protection api.EdgeProtectionResponse
+	// Events is the ADR-964 security-events section.
+	Events EdgeRuleEventsPageData
+}
+
+// EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
+// Filter values echo the request; NextURL continues the listing.
+type EdgeRuleEventsPageData struct {
+	Rule         string
+	Outcome      string
+	Since        string
+	SinceLabel   string
+	Events       []EdgeRuleEventPageItem
+	NextURL      string
+	ErrorMessage string
+}
+
+// EdgeRuleEventPageItem is one sampled rule match.
+type EdgeRuleEventPageItem struct {
+	OccurredAt string
+	RuleID     string
+	RuleLabel  string
+	Outcome    string
+	Method     string
+	HostPath   string
+	ClientIP   string
+	Country    string
+	UserAgent  string
+	RequestID  string
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only
@@ -1007,6 +1037,11 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
+	// ADR-960/964: name, mode and 24 h hit counts.
+	Name       string
+	Mode       string
+	Matched24h int64
+	Logged24h  int64
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's
@@ -1270,10 +1305,141 @@ type CronRunRow struct {
 	Outcome    string // closed vocab matching api.CronRunOutcome
 }
 
+// AppRestartProgressData renders the status of one accepted fresh restart.
+type AppRestartProgressData struct {
+	App            AppListItem
+	WakeID         string
+	Status         *api.RuntimeConfigRestartStatusResponse
+	Unavailable    string
+	RefreshSeconds int
+}
+
+// AppCostsView is the preformatted, app-scoped cost card shown on the app
+// detail page. The card contains attributed retained usage only; account
+// invoices and application forecasts are not part of this view.
+type AppCostsView struct {
+	Month                 string
+	SelectedMonth         string
+	MaxMonth              string
+	SelectionNotice       string
+	KnownUsage            string
+	AsOf                  string
+	Unavailable           string
+	Meters                []AppCostMeterView
+	MissingBillComponents []string
+	Comparison            *AppCostComparisonView
+	ComparisonUnavailable string
+	ComparisonCoverage    *AppCostComparisonCoverageView
+}
+
+type AppCostComparisonView struct {
+	SelectedPeriod string
+	PreviousPeriod string
+	SelectedTotal  string
+	PreviousTotal  string
+	Difference     string
+	Meters         []AppCostComparisonMeterView
+}
+
+type AppCostComparisonMeterView struct {
+	Meter        string
+	SelectedCost string
+	PreviousCost string
+	Difference   string
+}
+
+type AppCostComparisonCoverageView struct {
+	SelectedPeriod string
+	PreviousPeriod string
+	Meters         []AppCostComparisonCoverageMeterView
+}
+
+type AppCostComparisonCoverageMeterView struct {
+	Meter    string
+	Selected string
+	Previous string
+}
+
+type AppCostTrendData struct {
+	Months      []AppCostTrendMonthView
+	Unavailable string
+}
+
+type AppCostTrendMonthView struct {
+	Month           string
+	MonthURL        string
+	ComputeCost     string
+	EgressCost      string
+	TotalCost       string
+	CoverageStatus  string
+	CoverageDetails string
+	Unavailable     string
+	ComputeBarWidth int
+	EgressBarWidth  int
+	ComputeNegative bool
+	EgressNegative  bool
+	Complete        bool
+	Selected        bool
+	Current         bool
+}
+
+type AppCostMeterView struct {
+	Meter    string
+	Quantity string
+	NetCost  string
+	Coverage string
+	Drivers  []AppCostDriverView
+}
+
+type AppCostDriverView struct {
+	Name     string
+	Quantity string
+	NetCost  string
+}
+
+// AppCostsOverviewData is the account-wide retained cost ranking for a UTC
+// month. Costs remain attributed to stable application IDs; source coverage is
+// account-wide and is repeated on each row for clear spreadsheet-like reading.
+type AppCostsOverviewData struct {
+	Month                 string
+	SelectedMonth         string
+	MaxMonth              string
+	Sort                  string
+	AsOf                  string
+	KnownUsageTotal       string
+	AppAttributedTotal    string
+	SelectionNotice       string
+	Unavailable           string
+	MissingBillComponents []string
+	Apps                  []AppCostOverviewRow
+}
+
+type AppCostOverviewRow struct {
+	Slug            string
+	URL             string
+	Lifecycle       string
+	ComputeCost     string
+	EgressCost      string
+	TotalCost       string
+	CoverageStatus  string
+	CoverageClass   string
+	CoverageDetails string
+}
+
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
-	App      AppListItem
-	Manifest ManifestView
+	ProfilingAvailable bool
+	App                AppListItem
+	Manifest           ManifestView
+	AppCosts           *AppCostsView
+	// RefreshQuery preserves the selected app-detail filters when an SSE
+	// event refreshes the page content.
+	RefreshQuery     string
+	AnalyticsGroupBy string
+	AnalyticsRoute   string
+	AnalyticsMethod  string
+	// Operational is the same read-only summary returned to gregale inspect.
+	Operational *api.AppOperationalSummary
 	// GitHubConnection is the account-scoped GitHub App binding for this
 	// app. A nil value means the status read failed; the dashboard keeps
 	// the rest of the app page usable and renders a degraded notice.
@@ -1508,8 +1674,15 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
-	App        AppListItem
-	Deployment DeploymentItem
+	ProfileCheck                *api.ProfileDeploymentCheck
+	CanaryProfileSignal         *api.CanaryProfileSignal
+	CanaryProfileTraffic        *ProfileTrafficView
+	CanaryProfileHistoryEnabled bool
+	CanaryProfileHistory        []ProfileCanaryHistoryEntry
+	CanaryProfileHistoryMoreURL string
+	CanaryProfileHistoryError   string
+	App                         AppListItem
+	Deployment                  DeploymentItem
 	// BuildPlan is the persisted zero-config profile selected for this
 	// deployment. Keeping it separate from DeploymentItem lets list rows
 	// stay compact while failed-deployment detail pages explain the
@@ -1588,23 +1761,40 @@ type BuildPlanView struct {
 // what was checked, and what artifact went live?" without exposing storage
 // internals such as the rootfs key.
 type HostingReceiptView struct {
-	AppURL          string
-	SourceKind      string
-	SourceURL       string
-	CommitSHA       string
-	ImageDigest     string
-	ProfileVersion  string
-	Framework       string
-	FrameworkVer    string
-	Port            int
-	HealthPath      string
-	SmokeStatus     string
-	SmokePath       string
-	SmokeStatusCode int
-	SmokeLatencyMS  int64
-	SmokeVerifiedAt string
-	SmokeErrorCode  string
-	SmokeError      string
+	AppURL                   string
+	SourceKind               string
+	SourceURL                string
+	CommitSHA                string
+	ImageDigest              string
+	ProfileVersion           string
+	Framework                string
+	FrameworkVer             string
+	Port                     int
+	HealthPath               string
+	SmokeStatus              string
+	SmokePath                string
+	SmokeStatusCode          int
+	SmokeLatencyMS           int64
+	SmokeVerifiedAt          string
+	SmokeErrorCode           string
+	SmokeError               string
+	RouteCheckSetStatus      string
+	RouteCheckDocumentSHA256 string
+	RouteChecks              []HostingRouteCheckView
+}
+
+// HostingRouteCheckView is the safe deployment-page projection of one
+// OpenAPI-selected candidate route check. It intentionally omits transport
+// request IDs and other receipt fields the page does not need.
+type HostingRouteCheckView struct {
+	Method     string
+	Path       string
+	Status     string
+	StatusCode int
+	LatencyMS  int64
+	VerifiedAt string
+	ErrorCode  string
+	Error      string
 }
 
 // DeploymentAuditRow is the dashboard-local projection of one
@@ -2173,6 +2363,7 @@ type DiscoveredRouteItem struct {
 // a CSRF-protected replay action and a bounded status projection for the
 // invocation it just queued.
 type DebugPageData struct {
+	ProfilingAvailable  bool
 	AppSlug             string
 	Plan                string
 	PlanAllowed         bool

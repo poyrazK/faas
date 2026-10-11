@@ -18,10 +18,20 @@ import (
 
 func cmdRealtime(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale realtime <list|get|create|update|delete|connections|drain|drain-status|send|close|subscribe|unsubscribe|publish|auth>", "realtime")
+		PrintUsage(os.Stderr, "usage: gregale realtime <list|get|create|update|delete|connections|drain|drain-status|send|send-principal|edit-message|delete-message|receipt|inbox|push|read-progress|mark-read|close|subscribe|unsubscribe|publish|auth>", "realtime")
 		return 1
 	}
 	switch args[0] {
+	case "push":
+		return cmdRealtimePush(args[1:])
+	case "read-progress":
+		return cmdRealtimeReadProgress(args[1:], false)
+	case "mark-read":
+		return cmdRealtimeReadProgress(args[1:], true)
+	case "edit-message":
+		return cmdRealtimeMutate(args[1:], false)
+	case "delete-message":
+		return cmdRealtimeMutate(args[1:], true)
 	case "list":
 		return cmdRealtimeList(args[1:])
 	case "get":
@@ -40,6 +50,12 @@ func cmdRealtime(args []string) int {
 		return cmdRealtimeDrainStatus(args[1:])
 	case "send":
 		return cmdRealtimeSend(args[1:])
+	case "send-principal":
+		return cmdRealtimeSendPrincipal(args[1:])
+	case "inbox":
+		return cmdRealtimeInbox(args[1:])
+	case "receipt":
+		return cmdRealtimePrincipalReceipt(args[1:])
 	case "close":
 		return cmdRealtimeClose(args[1:])
 	case "subscribe":

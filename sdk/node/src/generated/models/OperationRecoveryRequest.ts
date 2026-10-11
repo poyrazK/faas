@@ -6,6 +6,10 @@
  * Explicit recovery decision with retained evidence and idempotent recovery identity.
  */
 export type OperationRecoveryRequest = {
+  /**
+   * Optional durable recovery inspection fence, rechecked before a new decision and ignored for an identical accepted receipt replay.
+   */
+  expected_inspection_revision?: string;
   recovery_id: string;
   expected_generation: number;
   resolution: 'succeeded' | 'failed' | 'cancelled' | 'safe_to_retry';

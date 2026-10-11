@@ -7,7 +7,7 @@
  */
 export type PlatformTenantPublishEventResponse = {
   /**
-   * Canonical event id scoped by tenant
+   * Canonical event id scoped by tenant, app, and source.
    */
   id: string;
   /**

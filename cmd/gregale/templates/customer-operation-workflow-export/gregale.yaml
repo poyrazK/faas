@@ -1,0 +1,27 @@
+hosting:
+  start: node server.mjs
+  port: 8080
+  health: /healthz
+workflows:
+  - name: export-chain
+    steps:
+      - name: collect
+        path: /collect
+      - name: transform
+        path: /transform
+        depends_on: [collect]
+        input: {rows: '{{steps.collect.output.rows}}'}
+      - name: finish
+        path: /finish
+        depends_on: [transform]
+        input: {rows: '{{steps.transform.output.rows}}'}
+operations:
+  - name: customer-export
+    workflow: export-chain
+    method: POST
+    path: /exports
+    owner: platform_tenant
+    input_schema: schemas/export-input.json
+    output_schema: schemas/export-output.json
+    progress_stages: [collect, transform, finish]
+    recovery: reconcile_on_unknown

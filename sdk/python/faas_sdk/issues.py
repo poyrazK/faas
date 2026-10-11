@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import inspect
-from functools import wraps
+import json
 import sys
 import threading
 import time
@@ -12,6 +11,7 @@ import traceback
 import uuid
 from collections import deque
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -162,6 +162,7 @@ class IssueReporter:
 
     def wrap(self, function):
         if inspect.iscoroutinefunction(function):
+
             @wraps(function)
             async def async_wrapped(*args, **kwargs):
                 try:
@@ -169,7 +170,9 @@ class IssueReporter:
                 except Exception as error:
                     self.capture_exception(error)
                     raise
+
             return async_wrapped
+
         @wraps(function)
         def wrapped(*args, **kwargs):
             try:

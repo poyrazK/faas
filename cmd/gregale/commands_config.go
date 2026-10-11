@@ -25,8 +25,10 @@ const (
 // here would bypass the keychain guarantees in config.go and make `config
 // list` a secret-disclosure surface.
 type cliConfig struct {
-	APIBase string `json:"api_base,omitempty"`
-	JSON    *bool  `json:"json,omitempty"`
+	APIBase       string                       `json:"api_base,omitempty"`
+	ActiveProfile string                       `json:"active_profile,omitempty"`
+	Profiles      map[string]connectionProfile `json:"profiles,omitempty"`
+	JSON          *bool                        `json:"json,omitempty"`
 }
 
 type cliConfigEntry struct {
@@ -68,6 +70,9 @@ func loadCLIConfig() (cliConfig, error) {
 		}
 		cfg.APIBase = normalized
 	}
+	if err := validateConnectionProfiles(cfg); err != nil {
+		return cliConfig{}, err
+	}
 	return cfg, nil
 }
 
@@ -75,6 +80,9 @@ func loadCLIConfig() (cliConfig, error) {
 // it into place. The mode is set before any bytes are written and restored
 // after rename so a crash cannot leave a world-readable preference file.
 func saveCLIConfig(cfg cliConfig) error {
+	if err := validateConnectionProfiles(cfg); err != nil {
+		return err
+	}
 	if cfg.APIBase != "" {
 		normalized, err := validateConfigAPIBase(cfg.APIBase)
 		if err != nil {
@@ -160,6 +168,9 @@ func effectiveConfigEntries(cfg cliConfig) []cliConfigEntry {
 	if raw, ok := os.LookupEnv("FAAS_API"); ok && strings.TrimSpace(raw) != "" {
 		apiEntry.Value = normalizeAPIBase(raw)
 		apiEntry.Source = "env:FAAS_API"
+	} else if name := selectedProfile(cfg); name != "default" {
+		apiEntry.Value = cfg.Profiles[name].APIBase
+		apiEntry.Source = "profile:" + name
 	} else if cfg.APIBase != "" {
 		apiEntry.Value = normalizeAPIBase(cfg.APIBase)
 		apiEntry.Source = "config"
@@ -210,11 +221,7 @@ func cmdConfig(args []string) int {
 	case "set":
 		return cmdConfigSet(args[1:])
 	default:
-		_, _ = fmt.Fprintf(os.Stderr, "gregale config: unknown subcommand %q\n", args[0])
-		if suggestion, ok := suggestSubcommand(args[0], parent); ok {
-			maybeSuggestSub(suggestion)
-		}
-		return 1
+		return printUnknownSubcommand(os.Stderr, "config", parent, args[0])
 	}
 }
 
@@ -278,7 +285,11 @@ func cmdConfigSet(args []string) int {
 		if err != nil {
 			return printErr("Invalid api-base", err)
 		}
-		cfg.APIBase = value
+		if name := selectedProfile(cfg); name != "default" {
+			cfg.Profiles[name] = connectionProfile{APIBase: value}
+		} else {
+			cfg.APIBase = value
+		}
 	case configKeyJSON:
 		value, err := parseConfigBool(args[1])
 		if err != nil {

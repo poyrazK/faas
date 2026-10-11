@@ -59,6 +59,7 @@ type branch struct {
 	Name            string `json:"name"`
 	ParentID        string `json:"parent_id"`
 	ParentTimestamp string `json:"parent_timestamp"`
+	ParentLSN       string `json:"parent_lsn"`
 	InitSource      string `json:"init_source"`
 	CurrentState    string `json:"current_state"`
 	PendingState    string `json:"pending_state"`
@@ -159,11 +160,15 @@ type createdProjectResponse struct {
 }
 
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
+	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.dataAPIEnabled {
+		access = append(access, managedpostgres.CredentialDataAPI)
+	}
 	return managedpostgres.Capabilities{
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		CredentialAccess:             access,
 		ClassResize:                  true,
 		ScaleToZeroUpdate:            true,
 		ScaleToZero:                  true,
@@ -303,6 +308,21 @@ func (p *Provider) RestoreWithCreationReceipt(ctx context.Context, request manag
 }
 
 func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
+	return p.inspect(ctx, providerResourceID, nil)
+}
+
+func (p *Provider) InspectRestore(ctx context.Context, providerResourceID string, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	target, err := parseResourceRef(providerResourceID)
+	source, sourceErr := parseResourceRef(request.SourceResourceID)
+	if err != nil || sourceErr != nil || target.branchID == "" || source.branchID == "" ||
+		target.projectID != source.projectID || target.branchID == source.branchID || request.ResourceID == "" ||
+		len(request.ResourceID) > 255 || request.PointInTime.IsZero() || request.PointInTime.After(p.now()) {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
+	}
+	return p.inspect(ctx, providerResourceID, &request)
+}
+
+func (p *Provider) inspect(ctx context.Context, providerResourceID string, restore *managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
 	ref, err := parseResourceRef(providerResourceID)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
@@ -319,6 +339,11 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 		status = managedpostgres.ProviderStatusPending
 	}
 	lineage, err := observedBranchLineage(ref.projectID, selectedBranch)
+	if restore != nil {
+		source, _ := parseResourceRef(restore.SourceResourceID)
+		verified, verifyErr := p.observeRestoredBranch(ctx, ref.projectID, source.branchID, p.restoreBranchName(restore.ResourceID), selectedBranch, *restore)
+		lineage, err = verified.RestoreLineage, verifyErr
+	}
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}

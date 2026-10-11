@@ -36,7 +36,7 @@ func TestRouteMigrationsReplayPreservesData(t *testing.T) {
 		VALUES ($1, $2, 'enforce', 9, '[{"method":"POST","path":"/checkout"}]', 'abort')`, app, account)
 	routeReplayExec(t, pool, `INSERT INTO route_health_notification_state(deployment_id, app_id, account_id, context_key, status, updated_at)
 		VALUES ($1, $2, $3, $4, 'aborted', now())`, deployment, app, account, strings.Repeat("b", 64))
-	events := []string{"issue.impact_threshold_reached", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"}
+	events := []string{"issue.impact_threshold_reached", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished"}
 	for _, event := range events {
 		routeReplayExec(t, pool, `INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
 			VALUES ($1, $2, $3, $4, '{}', ARRAY[$5::uuid])`, account, app, event, uuid.NewString(), uuid.NewString())
@@ -91,6 +91,8 @@ func routeTailVersions(t *testing.T) []int64 {
 		"route_health_gates": true, "route_health_history": true,
 		"route_health_notifications": true, "route_health_automatic_abort": true,
 		"route_production_monitoring": true, "route_monitor_customers": true,
+		"route_monitor_escalation_webhook": true,
+		"route_monitor_release_baseline":   true,
 	}
 	var versions []int64
 	for _, migration := range migrations.LoadMigrations(t) {

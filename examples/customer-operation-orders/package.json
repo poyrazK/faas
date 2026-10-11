@@ -1,0 +1,14 @@
+{
+  "name": "gregale-customer-operation-orders",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.10.0"},
+  "scripts": {
+    "start": "node server.mjs",
+    "setup": "node setup.mjs",
+    "bundle": "node bundle.mjs",
+    "bindings:generate": "gregale customer-operations bindings --app orders --plan pro --language javascript --output workflow-bindings.mjs",
+    "bindings:check": "gregale customer-operations bindings --app orders --plan pro --language javascript --output workflow-bindings.mjs --check"
+  },
+  "dependencies": {"pg": "8.16.3"}
+}

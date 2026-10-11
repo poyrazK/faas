@@ -15,7 +15,7 @@ export type PlatformTenantReconciliationApplyResponse = {
   plan_hash: string;
   applied_at: string;
   /**
-   * True when the confirmed plan completed
+   * True when the confirmed plan completed, including an already-converged no-op.
    */
   applied: boolean;
   changes: Array<PlatformTenantReconciliationPlanChange>;

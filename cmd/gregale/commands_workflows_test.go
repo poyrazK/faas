@@ -263,8 +263,21 @@ func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
 	if code != 1 {
 		t.Errorf("cmdWorkflowsEvents(not enough args) = %d, want 1", code)
 	}
-	if !strings.Contains(captured, "gregale workflows events send") {
-		t.Errorf("usage must mention 'events send'; got: %s", captured)
+	if !strings.Contains(captured, "gregale workflows events <run_id> <event_name>") {
+		t.Errorf("usage must show the documented form; got: %s", captured)
+	}
+}
+
+// production-us hunt #5 (H5-46): the documented form had no "send" and was
+// refused with a usage error.
+func TestCmdWorkflowsEvents_DocumentedFormSends(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"status":"received","event_name":"go"}`, http.StatusOK)
+	if code := cmdWorkflowsEvents([]string{"00000000-0000-4000-8000-000000000005", "go", "--payload", `{"n":1}`}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(string(f.sawBody), `"n":1`) {
+		t.Fatalf("body = %s, want the payload", f.sawBody)
 	}
 }
 
@@ -294,5 +307,23 @@ func TestCmdWorkflowsEvents_TrailingMalformedPayloadFailsBeforeRequest(t *testin
 	})
 	if code != 1 || !strings.Contains(output, "must be valid JSON") {
 		t.Fatalf("exit=%d stderr=%q", code, output)
+	}
+}
+
+// production-us hunt #5: `workflows get <run>` and `workflows runs` were
+// refused with no hint; they are the natural names for status and list.
+func TestCmdWorkflowsAcceptsCommonAliases(t *testing.T) {
+	for alias, want := range map[string]string{"get": "workflows status", "show": "workflows status", "runs": "--app <slug>", "ls": "--app <slug>"} {
+		code, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{alias}) })
+		if code != 1 || strings.Contains(captured, "unknown workflows subcommand") || !strings.Contains(captured, want) {
+			t.Errorf("workflows %s: code=%d stderr=%q, want the %q usage", alias, code, captured, want)
+		}
+	}
+}
+
+func TestCmdWorkflowsSuggestsTheClosestSubcommand(t *testing.T) {
+	_, captured := runWithStderr(t, func() int { return cmdWorkflows([]string{"statsu"}) })
+	if !strings.Contains(captured, "status") || !strings.Contains(strings.ToLower(captured), "did you mean") {
+		t.Fatalf("typo got no suggestion: %q", captured)
 	}
 }

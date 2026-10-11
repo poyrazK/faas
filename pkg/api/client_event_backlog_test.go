@@ -20,7 +20,7 @@ func TestGetEventBacklogFiltersAndMetadata(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"coverage":"captured_application_recipients","recipients":[{"event_id":"evt","waiting_reason":"capacity_consumer","capacity_deferrals":20}],"consumers":[{"waiting_recipients":9}],"next_after":"next","next_consumers_after":"consumers"}`))
+		_, _ = w.Write([]byte(`{"coverage":"captured_and_backfill_recipients","recipients":[{"event_id":"evt","waiting_reason":"capacity_consumer","capacity_deferrals":20}],"consumers":[{"waiting_recipients":9}],"next_after":"next","next_consumers_after":"consumers"}`))
 	}))
 	defer s.Close()
 	r, err := NewClient(s.URL, "").GetEventBacklog(context.Background(), EventBacklogOptions{EventBacklogFilters: EventBacklogFilters{App: "orders/?+", SubscriptionID: "a&b", State: "pending", CapacityScope: "consumer", MinAgeSeconds: 600}, After: "ebc1.a+b", ConsumersAfter: "ebc1.c/d", Limit: 17, ConsumerLimit: 3})

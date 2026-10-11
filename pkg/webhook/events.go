@@ -17,7 +17,8 @@ import (
 var errInvalidAppWebhookEvent = errors.New("webhook: invalid app webhook event")
 
 // Emit fans an event out to every enabled app webhook whose filter matches.
-// An empty filter subscribes to the complete closed vocabulary. The payload is
+// An empty filter subscribes to standard platform events. app.health.changed
+// requires an explicit filter. The payload is
 // stored verbatim in app_webhook_deliveries, making the event replayable from
 // the existing customer-facing retry endpoint.
 //
@@ -122,7 +123,7 @@ func EmitTo(ctx context.Context, store state.Store, appID, webhookID string, eve
 
 func matches(filter []string, event state.AppWebhookEvent) bool {
 	if len(filter) == 0 {
-		return true
+		return event != state.AppWebhookEventAppHealthChanged
 	}
 	for _, candidate := range filter {
 		if candidate == string(event) {

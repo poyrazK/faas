@@ -19,6 +19,10 @@ export type OperationDoctorCheck = {
   name?: string;
   revision?: string;
   release_id?: string;
+  /**
+   * Immutable execution family for a definition-specific preview admission observation. Omitted for common prerequisites or an ambiguous contract.
+   */
+  execution_kind?: 'http' | 'workflow' | 'job';
   limit?: number;
   observed?: number;
 };

@@ -155,3 +155,23 @@ schema migration is replay-safe per ADR-041.
   (line 5250 — INSERT includes `deployment_id`). No backfill needed.
 * Drop `floor.wake` after one release (follow-up PR; the dual-emit doubles the audit
   rate for ~30 days; negligible storage cost).
+
+## Amendment — zero-traffic siblings (2026-10-08, hunt #7, H5-68)
+
+The rejected alternative above named the risk of "a customer's first deploy
+after a traffic split silently waking N extra instances". Since traffic
+splits, safe rollouts and rollbacks (ADR-198/199/200), a demoted release, a
+rollback source and an aborted canary all stay `live` at 0% traffic. On
+production-us `gregale app h6-lab --min 2` therefore kept 2 warm 1 GB
+instances of each of four live deployments — the deliberately broken
+aborted canary among them — and billed 8 resident instances for a floor of 2.
+
+Decision 2 now reads: the effective floor of a live deployment is
+`max(inherited, d.EffectiveMinInstances())`, where `inherited` is
+`app.EffectiveMinInstances()` unless the deployment has 0% traffic while
+another live deployment of the same app and scope receives traffic, in which
+case it is 0. An explicit per-deployment floor still applies at any traffic
+weight, and a sole live deployment always inherits regardless of its stored
+weight. The meterd floor (ADR-060) is unchanged: it already bills the
+app-level floor once, so the gap no longer leaves extra real instances to
+bill.

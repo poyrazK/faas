@@ -29,6 +29,9 @@ func (m *MemStore) listOperationHistory(account, tenant string, opts api.Operati
 		if !sameOperationHistoryIdentity(op.AccountID, account) || (tenant != "" && !sameOperationHistoryIdentity(op.PlatformTenantID, tenant)) || !sameOperationHistoryIdentity(op.AppID, opts.AppID) || op.Scope != opts.Scope || !operationRetained(op, now) || (opts.Name != "" && op.Name != opts.Name) || (opts.State != "" && op.State != opts.State) {
 			continue
 		}
+		if opts.SubjectType != "" && (op.Subject == nil || op.Subject.Type != opts.SubjectType || op.Subject.ID != opts.SubjectID) {
+			continue
+		}
 		row := operationHistorySummary(m.operationDeliveryLocked(op))
 		if operator {
 			row.PlatformTenantID = op.PlatformTenantID

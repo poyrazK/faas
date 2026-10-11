@@ -7,9 +7,35 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"testing/iotest"
 )
+
+func TestCopySparseReportsNonZeroContent(t *testing.T) {
+	data := make([]byte, 64*4096)
+	data[0] = 1
+	data[10*4096+7] = 2
+	data[len(data)-1] = 3
+	f, err := os.Create(filepath.Join(t.TempDir(), "mem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	written, content, err := CopySparse(t.Context(), f, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written != int64(len(data)) || content != 3*4096 {
+		t.Fatalf("written=%d content=%d, want %d and %d", written, content, len(data), 3*4096)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := io.ReadAll(f); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("copied bytes differ: err=%v", err)
+	}
+}
 
 func TestSparseSnapshotBytesAndTrailingHoles(t *testing.T) {
 	mixed := make([]byte, 3*256*1024+123)

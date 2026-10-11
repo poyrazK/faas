@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 
 	"github.com/onebox-faas/faas/pkg/jsonschemautil"
 )
@@ -97,9 +99,9 @@ var schemaIDCounter atomic.Uint64
 //     earlier; we duplicate here for defence-in-depth in case
 //     the SQL hotfix path bypasses apid).
 //
-// rejectUnknownFields is reserved for a future audit-tag-only
-// shape; today the schema itself is the source of truth for
-// `additionalProperties`. We do not wrap the schema silently.
+// rejectUnknownFields applies the rule's reject_on_unknown_fields knob
+// (closeUnknownFields) and is folded into the digest, so a closed and an
+// open compile of the same schema never share a cache entry.
 func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	if len(schema) == 0 {
 		return nil, ErrSchemaEmpty
@@ -115,6 +117,9 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	// SHA-256 the post-strip bytes so the digest matches what the
 	// applier cached on the resolved rule.
 	digest := sha256.Sum256(schema)
+	if rejectUnknownFields {
+		digest = sha256.Sum256(append(append([]byte(nil), schema...), rejectUnknownFieldsDigestSuffix...))
+	}
 
 	compiler := schemaMempool.Get().(*jsonschema.Compiler)
 	defer schemaMempool.Put(compiler)
@@ -128,6 +133,9 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	if err := json.Unmarshal(schema, &doc); err != nil {
 		return nil, errors.Join(ErrSchemaInvalid, err)
 	}
+	if rejectUnknownFields {
+		closeUnknownFields(doc, true, legacyDraft(doc))
+	}
 	if err := compiler.AddResource(loc, doc); err != nil {
 		return nil, errors.Join(ErrSchemaInvalid, err)
 	}
@@ -136,9 +144,105 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 		return nil, errors.Join(ErrSchemaInvalid, err)
 	}
 
-	_ = rejectUnknownFields // reserved for future audit-tag-only path.
-
 	return &CompiledSchema{Schema: compiled, Digest: digest}, nil
+}
+
+// rejectUnknownFieldsDigestSuffix separates the digest of a closed
+// compile from the open compile of the same schema bytes.
+const rejectUnknownFieldsDigestSuffix = "\x00reject_on_unknown_fields"
+
+// closeUnknownFields implements reject_on_unknown_fields: each object
+// schema that declares fields gets unevaluatedProperties=false, so a body
+// field the schema does not declare fails with a 422. Unlike
+// additionalProperties, Draft 2020-12 unevaluatedProperties counts fields
+// declared through $ref, allOf, anyOf, oneOf and if/then/else, so composed
+// schemas keep working. An explicit additionalProperties or
+// unevaluatedProperties is the author's decision and is kept.
+//
+// Subschemas that apply in place to the same instance (allOf, anyOf,
+// oneOf, not, if/then/else, dependentSchemas, $defs) are not closed
+// themselves, since closing one branch would reject the fields its
+// siblings declare; their nested field schemas are still closed. A
+// free-form object ({"type":"object"} with no declared fields) stays open.
+//
+// Drafts 04-07 have no unevaluatedProperties, so for them a schema that
+// lists its fields directly gets additionalProperties=false and a composed
+// one ($ref, allOf, anyOf, oneOf, if, dependencies) stays open.
+func closeUnknownFields(node any, closeSelf, legacy bool) {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	for _, key := range []string{"properties", "patternProperties"} {
+		if children, ok := m[key].(map[string]any); ok {
+			for _, child := range children {
+				closeUnknownFields(child, true, legacy)
+			}
+		}
+	}
+	for _, key := range []string{"additionalProperties", "items", "additionalItems", "contains", "unevaluatedItems"} {
+		closeUnknownFields(m[key], true, legacy)
+	}
+	for _, key := range []string{"prefixItems", "items"} {
+		if items, ok := m[key].([]any); ok {
+			for _, child := range items {
+				closeUnknownFields(child, true, legacy)
+			}
+		}
+	}
+	for _, key := range []string{"allOf", "anyOf", "oneOf"} {
+		if branches, ok := m[key].([]any); ok {
+			for _, child := range branches {
+				closeUnknownFields(child, false, legacy)
+			}
+		}
+	}
+	for _, key := range []string{"not", "if", "then", "else"} {
+		closeUnknownFields(m[key], false, legacy)
+	}
+	for _, key := range []string{"dependentSchemas", "dependencies", "$defs", "definitions"} {
+		if children, ok := m[key].(map[string]any); ok {
+			for _, child := range children {
+				closeUnknownFields(child, false, legacy)
+			}
+		}
+	}
+	if !closeSelf || hasAnyKey(m, "additionalProperties", "unevaluatedProperties") {
+		return
+	}
+	switch {
+	case legacy:
+		if hasAnyKey(m, "properties", "patternProperties") && !hasAnyKey(m, "$ref", "allOf", "anyOf", "oneOf", "if", "dependencies") {
+			m["additionalProperties"] = false
+		}
+	case hasAnyKey(m, "properties", "patternProperties", "$ref", "$dynamicRef", "allOf", "anyOf", "oneOf", "if", "dependentSchemas"):
+		m["unevaluatedProperties"] = false
+	}
+}
+
+func hasAnyKey(m map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := m[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// legacyDraft reports whether the schema declares a draft without
+// unevaluatedProperties (04, 06 or 07).
+func legacyDraft(doc any) bool {
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return false
+	}
+	id, _ := m["$schema"].(string)
+	for _, draft := range []string{"draft-04", "draft-06", "draft-07"} {
+		if strings.Contains(id, draft) {
+			return true
+		}
+	}
+	return false
 }
 
 // Validate runs the compiled schema against a parsed-JSON body. It
@@ -200,6 +304,16 @@ func translateValidationError(ve *jsonschema.ValidationError) *FieldError {
 		ve = ve.Causes[0]
 	}
 	field := jsonschemautil.JoinInstanceLocation(ve.InstanceLocation)
+	// unevaluatedProperties (reject_on_unknown_fields) reports each
+	// undeclared field as a false-schema leaf; only its schema location
+	// names the keyword.
+	if _, falseLeaf := ve.ErrorKind.(*kind.FalseSchema); falseLeaf {
+		for _, keyword := range []string{"unevaluatedProperties", "additionalProperties"} {
+			if strings.HasSuffix(ve.SchemaURL, "/"+keyword) {
+				return &FieldError{Field: field, Expected: keyword, Got: "field is not declared by the schema"}
+			}
+		}
+	}
 	expected := ""
 	if ve.ErrorKind != nil {
 		kp := ve.ErrorKind.KeywordPath()

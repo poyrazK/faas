@@ -27,6 +27,33 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 			o.Candidate.CPURequests = CircuitBreakerMinCPURequests - 1
 		}, want: CircuitBreakerHold},
 		{name: "small sample holds", mutate: func(o *CircuitBreakerObservation) { o.Candidate.Requests = CircuitBreakerMinRequests - 1 }, want: CircuitBreakerHold},
+		// production-us hunt #9: a --safe canary answering 500 to every
+		// request held at 1% for 6.5 minutes (candidate=19 of 19 failing)
+		// waiting for 20 samples. Five decisive failures are enough.
+		{name: "decisively failing small candidate aborts", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate = HealthWindow{Requests: 5, ServerErrors: 5}
+			o.Stable = HealthWindow{Requests: 1414, ServerErrors: 0}
+		}, want: CircuitBreakerAbort},
+		{name: "half failing small candidate aborts", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate = HealthWindow{Requests: 10, ServerErrors: 5}
+			o.Stable = HealthWindow{Requests: 200, ServerErrors: 2}
+		}, want: CircuitBreakerAbort},
+		{name: "four small-sample failures still hold", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate = HealthWindow{Requests: 4, ServerErrors: 4}
+			o.Stable = HealthWindow{Requests: 200, ServerErrors: 0}
+		}, want: CircuitBreakerHold},
+		{name: "minority small-sample failures hold", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate = HealthWindow{Requests: 12, ServerErrors: 5}
+			o.Stable = HealthWindow{Requests: 200, ServerErrors: 0}
+		}, want: CircuitBreakerHold},
+		{name: "small failing candidate with failing stable holds", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate = HealthWindow{Requests: 6, ServerErrors: 6}
+			o.Stable = HealthWindow{Requests: 200, ServerErrors: 180}
+		}, want: CircuitBreakerHold},
+		{name: "small failing candidate without stable sample holds", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate = HealthWindow{Requests: 6, ServerErrors: 6}
+			o.Stable = HealthWindow{Requests: CircuitBreakerMinRequests - 1}
+		}, want: CircuitBreakerHold},
 		{name: "strong 5xx regression aborts", mutate: func(o *CircuitBreakerObservation) {
 			o.Candidate = HealthWindow{Requests: 100, ServerErrors: 10, P95LatencyMS: 120, CPURequests: 100, CPUUsec: 10_000_000}
 			o.Stable = HealthWindow{Requests: 100, ServerErrors: 1, P95LatencyMS: 100, CPURequests: 100, CPUUsec: 10_000_000}
@@ -45,6 +72,16 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 		}, want: CircuitBreakerAbort},
 		{name: "cpu per request regression aborts", mutate: func(o *CircuitBreakerObservation) {
 			o.Candidate.CPUUsec = 80_000_000 // 800ms per request vs 100ms stable.
+		}, want: CircuitBreakerAbort},
+		// production-us hunt #7 (H5-61): an unchanged release at a 5% step.
+		// Idle CPU divided by the candidate's few requests is not a regression.
+		{name: "cpu per request is not compared while the candidate carries little load", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate.CPURequests, o.Candidate.CPUUsec = 23, 23*53_890
+			o.Stable.CPURequests, o.Stable.CPUUsec = 462, 462*9_447
+		}, want: CircuitBreakerAdvance},
+		{name: "cpu per request regression at comparable load aborts", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate.CPURequests, o.Candidate.CPUUsec = 60, 60*800_000
+			o.Stable.CPURequests, o.Stable.CPUUsec = 100, 100*100_000
 		}, want: CircuitBreakerAbort},
 		{name: "small cpu per request change does not abort", mutate: func(o *CircuitBreakerObservation) {
 			o.Candidate.CPUUsec = 19_000_000 // 190ms per request; below 3x stable.

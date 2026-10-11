@@ -146,7 +146,7 @@ func releaseWebhookMatchesSource(hook AppWebhook, app App, event AppWebhookEvent
 
 func appWebhookMatches(filter []string, event AppWebhookEvent) bool {
 	if len(filter) == 0 {
-		return true
+		return event != AppWebhookEventAppHealthChanged
 	}
 	for _, candidate := range filter {
 		if candidate == string(event) {

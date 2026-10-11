@@ -84,11 +84,13 @@ func validateProjectEnvironmentCloneObjectManifest(manifest ProjectEnvironmentCl
 }
 
 func ProjectEnvironmentCloneObjectManifestHash(items []ProjectEnvironmentCloneObjectVersion) (string, error) {
+	var previousKey string
 	for i, item := range items {
 		if !validCloneObjectKey(item.Key) || item.VersionID == "" || item.Deleted ||
-			(i > 0 && items[i-1].Key >= item.Key) {
+			(i > 0 && previousKey >= item.Key) {
 			return "", ErrInvalidProjectEnvironmentCloneOperation
 		}
+		previousKey = item.Key
 	}
 	raw, err := json.Marshal(items)
 	if err != nil {

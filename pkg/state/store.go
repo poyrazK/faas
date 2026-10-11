@@ -21,6 +21,11 @@ import (
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
 
+// ErrRequestTelemetryRowNotFound reports that a spans summary arrived before
+// (or without) the request_telemetry row it enriches. Producers retry it on
+// their next flush instead of treating the write as delivered (ADR-958).
+var ErrRequestTelemetryRowNotFound = errors.New("state: request telemetry row not found for trace")
+
 // ErrSnapshotRuntimeStale means the captured guest predates the app's most
 // recent runtime configuration change. The notification is safe to discard.
 var ErrSnapshotRuntimeStale = errors.New("state: snapshot runtime config stale")
@@ -352,8 +357,12 @@ var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit re
 // The store applies all requested gates with the expected-step CAS, traffic
 // rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
-	ExpectedStep   int
-	TrafficPercent int
+	ProfileGateOverride *api.ProfileGateOverride
+	ProfileGateDecision *api.ProfileCanaryGateDecision
+	// Only the worker may request a preplanned zero-traffic recovery.
+	ProfileGateRollback bool
+	ExpectedStep        int
+	TrafficPercent      int
 	// RequireSafeReleaseLease gates an automated worker advance on the
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
@@ -1880,7 +1889,10 @@ type Store interface {
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
+	ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error
 	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
+	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.
 	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
 	// PruneScenarioTestMembers removes abandoned namespaces only after every
@@ -2953,9 +2965,12 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
-	// MarkGitDrivenDeploymentLiveIfLatest applies the ordinary live cutover
-	// for GitHub and PR preview deployments only while no newer same-scope
-	// deployment intent exists. Explicit rollback uses MarkDeploymentLive.
+	// MarkDeploymentLiveIfLatest applies the ordinary live cutover for image,
+	// GitHub, and PR preview deployments only while no newer same-scope intent
+	// exists. Explicit rollback uses MarkDeploymentLive.
+	MarkDeploymentLiveIfLatest(ctx context.Context, id string) error
+	// MarkGitDrivenDeploymentLiveIfLatest is the compatibility name for
+	// MarkDeploymentLiveIfLatest.
 	MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error
 
 	// CancelDeploymentTx is the single-transaction orchestrator
@@ -3011,9 +3026,10 @@ type Store interface {
 	// wire and vmmd resolves it via Storage.Get before staging the chroot.
 	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
 	// SetDeploymentRuntimeProfile records image-config-derived runtime metadata
-	// before snapshot prime. In particular, a single OCI EXPOSE port must be
+	// before snapshot prime, preserving the command captured by apid at admission.
+	// In particular, a single OCI EXPOSE port must be
 	// durable so schedd and vmmd agree on the guest DNAT target at first boot
-	// and every later wake. Only imaged writes this deployment-owned field.
+	// and every later wake. Only imaged calls this worker metadata update.
 	SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error
 
 	// UpsertDeploymentScanResult records the per-deploy grype CVE
@@ -6466,6 +6482,11 @@ type Store interface {
 	// tenant-scoped and within the caller's plan retention window.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
 
+	// ListRequestTelemetryByAccountTrace backs GET /v1/account/traces/{id}:
+	// the newest retained row per app for one trace id, in one indexed read
+	// instead of one lookup per app.
+	ListRequestTelemetryByAccountTrace(ctx context.Context, arg sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error)
+
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses
 	// request_telemetry_app_dep_received_idx and returns each row's
@@ -6850,6 +6871,31 @@ type IdempotencyReservation struct {
 	InFlight bool
 	Status   int
 	Body     []byte
+}
+
+// ManagedRealtimePublishReservation extends the ordinary idempotency receipt
+// with a payload-conflict result. Publish keys stay bound to their first
+// request fingerprint for the 24-hour replay window.
+type ManagedRealtimePublishReservation struct {
+	Reserved bool
+	InFlight bool
+	Conflict bool
+	Status   int
+	Body     []byte
+}
+
+// ManagedRealtimePublishIdempotencyStore is optional so unrelated Store
+// adapters can remain narrow. The reservation is scoped by account and the
+// caller-provided route key; requestDigest is the canonical payload digest.
+type ManagedRealtimePublishIdempotencyStore interface {
+	ReserveManagedRealtimePublish(ctx context.Context, accountID, key string, requestDigest []byte) (ManagedRealtimePublishReservation, error)
+}
+
+// ManagedRealtimePublishIdempotencyReaper removes expired payload-bound
+// publish receipts in bounded batches. It is separate from reservation so
+// store adapters can expose reservation and cleanup capabilities independently.
+type ManagedRealtimePublishIdempotencyReaper interface {
+	ReapManagedRealtimePublishIdempotency(ctx context.Context, limit int) (int, error)
 }
 
 // UDPListenerStore is optional so unrelated Store adapters stay narrow.

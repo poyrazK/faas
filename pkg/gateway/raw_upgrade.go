@@ -74,6 +74,7 @@ func rawRequestBodyLoop(ctx context.Context, body io.ReadCloser,
 ) <-chan error {
 	result := make(chan error, 1)
 	go func() {
+		defer close(result)
 		err := sendRawRequestBytes(ctx, body, stream, touch, metrics, plan)
 		if err == nil {
 			select {

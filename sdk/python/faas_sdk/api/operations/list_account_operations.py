@@ -20,6 +20,8 @@ def _get_kwargs(
     tenant_id: UUID | Unset = UNSET,
     name: str | Unset = UNSET,
     state: ListAccountOperationsState | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -40,6 +42,10 @@ def _get_kwargs(
         json_state = state
 
     params["state"] = json_state
+
+    params["subject_type"] = subject_type
+
+    params["subject_id"] = subject_id
 
     params["limit"] = limit
 
@@ -131,6 +137,8 @@ def sync_detailed(
     tenant_id: UUID | Unset = UNSET,
     name: str | Unset = UNSET,
     state: ListAccountOperationsState | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationListResponse | Problem]:
@@ -146,6 +154,8 @@ def sync_detailed(
         tenant_id (UUID | Unset):
         name (str | Unset):
         state (ListAccountOperationsState | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
 
@@ -163,6 +173,8 @@ def sync_detailed(
         tenant_id=tenant_id,
         name=name,
         state=state,
+        subject_type=subject_type,
+        subject_id=subject_id,
         limit=limit,
         cursor=cursor,
     )
@@ -182,6 +194,8 @@ def sync(
     tenant_id: UUID | Unset = UNSET,
     name: str | Unset = UNSET,
     state: ListAccountOperationsState | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationListResponse | Problem | None:
@@ -197,6 +211,8 @@ def sync(
         tenant_id (UUID | Unset):
         name (str | Unset):
         state (ListAccountOperationsState | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
 
@@ -215,6 +231,8 @@ def sync(
         tenant_id=tenant_id,
         name=name,
         state=state,
+        subject_type=subject_type,
+        subject_id=subject_id,
         limit=limit,
         cursor=cursor,
     ).parsed
@@ -228,6 +246,8 @@ async def asyncio_detailed(
     tenant_id: UUID | Unset = UNSET,
     name: str | Unset = UNSET,
     state: ListAccountOperationsState | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationListResponse | Problem]:
@@ -243,6 +263,8 @@ async def asyncio_detailed(
         tenant_id (UUID | Unset):
         name (str | Unset):
         state (ListAccountOperationsState | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
 
@@ -260,6 +282,8 @@ async def asyncio_detailed(
         tenant_id=tenant_id,
         name=name,
         state=state,
+        subject_type=subject_type,
+        subject_id=subject_id,
         limit=limit,
         cursor=cursor,
     )
@@ -277,6 +301,8 @@ async def asyncio(
     tenant_id: UUID | Unset = UNSET,
     name: str | Unset = UNSET,
     state: ListAccountOperationsState | Unset = UNSET,
+    subject_type: str | Unset = UNSET,
+    subject_id: str | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationListResponse | Problem | None:
@@ -292,6 +318,8 @@ async def asyncio(
         tenant_id (UUID | Unset):
         name (str | Unset):
         state (ListAccountOperationsState | Unset):
+        subject_type (str | Unset):
+        subject_id (str | Unset):
         limit (int | Unset):  Default: 20.
         cursor (str | Unset):
 
@@ -311,6 +339,8 @@ async def asyncio(
             tenant_id=tenant_id,
             name=name,
             state=state,
+            subject_type=subject_type,
+            subject_id=subject_id,
             limit=limit,
             cursor=cursor,
         )

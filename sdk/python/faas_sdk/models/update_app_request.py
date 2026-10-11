@@ -123,12 +123,14 @@ if TYPE_CHECKING:
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.declared_route import DeclaredRoute
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+    from ..models.profiling_config import ProfilingConfig
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
+    from ..models.tracing_config import TracingConfig
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
@@ -140,6 +142,12 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    profiling: ProfilingConfig | Unset = UNSET
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    tracing: TracingConfig | Unset = UNSET
+    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
+    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
+    OTel exporter are left untouched."""
     visibility: (
         None
         | Unset
@@ -376,6 +384,14 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        profiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profiling, Unset):
+            profiling = self.profiling.to_dict()
+
+        tracing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tracing, Unset):
+            tracing = self.tracing.to_dict()
 
         visibility: None | str | Unset
         if isinstance(self.visibility, Unset):
@@ -829,6 +845,10 @@ class UpdateAppRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if profiling is not UNSET:
+            field_dict["profiling"] = profiling
+        if tracing is not UNSET:
+            field_dict["tracing"] = tracing
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if allowed_service_callers is not UNSET:
@@ -966,16 +986,31 @@ class UpdateAppRequest:
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.declared_route import DeclaredRoute
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.profiling_config import ProfilingConfig
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
+        from ..models.tracing_config import TracingConfig
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+        _profiling = d.pop("profiling", UNSET)
+        profiling: ProfilingConfig | Unset
+        if isinstance(_profiling, Unset):
+            profiling = UNSET
+        else:
+            profiling = ProfilingConfig.from_dict(_profiling)
+
+        _tracing = d.pop("tracing", UNSET)
+        tracing: TracingConfig | Unset
+        if isinstance(_tracing, Unset):
+            tracing = UNSET
+        else:
+            tracing = TracingConfig.from_dict(_tracing)
 
         def _parse_visibility(
             data: object,
@@ -1969,6 +2004,8 @@ class UpdateAppRequest:
         cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
 
         update_app_request = cls(
+            profiling=profiling,
+            tracing=tracing,
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,

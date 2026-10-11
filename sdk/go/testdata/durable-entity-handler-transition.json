@@ -1,0 +1,20 @@
+{
+  "data": {
+    "status": "reserved",
+    "quantity": 2
+  },
+  "result": {
+    "status": "reserved",
+    "quantity": 2
+  },
+  "outbox": [
+    {
+      "webhook_id": "6dd283da-3c14-40de-9d47-bb71fb35be9a",
+      "event_type": "reservation.confirmed",
+      "payload": {
+        "reservation_key": "reservation:123",
+        "quantity": 2
+      }
+    }
+  ]
+}

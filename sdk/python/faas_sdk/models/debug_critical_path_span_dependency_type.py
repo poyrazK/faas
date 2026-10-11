@@ -1,10 +1,11 @@
 from typing import Literal
 
 DebugCriticalPathSpanDependencyType = Literal[
-    "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
+    "app_dependency", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
 ]
 
 DEBUG_CRITICAL_PATH_SPAN_DEPENDENCY_TYPE_VALUES: set[DebugCriticalPathSpanDependencyType] = {
+    "app_dependency",
     "guest_transport",
     "managed_binding",
     "outbound_integration",

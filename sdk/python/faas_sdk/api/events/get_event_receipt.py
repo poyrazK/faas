@@ -105,8 +105,9 @@ def sync_detailed(
     """Inspect acceptance, routing, and execution for one event.
 
      Requires apps:read or admin. Reads the retained account/source/id receipt
-    and a bounded page of immutable acceptance-time recipients. Routing
-    counts cover the entire snapshot, including recipients without invocations.
+    and a bounded page of captured and backfilled recipients. recipient_count
+    and routing_summary cover the immutable acceptance snapshot; separate
+    backfill counts cover added consumers, including those without invocations.
     Enqueued routing does not imply handler success: keyed cancellation can
     produce a cancellation receipt instead. The original deterministic
     invocation is shown when retained; trusted generic replay lineage adds
@@ -115,7 +116,9 @@ def sync_detailed(
     when present. Recovery actions require their existing
     write scopes and are revalidated when called. Legacy receipts without
     snapshots report snapshot_captured=false and cannot reconstruct recipients.
-    Pages follow acceptance order while outcomes may change between requests.
+    Pages follow acceptance order then append-only backfill positions, which
+    survive job pruning. Inspection order does not imply delivery order;
+    outcomes may change between requests.
 
     Args:
         source (str):
@@ -156,8 +159,9 @@ def sync(
     """Inspect acceptance, routing, and execution for one event.
 
      Requires apps:read or admin. Reads the retained account/source/id receipt
-    and a bounded page of immutable acceptance-time recipients. Routing
-    counts cover the entire snapshot, including recipients without invocations.
+    and a bounded page of captured and backfilled recipients. recipient_count
+    and routing_summary cover the immutable acceptance snapshot; separate
+    backfill counts cover added consumers, including those without invocations.
     Enqueued routing does not imply handler success: keyed cancellation can
     produce a cancellation receipt instead. The original deterministic
     invocation is shown when retained; trusted generic replay lineage adds
@@ -166,7 +170,9 @@ def sync(
     when present. Recovery actions require their existing
     write scopes and are revalidated when called. Legacy receipts without
     snapshots report snapshot_captured=false and cannot reconstruct recipients.
-    Pages follow acceptance order while outcomes may change between requests.
+    Pages follow acceptance order then append-only backfill positions, which
+    survive job pruning. Inspection order does not imply delivery order;
+    outcomes may change between requests.
 
     Args:
         source (str):
@@ -202,8 +208,9 @@ async def asyncio_detailed(
     """Inspect acceptance, routing, and execution for one event.
 
      Requires apps:read or admin. Reads the retained account/source/id receipt
-    and a bounded page of immutable acceptance-time recipients. Routing
-    counts cover the entire snapshot, including recipients without invocations.
+    and a bounded page of captured and backfilled recipients. recipient_count
+    and routing_summary cover the immutable acceptance snapshot; separate
+    backfill counts cover added consumers, including those without invocations.
     Enqueued routing does not imply handler success: keyed cancellation can
     produce a cancellation receipt instead. The original deterministic
     invocation is shown when retained; trusted generic replay lineage adds
@@ -212,7 +219,9 @@ async def asyncio_detailed(
     when present. Recovery actions require their existing
     write scopes and are revalidated when called. Legacy receipts without
     snapshots report snapshot_captured=false and cannot reconstruct recipients.
-    Pages follow acceptance order while outcomes may change between requests.
+    Pages follow acceptance order then append-only backfill positions, which
+    survive job pruning. Inspection order does not imply delivery order;
+    outcomes may change between requests.
 
     Args:
         source (str):
@@ -251,8 +260,9 @@ async def asyncio(
     """Inspect acceptance, routing, and execution for one event.
 
      Requires apps:read or admin. Reads the retained account/source/id receipt
-    and a bounded page of immutable acceptance-time recipients. Routing
-    counts cover the entire snapshot, including recipients without invocations.
+    and a bounded page of captured and backfilled recipients. recipient_count
+    and routing_summary cover the immutable acceptance snapshot; separate
+    backfill counts cover added consumers, including those without invocations.
     Enqueued routing does not imply handler success: keyed cancellation can
     produce a cancellation receipt instead. The original deterministic
     invocation is shown when retained; trusted generic replay lineage adds
@@ -261,7 +271,9 @@ async def asyncio(
     when present. Recovery actions require their existing
     write scopes and are revalidated when called. Legacy receipts without
     snapshots report snapshot_captured=false and cannot reconstruct recipients.
-    Pages follow acceptance order while outcomes may change between requests.
+    Pages follow acceptance order then append-only backfill positions, which
+    survive job pruning. Inspection order does not imply delivery order;
+    outcomes may change between requests.
 
     Args:
         source (str):

@@ -17,6 +17,7 @@
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
 //	-no-listen     never bind the port, so liveness sees conn_refused
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
+//	-durable-counter serve the pure durable entity counter protocol
 package main
 
 import (
@@ -63,6 +64,7 @@ func main() {
 	contract := flag.Bool("contract", false, "expose fixed process-contract evidence")
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
+	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	flag.Parse()
 	if *addr == "" {
 		port := os.Getenv("PORT")
@@ -117,6 +119,9 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	if *durableCounter {
+		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
+	}
 	if *contract {
 		var mu sync.Mutex
 		var lastProbe *processEvidence

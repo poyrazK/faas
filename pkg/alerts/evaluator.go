@@ -372,7 +372,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
 				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
 			}
-		case skipInsufficient:
+		case skipInsufficient, skipPaused:
 			stats.SkippedInsufficient++
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
 				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
@@ -464,7 +464,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthInvestigationPaths(ctx, rule))
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.investigationPaths(ctx, rule))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -628,8 +628,8 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID 
 	if action == "" || action == state.AlertActionWebhook {
 		return
 	}
-	if rule.Metric == state.AlertMetricPreAuthTargetThreshold || rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct {
-		e.log.Warn("alerts: pre-auth target metric cannot execute a deployment action", "rule", rule.ID)
+	if api.IsEdgeSecurityAlertMetric(string(rule.Metric)) {
+		e.log.Warn("alerts: edge security metric cannot execute a deployment action", "rule", rule.ID)
 		stats.ActionSkipped++
 		return
 	}
@@ -699,6 +699,7 @@ const (
 	skipDegraded     = "degraded"
 	skipInsufficient = "insufficient"
 	skipNoIdentity   = "no_identity"
+	skipPaused       = "consumer_paused"
 )
 
 // AlertOutcomeDelivered / AlertOutcomeFailed are the closed-vocab
@@ -720,7 +721,41 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsEventRetentionAlertMetric(string(rule.Metric)) {
+		return e.observeEventRetention(ctx, rule)
+	}
+	if api.IsEventRecoveryAlertMetric(string(rule.Metric)) {
+		return e.observeEventRecovery(ctx, rule)
+	}
+	if api.IsEventConsumerAlertMetric(string(rule.Metric)) {
+		return e.observeEventConsumer(ctx, rule)
+	}
 	switch rule.Metric {
+	case state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge, state.AlertMetricWorkflowDueAge:
+		store, ok := e.store.(state.WorkflowAlertStore)
+		if !ok {
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		snapshot, err := store.WorkflowAlertSnapshot(ctx, rule.AccountID, rule.AppID, e.windowStart(rule.WindowSpec, now), now)
+		if err != nil {
+			e.log.Warn("alerts: read workflow signals", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		var value float64
+		switch rule.Metric {
+		case state.AlertMetricWorkflowFailures:
+			value = float64(snapshot.Failures)
+		case state.AlertMetricWorkflowQuotaSkips:
+			value = float64(snapshot.QuotaSkips)
+		case state.AlertMetricWorkflowPendingAge:
+			value = snapshot.PendingAgeSeconds
+		case state.AlertMetricWorkflowWaitingAge:
+			value = snapshot.WaitingAgeSeconds
+		case state.AlertMetricWorkflowDueAge:
+			value = snapshot.DueAgeSeconds
+		}
+		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -987,28 +1022,54 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // the canonical map across both sides, we guarantee the dashboard
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
-type preAuthPaths struct {
-	observations string
-	dashboard    string
+type investigationPaths struct {
+	observations     string
+	dashboard        string
+	appID            string
+	workflowRuns     string
+	workflowDeadRuns string
+	automations      string
 }
 
-func (e *Evaluator) preAuthInvestigationPaths(ctx context.Context, rule state.AlertRule) preAuthPaths {
-	if (rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
-		return preAuthPaths{}
+func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule) investigationPaths {
+	workflow := isWorkflowMetric(rule.Metric)
+	if (!workflow && !preAuthObservationMetric(rule.Metric)) || rule.AppID == "" {
+		return investigationPaths{}
 	}
+	ctx, cancel := context.WithTimeout(ctx, api.WorkflowAlertSnapshotReadTimeout)
+	defer cancel()
 	app, err := e.store.AppByID(ctx, rule.AppID)
 	if err != nil || app.AccountID != rule.AccountID || app.Slug == "" {
-		e.log.Warn("alerts: cannot resolve app for pre-auth observations link", "rule", rule.ID, "error", err)
-		return preAuthPaths{}
+		e.log.Warn("alerts: cannot resolve app for investigation links", "rule", rule.ID, "error", err)
+		return investigationPaths{}
 	}
 	slug, rng := url.PathEscape(app.Slug), url.QueryEscape(string(rule.WindowSpec))
-	return preAuthPaths{
+	if workflow {
+		paths := investigationPaths{appID: app.ID, automations: "/v1/apps/" + slug + "/automations"}
+		paths.workflowRuns = "/v1/apps/" + slug + "/workflows/runs"
+		if rule.Metric == state.AlertMetricWorkflowFailures {
+			paths.workflowDeadRuns = paths.workflowRuns + "?status=dead"
+			paths.workflowRuns += "?status=failed"
+		}
+		return paths
+	}
+	return investigationPaths{
 		observations: "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng,
 		dashboard:    "/dashboard/apps/" + slug + "/pre-auth?range=" + rng,
 	}
 }
 
-func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([]byte, map[string]any, error) {
+// preAuthObservationMetric reports metrics whose alert payload links to the
+// app's pre-auth observations and dashboard view.
+func preAuthObservationMetric(metric state.AlertMetric) bool {
+	switch metric {
+	case state.AlertMetricPreAuthTargetThreshold, state.AlertMetricPreAuthTargetSignalGapPct, state.AlertMetricPreAuthPressure:
+		return true
+	}
+	return false
+}
+
+func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -1019,12 +1080,23 @@ func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if rule.EventSubscriptionID != "" {
+		m["event_subscription_id"] = rule.EventSubscriptionID
+	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
 	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations
 		m["dashboard_path"] = paths.dashboard
+	}
+	if paths.workflowRuns != "" {
+		m["app_id"] = paths.appID
+		m["workflow_runs_path"] = paths.workflowRuns
+		m["automations_path"] = paths.automations
+		if paths.workflowDeadRuns != "" {
+			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
+		}
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

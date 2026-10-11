@@ -145,6 +145,21 @@ func TestLayerCloneTempPatternCarriesDurableInstanceID(t *testing.T) {
 	}
 }
 
+func TestSnapshotTempPatternCarriesDurableInstanceID(t *testing.T) {
+	const instanceID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	if got, want := snapshotTempPattern(instanceID, ".mem"), "faas-snap-"+instanceID+"-*.mem"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got := snapshotTempPattern("not-an-instance-id", ".bin"); got != "faas-snap-*.bin" {
+		t.Fatalf("invalid-id pattern = %q, want legacy fallback", got)
+	}
+	// The read-only staging name ignores the per-instance temp name, so a
+	// restore sees the same in-jail file name as before.
+	if got := stableReadOnlyName("/srv/fc/base/faas-snap-"+instanceID+"-X.bin", "fallback.ext4"); got != "fallback.ext4" {
+		t.Fatalf("stableReadOnlyName = %q", got)
+	}
+}
+
 func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
 	v := &JailerVMM{readyTimeout: 30 * time.Second}
 	p := v.notReadyProblem(Lease{Instance: "inst-1"}, "", 1, 45*time.Second)
@@ -1435,73 +1450,27 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 	if err != nil {
 		t.Fatalf("listen %s: %v", sockPath, err)
 	}
-	t.Cleanup(func() { _ = l.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		_ = l.Close()
+		<-done
+	})
 	go func() {
-		c, err := l.Accept()
-		if err != nil {
-			return
-		}
-		defer func() { _ = c.Close() }()
-		// Step 1: read "CONNECT <port>\n". Read byte-by-byte until newline
-		// so we don't block on ReadFull waiting for a fixed count that the
-		// port number's digit count might vary.
-		connectBuf := make([]byte, 0, 32)
-		readByte := make([]byte, 1)
+		defer close(done)
 		for {
-			if _, err := c.Read(readByte); err != nil {
-				_, _ = c.Write([]byte{1})
+			c, err := l.Accept()
+			if err != nil {
 				return
 			}
-			connectBuf = append(connectBuf, readByte[0])
-			if readByte[0] == '\n' {
-				break
-			}
-			if len(connectBuf) > 32 {
-				_, _ = c.Write([]byte{1})
-				return
-			}
+			// A timed-out CONNECT can leave the first accepted socket closed
+			// before its payload arrives. Model the guest's next accept rather
+			// than stranding the host retry on a single-shot fake (ADR-348).
+			stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+			handleFakeVsockHook(t, c, ack, onHook)
+			stop()
 		}
-		if !strings.HasPrefix(string(connectBuf), "CONNECT ") {
-			_, _ = c.Write([]byte{1})
-			return
-		}
-		// Step 2: reply "OK <hostside_port>\n". FC picks an ephemeral
-		// port; the value is for multiplexing bookkeeping and the
-		// host-side reader doesn't validate it.
-		if _, err := c.Write([]byte("OK 1073741824\n")); err != nil {
-			return
-		}
-
-		// Step 3: read the resume-hook payload. Format: 4-byte BE msg type +
-		// 4-byte BE body length + JSON body. Read exactly 8 bytes header,
-		// then the body length bytes.
-		var hdr [8]byte
-		if _, err := io.ReadFull(c, hdr[:]); err != nil {
-			_, _ = c.Write([]byte{1})
-			return
-		}
-		bodyLen := binary.BigEndian.Uint32(hdr[4:8])
-		body := make([]byte, bodyLen)
-		if _, err := io.ReadFull(c, body); err != nil {
-			_, _ = c.Write([]byte{1})
-			return
-		}
-		var payload struct {
-			Nano     int64  `json:"hostTimeUnixNano"`
-			EntropyB string `json:"entropy"`
-		}
-		_ = json.Unmarshal(body, &payload)
-		var entropy []byte
-		if payload.EntropyB != "" {
-			entropy, _ = base64.StdEncoding.DecodeString(payload.EntropyB)
-		}
-		if onHook != nil {
-			if err := onHook(payload.Nano, entropy); err != nil {
-				_, _ = c.Write([]byte{1})
-				return
-			}
-		}
-		_, _ = c.Write([]byte{ack})
 	}()
 }
 
@@ -1674,10 +1643,76 @@ func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTim
 			return
 		}
 	}
-	_, _ = c.Write([]byte{ack})
+	_, _ = c.Write(fakeGuestAckFrame(ack))
 }
 
 const ackOK = byte(0)
+
+// fakeGuestAckFrame models a current guest-init: an OK ack is followed by
+// the ADR-687 userspace reseed capability byte.
+func fakeGuestAckFrame(ack byte) []byte {
+	if ack == ackOK {
+		return []byte{ack, resumeCapUserspaceReseed}
+	}
+	return []byte{ack}
+}
+
+// TestTriggerResumeHookRefusesGuestWithoutReseedBarrier: a guest-init that
+// predates ADR-687 acks OK and closes. Its processes may replay the
+// snapshot's random state, so the restore must be refused (the manager then
+// cold-boots) and the resume must not be re-sent by the transport retry.
+func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
+	chrootBase := shortChrootBase(t, "nocap")
+	instance := "iA"
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", filepath.Join(root, VsockUDSSocketName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	var resumes int32
+	go func() {
+		for {
+			c, aErr := l.Accept()
+			if aErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				handleFakeVsockHook(t, &oneByteAckConn{Conn: c}, ackOK, func(int64, []byte) error {
+					atomic.AddInt32(&resumes, 1)
+					return nil
+				})
+			}(c)
+		}
+	}()
+
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	err = v.TriggerResumeHook(context.Background(), Lease{Instance: instance}, 1)
+	if !errors.Is(err, ErrGuestLacksRestoreReseed) {
+		t.Fatalf("err = %v, want ErrGuestLacksRestoreReseed", err)
+	}
+	if got := atomic.LoadInt32(&resumes); got != 1 {
+		t.Fatalf("resume request sent %d times, want 1 (no transport retry)", got)
+	}
+}
+
+// oneByteAckConn drops everything after the first byte of the final ack
+// frame, which is what a pre-ADR-687 guest-init writes.
+type oneByteAckConn struct {
+	net.Conn
+}
+
+func (c *oneByteAckConn) Write(p []byte) (int, error) {
+	if len(p) == 2 && p[1] == resumeCapUserspaceReseed {
+		_, err := c.Conn.Write(p[:1])
+		return len(p), err
+	}
+	return c.Conn.Write(p)
+}
 
 // TestResumeHookBodyCapCoversEntropy pins the relationship between
 // resumeHookEntropyBytes and resumeHookMaxBodyBytes. The cap is the
@@ -1764,6 +1799,36 @@ func TestTriggerResumeHookAfterRestoreFailure(t *testing.T) {
 	}
 	if reason := ClassifyWakeError(err, WakeContext{}); reason != WakeReasonAfterRestoreFailed {
 		t.Fatalf("wake reason = %q, want %q", reason, WakeReasonAfterRestoreFailed)
+	}
+}
+
+// The fake guest must accept a fresh connection when an earlier CONNECT
+// succeeded but the host closed before sending its resume payload (ADR-348).
+func TestFakeVsockUDSServerReconnectAfterDroppedHandshake(t *testing.T) {
+	base := shortChrootBase(t, "ack-reconnect")
+	root := filepath.Join(base, "f", "iA", "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(root, VsockUDSSocketName)
+	fakeVsockUDSServer(t, socket, resumeHookAckAfterRestore, nil)
+	first, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = first.SetDeadline(time.Now().Add(time.Second))
+	if _, err := first.Write([]byte("CONNECT 1024\n")); err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	ack, err := readConnectAck(first)
+	_ = first.Close()
+	if err != nil || ack != "OK" {
+		t.Fatalf("initial CONNECT = %q, %v", ack, err)
+	}
+	v := &JailerVMM{chrootBase: base, fcName: "f"}
+	if err := v.TriggerResumeHook(t.Context(), Lease{Instance: "iA", Slot: 0}, 1); !errors.Is(err, ErrAfterRestoreHook) {
+		t.Fatalf("reconnected resume error = %v", err)
 	}
 }
 
@@ -2193,12 +2258,12 @@ func TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler(t *testing.T) {
 	v := &JailerVMM{}
 	l := Lease{Instance: "i-health"}
 
-	guest := v.healthcheckNotReadyProblem(l, "/healthz", 0, 35*time.Second)
+	guest := v.healthcheckNotReadyProblem(l, "/healthz", readinessObservation{}, 35*time.Second)
 	if guest.Code != api.CodeAppStartupTimeout || !strings.Contains(guest.Detail, "startup_phase=guest_startup") {
 		t.Fatalf("guest problem = %+v", guest)
 	}
 
-	handler := v.healthcheckNotReadyProblem(l, "/healthz", 3, 35*time.Second)
+	handler := v.healthcheckNotReadyProblem(l, "/healthz", readinessObservation{responses: 3, lastStatus: 503}, 35*time.Second)
 	if handler.Code != api.CodeAppStartupTimeout || !strings.Contains(handler.Detail, "startup_phase=handler_healthcheck") {
 		t.Fatalf("handler problem = %+v", handler)
 	}
@@ -2253,5 +2318,40 @@ func TestWaitReady_AllConnRefusedReturnsAppNotListening(t *testing.T) {
 	}
 	if p.Status != 422 {
 		t.Errorf("waitReady on closed port: status = %d, want 422", p.Status)
+	}
+}
+
+// H4-21: an app that exited during startup left nothing listening, yet every
+// refused readiness GET counted as an answer and the customer was told the
+// guest "answered 348 readiness probes without a 2xx". A refused probe is
+// not an answer.
+func TestWaitReady_HealthcheckRefusedIsAppNotListening(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host, _, _ := net.SplitHostPort(ln.Addr().String())
+	_ = ln.Close()
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &JailerVMM{readyTimeout: 250 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = v.waitReady(ctx, Lease{Instance: "i-crashed", HostIP: addr}, "/healthz")
+	var p *api.Problem
+	if !errors.As(err, &p) || p.Code != api.CodeAppNotListening {
+		t.Fatalf("waitReady against no listener = %v, want app_not_listening", err)
+	}
+	if strings.Contains(p.Detail, "answered") {
+		t.Fatalf("refused probes reported as answers: %q", p.Detail)
+	}
+}
+
+func TestHealthcheckNotReadyProblemNamesTheLastStatus(t *testing.T) {
+	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i"}, "/healthz", readinessObservation{responses: 7, lastStatus: 503}, time.Second)
+	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "last status 503") {
+		t.Fatalf("problem = %+v", p)
 	}
 }

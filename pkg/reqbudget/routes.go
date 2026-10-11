@@ -17,6 +17,9 @@ func IsSyncInvokeRequest(r *http.Request) bool {
 		return false
 	}
 	appAndSuffix := strings.TrimPrefix(r.URL.Path, prefix)
+	if app, suffix, ok := strings.Cut(appAndSuffix, "/entities/invoke"); ok && app != "" && !strings.Contains(app, "/") && suffix == "" {
+		return true
+	}
 	app, suffix, ok := strings.Cut(appAndSuffix, "/invoke")
-	return ok && app != "" && suffix == ""
+	return ok && app != "" && !strings.Contains(app, "/") && suffix == ""
 }

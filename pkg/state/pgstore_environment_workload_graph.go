@@ -53,6 +53,13 @@ func (s *PgStore) ReconcileEnvironmentGitOpsPreparation(ctx context.Context, lea
 		if err != nil {
 			return EnvironmentWorkloadGraph{}, mapErr(err)
 		}
+		var storedRuntime []byte
+		if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime FROM deployments WHERE id=$1`, id).Scan(&storedRuntime); err != nil {
+			return EnvironmentWorkloadGraph{}, mapErr(err)
+		}
+		if !frozenCandidateInputsMatch(storedRuntime, frozen) {
+			return EnvironmentWorkloadGraph{}, ErrConflict
+		}
 		candidates = append(candidates, EnvironmentWorkloadCandidate{Status: DeploymentStatus(dep.Status), HasRootfs: dep.RootfsPath != "" || dep.RootfsKey != ""})
 	}
 	phase, code := preparationGraphPhase(candidates)

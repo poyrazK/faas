@@ -51,6 +51,17 @@ func (a *App) EffectiveMinInstancesAt(t time.Time) int {
 	return effectiveMinInstances(a, t)
 }
 
+// FloorServed reports whether the app's lifecycle status keeps its
+// min-instances floor in force. The floor reconciler holds the floor only
+// for an active app: an explicitly parked (evicted_cold) app stays parked
+// until a real wake reactivates it (production-us hunt #5, H5-54). The
+// ADR-060 sampler bills synthetic floor rows under exactly the same
+// condition, because a floor the scheduler does not hold must not be
+// charged. Both read this one predicate so they cannot drift apart.
+func (a *App) FloorServed() bool {
+	return a != nil && (a.Status == "" || a.Status == AppActive)
+}
+
 // effectiveMinInstances is the function form so callers holding an App
 // by value (e.g. pkg/sched/engine.go's local `app state.App`) can pass
 // `&app` without copying the whole struct. Nil-safe.

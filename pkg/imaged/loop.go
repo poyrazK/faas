@@ -357,6 +357,13 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		return
 	}
 	for _, deployment := range rows {
+		entered := pipelineStageEnteredAt(deployment)
+		if !entered.Before(cutoff) {
+			// A rollback re-entered the pipeline recently; created_at alone
+			// would cancel every rollback to a deployment older than the
+			// threshold (hunt #9: a rollback cancelled six seconds in).
+			continue
+		}
 		if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
 			// A staged artifact is deliberately waiting for its graph, rather
 			// than a lost snapshot handoff. Its coordinator owns cancellation.
@@ -371,7 +378,7 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 			continue
 		}
 		started := time.Now()
-		age := now.Sub(deployment.CreatedAt).Round(time.Second)
+		age := now.Sub(entered).Round(time.Second)
 		principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
 		_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
 		if l.handler != nil && l.handler.ops != nil {
@@ -394,8 +401,9 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 
 // observeStaleDeploymentBacklog refreshes the alert gauge after mutations, so
 // repaired rows do not leave a false positive until the next five-minute
-// sweep. The query is oldest-first and limit-one: its single row is the true
-// fleet maximum even when a sweep had more candidates than its mutation cap.
+// sweep. Candidates are selected by created_at, but age counts from the
+// current pipeline stage, so the oldest row is not necessarily the stalest:
+// scan one bounded oldest-first batch and take the maximum.
 func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now time.Time) {
 	if l.handler == nil || l.handler.ops == nil {
 		return
@@ -407,17 +415,38 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 		IncludeDeleted: true,
 		CreatedBefore:  cutoff,
 		OldestFirst:    true,
-		Limit:          1,
+		Limit:          staleDeploymentBatchSize,
 	})
 	if err != nil {
 		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
 		return
 	}
-	if len(rows) == 0 {
-		l.handler.ops.SetStaleDeploymentOldestAge(0)
-		return
+	var oldest time.Duration
+	for _, deployment := range rows {
+		if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) {
+			oldest = max(oldest, now.Sub(entered))
+		}
 	}
-	l.handler.ops.SetStaleDeploymentOldestAge(now.Sub(rows[0].CreatedAt))
+	l.handler.ops.SetStaleDeploymentOldestAge(oldest)
+}
+
+// pipelineStageEnteredAt is when a deployment entered its current pipeline
+// stage. A rollback moves an old superseded deployment back to snapshotting
+// and stamps stage_state.current_started_at; rows without a readable stage
+// start fall back to created_at.
+func pipelineStageEnteredAt(d state.Deployment) time.Time {
+	entered := d.CreatedAt
+	if len(d.StageState) == 0 {
+		return entered
+	}
+	var stages state.StageState
+	if json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
+		return entered
+	}
+	if stages.CurrentStartedAt.After(entered) {
+		return *stages.CurrentStartedAt
+	}
+	return entered
 }
 
 // HandleNotification exposes the handler to the durable replay worker while
@@ -813,15 +842,22 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		}
 		vmstateKey := state.SnapshotVMStateKey(snap)
 		driveKey := state.SnapshotDriveKey(snap)
+		// The ADR-510 backing identity sits beside every capture; leaving it
+		// behind orphaned one object per collected snapshot (H5-13).
+		backingKey := state.SnapshotBackingKey(snap)
 		memErr := be.Delete(ctx, memKey)
 		vmstateErr := be.Delete(ctx, vmstateKey)
-		var driveErr error
+		var driveErr, backingErr error
 		if driveKey != "" {
 			driveErr = be.Delete(ctx, driveKey)
+		}
+		if backingKey != "" {
+			backingErr = be.Delete(ctx, backingKey)
 		}
 		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
 		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
 		driveQuarantined := errors.Is(driveErr, storage.ErrDeleteQuarantined)
+		backingQuarantined := errors.Is(backingErr, storage.ErrDeleteQuarantined)
 		if memErr != nil && !memQuarantined {
 			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", memErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", memKey, memErr))
@@ -834,16 +870,22 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			l.log.Warn("imaged: gc remove snap drive", "deployment", t.DeploymentID, "tier", t.Tier, "err", driveErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", driveKey, driveErr))
 		}
+		if backingErr != nil && !backingQuarantined {
+			l.log.Warn("imaged: gc remove snap backing", "deployment", t.DeploymentID, "tier", t.Tier, "err", backingErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", backingKey, backingErr))
+		}
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
 		}
-		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined) && (driveErr == nil || driveQuarantined)
-		terminalDisposition := memQuarantined || vmstateQuarantined || driveQuarantined
+		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined) &&
+			(driveErr == nil || driveQuarantined) && (backingErr == nil || backingQuarantined)
+		terminalDisposition := memQuarantined || vmstateQuarantined || driveQuarantined || backingQuarantined
 		if terminalDisposition && deletable {
 			payload, marshalErr := json.Marshal(map[string]any{
 				"snapshot_id": t.ID, "deployment_id": t.DeploymentID, "app_id": t.AppID,
 				"tier": t.Tier, "disposition": "remote_quarantine_manual_retention",
 				"mem_quarantined": memQuarantined, "vmstate_quarantined": vmstateQuarantined, "drive_quarantined": driveQuarantined,
+				"backing_quarantined": backingQuarantined,
 			})
 			var accountID *string
 			if t.AccountID != "" {

@@ -412,11 +412,19 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 }
 
 func TestGitHubSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
-	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindGitHub)
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindGitHub, false)
 }
 
 func TestPreviewSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
-	checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview)
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindPreview, false)
+}
+
+func TestImageSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T) {
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindImage, false)
+}
+
+func TestImageSnapshotCannotReplaceNewerLiveDeployment(t *testing.T) {
+	checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t, state.DeploymentKindImage, true)
 }
 
 func TestGitHubWebhookSnapshotCannotPromoteAfterBranchMoves(t *testing.T) {
@@ -488,7 +496,7 @@ func TestGitHubWebhookSnapshotCannotPromoteAfterBranchMoves(t *testing.T) {
 	}
 }
 
-func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind) {
+func checkSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.T, kind state.DeploymentKind, newerLive bool) {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -508,16 +516,24 @@ func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.
 		t.Fatal(err)
 	}
 	older, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
-		CommitSHA: strings.Repeat("a", 40)})
+		CommitSHA: strings.Repeat("a", 40), ImageDigest: "sha256:older"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpdateDeploymentStatus(ctx, older.ID, state.DeploySnapshotting, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
-		CommitSHA: strings.Repeat("b", 40)}); err != nil {
+	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind,
+		CommitSHA: strings.Repeat("b", 40), ImageDigest: "sha256:newer"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	servingID := stable.ID
+	if newerLive {
+		if err := store.MarkDeploymentLiveIfLatest(ctx, newer.ID); err != nil {
+			t.Fatal(err)
+		}
+		servingID = newer.ID
 	}
 	backend := mustLocalStorage(t, t.TempDir())
 	notifier := &fakeNotifier{}
@@ -536,7 +552,7 @@ func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.
 	if err != nil || oldRow.Status != state.DeploySuperseded {
 		t.Fatalf("stale GitHub row = (%+v, %v)", oldRow, err)
 	}
-	stableRow, err := store.DeploymentByID(ctx, stable.ID)
+	stableRow, err := store.DeploymentByID(ctx, servingID)
 	if err != nil || stableRow.Status != state.DeployLive {
 		t.Fatalf("serving predecessor = (%+v, %v)", stableRow, err)
 	}
@@ -551,5 +567,51 @@ func checkGitDrivenSnapshotCannotPromoteAfterNewerDeploymentAccepted(t *testing.
 	}
 	if !supersededNotice {
 		t.Fatalf("stale deployment did not notify its terminal status: %+v", notifier.calls)
+	}
+}
+
+// TestSnapshotPublicationCountsCompanionRAM reproduces production-us rc.251:
+// a source deploy with a 64 MiB companion booted a 1024+64 MiB guest (vmmd
+// adds companion RAM), its snapshot reported 1088 MiB, and imaged rejected it
+// as a RAM mismatch against the app's 1024 MiB on every retry, so the
+// deployment never left "snapshotting".
+func TestSnapshotPublicationCountsCompanionRAM(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "snapshot-companion@example.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "snapshot-companion", RAMMB: 1024, MaxConcurrency: 3, IdleTimeoutS: 60})
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
+		Sidecars: json.RawMessage(`[{"name":"heartbeat","type":"sidecar","ram_mb":64}]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := mustLocalStorage(t, t.TempDir())
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be)
+	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "companion")
+	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: dep.ID, StorageKey: key, FCVersion: "1.10.0", Tier: state.SnapshotTierInit, MemBytes: (1024 + 64) << 20,
+	}); err != nil {
+		t.Fatalf("handleSnapshotWritten with companion RAM: %v", err)
+	}
+	if _, err := store.LatestSnapshot(ctx, dep.ID); err != nil {
+		t.Fatalf("companion snapshot was not published: %v", err)
+	}
+	// The app's RAM alone is now the mismatch.
+	key2 := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "app-only")
+	for _, part := range []string{key2, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key2})} {
+		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = h.handleSnapshotWritten(ctx, snapshotWrittenPayload{
+		DeploymentID: dep.ID, StorageKey: key2, FCVersion: "1.10.0", Tier: state.SnapshotTierInit, MemBytes: 1024 << 20,
+	})
+	if err == nil || !strings.Contains(err.Error(), "snapshot RAM mismatch") {
+		t.Fatalf("app-only memory for a companion deployment = %v, want RAM mismatch", err)
 	}
 }

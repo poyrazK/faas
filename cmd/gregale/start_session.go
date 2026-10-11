@@ -34,10 +34,28 @@ type startSession struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
+// canonicalStartScope resolves dir through symlinks so one directory keys one
+// session however the shell reached it: macOS reports /var as /private/var,
+// and project directories are often symlinked. An unresolvable path keeps its
+// absolute form.
+func canonicalStartScope(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve session directory: %w", err)
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+		return resolved, nil
+	}
+	return abs, nil
+}
+
 func startSessionPath(scope string) (string, error) {
+	scope, err := canonicalStartScope(scope)
+	if err != nil {
+		return "", err
+	}
 	dir := os.Getenv("XDG_STATE_HOME")
 	if dir == "" {
-		var err error
 		dir, err = os.UserConfigDir()
 		if err != nil {
 			return "", fmt.Errorf("locate start session directory: %w", err)

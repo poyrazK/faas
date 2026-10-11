@@ -173,12 +173,56 @@ func TestConfigOptionalDurableTasks(t *testing.T) {
 		"short task ttl":        base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","ttl_seconds":59}}`,
 		"long poll interval":    base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","poll_interval_ms":30001}}`,
 		"excessive concurrency": base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","worker_concurrency":17}}`,
-		"unknown task field":    base + `,"tasks":{"enabled":false,"mystery":true}}`,
+		"negative admission":    base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","max_outstanding":-1}}`,
+		"owner exceeds queue":   base + `,"tasks":{"enabled":true,"database_url_env":"DATABASE_URL","owner_key_env":"MCP_TASK_OWNER_KEY","namespace_env":"FAAS_APP_ID","max_outstanding":10,"max_outstanding_per_owner":11}}`,
+
+		"unknown task field": base + `,"tasks":{"enabled":false,"mystery":true}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Decode(strings.NewReader(body)); err == nil {
 				t.Fatal("accepted invalid task config")
 			}
 		})
+	}
+}
+
+func TestTaskRunningLimits(t *testing.T) {
+	for _, tc := range []struct {
+		total, owner int
+		valid        bool
+	}{
+		{16, 4, true}, {1, 1, true}, {-1, 1, false}, {16, -1, false}, {1, 2, false}, {1, 0, false},
+	} {
+		enabled := true
+		config := TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", MaxRunning: tc.total, MaxRunningPerOwner: tc.owner}
+		if err := config.validate(); (err == nil) != tc.valid {
+			t.Errorf("running limits %d/%d: %v", tc.total, tc.owner, err)
+		}
+	}
+}
+
+func TestTaskRetryPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		attempts, base, maximum int
+		valid                   bool
+	}{
+		{0, 0, 0, true}, {1, 100, 100, true}, {10, 1000, 60000, true}, {-1, 0, 0, false}, {11, 0, 0, false}, {3, 99, 1000, false}, {3, 1000, 500, false}, {3, 100, 86400001, false},
+	} {
+		enabled := true
+		config := TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", MaxAttempts: tc.attempts, RetryBaseDelayMS: tc.base, RetryMaxDelayMS: tc.maximum}
+		if err := config.validate(); (err == nil) != tc.valid {
+			t.Errorf("retry policy %+v: %v", tc, err)
+		}
+	}
+}
+
+func TestTaskEncryptionKeyEnvironment(t *testing.T) {
+	for _, name := range []string{"TASK_PAYLOAD_KEYS", "lowercase", "DATABASE_URL", "OWNER_KEY", "NAMESPACE"} {
+		enabled := true
+		config := TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", EncryptionKeysEnv: name}
+		err := config.validate()
+		if (err == nil) != (name == "TASK_PAYLOAD_KEYS") {
+			t.Errorf("encryption environment %q: %v", name, err)
+		}
 	}
 }

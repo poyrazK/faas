@@ -17,39 +17,43 @@ import (
 // This report composes existing account-scoped reads. Captured deployment
 // contracts are kept separate from current app policy and historical traffic.
 type previewRouteReport struct {
-	Version               int                              `json:"version"`
-	Preview               string                           `json:"preview"`
-	Parent                string                           `json:"parent"`
-	CandidateDeployment   string                           `json:"candidate_deployment,omitempty"`
-	CandidateSourceSHA256 string                           `json:"candidate_source_sha256,omitempty"`
-	BaselineDeployment    string                           `json:"baseline_deployment,omitempty"`
-	BaselineSelection     string                           `json:"baseline_selection"`
-	GeneratedAt           time.Time                        `json:"generated_at"`
-	Readiness             previewReportEvidence            `json:"readiness"`
-	Outcome               string                           `json:"outcome"`
-	Contract              previewReportEvidence            `json:"contract"`
-	Policy                previewReportEvidence            `json:"policy"`
-	PolicyDrift           previewRoutePolicyDriftEvidence  `json:"policy_drift"`
-	Performance           previewReportEvidence            `json:"performance"`
-	Requests              previewReportEvidence            `json:"requests"`
-	Security              previewReportEvidence            `json:"security"`
-	Customers             previewReportCustomerEvidence    `json:"customers"`
-	Tests                 previewReportEvidence            `json:"tests"`
-	Requirements          *routerequirements.PreviewReport `json:"requirements,omitempty"`
-	TestReportSHA256      string                           `json:"test_report_sha256,omitempty"`
-	UnboundTestRuns       int                              `json:"unbound_test_runs"`
-	BaselineDocumentHash  string                           `json:"baseline_document_sha256,omitempty"`
-	CandidateDocumentHash string                           `json:"candidate_document_sha256,omitempty"`
-	Routes                []previewReportRoute             `json:"routes"`
-	Notes                 []string                         `json:"notes"`
-	SourceImpact          *previewSourceImpact             `json:"source_impact,omitempty"`
-	ReviewPriorities      []previewRouteReview             `json:"review_priorities,omitempty"`
-	baselineSource        previewDeploymentSource
-	candidateSource       previewDeploymentSource
-	candidateContract     *openapidiff.Spec
-	candidateEdgeRules    []api.EdgeRuleResponse
-	candidateRulesErr     error
-	candidateRulesLoaded  bool
+	Version                  int                              `json:"version"`
+	Preview                  string                           `json:"preview"`
+	Parent                   string                           `json:"parent"`
+	CandidateDeployment      string                           `json:"candidate_deployment,omitempty"`
+	CandidateSourceSHA256    string                           `json:"candidate_source_sha256,omitempty"`
+	BaselineDeployment       string                           `json:"baseline_deployment,omitempty"`
+	BaselineSelection        string                           `json:"baseline_selection"`
+	GeneratedAt              time.Time                        `json:"generated_at"`
+	Readiness                previewReportEvidence            `json:"readiness"`
+	Outcome                  string                           `json:"outcome"`
+	Contract                 previewReportEvidence            `json:"contract"`
+	Policy                   previewReportEvidence            `json:"policy"`
+	PolicyDrift              previewRoutePolicyDriftEvidence  `json:"policy_drift"`
+	Performance              previewReportEvidence            `json:"performance"`
+	Requests                 previewReportEvidence            `json:"requests"`
+	Security                 previewReportEvidence            `json:"security"`
+	Customers                previewReportCustomerEvidence    `json:"customers"`
+	Tests                    previewReportEvidence            `json:"tests"`
+	Requirements             *routerequirements.PreviewReport `json:"requirements,omitempty"`
+	TestReportSHA256         string                           `json:"test_report_sha256,omitempty"`
+	UnboundTestRuns          int                              `json:"unbound_test_runs"`
+	BaselineDocumentHash     string                           `json:"baseline_document_sha256,omitempty"`
+	CandidateDocumentHash    string                           `json:"candidate_document_sha256,omitempty"`
+	Routes                   []previewReportRoute             `json:"routes"`
+	Notes                    []string                         `json:"notes"`
+	SourceImpact             *previewSourceImpact             `json:"source_impact,omitempty"`
+	ReviewPriorities         []previewRouteReview             `json:"review_priorities,omitempty"`
+	RouteRemovalGate         *routeRemovalGateReport          `json:"route_removal_gate,omitempty"`
+	baselineSource           previewDeploymentSource
+	candidateSource          previewDeploymentSource
+	candidateContract        *openapidiff.Spec
+	baselineContract         *openapidiff.Spec
+	removalCandidateContract *openapidiff.Spec
+	removalBaselineServing   bool
+	candidateEdgeRules       []api.EdgeRuleResponse
+	candidateRulesErr        error
+	candidateRulesLoaded     bool
 }
 
 type previewReportEvidence struct {
@@ -63,6 +67,7 @@ type previewReportRoute struct {
 	Change                 string                      `json:"change"`
 	RouteSource            string                      `json:"route_source"`
 	Breaks                 []previewReportBreak        `json:"breaks,omitempty"`
+	Unknowns               []previewReportUnknown      `json:"unknowns,omitempty"`
 	RequestContractChanged bool                        `json:"request_contract_changed,omitempty"`
 	PolicyKinds            []string                    `json:"policy_kinds"`
 	PolicyScope            string                      `json:"policy_scope"`
@@ -83,6 +88,12 @@ type previewReportRoute struct {
 // shareable report: these can contain customer examples or credentials.
 type previewReportBreak struct {
 	Kind         string `json:"kind"`
+	Status       string `json:"status,omitempty"`
+	PathInSchema string `json:"path_in_schema,omitempty"`
+}
+
+type previewReportUnknown struct {
+	Code         string `json:"code"`
 	Status       string `json:"status,omitempty"`
 	PathInSchema string `json:"path_in_schema,omitempty"`
 }
@@ -112,6 +123,11 @@ func cmdPreviewReport(args []string) int {
 	tests := fs.String("test-report", "", "JSON receipts from gregale test")
 	sourceImpact := fs.String("source-impact", "", "route impact report from gregale routes impact")
 	requirements := fs.String("requirements", "", "versioned route requirements YAML or JSON file")
+	removalMode := fs.String("route-removal-mode", "report", "route-removal CLI gate: report or enforce")
+	removalReadiness := fs.String("route-readiness", "", "migration readiness report for the serving production deployment")
+	removalMapping := fs.String("route-mapping", "", "reviewed successor mapping JSON")
+	removalApproval := fs.String("route-owner-approval", "", "owner attestation for this exact baseline, candidate and evidence")
+	removalAge := fs.Duration("route-evidence-max-age", 72*time.Hour, "maximum route evidence age (at most 72h)")
 	failRequestBreaking := fs.Bool("fail-on-request-breaking", false, "exit 1 for known request-contract restrictions")
 	failSecurity := fs.Bool("fail-on-security-regression", false, "exit 1 for known reductions in declared authentication requirements")
 	failPolicyDrift := fs.Bool("fail-on-policy-drift", false, "exit 1 for changed or incomplete route rule policy comparison")
@@ -122,7 +138,7 @@ func cmdPreviewReport(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || !validCLISlug(pos[0]) || (*format != "text" && *format != "markdown") || (jsonOutput && *format != "text") {
-		PrintUsage(osStderr, "usage: gregale preview report <preview-slug> [--format text|markdown] [--since 24h] [--customer-details] [--source-impact PATH] [--test-report PATH] [--requirements PATH] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements]", "preview")
+		PrintUsage(osStderr, "usage: gregale preview report <preview-slug> [--format text|markdown] [--since 24h] [--customer-details] [--source-impact PATH] [--test-report PATH] [--requirements PATH] [--route-removal-mode report|enforce] [--route-readiness PATH] [--route-mapping PATH] [--route-owner-approval PATH] [--route-evidence-max-age 72h] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements]", "preview")
 		return 1
 	}
 	if d, err := time.ParseDuration(*since); err != nil || d <= 0 {
@@ -133,6 +149,13 @@ func cmdPreviewReport(args []string) int {
 	}
 	if *failRequirements && *requirements == "" {
 		return printErr("Missing --requirements", errors.New("--fail-on-requirements requires a route requirements file"))
+	}
+	if (*removalMode != "report" && *removalMode != "enforce") || *removalAge <= 0 || *removalAge > 72*time.Hour {
+		return printErr("Invalid removal policy", errors.New("use --route-removal-mode report|enforce and a positive --route-evidence-max-age of at most 72h"))
+	}
+	removalEvidence, err := readRouteRemovalGateEvidence(*removalReadiness, *removalMapping, *removalApproval)
+	if err != nil {
+		return printErr("Invalid removal evidence", err)
 	}
 	var requirementConfig routerequirements.PreviewConfig
 	var requirementDigest string
@@ -181,6 +204,18 @@ func cmdPreviewReport(args []string) int {
 		attachPreviewSourceImpact(&report, impact, impactDigest)
 	}
 	prioritizePreviewRouteReview(&report)
+	gate := buildRouteRemovalGate(report.Parent, report.BaselineDeployment, report.CandidateDeployment, report.BaselineDocumentHash, report.CandidateDocumentHash, *removalMode, report.baselineContract, report.removalCandidateContract, removalEvidence, *removalAge, time.Now().UTC())
+	if len(gate.Routes) > 0 && (!report.removalBaselineServing || report.Readiness.Status != "available") {
+		gate.Blockers = appendUniqueCutoverCaveats(gate.Blockers, "baseline_not_serving_or_candidate_not_live")
+		gate.Status = "blocked"
+		for i := range gate.Routes {
+			gate.Routes[i].Status = "blocked"
+		}
+	}
+	if gate.Status == "passed" {
+		refreshRouteRemovalTraffic(ctx, client, &gate, *removalAge, time.Now().UTC())
+	}
+	report.RouteRemovalGate = &gate
 	if jsonOutput {
 		if code := jsonOut(writeJSON(report)); code != 0 {
 			return code
@@ -189,7 +224,7 @@ func cmdPreviewReport(args []string) int {
 		renderPreviewRouteReport(osStdout, report, *format == "markdown")
 	}
 	if (*failSecurity && previewReportHasSecurityRegressions(report)) || (*failPolicyDrift && previewReportHasPolicyDrift(report)) || (*failRequestBreaking && (previewReportHasRequestBreaks(report) || previewReportHasSecurityBreaks(report))) || (*failBreaking && previewReportHasBreaks(report)) || (*failIncomplete && report.Outcome != "no_findings") ||
-		(*failRequirements && report.Requirements.Status != "satisfied") {
+		(*failRequirements && report.Requirements.Status != "satisfied") || (*removalMode == "enforce" && gate.Status == "blocked") {
 		return 1
 	}
 	return 0
@@ -232,6 +267,7 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 	}
 	if production != nil {
 		report.BaselineDeployment = production.ID
+		report.removalBaselineServing = production.Status == statusLive && production.TrafficPercent == 100
 	}
 	report.baselineSource = previewSourceDeployment(production, preview.Parent.ID)
 	report.candidateSource = previewSourceDeployment(preview.LatestDeployment, preview.App.ID)
@@ -245,10 +281,16 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 			report.Notes = append(report.Notes, "Candidate deployment is not live; this report does not establish readiness.")
 		}
 	}
-	before, beforeHash, beforeState := previewReportDocument(ctx, client, report.Parent, report.BaselineDeployment)
-	after, afterHash, afterState := previewReportDocument(ctx, client, report.Preview, report.CandidateDeployment)
+	before, beforeHash, beforeState, beforeBound := previewReportDocumentWithBinding(ctx, client, report.Parent, report.BaselineDeployment, preview.Parent.ID)
+	after, afterHash, afterState, afterBound := previewReportDocumentWithBinding(ctx, client, report.Preview, report.CandidateDeployment, preview.App.ID)
 	report.BaselineDocumentHash, report.CandidateDocumentHash = beforeHash, afterHash
 	report.candidateContract = after
+	if beforeBound {
+		report.baselineContract = before
+	}
+	if afterBound {
+		report.removalCandidateContract = after
+	}
 	if before != nil && after != nil {
 		report.Contract = previewReportEvidence{Status: "available"}
 		report.Routes, report.Requests = comparePreviewContractsWithRequests(before, after)
@@ -298,25 +340,31 @@ func previewReportBaseline(ctx context.Context, client *api.Client, id, parentID
 }
 
 func previewReportDocument(ctx context.Context, client *api.Client, slug, id string) (*openapidiff.Spec, string, string) {
+	spec, hash, status, _ := previewReportDocumentWithBinding(ctx, client, slug, id, "")
+	return spec, hash, status
+}
+
+func previewReportDocumentWithBinding(ctx context.Context, client *api.Client, slug, id, appID string) (*openapidiff.Spec, string, string, bool) {
 	if id == "" {
-		return nil, "", "deployment_missing"
+		return nil, "", "deployment_missing", false
 	}
 	doc, err := client.GetAppsDeploymentOpenAPIDoc(ctx, slug, id)
 	if err != nil {
-		return nil, "", previewReportReadReason(err)
+		return nil, "", previewReportReadReason(err), false
 	}
 	if doc.DeploymentID != id || doc.Truncated || len(doc.Doc) == 0 {
-		return nil, "", "document_incomplete"
+		return nil, "", "document_incomplete", false
 	}
 	body, err := marshalPreviewReportDocument(doc.Doc)
 	if err != nil {
-		return nil, "", "document_invalid"
+		return nil, "", "document_invalid", false
 	}
 	spec, err := openapidiff.LoadBytes(body)
 	if err != nil || spec.OpenAPIVersion() == "" {
-		return nil, "", "document_invalid"
+		return nil, "", "document_invalid", false
 	}
-	return spec, fmt.Sprintf("%x", openapidiff.SumSHA256(body)), "available"
+	bound := appID != "" && doc.AppID == appID && (doc.Source == "cold_boot" || doc.Source == "manual_upload")
+	return spec, fmt.Sprintf("%x", openapidiff.SumSHA256(body)), "available", bound
 }
 
 func previewReportReadReason(err error) string {

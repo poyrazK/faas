@@ -245,5 +245,7 @@ func isComputeOwnedLogsPath(path string) bool {
 		return false
 	}
 	tail := rest[separator:]
-	return tail == "/logs" || len(tail) > len("/logs/") && tail[:len("/logs/")] == "/logs/"
+	// ADR-741: the `gregale dev --debug` tunnel is served by the compute
+	// gateway beside the log stream.
+	return tail == "/logs" || tail == "/debug" || len(tail) > len("/logs/") && tail[:len("/logs/")] == "/logs/"
 }

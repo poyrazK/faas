@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 const (
@@ -157,7 +156,7 @@ func openPreviewURL(open bool, url string) {
 	if !open || strings.TrimSpace(url) == "" {
 		return
 	}
-	if err := browser.Open(url); err != nil {
+	if err := openBrowser(url); err != nil {
 		PrintWarn(osStderr, "Could not open preview URL: %v", err)
 	}
 }

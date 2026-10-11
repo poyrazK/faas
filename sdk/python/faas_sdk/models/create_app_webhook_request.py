@@ -38,6 +38,8 @@ class CreateAppWebhookRequest:
     target_url: str
     webhook_secret: str
     event_filter: list[CreateAppWebhookRequestEventFilterItem] | Unset = UNSET
+    """Events to subscribe to; omit or leave empty for standard platform events. Select app.health.changed
+    explicitly to enable health notifications."""
     retry_policy: CreateAppWebhookRequestRetryPolicy | Unset = "default"
     delivery_format: CreateAppWebhookRequestDeliveryFormat | Unset = "json"
     """Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured

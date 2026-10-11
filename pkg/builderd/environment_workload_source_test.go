@@ -28,7 +28,7 @@ func (n *lostReviewedSourceHandoff) Notify(ctx context.Context, channel, payload
 }
 
 func TestEnvironmentWorkloadSourceBuildCompletionRetainsRecoverableHold(t *testing.T) {
-	for _, kind := range []string{"source", "dockerfile"} {
+	for _, kind := range []string{"source", "dockerfile", "function"} {
 		t.Run(kind, func(t *testing.T) {
 			store, dep, _ := heldSourceBuild(t, kind)
 			t.Setenv("FAAS_DEPLOY_BASE_REF_NODE22", "registry.example/node@sha256:"+strings.Repeat("1", 64))
@@ -78,6 +78,10 @@ func TestEnvironmentWorkloadSourceBuildCompletionRetainsRecoverableHold(t *testi
 
 func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployment, state.App) {
 	t.Helper()
+	appType := state.AppTypeApp
+	if kind == "function" {
+		appType = state.AppTypeFunction
+	}
 	store := state.NewMemStore()
 	account, err := store.CreateAccount(t.Context(), "frozen-build@example.test", api.PlanPro)
 	if err != nil {
@@ -87,7 +91,7 @@ func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployme
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "frozen-api", Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 1,
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "frozen-api", Type: appType, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 1,
 		Runtime: "node22", Manifest: state.AppManifest{Port: 8080, BuildDockerfile: "shared/Dockerfile"}})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +101,9 @@ func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployme
 		t.Fatal(err)
 	}
 	buildSource := &api.EnvironmentWorkloadSource{Kind: kind, Directory: "."}
+	if kind == "function" {
+		buildSource.Runtime = "node22"
+	}
 	if kind == "dockerfile" {
 		buildSource.Dockerfile = "deploy/Dockerfile"
 	}
@@ -158,7 +165,7 @@ func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployme
 }
 
 func TestEnvironmentWorkloadSourceBuilderUsesFrozenSelection(t *testing.T) {
-	for _, kind := range []string{"source", "dockerfile"} {
+	for _, kind := range []string{"source", "dockerfile", "function"} {
 		t.Run(kind, func(t *testing.T) {
 			store, dep, app := heldSourceBuild(t, kind)
 			manifest := app.Manifest
@@ -178,7 +185,7 @@ func TestEnvironmentWorkloadSourceBuilderUsesFrozenSelection(t *testing.T) {
 			if kind == "dockerfile" {
 				wantFramework, wantDockerfile = FrameworkDocker, "deploy/Dockerfile"
 			}
-			if vm.spawnCalls != 1 || request.Framework != wantFramework || request.DockerfilePath != wantDockerfile || request.Runtime != "node22" || request.SourceRoot != "." || request.SourceSHA256 != dep.SourceSHA256 || request.SourcePath != dep.SourcePath || request.LogPath != dep.LogPath {
+			if vm.spawnCalls != 1 || request.Framework != wantFramework || request.DockerfilePath != wantDockerfile || request.Function != (kind == "function") || request.Runtime != "node22" || request.SourceRoot != "." || request.SourceSHA256 != dep.SourceSHA256 || request.SourcePath != dep.SourcePath || request.LogPath != dep.LogPath {
 				t.Fatalf("builder read unreviewed selection: %+v", request)
 			}
 			stored, err := store.DeploymentByID(t.Context(), dep.ID)

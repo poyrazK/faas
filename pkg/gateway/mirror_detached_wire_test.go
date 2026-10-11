@@ -1,5 +1,6 @@
 // adr: 125
 // adr: 133
+// adr: 696
 package gateway
 
 import (
@@ -13,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
@@ -58,24 +61,35 @@ func TestDispatchMirrorDetachedRequestThroughGRPC(t *testing.T) {
 				<-budget.Done()
 			}
 
+			tracker, err := activity.New(uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			appID, deploymentID := uuid.NewString(), uuid.NewString()
 			backend := &mirrorParkerBackend{mirrorTargetFakeBackend: &mirrorTargetFakeBackend{
 				mirrorFakeBackend: &mirrorFakeBackend{},
-				target:            Target{AppID: "app", NodeID: "shadow-node", InstanceID: "shadow", DeploymentID: "shadow-dep", Port: 3000},
+				target:            Target{AppID: appID, NodeID: "shadow-node", InstanceID: "shadow", DeploymentID: deploymentID, Port: 3000},
 			}}
 			ledger := &mirrorResultStoreFake{results: make(chan state.MirrorInvocationResult, 1)}
 			h := &Handler{backend: backend, log: slog.New(slog.NewTextHandler(io.Discard, nil)), mirrorResultStore: ledger}
-			h.proxyByNode = func(target Target) http.Handler {
+			h.proxyByNode = WithDeploymentActivity(func(target Target) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if got := tracker.Observe(appID, deploymentID); !got.CoverageKnown || got.ActiveForwards != 1 {
+						t.Errorf("detached mirror was not counted: %+v", got)
+					}
 					fwdStreamOnceWithEvents(w, r, vmmdpb.NewVmmdClient(conn), h.log, target, nil)
 				})
-			}
+			}, tracker)
 			source := newMirrorSourceCapture()
 			source.writeHeader(http.StatusOK)
 			source.write([]byte(`{"ok":true}`))
 			source.complete()
 			request := httptest.NewRequest(http.MethodGet, "http://example.test/echo", nil).WithContext(budget)
 			request.Header.Set("Authorization", "Bearer test-only-secret")
-			h.dispatchMirror(budget, "primary", nil, MirrorRuleRow{ID: "rule", AppID: "app", MirrorDeploymentID: "shadow-dep", IncludeBody: true}, request, nil, "request", source)
+			h.dispatchMirror(budget, "primary", nil, MirrorRuleRow{ID: "rule", AppID: appID, MirrorDeploymentID: deploymentID, IncludeBody: true}, request, nil, "request", source)
+			if got := tracker.Observe(appID, deploymentID); !got.CoverageKnown || got.ActiveForwards != 0 || got.ActivityVersion != 3 {
+				t.Fatalf("detached mirror retained activity: %+v", got)
+			}
 
 			result := <-ledger.results
 			if result.StatusCode != http.StatusOK || result.Crashed || result.StatusDiff || result.SchemaDiff || result.BodyDiff || result.ComparisonIncomplete {

@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
+    from ..models.mcp_resource_policy import MCPResourcePolicy
 
 
 T = TypeVar("T", bound="EdgeRuleJWTAction")
@@ -33,10 +34,20 @@ class EdgeRuleJWTAction:
     algorithms: list[EdgeRuleJWTActionAlgorithmsItem]
     audience: list[str] | Unset = UNSET
     required_claims: EdgeRuleJWTActionRequiredClaims | Unset = UNSET
+    mcp: MCPResourcePolicy | Unset = UNSET
+    """Opt-in MCP resource-server policy on a JWT edge rule. Requires a
+    canonical HTTPS resource, matching JWT audience, match_path=/**,
+    and no method or header selectors. The gateway serves OAuth resource
+    metadata, rejects expired credentials, and enforces JSON-RPC execution
+    scopes. Catalog filtering and task ownership remain application duties.
+    """
     platform_tenant_external_ref_claim: str | Unset = UNSET
     """Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the
     app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are
     rejected before the request reaches the guest."""
+    require_exp: bool | Unset = UNSET
+    """Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token
+    minted without one never expires unless this is set."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,7 +68,13 @@ class EdgeRuleJWTAction:
         if not isinstance(self.required_claims, Unset):
             required_claims = self.required_claims.to_dict()
 
+        mcp: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.mcp, Unset):
+            mcp = self.mcp.to_dict()
+
         platform_tenant_external_ref_claim = self.platform_tenant_external_ref_claim
+
+        require_exp = self.require_exp
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -72,14 +89,19 @@ class EdgeRuleJWTAction:
             field_dict["audience"] = audience
         if required_claims is not UNSET:
             field_dict["required_claims"] = required_claims
+        if mcp is not UNSET:
+            field_dict["mcp"] = mcp
         if platform_tenant_external_ref_claim is not UNSET:
             field_dict["platform_tenant_external_ref_claim"] = platform_tenant_external_ref_claim
+        if require_exp is not UNSET:
+            field_dict["require_exp"] = require_exp
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
+        from ..models.mcp_resource_policy import MCPResourcePolicy
 
         d = dict(src_dict)
         issuer = d.pop("issuer")
@@ -102,7 +124,16 @@ class EdgeRuleJWTAction:
         else:
             required_claims = EdgeRuleJWTActionRequiredClaims.from_dict(_required_claims)
 
+        _mcp = d.pop("mcp", UNSET)
+        mcp: MCPResourcePolicy | Unset
+        if isinstance(_mcp, Unset):
+            mcp = UNSET
+        else:
+            mcp = MCPResourcePolicy.from_dict(_mcp)
+
         platform_tenant_external_ref_claim = d.pop("platform_tenant_external_ref_claim", UNSET)
+
+        require_exp = d.pop("require_exp", UNSET)
 
         edge_rule_jwt_action = cls(
             issuer=issuer,
@@ -110,7 +141,9 @@ class EdgeRuleJWTAction:
             algorithms=algorithms,
             audience=audience,
             required_claims=required_claims,
+            mcp=mcp,
             platform_tenant_external_ref_claim=platform_tenant_external_ref_claim,
+            require_exp=require_exp,
         )
 
         edge_rule_jwt_action.additional_properties = d

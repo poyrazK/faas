@@ -116,10 +116,12 @@ def sync_detailed(
 ) -> Response[OperationResponse | Problem]:
     """Reconcile an uncertain outcome or authorize safe retry.
 
-     Requires deploy:write and evidence. Expected generation prevents stale recovery; recovery_id makes
-    the same recovery decision idempotent. succeeded validates result against the pinned output schema.
-    safe_to_retry creates a new execution while retaining the logical operation identity and pinned
-    contract. Ordinary invocation/DLQ replay cannot bypass this policy.
+     Requires deploy:write and evidence. Expected generation prevents stale recovery; optional
+    expected_inspection_revision also rejects changed execution evidence. Matching recovery receipts
+    replay before revision validation. recovery_id makes the same recovery decision idempotent.
+    succeeded validates result against the pinned output schema. safe_to_retry creates a new execution
+    while retaining the logical operation identity and pinned contract. Ordinary invocation/DLQ replay
+    cannot bypass this policy.
 
     Args:
         slug (str):
@@ -157,10 +159,12 @@ def sync(
 ) -> OperationResponse | Problem | None:
     """Reconcile an uncertain outcome or authorize safe retry.
 
-     Requires deploy:write and evidence. Expected generation prevents stale recovery; recovery_id makes
-    the same recovery decision idempotent. succeeded validates result against the pinned output schema.
-    safe_to_retry creates a new execution while retaining the logical operation identity and pinned
-    contract. Ordinary invocation/DLQ replay cannot bypass this policy.
+     Requires deploy:write and evidence. Expected generation prevents stale recovery; optional
+    expected_inspection_revision also rejects changed execution evidence. Matching recovery receipts
+    replay before revision validation. recovery_id makes the same recovery decision idempotent.
+    succeeded validates result against the pinned output schema. safe_to_retry creates a new execution
+    while retaining the logical operation identity and pinned contract. Ordinary invocation/DLQ replay
+    cannot bypass this policy.
 
     Args:
         slug (str):
@@ -193,10 +197,12 @@ async def asyncio_detailed(
 ) -> Response[OperationResponse | Problem]:
     """Reconcile an uncertain outcome or authorize safe retry.
 
-     Requires deploy:write and evidence. Expected generation prevents stale recovery; recovery_id makes
-    the same recovery decision idempotent. succeeded validates result against the pinned output schema.
-    safe_to_retry creates a new execution while retaining the logical operation identity and pinned
-    contract. Ordinary invocation/DLQ replay cannot bypass this policy.
+     Requires deploy:write and evidence. Expected generation prevents stale recovery; optional
+    expected_inspection_revision also rejects changed execution evidence. Matching recovery receipts
+    replay before revision validation. recovery_id makes the same recovery decision idempotent.
+    succeeded validates result against the pinned output schema. safe_to_retry creates a new execution
+    while retaining the logical operation identity and pinned contract. Ordinary invocation/DLQ replay
+    cannot bypass this policy.
 
     Args:
         slug (str):
@@ -232,10 +238,12 @@ async def asyncio(
 ) -> OperationResponse | Problem | None:
     """Reconcile an uncertain outcome or authorize safe retry.
 
-     Requires deploy:write and evidence. Expected generation prevents stale recovery; recovery_id makes
-    the same recovery decision idempotent. succeeded validates result against the pinned output schema.
-    safe_to_retry creates a new execution while retaining the logical operation identity and pinned
-    contract. Ordinary invocation/DLQ replay cannot bypass this policy.
+     Requires deploy:write and evidence. Expected generation prevents stale recovery; optional
+    expected_inspection_revision also rejects changed execution evidence. Matching recovery receipts
+    replay before revision validation. recovery_id makes the same recovery decision idempotent.
+    succeeded validates result against the pinned output schema. safe_to_retry creates a new execution
+    while retaining the logical operation identity and pinned contract. Ordinary invocation/DLQ replay
+    cannot bypass this policy.
 
     Args:
         slug (str):

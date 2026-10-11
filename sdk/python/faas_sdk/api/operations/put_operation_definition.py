@@ -133,9 +133,10 @@ def sync_detailed(
         deployment_id (UUID):
         name (str):
         x_gregale_release (UUID | Unset):
-        body (OperationDefinitionSpec): Resolved immutable contract for one HTTP handler.
-            Ownership comes from verified authentication, never input fields. Production admission
-            stays disabled until the HTTP execution adapter is qualified.
+        body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
+            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            authentication. Production admission remains disabled pending qualification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,9 +182,10 @@ def sync(
         deployment_id (UUID):
         name (str):
         x_gregale_release (UUID | Unset):
-        body (OperationDefinitionSpec): Resolved immutable contract for one HTTP handler.
-            Ownership comes from verified authentication, never input fields. Production admission
-            stays disabled until the HTTP execution adapter is qualified.
+        body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
+            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            authentication. Production admission remains disabled pending qualification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,9 +226,10 @@ async def asyncio_detailed(
         deployment_id (UUID):
         name (str):
         x_gregale_release (UUID | Unset):
-        body (OperationDefinitionSpec): Resolved immutable contract for one HTTP handler.
-            Ownership comes from verified authentication, never input fields. Production admission
-            stays disabled until the HTTP execution adapter is qualified.
+        body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
+            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            authentication. Production admission remains disabled pending qualification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -270,9 +273,10 @@ async def asyncio(
         deployment_id (UUID):
         name (str):
         x_gregale_release (UUID | Unset):
-        body (OperationDefinitionSpec): Resolved immutable contract for one HTTP handler.
-            Ownership comes from verified authentication, never input fields. Production admission
-            stays disabled until the HTTP execution adapter is qualified.
+        body (OperationDefinitionSpec): Resolved immutable contract for an HTTP handler or a named
+            linear HTTP workflow from the same deployment. Workflow definitions require POST ingress,
+            reconciliation recovery and stages matching the steps. Ownership comes from verified
+            authentication. Production admission remains disabled pending qualification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

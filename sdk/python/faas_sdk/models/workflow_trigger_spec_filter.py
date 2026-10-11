@@ -12,7 +12,7 @@ T = TypeVar("T", bound="WorkflowTriggerSpecFilter")
 @_attrs_define
 class WorkflowTriggerSpecFilter:
     """Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule, timezone, input,
-    and overlap options.
+    overlap, and catch-up options.
 
     """
 

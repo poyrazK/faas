@@ -17,7 +17,7 @@ export type EventReceiptAttemptHistoryResponse = {
   coverage: 'recorded_attempts_only';
   attempts: Array<InvocationAttemptResponse>;
   /**
-   * Opaque cursor for the next page of older dispatch attempts for this captured recipient.
+   * Opaque cursor for the next page of older dispatch attempts for this recipient.
    */
   next_after?: string;
 };

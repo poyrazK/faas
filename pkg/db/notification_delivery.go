@@ -26,6 +26,7 @@ const (
 	notificationCompleted notificationDelivery = iota
 	notificationRetrying
 	notificationSkipped
+	notificationDeferred
 )
 
 func notificationLeaseMilliseconds(lease time.Duration) int64 {
@@ -147,6 +148,21 @@ func settleNotificationClaim(ctx context.Context, pool *pgxpool.Pool, item Notif
 		return notificationSkipped, notificationClaimUpdated(item.ID, rows)
 	}
 	if handlerErr != nil {
+		var deferred *DeferredNotificationError
+		if errors.As(handlerErr, &deferred) {
+			delay := max(notificationOutboxRetry, min(deferred.Delay, notificationOutboxMaxRetry))
+			rows, err := sqlc.New().DeferNotificationClaim(ctx, pool, sqlc.DeferNotificationClaimParams{
+				ID: item.ID, ClaimToken: item.ClaimToken, DelayMilliseconds: delay.Milliseconds(),
+				Message: safetext.Truncate(deferred.Error(), notificationFailureMessageMaxBytes),
+			})
+			if err != nil {
+				return notificationSkipped, fmt.Errorf("db: defer notification %d: %w", item.ID, err)
+			}
+			if err := notificationClaimUpdated(item.ID, rows); err != nil {
+				return notificationSkipped, err
+			}
+			return notificationDeferred, nil
+		}
 		if err := failNotificationClaim(ctx, pool, item.ID, item.ClaimToken, handlerErr); err != nil {
 			return notificationSkipped, errors.Join(handlerErr, err)
 		}

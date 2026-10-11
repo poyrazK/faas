@@ -88,7 +88,7 @@ func newRealtimedControlProxy(socket string, log *slog.Logger) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = transport
 	proxy.FlushInterval = -1
-	proxy.Director = func(req *http.Request) {
+	proxy.Director = func(req *http.Request) { //nolint:staticcheck // SA1019: retain the qualified realtime forwarding contract during the compiler patch.
 		path := strings.TrimPrefix(req.URL.Path, prefix)
 		if path == "" {
 			path = "/"

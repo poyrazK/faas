@@ -68,12 +68,15 @@ func cmdDebug(args []string) int {
 	if args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		_, _ = fmt.Fprintln(os.Stderr, "  requests inspect  select a request and render the complete investigation")
+		_, _ = fmt.Fprintln(os.Stderr, "  profiles          CPU profiles and deployment comparison")
 		_, _ = fmt.Fprintln(os.Stderr, "  dependencies      show historical dependency latency and regressions")
 		return 0
 	}
 	switch args[0] {
 	case "requests":
 		return cmdDebugRequests(args[1:])
+	case "profiles":
+		return cmdDebugProfiles(args[1:])
 	case "coverage":
 		return cmdDebugCoverage(args[1:])
 	case "dependencies":
@@ -843,7 +846,7 @@ func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
 	if r.TraceID != nil && *r.TraceID != "" {
 		_, _ = fmt.Fprintf(w, "Trace ID:   %s\n", *r.TraceID)
 	}
-	_, _ = fmt.Fprintf(w, "Route:      %s %s\n", r.Method, r.Route)
+	_, _ = fmt.Fprintf(w, "Route:      %s\n", requestLine(r.Method, r.Route))
 	_, _ = fmt.Fprintf(w, "Status:     %d\n", r.Status)
 	_, _ = fmt.Fprintf(w, "Latency:    %d ms\n", r.LatencyMS)
 	_, _ = fmt.Fprintf(w, "Count:      %d\n", r.Count)
@@ -949,7 +952,7 @@ func renderDebugDependencies(w io.Writer, resp api.DebugDependencyLatencyRespons
 // not part of this surface.
 func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceResponse) {
 	r := resp.Request
-	_, _ = fmt.Fprintf(w, "%s %s · HTTP %d · %d ms\n", r.Method, r.Route, r.Status, r.LatencyMS)
+	_, _ = fmt.Fprintf(w, "%s · HTTP %d · %d ms\n", requestLine(r.Method, r.Route), r.Status, r.LatencyMS)
 	_, _ = fmt.Fprintf(w, "telemetry row %s", r.ID)
 	if r.TraceID != nil && *r.TraceID != "" {
 		_, _ = fmt.Fprintf(w, " · public request %s", *r.TraceID)
@@ -1142,12 +1145,25 @@ func normalizeDebugFlagArgs(args []string, valueFlags map[string]bool) (flagArgs
 
 func renderDebugRegressionsTable(w io.Writer, resp api.DebugRegressionsResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED")
+	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED\tSUSPECTED")
 	for _, r := range resp.Regressions {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
-			r.DeploymentID, r.Route, r.State, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+			r.DeploymentID, r.Route, r.State, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt, formatSuspectedDependency(r.SuspectedDependency))
 	}
 	_ = tw.Flush()
+}
+
+// formatSuspectedDependency renders `postgresql "SELECT orders" 82→191ms`,
+// or "-" when the detector named no dependency.
+func formatSuspectedDependency(suspect *api.DebugSuspectedDependency) string {
+	if suspect == nil {
+		return "-"
+	}
+	kind := suspect.Kind
+	if kind == "" {
+		kind = suspect.Type
+	}
+	return fmt.Sprintf("%s %q %d→%dms", kind, suspect.Name, suspect.P95BaseMS, suspect.P95MS)
 }
 
 func renderDebugCompareTable(w io.Writer, resp api.DebugCompareResponse) {
@@ -1162,4 +1178,19 @@ func renderDebugCompareTable(w io.Writer, resp api.DebugCompareResponse) {
 			r.MirrorP50, r.MirrorP95, r.MirrorP99, r.MirrorN, delta)
 	}
 	_ = tw.Flush()
+}
+
+// requestLine renders a request as "METHOD /path". Request telemetry stores
+// the route with its method already ("GET /"), so prefixing the method again
+// printed "GET GET /" in every debugger and trace view (hunt #8).
+func requestLine(method, route string) string {
+	method = strings.TrimSpace(method)
+	route = strings.TrimSpace(route)
+	switch {
+	case route == "":
+		return method
+	case method == "" || strings.HasPrefix(route, method+" "):
+		return route
+	}
+	return method + " " + route
 }

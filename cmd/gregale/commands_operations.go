@@ -599,8 +599,8 @@ func cmdOperationGet(args []string) int {
 		target = "Job " + row.JobID
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "ID: %s\nState: %s\nGeneration: %d\nTarget: %s\n", row.ID, row.State, row.Generation, target)
-	if row.LastError != "" {
-		_, _ = fmt.Fprintf(os.Stdout, "Last error: %s\n", row.LastError)
+	if line := operationLastErrorLine(row.State, row.LastError); line != "" {
+		_, _ = fmt.Fprintln(os.Stdout, line)
 	}
 	if len(row.Result) > 0 {
 		_, _ = fmt.Fprintf(os.Stdout, "Result: %s\n", row.Result)
@@ -613,6 +613,20 @@ func cmdOperationGet(args []string) int {
 		_, _ = fmt.Fprintf(os.Stdout, "Effect %s: %s (delivery %s, attempt %d)\n", effect.Name, effect.Status, effect.DeliveryID, effect.Attempt)
 	}
 	return 0
+}
+
+// operationLastErrorLine labels last_error by state. A completed operation
+// keeps the error from an earlier, retried attempt; printing it as "Last error"
+// made successful work look failed (H8-17).
+func operationLastErrorLine(state, lastError string) string {
+	switch {
+	case lastError == "":
+		return ""
+	case state == "completed":
+		return "Recovered after: " + lastError
+	default:
+		return "Last error: " + lastError
+	}
 }
 
 func cmdOperationWait(args []string) int {

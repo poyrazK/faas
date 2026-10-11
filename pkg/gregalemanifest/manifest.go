@@ -104,14 +104,17 @@ const (
 // persistence. Filter is a JSON object encoded as a string so the same matcher
 // contract is shared by YAML/TOML manifests and the event router.
 type EventTrigger struct {
-	App             string `yaml:"app,omitempty" toml:"app"`
-	Source          string `yaml:"source" toml:"source"`
-	Type            string `yaml:"type" toml:"type"`
-	Filter          string `yaml:"filter,omitempty" toml:"filter"`
-	WorkPolicy      string `yaml:"work_policy,omitempty" toml:"work_policy"`
-	WorkKey         string `yaml:"work_key,omitempty" toml:"work_key"`
-	WorkFairnessKey string `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
-	WorkAction      string `yaml:"work_action,omitempty" toml:"work_action"`
+	SchemaVersions  []string               `yaml:"schema_versions,omitempty" toml:"schema_versions"`
+	Retry           *EventRoutingRetrySpec `yaml:"retry,omitempty" toml:"retry"`
+	App             string                 `yaml:"app,omitempty" toml:"app"`
+	Source          string                 `yaml:"source" toml:"source"`
+	Type            string                 `yaml:"type" toml:"type"`
+	Filter          string                 `yaml:"filter,omitempty" toml:"filter"`
+	Ordered         bool                   `yaml:"ordered,omitempty" toml:"ordered"`
+	WorkPolicy      string                 `yaml:"work_policy,omitempty" toml:"work_policy"`
+	WorkKey         string                 `yaml:"work_key,omitempty" toml:"work_key"`
+	WorkFairnessKey string                 `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
+	WorkAction      string                 `yaml:"work_action,omitempty" toml:"work_action"`
 }
 
 func (t EventTrigger) EffectiveWorkAction() string {
@@ -396,6 +399,26 @@ type AsyncRoute struct {
 	MaxAgeSeconds int                `yaml:"max_age_seconds,omitempty"`
 }
 
+// TemplatedPathWarnings lists async routes whose match_path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a route only matches
+// the literal braces and never receives traffic. These are warnings, not
+// errors, so an existing manifest keeps deploying; the edge-rules API already
+// rejects new templated paths.
+func (m *Manifest) TemplatedPathWarnings() []string {
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for i, route := range m.AsyncRoutes {
+		if glob, templated := api.EdgeRuleTemplatedPath(route.MatchPath); templated {
+			out = append(out, fmt.Sprintf(
+				"async_routes[%d].match_path %q is an OpenAPI template, not a glob, so the route never matches a request; use %q",
+				i, route.MatchPath, glob))
+		}
+	}
+	return out
+}
+
 // Validate checks the manifest-only constraints for an async route. API-level
 // action validation is shared by constructing the same DTO used by edge rules.
 func (r AsyncRoute) Validate(index int) error {
@@ -611,6 +634,12 @@ func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
 // Validate checks the event pattern and content filter without requiring an
 // account ID. Account ownership is assigned by the authenticated apply path.
 func (t EventTrigger) Validate(idx int) error {
+	if _, err := api.NormalizeEventSchemaVersions(t.SchemaVersions); err != nil {
+		return fmt.Errorf("triggers.event[%d].schema_versions: %w", idx, err)
+	}
+	if _, err := t.RoutingRetryPolicy(); err != nil {
+		return fmt.Errorf("triggers.event[%d].retry: %w", idx, err)
+	}
 	if t.WorkAction != "" && t.WorkAction != "invoke" && t.WorkAction != "cancel_pending" {
 		return fmt.Errorf("triggers.event[%d].work_action must be invoke or cancel_pending", idx)
 	}
@@ -619,6 +648,9 @@ func (t EventTrigger) Validate(idx int) error {
 	}
 	if (t.WorkPolicy == "") != (t.WorkKey == "") {
 		return fmt.Errorf("triggers.event[%d]: work_policy and work_key must be set together", idx)
+	}
+	if t.Ordered && (t.WorkPolicy == "" || t.EffectiveWorkAction() != "invoke") {
+		return fmt.Errorf("triggers.event[%d].ordered requires work_policy, work_key, and work_action=invoke", idx)
 	}
 	if t.WorkPolicy != "" {
 		if err := (workpolicy.Policy{Name: t.WorkPolicy, MaxRunningPerKey: 1}).Validate(); err != nil {
@@ -668,10 +700,11 @@ func (t EventTrigger) AsSubscription(accountID string) (events.Subscription, err
 		return events.Subscription{}, err
 	}
 	subscription := events.Subscription{
-		AccountID: accountID,
-		Source:    t.Source,
-		Type:      t.Type,
-		Filter:    t.FilterJSON(),
+		SchemaVersions: append([]string(nil), t.SchemaVersions...),
+		AccountID:      accountID,
+		Source:         t.Source,
+		Type:           t.Type,
+		Filter:         t.FilterJSON(),
 	}
 	if err := subscription.Validate(); err != nil {
 		return events.Subscription{}, err
@@ -1394,6 +1427,8 @@ func (d BucketDependency) EffectiveLabel() string {
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
 type Manifest struct {
+	Profiling *api.ProfilingConfig `yaml:"profiling,omitempty"`
+	Tracing   *api.TracingConfig   `yaml:"tracing,omitempty"`
 	// SchemaVersion is optional for backward compatibility. New manifests may
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
@@ -1418,6 +1453,7 @@ type Manifest struct {
 	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
 	// existing managed routes unchanged; an explicit empty list clears them.
 	Operations         []Operation                   `yaml:"operations,omitempty"`
+	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
 	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
 	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
 	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
@@ -1463,6 +1499,32 @@ type DevConfig struct {
 	ServiceOverrideFile string `yaml:"service_override_file,omitempty"`
 	Postgres            *bool  `yaml:"postgres,omitempty"`
 	PostgresRegion      string `yaml:"postgres_region,omitempty"`
+	// TTL is the environment lease as a Go duration (for example "72h").
+	// The plan ceiling is enforced by the API, not here.
+	TTL string `yaml:"ttl,omitempty"`
+	// PostgresSeed is a shell command run once inside the developer app,
+	// through the app task path, after its developer database is ready.
+	PostgresSeed string `yaml:"postgres_seed,omitempty"`
+	// Debug starts the Node.js inspector in the developer environment and
+	// exposes it on a local port (`gregale dev --debug`, ADR-741).
+	Debug *bool `yaml:"debug,omitempty"`
+}
+
+// ParseDevTTL parses a `gregale dev` lease from `--ttl` or `dev.ttl`. It
+// enforces only the plan-independent shape: whole seconds and at least
+// api.DeveloperLeaseMin. The API rejects a lease over the plan ceiling.
+func ParseDevTTL(raw string) (time.Duration, error) {
+	ttl, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("ttl %q is not a duration such as 72h", raw)
+	}
+	if ttl < api.DeveloperLeaseMin {
+		return 0, fmt.Errorf("ttl must be at least %s", api.DeveloperLeaseMin)
+	}
+	if ttl%time.Second != 0 {
+		return 0, fmt.Errorf("ttl must be a whole number of seconds")
+	}
+	return ttl, nil
 }
 
 func (c *DevConfig) Validate() error {
@@ -1480,6 +1542,22 @@ func (c *DevConfig) Validate() error {
 	}
 	if c.PostgresRegion != "" && (c.Postgres == nil || !*c.Postgres) {
 		return fmt.Errorf("dev: postgres_region requires postgres: true")
+	}
+	if c.TTL != "" {
+		if _, err := ParseDevTTL(c.TTL); err != nil {
+			return fmt.Errorf("dev.%w", err)
+		}
+	}
+	if c.PostgresSeed != "" {
+		if c.Postgres == nil || !*c.Postgres {
+			return fmt.Errorf("dev: postgres_seed requires postgres: true")
+		}
+		if _, problem := (api.CreateAppTaskRequest{
+			Command:      []string{c.PostgresSeed},
+			CommandShell: true,
+		}).Resolve(); problem != nil {
+			return fmt.Errorf("dev: postgres_seed: %s", problem.Detail)
+		}
 	}
 	return nil
 }
@@ -1518,6 +1596,8 @@ type FunctionConfig struct {
 // current app setting unchanged, while an explicit zero clears/inherits it.
 // The API remains authoritative for plan gates and workload compatibility.
 type LifecycleConfig struct {
+	Profiling        *api.ProfilingConfig      `yaml:"profiling,omitempty"`
+	Tracing          *api.TracingConfig        `yaml:"tracing,omitempty"`
 	ExecutionMode    *string                   `yaml:"execution_mode,omitempty"`
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
@@ -1540,6 +1620,8 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Profiling:        c.Profiling,
+		Tracing:          c.Tracing,
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
@@ -1551,7 +1633,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1562,7 +1644,7 @@ func (c *LifecycleConfig) Validate() error {
 	if c == nil || c.Empty() {
 		return nil
 	}
-	m := api.AppManifest{}
+	m := api.AppManifest{Profiling: c.Profiling, Tracing: c.Tracing}
 	if c.ExecutionMode != nil {
 		m.ExecutionMode = *c.ExecutionMode
 	}
@@ -1896,6 +1978,8 @@ func editDistance(a, b string) int {
 }
 
 type tomlManifest struct {
+	Profiling           *api.ProfilingConfig       `toml:"profiling"`
+	Tracing             *api.TracingConfig         `toml:"tracing"`
 	Operations          []Operation                `toml:"operations"`
 	SchemaVersion       int                        `toml:"schema_version"`
 	Triggers            tomlTriggers               `toml:"triggers"`
@@ -1927,6 +2011,8 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		Operations:          raw.Operations,
 		SchemaVersion:       raw.SchemaVersion,
 		EventTriggers:       raw.Triggers.Event,
+		Profiling:           raw.Profiling,
+		Tracing:             raw.Tracing,
 		WorkPolicies:        raw.WorkPolicies,
 		ExclusiveOperations: raw.ExclusiveOperations,
 		Companions:          raw.Companions,
@@ -1962,6 +2048,30 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if m.Profiling != nil {
+		if err := m.Profiling.Validate(plan); err != nil {
+			return err
+		}
+		if m.Lifecycle == nil {
+			m.Lifecycle = &LifecycleConfig{}
+		}
+		if m.Lifecycle.Profiling != nil && *m.Lifecycle.Profiling != *m.Profiling {
+			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
+		}
+		m.Lifecycle.Profiling = m.Profiling
+	}
+	if m.Tracing != nil {
+		if err := m.Tracing.Validate(plan); err != nil {
+			return err
+		}
+		if m.Lifecycle == nil {
+			m.Lifecycle = &LifecycleConfig{}
+		}
+		if m.Lifecycle.Tracing != nil && *m.Lifecycle.Tracing != *m.Tracing {
+			return fmt.Errorf("declare tracing once, at top level or in lifecycle")
+		}
+		m.Lifecycle.Tracing = m.Tracing
 	}
 	if err := m.validateOperations(plan); err != nil {
 		return err
@@ -2217,6 +2327,19 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := trigger.Validate(i); err != nil {
 			return err
 		}
+		if trigger.Ordered {
+			for _, declaration := range m.WorkPolicies {
+				if declaration.Name != trigger.WorkPolicy ||
+					(declaration.App != "" && trigger.App != "" && declaration.App != trigger.App) {
+					continue
+				}
+				policy := declaration.ToPolicy()
+				if policy.MaxRunningPerKey != 1 || policy.PendingUpdates != workpolicy.PendingAll || policy.Debounce != 0 || policy.ExpiresAfter != 0 {
+					return fmt.Errorf("triggers.event[%d].ordered requires work policy %q to use max_running_per_key=1, pending_updates=all, debounce_ms=0, and expires_after_ms=0", i, trigger.WorkPolicy)
+				}
+				break
+			}
+		}
 		key := strings.Join([]string{trigger.App, trigger.Source, trigger.Type, strings.TrimSpace(trigger.Filter)}, "\x00")
 		if _, duplicate := seenEvents[key]; duplicate {
 			return fmt.Errorf("triggers.event[%d]: duplicate (app, source, type, filter)", i)
@@ -2239,8 +2362,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" && access != "migration" {
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration}", i, access)
+		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" {
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the

@@ -3,13 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Verified result reference in a private customer-managed object bucket.
+ * Verified private result reference, from a managed object or direct Job upload.
  */
 export type OperationResultArtifact = {
   id: string;
   name: string;
   /**
-   * obj://<app UUID>/<bucket UUID>/<opaque object key>; never a signed URL.
+   * Managed obj:// source or opaque operation://<operation UUID>/artifacts/<artifact UUID> direct-upload reference; never a signed URL or physical storage key.
    */
   uri: string;
   size_bytes: number;

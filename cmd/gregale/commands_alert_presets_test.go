@@ -26,6 +26,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestCmdAlertsPreset_NoArgsIsUsage pins the dispatcher's
@@ -236,6 +238,27 @@ func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
 	}
 	if cm, _ := got["cooldown_minutes"].(float64); cm != 30 {
 		t.Errorf("body.cooldown_minutes = %v, want 30", got["cooldown_minutes"])
+	}
+}
+
+func TestCmdAutomationBacklogPresetEnableUsesNotificationDefaults(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Automation backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
+	output := captureAutomationStdout(t)
+	if code := cmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "automation_backlog"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/billing/alert-presets/automation_backlog/enable" {
+		t.Fatalf("request=%s %s", f.sawMethod, f.sawPath)
+	}
+	var request api.EnableAlertPresetRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil || request.Action != nil || request.CooldownMinutes != nil {
+		t.Fatalf("preset defaults overridden: %+v %v", request, err)
+	}
+	var got api.AlertRuleResponse
+	if err := json.Unmarshal(output.Bytes(), &got); err != nil || got.Metric != "workflow_due_age_seconds" || got.Threshold != api.WorkflowBacklogAlertThresholdSeconds || got.Action != "webhook" {
+		t.Fatalf("CLI backlog rule=%s %v", output.String(), err)
 	}
 }
 

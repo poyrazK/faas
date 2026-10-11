@@ -36,6 +36,7 @@ import "net/http"
 // BudgetMs + AllowOverrideHeader fields the budget applier
 // needs.
 type EdgeRuleBudgetResolved struct {
+	EdgeRuleCondition
 	ID                  string
 	AccountID           string
 	AppID               string

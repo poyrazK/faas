@@ -62,6 +62,14 @@ func (m *MemStore) recordJobTaskAttemptLocked(task JobTask) {
 // Callers hold m.mu, so the JobRun and operation generation are checked
 // atomically with the task transition.
 func (m *MemStore) exclusiveJobRunCurrentLocked(run JobRun) bool {
+	if op, owned := m.operationForJobLocked(run.ID); owned {
+		if op.JobRunID != run.ID || !operationIsActive(op) {
+			return false
+		}
+		if m.jobTasks[run.ID][0].Status == "queued" && (!m.accounts[op.AccountID].Active() || !operationJobPolicyAvailable(op, m.accounts[op.AccountID].Plan) || m.apps[op.AppID].MaintenanceMode || m.apps[op.AppID].Status == AppDeleted || m.platformTenants[op.PlatformTenantID].Status != PlatformTenantActive) {
+			return false
+		}
+	}
 	if run.ExclusiveOperationID == "" {
 		return true
 	}
@@ -265,6 +273,9 @@ func (m *MemStore) JobListScheduled(_ context.Context) ([]Job, error) {
 func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.environmentGitOpsManagedJobLocked(id) {
+		return Job{}, ErrEnvironmentGitManaged
+	}
 	return m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, nil, nil)
 }
 
@@ -273,6 +284,9 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 func (m *MemStore) JobUpdateWithSchedule(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.environmentGitOpsManagedJobLocked(id) {
+		return Job{}, ErrEnvironmentGitManaged
+	}
 	updated, err := m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, schedule, timezone)
 
 	if err != nil {
@@ -297,6 +311,9 @@ func (m *MemStore) jobUpdateLocked(id string, command []string, imageRef *string
 		return Job{}, ErrNotFound
 	}
 	for runID, run := range m.jobRuns {
+		if _, owned := m.operationForJobLocked(runID); owned {
+			continue
+		}
 		if run.JobID != id {
 			continue
 		}
@@ -659,6 +676,9 @@ func (m *MemStore) settleJobImageFailureLocked(jobID, reason string) {
 func (m *MemStore) JobSoftDelete(_ context.Context, id string) (bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.environmentGitOpsManagedJobLocked(id) {
+		return false, false, ErrEnvironmentGitManaged
+	}
 	j, ok := m.jobs[id]
 	if !ok {
 		return false, false, ErrNotFound
@@ -903,7 +923,7 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 			Attempt:   1,
 			CreatedAt: now,
 		}
-		if len(inputs) > 0 {
+		if i < len(inputs) {
 			t.InputID = inputs[i].ID
 			t.InputRef = inputs[i].Ref
 		}
@@ -918,6 +938,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, owned := m.operationForJobLocked(sourceRunID); owned {
+		return JobRun{}, nil, ErrConflict
+	}
 	source, ok := m.jobRuns[sourceRunID]
 	if !ok || source.AccountID != accountID {
 		return JobRun{}, nil, ErrNotFound
@@ -1339,6 +1362,9 @@ func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, err
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		// No tasks — degenerate case (shouldn't happen post-create).
+		if err := m.syncOperationJobLocked(runID); err != nil {
+			return JobRun{}, err
+		}
 		return run, nil
 	}
 	if job, ok := m.jobs[run.JobID]; ok && runHasPermanentFailure(run, tasks, job) {
@@ -1359,6 +1385,9 @@ func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, err
 	run = recomputeJobRun(run, tasks, time.Now().UTC())
 	m.jobRuns[runID] = run
 	m.syncJobOccurrenceLocked(run, time.Now().UTC())
+	if err := m.syncOperationJobLocked(runID); err != nil {
+		return JobRun{}, err
+	}
 	return run, nil
 }
 
@@ -1375,6 +1404,9 @@ func (m *MemStore) JobRunCancel(_ context.Context, runID string) (JobRun, error)
 	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
+		if err := m.syncOperationJobLocked(runID); err != nil {
+			return JobRun{}, err
+		}
 		return run, nil
 	}
 	now := time.Now().UTC()
@@ -1410,6 +1442,9 @@ func (m *MemStore) JobRunCancel(_ context.Context, runID string) (JobRun, error)
 	}
 	m.jobRuns[runID] = run
 	m.syncJobOccurrenceLocked(run, now)
+	if err := m.syncOperationJobLocked(runID); err != nil {
+		return JobRun{}, err
+	}
 	return run, nil
 }
 
@@ -1459,7 +1494,8 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 		for _, t := range tasks {
 			run, runOK := m.jobRuns[t.RunID]
 			job, jobOK := m.jobs[run.JobID]
-			if !runOK || !jobOK || job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" || !m.exclusiveJobRunCurrentLocked(run) {
+			_, operationOwned := m.operationForJobLocked(run.ID)
+			if !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
 				continue
 			}
 			if runHasPermanentFailure(run, tasks, job) {
@@ -1575,6 +1611,9 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	if !ok || t.Status != "queued" {
 		return ErrNotFound
 	}
+	if !m.exclusiveJobRunCurrentLocked(m.jobRuns[runID]) {
+		return ErrOperationStaleAttempt
+	}
 	t.Status = "claimed"
 	t.InstanceID = &instanceID
 	t.LeaseToken = &leaseToken
@@ -1587,7 +1626,7 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	}
 	tasks[taskIndex] = t
 	m.jobTasks[runID] = tasks
-	return nil
+	return m.syncOperationJobLocked(runID)
 }
 
 func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
@@ -1669,6 +1708,9 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 	m.instances[instanceID] = ins
 	tasks[taskIndex] = task
 	m.jobTasks[runID] = tasks
+	if err := m.syncOperationJobLocked(runID); err != nil {
+		return Instance{}, err
+	}
 	return ins, nil
 }
 
@@ -1731,6 +1773,9 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInst
 	} else if !m.exclusiveJobRunCurrentLocked(run) {
 		return exclusivework.ErrStaleOwner
 	}
+	if op, owned := m.operationForJobLocked(runID); owned && (!requireClaim || t.LeaseExpiresAt == nil || !t.LeaseExpiresAt.After(time.Now()) || !operationJobDeadline(op, t).After(time.Now())) {
+		return ErrOperationStaleAttempt
+	}
 	t.Status = status
 	t.WorkDecision = workpolicy.Clone(decision)
 	t.OutcomeCode = outcomeCode
@@ -1755,7 +1800,7 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInst
 	m.recordJobTaskAttemptLocked(t)
 	tasks[taskIndex] = t
 	m.jobTasks[runID] = tasks
-	return nil
+	return m.syncOperationJobLocked(runID)
 }
 
 // JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
@@ -1764,6 +1809,9 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInst
 func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, owned := m.operationForJobLocked(runID); owned {
+		return ErrConflict
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return ErrNotFound
@@ -1818,6 +1866,9 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 func (m *MemStore) JobTaskFailBoot(_ context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, owned := m.operationForJobLocked(runID); owned {
+		retryMax = 0
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return false, ErrNotFound
@@ -1864,6 +1915,9 @@ func (m *MemStore) JobTaskFailBoot(_ context.Context, runID string, taskIndex in
 	t.NextAttemptAt = nil
 	m.recordJobTaskAttemptLocked(t)
 	tasks[taskIndex] = t
+	if err := m.syncOperationJobLocked(runID); err != nil {
+		return false, err
+	}
 	return false, nil
 }
 
@@ -1897,6 +1951,9 @@ func (m *MemStore) JobTaskDeferQueued(_ context.Context, runID string, taskIndex
 func (m *MemStore) JobTaskRequeue(_ context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, owned := m.operationForJobLocked(runID); owned {
+		return ErrConflict
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return ErrNotFound
@@ -1951,7 +2008,7 @@ func (m *MemStore) JobTaskCancel(_ context.Context, runID string, taskIndex int)
 	m.recordJobTaskAttemptLocked(t)
 	tasks[taskIndex] = t
 	m.jobTasks[runID] = tasks
-	return nil
+	return m.syncOperationJobLocked(runID)
 }
 
 // JobTaskFindStuck returns claimed tasks whose lease_expires_at is
@@ -1991,6 +2048,9 @@ func (m *MemStore) JobTaskFindStuck(_ context.Context, ttl time.Duration) ([]Job
 func (m *MemStore) JobTaskReapClaimed(_ context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, owned := m.operationForJobLocked(runID); owned {
+		retryMax = 0
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return false, ErrNotFound
@@ -2057,6 +2117,9 @@ func (m *MemStore) JobTaskReapClaimed(_ context.Context, runID string, taskIndex
 		run = recomputeJobRun(run, tasks, time.Now().UTC())
 	}
 	m.jobRuns[runID] = run
+	if err := m.syncOperationJobLocked(runID); err != nil {
+		return false, err
+	}
 	return retry, nil
 }
 

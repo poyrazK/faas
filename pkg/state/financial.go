@@ -45,6 +45,10 @@ type FinancialStore interface {
 	ListFinancialPriceSnapshots(context.Context, string, time.Time) ([]FinancialPriceSnapshot, error)
 	RecordFinancialSamplingWindow(context.Context, time.Time, bool, bool) error
 	FinancialSamplingCoverage(context.Context, time.Time, time.Time) (FinancialSamplingCoverage, error)
+	// FinancialCompletedComputeMinutes lists the minutes in [start,end) that
+	// meterd recorded as compute-complete, oldest first. meterd re-bills only
+	// closed minutes missing from this list (ADR-790).
+	FinancialCompletedComputeMinutes(context.Context, time.Time, time.Time) ([]time.Time, error)
 	AggregateFinancialUsage(context.Context, string, time.Time, time.Time, int64) ([]FinancialUsageAggregate, error)
 	AppendFinancialAdjustment(context.Context, FinancialAdjustment) (FinancialUsageRecord, error)
 }

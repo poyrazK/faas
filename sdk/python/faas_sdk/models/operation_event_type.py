@@ -3,6 +3,7 @@ from typing import Literal
 OperationEventType = Literal[
     "accepted",
     "artifact_attached",
+    "artifact_prepared",
     "cancellation_requested",
     "cancelled",
     "delivery_changed",
@@ -10,6 +11,7 @@ OperationEventType = Literal[
     "progress",
     "reconciliation_required",
     "recovery_requested",
+    "result_prepared",
     "running",
     "succeeded",
 ]
@@ -17,6 +19,7 @@ OperationEventType = Literal[
 OPERATION_EVENT_TYPE_VALUES: set[OperationEventType] = {
     "accepted",
     "artifact_attached",
+    "artifact_prepared",
     "cancellation_requested",
     "cancelled",
     "delivery_changed",
@@ -24,6 +27,7 @@ OPERATION_EVENT_TYPE_VALUES: set[OperationEventType] = {
     "progress",
     "reconciliation_required",
     "recovery_requested",
+    "result_prepared",
     "running",
     "succeeded",
 }

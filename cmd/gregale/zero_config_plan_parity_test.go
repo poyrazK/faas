@@ -155,6 +155,8 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			t.Setenv("FAAS_API", stub.srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+			t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 
 			args := []string{"--json", "--name", "demo", "--profile", "small"}
 			selectedPath := ""

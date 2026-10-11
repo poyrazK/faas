@@ -23,6 +23,7 @@ def test_resume_routes_and_zero_revision():
                 json={
                     "id": "00000000-0000-0000-0000-000000000001",
                     "app_id": "00000000-0000-0000-0000-000000000002",
+                    "deployment_id": "00000000-0000-0000-0000-000000000004",
                     "workflow_name": "batch",
                     "status": "pending",
                     "resume_count": 1,
@@ -54,6 +55,8 @@ def test_resume_routes_and_zero_revision():
         run = resume_workflow_run.sync(id="run", client=client, body=ResumeWorkflowRunRequest(expected_resume_count=0))
         assert isinstance(run, WorkflowRunResponse)
         assert run.resume_count == 1
+        assert str(run.deployment_id) == "00000000-0000-0000-0000-000000000004"
+        assert run.to_dict()["deployment_id"] == "00000000-0000-0000-0000-000000000004"
         history = list_workflow_resumes.sync(id="run", client=client)
         assert isinstance(history, ListWorkflowResumesResponse)
         assert history.resumes[0].resumed_steps == ["send"]
@@ -73,3 +76,16 @@ def test_retry_budget_and_empty_resume_history_round_trip():
     assert value["retry_base"] == 3
     assert ListWorkflowResumesResponse.from_dict({"resumes": []}).to_dict() == {"resumes": []}
     assert ResumeWorkflowRunRequest.from_dict({"expected_resume_count": 0}).to_dict() == {"expected_resume_count": 0}
+
+
+def test_legacy_run_omits_unknown_deployment_pin():
+    payload = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "app_id": "00000000-0000-0000-0000-000000000002",
+        "workflow_name": "legacy",
+        "status": "pending",
+        "scheduled_for": "2026-10-03T12:00:00Z",
+        "created_at": "2026-10-03T12:00:00Z",
+        "updated_at": "2026-10-03T12:00:00Z",
+    }
+    assert "deployment_id" not in WorkflowRunResponse.from_dict(payload).to_dict()

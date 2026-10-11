@@ -28,6 +28,14 @@ func (c *Client) SetRouteMonitor(ctx context.Context, slug string, req SetRouteM
 	err := c.do(ctx, "PUT", routeMonitorPath(slug), req, &out)
 	return out, err
 }
+func (c *Client) PreviewRouteMonitor(ctx context.Context, slug string, req PreviewRouteMonitorRequest) (RouteMonitorPreview, error) {
+	return c.PreviewRouteMonitorWithOptions(ctx, slug, req, RouteMonitorReadOptions{})
+}
+func (c *Client) PreviewRouteMonitorWithOptions(ctx context.Context, slug string, req PreviewRouteMonitorRequest, opts RouteMonitorReadOptions) (RouteMonitorPreview, error) {
+	var out RouteMonitorPreview
+	err := c.do(ctx, "POST", routeMonitorDetailsPath(routeMonitorPath(slug)+"/preview", opts), req, &out)
+	return out, err
+}
 func (c *Client) GetRouteMonitorReport(ctx context.Context, slug string) (RouteMonitorReport, error) {
 	return c.GetRouteMonitorReportWithOptions(ctx, slug, RouteMonitorReadOptions{})
 }

@@ -176,6 +176,10 @@ var daemonInfoTable = map[string]daemonInfo{
 		EnvKey: "FAAS_REALTIME_ROLE",
 		Allows: map[Role]bool{RoleSingleBox: true, RoleComputeOnly: true},
 	},
+	"profiled": {
+		EnvKey: "FAAS_PROFILED_ROLE",
+		Allows: map[Role]bool{RoleSingleBox: true, RoleComputeOnly: true},
+	},
 }
 
 // init cross-checks daemonInfoTable against pkg/daemonunitspec.Registry

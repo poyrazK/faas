@@ -407,3 +407,19 @@ func TestRenderDebugRequestsTableOmitsEmptyRequestIDColumn(t *testing.T) {
 		t.Fatalf("list with a request ID:\n%s", got)
 	}
 }
+
+// Request telemetry stores routes as "GET /"; the debugger and trace views
+// printed "GET GET /" by prefixing the method again (hunt #8).
+func TestRequestLine(t *testing.T) {
+	for _, tc := range []struct{ method, route, want string }{
+		{"GET", "GET /", "GET /"},
+		{"GET", "/", "GET /"},
+		{"POST", "GET /", "POST GET /"},
+		{"", "GET /x", "GET /x"},
+		{"GET", "", "GET"},
+	} {
+		if got := requestLine(tc.method, tc.route); got != tc.want {
+			t.Errorf("requestLine(%q, %q) = %q, want %q", tc.method, tc.route, got, tc.want)
+		}
+	}
+}

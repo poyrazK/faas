@@ -21,14 +21,30 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 	if !isSparseArtifactKey(key) {
 		return copyContext(ctx, dst, src)
 	}
+	return copySparseArtifactContext(ctx, dst, src)
+}
+
+// Exclusive publication also uses this copy directly: prefix routing may strip
+// the logical artifact type, but must not materialize holes in a private drive.
+func copySparseArtifactContext(ctx context.Context, dst *os.File, src io.Reader) (int64, error) {
+	written, _, err := CopySparse(ctx, dst, src)
+	return written, err
+}
+
+// CopySparse copies src into the fresh, empty file dst, leaving every
+// all-zero 4 KiB page as a hole. It returns the logical length copied and the
+// bytes that were actually written (the non-zero content). vmmd uses it to
+// publish Firecracker memory files, which are mostly zero pages.
+func CopySparse(ctx context.Context, dst *os.File, src io.Reader) (written, data int64, err error) {
 	const quantum = 256 * 1024
 	const page = 4096
 	buf := make([]byte, quantum)
 	zero := make([]byte, page)
-	var written int64
+	writer := boundedFileWrites(dst)
+	var holes []fileRange
 	for {
 		if err := ctx.Err(); err != nil {
-			return written, err
+			return written, data, err
 		}
 		n, readErr := readSnapshotQuantum(ctx, src, buf)
 		for start := 0; start < n; {
@@ -43,17 +59,19 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 			}
 			if isZero {
 				if _, err := dst.Seek(int64(end-start), io.SeekCurrent); err != nil {
-					return written, fmt.Errorf("seek artifact hole: %w", err)
+					return written, data, fmt.Errorf("seek artifact hole: %w", err)
 				}
+				holes = appendRange(holes, written, int64(end-start))
 				written += int64(end - start)
 			} else {
-				w, err := dst.Write(buf[start:end])
+				w, err := writer.Write(buf[start:end])
 				written += int64(w)
+				data += int64(w)
 				if err != nil {
-					return written, err
+					return written, data, err
 				}
 				if w != end-start {
-					return written, io.ErrShortWrite
+					return written, data, io.ErrShortWrite
 				}
 			}
 			start = end
@@ -61,14 +79,32 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 		if readErr == io.EOF { //nolint:errorlint // Reader must return EOF itself; a wrapped source failure must prevent publication.
 			// Seek does not extend a file when the snapshot ends with zeros.
 			if err := dst.Truncate(written); err != nil {
-				return written, fmt.Errorf("size sparse artifact: %w", err)
+				return written, data, fmt.Errorf("size sparse artifact: %w", err)
 			}
-			return written, nil
+			// XFS speculatively preallocates past EOF while the file grows;
+			// once a later write lands beyond a skipped run, that reservation
+			// stays inside the file as allocated, unwritten blocks (21–100 MiB
+			// per production memory file). Release every skipped run.
+			punchHoles(dst, holes)
+			return written, data, nil
 		}
 		if readErr != nil {
-			return written, readErr
+			return written, data, readErr
 		}
 	}
+}
+
+// fileRange is a byte range of a file.
+type fileRange struct{ off, length int64 }
+
+// appendRange adds [off, off+length), merging it into the last range when the
+// two touch. Skipped zero runs arrive in order.
+func appendRange(rs []fileRange, off, length int64) []fileRange {
+	if n := len(rs); n > 0 && rs[n-1].off+rs[n-1].length == off {
+		rs[n-1].length += length
+		return rs
+	}
+	return append(rs, fileRange{off: off, length: length})
 }
 
 func isSparseArtifactKey(key string) bool {

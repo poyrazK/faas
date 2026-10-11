@@ -4,7 +4,7 @@ import express from 'express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { completable, createMcpHandler, McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import { createAuth } from './auth.js';
+import { createAuth, verifiedCallerIdentity } from './auth.js';
 import { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from './tasks.js';
 
 const MCP_PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
@@ -14,6 +14,11 @@ const MCP_SERVER_INFO_META_KEY = 'io.modelcontextprotocol/serverInfo';
 const MCP_SERVER_INFO = { name: 'gregale-mcp-server', version: '1.0.0' };
 const SUMMARY_STYLES = ['brief', 'technical', 'executive'];
 const SAMPLE_RECORD_IDS = ['example-1', 'example-2', 'example-3'];
+const SAMPLE_RECORD_OWNERS = Object.freeze({
+  'example-1': 'demo-caller-a',
+  'example-2': 'demo-caller-b',
+  'example-3': 'demo-caller-a',
+});
 const MCP_TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_TASK_SUBSCRIPTION_STREAMS = 128;
 const MAX_TASK_RESOURCE_SUBSCRIPTIONS = 64;
@@ -77,6 +82,9 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
   }
 
   function createServer({ authInfo, era }) {
+    const caller = verifiedCallerIdentity(authInfo);
+    const canReadSampleRecord = recordID => Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
+      && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
     const server = new McpServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
       capabilities: {
         tools: { listChanged: true }, resources: { listChanged: true, ...(taskRuntime && era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true },
@@ -135,13 +143,14 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     registerResource('customer_record', new ResourceTemplate('customer://records/{recordId}', {
       list: undefined,
       complete: {
-        recordId: value => SAMPLE_RECORD_IDS.filter(recordID => recordID.startsWith(value.toLowerCase())),
+        recordId: value => SAMPLE_RECORD_IDS.filter(recordID => canReadSampleRecord(recordID) && recordID.startsWith(value.toLowerCase())),
       },
     }), {
-      title: 'Customer record', description: 'Example customer-record resource; enforce ownership in your own data lookup.', mimeType: 'application/json',
-    }, async (uri, { recordId }) => ({
-      contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }],
-    }));
+      title: 'Customer record', description: 'Demo records are restricted by the verified OAuth subject.', mimeType: 'application/json',
+    }, async (uri, { recordId }) => {
+      if (!canReadSampleRecord(recordId)) throw new Error('Resource not found');
+      return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }] };
+    });
     if (taskRuntime) {
       registerResource('task', new ResourceTemplate('task://tasks/{taskId}', { list: undefined }), {
         title: 'MCP task', description: 'Read the current state and result of a task owned by this caller.', mimeType: 'application/json',
@@ -234,6 +243,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     let subscription;
     let unsubscribeBus;
     let keepAlive;
+    let authDeadline;
     let ended = false;
     let ready = false;
     let closeAfterSetup = false;
@@ -242,6 +252,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
       if (ended) return;
       ended = true;
       clearInterval(keepAlive);
+      clearTimeout(authDeadline);
       unsubscribeBus?.();
       subscription?.close();
       taskSubscriptionStreams.delete(closeGracefully);
@@ -267,6 +278,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     };
     function deliver(message) {
       if (ended) return;
+      if (req.auth?.expiresAt * 1000 <= Date.now()) { closeNow(); return; }
       if (!ready) { queued.push(message); return; }
       writeSseMessage(res, message);
     }
@@ -286,6 +298,16 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     taskSubscriptionStreams.add(closeGracefully);
     res.once('close', closeNow);
     req.once('aborted', closeNow);
+    // Streams may survive a token's lifetime (including snapshot restore).
+    // Recheck the clock when delivering as well as when the deadline fires.
+    function expireAuthentication() {
+      if (ended || !Number.isFinite(req.auth?.expiresAt)) return;
+      const remaining = req.auth.expiresAt * 1000 - Date.now();
+      if (remaining <= 0) { closeNow(); return; }
+      authDeadline = setTimeout(expireAuthentication, Math.min(remaining, 2_147_483_647));
+      authDeadline.unref?.();
+    }
+    expireAuthentication();
 
     try {
       unsubscribeBus = handler.bus.subscribe(event => {

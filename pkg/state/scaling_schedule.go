@@ -90,7 +90,7 @@ func (a *App) EffectiveMinInstanceSecondsInMinute(minute time.Time, deploymentFl
 	policy := ScalingPolicyOrDefault(a.ScalingPolicy)
 	base := max(0, a.MinInstances, policy.MinInstances, deploymentFloor)
 	for i := range floors {
-		floors[i] = base
+		floors[i] = base // #nosec G602 -- range over [60]int produces only indexes 0 through 59.
 	}
 	for _, window := range policy.Schedules {
 		if window.MinInstances <= 0 || window.DurationS <= 0 || window.Cron == "" {
@@ -104,13 +104,13 @@ func (a *App) EffectiveMinInstanceSecondsInMinute(minute time.Time, deploymentFl
 		// Parse each rule once and bound work to the minute's 60 seconds,
 		// including rules whose recurring windows overlap for many hours.
 		for i := range floors {
-			if window.MinInstances <= floors[i] {
+			if window.MinInstances <= floors[i] { // #nosec G602 -- i is an index from range over the same [60]int.
 				continue
 			}
 			at := minute.Add(time.Duration(i) * time.Second)
 			fire := schedule.Next(at.Add(-duration))
 			if !fire.IsZero() && !fire.After(at) {
-				floors[i] = window.MinInstances
+				floors[i] = window.MinInstances // #nosec G602 -- i is an index from range over the same [60]int.
 			}
 		}
 	}

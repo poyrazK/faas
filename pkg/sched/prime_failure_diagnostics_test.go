@@ -68,6 +68,7 @@ func TestMarkPrimeFailedPersistsStartupPhaseGuidance(t *testing.T) {
 	for _, tc := range []struct{ phase, want string }{
 		{"guest_startup", "guest did not answer"},
 		{"handler_healthcheck", "answered readiness probes"},
+		{"image_healthcheck", "fresh successful result"},
 	} {
 		t.Run(tc.phase, func(t *testing.T) {
 			ctx := context.Background()

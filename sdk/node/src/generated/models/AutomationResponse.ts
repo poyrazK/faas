@@ -7,6 +7,10 @@ import type { WorkflowSpec } from './WorkflowSpec.js';
  * Saved draft, publication, ownership and opaque revision of one automation.
  */
 export type AutomationResponse = {
+  /**
+   * Runtime failure guard blocks automatic admissions independently of configured enabled intent.
+   */
+  failure_paused?: boolean;
   name: string;
   /**
    * Opaque monotonically increasing revision. Zero creates the first draft. A stale value returns automation_version_conflict.

@@ -110,13 +110,17 @@ func TestChoosePlacementWithCPU_DeploymentSmokePrefersReadyReplica(t *testing.T)
 	if got.NodeID != "replica" {
 		t.Fatalf("smoke node = %q, want ready replica", got.NodeID)
 	}
+	// An ordinary wake also keeps the cached replica while it holds at least
+	// half of the best CPU headroom: the uncached node would first stream
+	// the snapshot and app layer from object storage. A genuinely crowded
+	// replica still loses (IdlePeerOutranksCrowdedSnapshotNode).
 	request.PrioritizeSnapshotLocality = false
 	got, err = choosePlacementWithCPU(nodes, nil, nil, map[string]int64{"replica": 1000}, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.NodeID != "uncached" {
-		t.Fatalf("ordinary wake node = %q, want CPU-first uncached node", got.NodeID)
+	if got.NodeID != "replica" {
+		t.Fatalf("ordinary wake node = %q, want cached replica on a small CPU imbalance", got.NodeID)
 	}
 }
 
@@ -185,5 +189,47 @@ func TestCPUBudgetMillicoresAppliesSpecOvercommit(t *testing.T) {
 	n.VPCPUs = 0
 	if got := cpuBudgetMillicores(n); got != 0 {
 		t.Fatalf("cpuBudgetMillicores with vpcpus=0 = %d, want 0", got)
+	}
+}
+
+// A snapshot-local restore avoids streaming memory, vmstate and the padded
+// app layer from object storage (6-60 s in production), so a small CPU
+// imbalance must not send it to a node without the snapshot.
+func TestChoosePlacementWithCPU_SnapshotLocalityOutranksSmallCPUImbalance(t *testing.T) {
+	t.Parallel()
+	nodes := []state.ComputeNode{cpuPlacementNode("a"), cpuPlacementNode("b")}
+	got, err := choosePlacementWithCPU(
+		nodes,
+		map[string]int64{"a": 0, "b": 0},
+		map[string]int64{"a": 0, "b": 0},
+		map[string]int64{"a": 2000, "b": 0},
+		Request{RAMMB: 128, VCPU: 4, CPUMillicores: 1000, PreferredNodeIDs: []string{"a"}},
+	)
+	if err != nil {
+		t.Fatalf("choose placement: %v", err)
+	}
+	if got.NodeID != "a" {
+		t.Fatalf("node = %q, want a (snapshot-local with most of the best headroom)", got.NodeID)
+	}
+}
+
+// Locality is still a bias: a peer with more than twice the headroom wins,
+// so one host is not packed while another sits idle.
+func TestChoosePlacementWithCPU_IdlePeerOutranksCrowdedSnapshotNode(t *testing.T) {
+	t.Parallel()
+	nodes := []state.ComputeNode{cpuPlacementNode("a"), cpuPlacementNode("b")}
+	budget := cpuSaturated()
+	got, err := choosePlacementWithCPU(
+		nodes,
+		map[string]int64{"a": 0, "b": 0},
+		map[string]int64{"a": 0, "b": 0},
+		map[string]int64{"a": budget - budget/4, "b": 0},
+		Request{RAMMB: 128, VCPU: 4, CPUMillicores: 1000, PreferredNodeIDs: []string{"a"}},
+	)
+	if err != nil {
+		t.Fatalf("choose placement: %v", err)
+	}
+	if got.NodeID != "b" {
+		t.Fatalf("node = %q, want b (a keeps under half of b's CPU headroom)", got.NodeID)
 	}
 }

@@ -205,10 +205,12 @@ func TestPg_CoverageBuildsAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	// CreateBuildProvenance + BuildProvenanceByBuildID + UpdateBuildProvenanceSBOM.
-	if err := s.CreateBuildProvenance(ctx, state.BuildProvenance{BuildID: claimed.ID, BuildkitVer: "v0.20"}); err != nil {
+	devPatch := &api.DevPatchSourceMap{Version: 1, Verbatim: true, ImageDir: "/app", RebuildPaths: []string{"package.json"}}
+	if err := s.CreateBuildProvenance(ctx, state.BuildProvenance{BuildID: claimed.ID, BuildkitVer: "v0.20", DevPatch: devPatch}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.BuildProvenanceByBuildID(ctx, claimed.ID); err != nil || got.BuildID != claimed.ID {
+	if got, err := s.BuildProvenanceByBuildID(ctx, claimed.ID); err != nil || got.BuildID != claimed.ID ||
+		got.DevPatch == nil || !got.DevPatch.Verbatim || len(got.DevPatch.RebuildPaths) != 1 {
 		t.Fatalf("provenance = %+v, %v", got, err)
 	}
 	if err := s.UpdateBuildProvenanceSBOM(ctx, claimed.ID, "sboms/pg-1"); err != nil {

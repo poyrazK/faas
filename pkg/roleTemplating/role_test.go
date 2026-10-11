@@ -72,7 +72,7 @@ func TestSubset(t *testing.T) {
 		{
 			"compute-only subset",
 			RoleComputeOnly,
-			[]string{"vmmd", "realtimed", "schedd", "gatewayd-internal", "imaged", "builderd"},
+			[]string{"vmmd", "realtimed", "schedd", "gatewayd-internal", "imaged", "profiled", "builderd"},
 		},
 	}
 	for _, tt := range tests {
@@ -122,6 +122,7 @@ func TestSubsetHonorsDaemonRoleGates(t *testing.T) {
 		"gatewayd-internal": {RoleSingleBox: true, RoleComputeOnly: true},
 		"builderd":          {RoleSingleBox: true, RoleComputeOnly: true},
 		"realtimed":         {RoleSingleBox: true, RoleComputeOnly: true},
+		"profiled":          {RoleSingleBox: true, RoleComputeOnly: true},
 	}
 	for dmn, want := range dmnAllows {
 		for _, r := range AllowedRoles {
@@ -406,11 +407,11 @@ func TestMutateControlPlaneToComputeOnly(t *testing.T) {
 		t.Errorf("Mutate stopped %d daemons (%v), want exactly %v", len(stopped), stopped, wantStopped)
 	}
 
-	// Start: 5 compute-only daemons (vmmd, realtimed, imaged, builderd,
-	// gatewayd-internal). gatewayd-public is NOT started because
+	// Start: 6 compute-only daemons (vmmd, realtimed, imaged, builderd,
+	// gatewayd-internal, profiled). gatewayd-public is NOT started because
 	// it's not in the compute-only role allow-list.
 	wantStarted := map[string]bool{
-		"vmmd": true, "realtimed": true, "imaged": true, "builderd": true, "gatewayd-internal": true,
+		"vmmd": true, "realtimed": true, "imaged": true, "builderd": true, "gatewayd-internal": true, "profiled": true,
 	}
 	for _, d := range started {
 		if !wantStarted[d] {
@@ -438,11 +439,11 @@ func TestMutateComputeOnlyToControlPlane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mutate error: %v", err)
 	}
-	// Stop: vmmd, realtimed, imaged, builderd, gatewayd-internal — the 5
+	// Stop: vmmd, realtimed, imaged, builderd, gatewayd-internal, profiled — the 6
 	// compute-only daemons. gatewayd-public is NOT in the stop
 	// list because it doesn't allow compute-only.
 	wantStopped := map[string]bool{
-		"vmmd": true, "realtimed": true, "imaged": true, "builderd": true, "gatewayd-internal": true,
+		"vmmd": true, "realtimed": true, "imaged": true, "builderd": true, "gatewayd-internal": true, "profiled": true,
 	}
 	for _, d := range stopped {
 		if !wantStopped[d] {

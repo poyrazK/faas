@@ -35,12 +35,15 @@ class AutomationSimulationStep:
     output: Any | Unset = UNSET
     """Supplied successful mock, timeout sentinel or control output; omitted when no result is known."""
     attempts: list[AutomationSimulationAttempt] | Unset = UNSET
-    """Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure
+    """Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure
     context."""
     run: str | Unset = UNSET
     path: str | Unset = UNSET
     method: str | Unset = UNSET
     integration_id: str | Unset = UNSET
+    raw_query: str | Unset = UNSET
+    """Canonically URL-encoded outbound query after resolving sample input and dependency outputs; omitted when
+    empty or unresolved."""
     wait_for: str | Unset = UNSET
     parent_step: str | Unset = UNSET
     item_index: int | Unset = UNSET
@@ -80,6 +83,8 @@ class AutomationSimulationStep:
 
         integration_id = self.integration_id
 
+        raw_query = self.raw_query
+
         wait_for = self.wait_for
 
         parent_step = self.parent_step
@@ -117,6 +122,8 @@ class AutomationSimulationStep:
             field_dict["method"] = method
         if integration_id is not UNSET:
             field_dict["integration_id"] = integration_id
+        if raw_query is not UNSET:
+            field_dict["raw_query"] = raw_query
         if wait_for is not UNSET:
             field_dict["wait_for"] = wait_for
         if parent_step is not UNSET:
@@ -166,6 +173,8 @@ class AutomationSimulationStep:
 
         integration_id = d.pop("integration_id", UNSET)
 
+        raw_query = d.pop("raw_query", UNSET)
+
         wait_for = d.pop("wait_for", UNSET)
 
         parent_step = d.pop("parent_step", UNSET)
@@ -188,6 +197,7 @@ class AutomationSimulationStep:
             path=path,
             method=method,
             integration_id=integration_id,
+            raw_query=raw_query,
             wait_for=wait_for,
             parent_step=parent_step,
             item_index=item_index,

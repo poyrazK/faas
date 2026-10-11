@@ -124,6 +124,10 @@
     .hosting-receipt dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 0; }
     .hosting-receipt dt { color: #6b7280; }
     .hosting-receipt dd { margin: 0; }
+    .hosting-route-check-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+    .hosting-route-check-list li { border-top: 1px solid #dbeafe; padding: 0.5rem 0; }
+    .hosting-route-check-list p { margin: 0.2rem 0; }
+    .hosting-route-check-fingerprint { overflow-wrap: anywhere; color: #6b7280; }
     .badge.smoke-verified { background: #d1fae5; color: #065f46; }
     .badge.smoke-failed   { background: #fee2e2; color: #991b1b; }
     .badge.smoke-skipped  { background: #f3f4f6; color: #6b7280; }
@@ -183,6 +187,9 @@
     </nav>
   </header>
   <main>
+    {{with .Data.ProfileCheck}}<section id="deployment-profile-check" aria-label="Deployment CPU regression check"><h2>CPU regression check: {{.Status}}</h2><p>{{.Reason}}</p>{{if .NextAttemptAt}}<p>Next attempt: {{.NextAttemptAt.Format "2006-01-02T15:04:05Z07:00"}}</p>{{end}}{{if .CompletedAt}}<p>Checked: {{.CompletedAt.Format "2006-01-02T15:04:05Z07:00"}}</p>{{end}}{{if .ComparisonURL}}<p><a href="{{.ComparisonURL}}">Inspect affected functions and the differential flamegraph{{if .InvestigationID}} in the saved investigation{{end}}</a></p>{{end}}</section>{{end}}
+    {{with .Data.CanaryProfileSignal}}<section id="canary-profile-signal" aria-label="Canary CPU profile signal"><h2>Canary CPU profile signal: {{.Status}}</h2>{{template "profile_route_checks" .RouteChecks}}{{with .Attribution}}{{template "profile_attribution_comparison" .}}{{end}}{{with $.Data.CanaryProfileTraffic}}<details><summary>Traffic and CPU per request</summary>{{template "profile_traffic" .}}{{with .RequestMix}}{{template "profile_request_mix" .}}{{end}}</details>{{end}}<p>{{.Reason}}</p>{{with .Gate}}<section aria-label="Canary profiling gate"><h3>Profiling gate: {{.Status}}</h3><p>{{.Reason}}</p><p>Deadline: {{.Deadline.Format "2006-01-02T15:04:05Z07:00"}}; timeout action: {{.Policy.OnTimeout}}; automatic rollback: {{.Policy.AutoRollback}}. {{.Windows}} distinct windows checked.</p><ul>{{range .Streaks}}<li><code>{{.Route}}</code>: {{.Status}} · {{.Count}} consecutive qualified windows</li>{{end}}</ul><p>A customer override requires the current profile policy revision and a reason through the canary advance API. Overrides are audited and other rollout checks still apply.</p></section>{{else}}<p><strong>Report only:</strong> this signal never blocks canary advancement or triggers rollback.</p>{{end}}<p>Stage {{.CanaryStep}}; metric: {{.Metric}}; window: {{.WindowSeconds}} seconds; profile policy revision: {{.PolicyRevision}}; attempts: {{.Attempts}}.{{if .CheckedAt}} Last checked: {{.CheckedAt.Format "2006-01-02T15:04:05Z07:00"}}.{{else}} Waiting for the profile window.{{end}}{{if .NextAttemptAt}} Next attempt: {{.NextAttemptAt.Format "2006-01-02T15:04:05Z07:00"}}.{{end}}{{if .CompletedAt}} Completed: {{.CompletedAt.Format "2006-01-02T15:04:05Z07:00"}}.{{end}}</p><p>Thresholds: relative increase {{.Options.RelativeIncreasePercent}}%; absolute CPU increase {{.Options.AbsoluteIncreaseCPUPerSecond}} CPU seconds per second; absolute CPU/request increase {{.Options.AbsoluteIncreaseCPUSecondsPerRequest}}; minimum profiles {{.Options.MinimumProfiles}}; minimum coverage {{.Options.MinimumCoverageRatio}}; minimum requests {{.Options.MinimumRequests}}.</p>{{if .Total}}<p>Total sampled CPU: stable {{printf "%.6f" .Total.BaselineCPUPerSecond}} CPU seconds per second, canary {{printf "%.6f" .Total.CandidateCPUPerSecond}} CPU seconds per second.</p>{{if .Total.CPUPerRequest}}<p>Sampled CPU per request: stable {{printf "%.8f" .Total.CPUPerRequest.BaselineCPUSecondsPerRequest}}, canary {{printf "%.8f" .Total.CPUPerRequest.CandidateCPUSecondsPerRequest}}.</p>{{end}}{{end}}{{if .BaselineSource}}<p>Stable source: {{if .BaselineSource.Available}}<a href="{{.BaselineSource.CommitURL}}">{{.BaselineSource.Repository}}@{{.BaselineSource.CommitSHA}}</a>{{else}}unavailable{{end}}</p>{{end}}{{if .CandidateSource}}<p>Canary source: {{if .CandidateSource.Available}}<a href="{{.CandidateSource.CommitURL}}">{{.CandidateSource.Repository}}@{{.CandidateSource.CommitSHA}}</a>{{else}}unavailable{{end}}</p>{{end}}{{if .ComparisonURL}}<p><a href="{{.ComparisonURL}}">Inspect the full profile comparison</a></p>{{end}}{{if .Evidence}}<h3>Functions and call paths above the configured thresholds</h3><ul>{{$signal := .}}{{range $index, $finding := .Evidence}}<li>{{range .Frames}}{{.Name}}{{if .BaselineSource}} <a href="{{.BaselineSource.URL}}">stable {{.BaselineSource.Path}}:{{.BaselineSource.Line}}</a>{{end}}{{if .CandidateSource}} <a href="{{.CandidateSource.URL}}">canary {{.CandidateSource.Path}}:{{.CandidateSource.Line}}</a>{{end}}; {{end}}{{with $signal.FindingURL $index}} <a href="{{.}}">Investigate this function or call path</a>{{end}}</li>{{end}}</ul>{{end}}</section>{{end}}
+    {{if .Data.CanaryProfileHistoryEnabled}}<section id="canary-profile-history" aria-label="Canary CPU profile stage history"><h2>Canary profile history</h2><p class="muted">Report-only assessments for fixed stage windows. Each row keeps its policy revision and retry state; profile samples follow the plan's retention.</p>{{if .Data.CanaryProfileHistoryError}}<p class="notice">{{.Data.CanaryProfileHistoryError}}</p>{{end}}{{if .Data.CanaryProfileHistory}}<table><thead><tr><th>Stage</th><th>Result</th><th>Comparison window</th><th>CPU summary</th><th>Evidence</th><th>Traffic context</th></tr></thead><tbody>{{range .Data.CanaryProfileHistory}}<tr><td>{{.CanaryStep}}<br><small>Started {{.CanaryStepStartedAt.Format "2006-01-02T15:04:05Z07:00"}}</small><br><small>Policy revision {{.PolicyRevision}}</small></td><td>{{.Status}}{{template "profile_route_checks" .RouteChecks}}{{with .Attribution}}{{template "profile_attribution_comparison" .}}{{end}}<br><small>{{.Attempts}} attempt(s){{if .CheckedAt}}; checked {{.CheckedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}{{if .NextAttemptAt}}; next {{.NextAttemptAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}</small><br>{{.Reason}}</td><td>{{if .Baseline}}Stable: {{.Baseline.Start.Format "15:04:05Z07:00"}}–{{.Baseline.End.Format "15:04:05Z07:00"}}<br>{{end}}{{if .Candidate}}Canary: {{.Candidate.Start.Format "15:04:05Z07:00"}}–{{.Candidate.End.Format "15:04:05Z07:00"}}{{end}}</td><td>{{if .Total}}Stable {{printf "%.6f" .Total.BaselineCPUPerSecond}} CPU/s; canary {{printf "%.6f" .Total.CandidateCPUPerSecond}} CPU/s{{if .Total.CPUPerRequest}}<br>CPU/request: {{printf "%.8f" .Total.CPUPerRequest.BaselineCPUSecondsPerRequest}} → {{printf "%.8f" .Total.CPUPerRequest.CandidateCPUSecondsPerRequest}}{{end}}{{else}}No comparable summary yet{{end}}{{if .ComparisonURL}}<br><a href="{{.ComparisonURL}}">Inspect full comparison</a>{{end}}</td><td>{{if .BaselineSource}}Stable: {{if .BaselineSource.Available}}<a href="{{.BaselineSource.CommitURL}}">{{.BaselineSource.CommitSHA}}</a>{{else}}source unavailable{{end}}<br>{{end}}{{if .CandidateSource}}Canary: {{if .CandidateSource.Available}}<a href="{{.CandidateSource.CommitURL}}">{{.CandidateSource.CommitSHA}}</a>{{else}}source unavailable{{end}}<br>{{end}}{{if .Evidence}}{{$signal := .}}{{range $index, $finding := .Evidence}}{{range .Frames}}{{.Name}}{{if .BaselineSource}} <a href="{{.BaselineSource.URL}}">stable {{.BaselineSource.Path}}:{{.BaselineSource.Line}}</a>{{end}}{{if .CandidateSource}} <a href="{{.CandidateSource.URL}}">canary {{.CandidateSource.Path}}:{{.CandidateSource.Line}}</a>{{end}}; {{end}}{{with $signal.FindingURL $index}} <a href="{{.}}">Investigate this function or call path</a>{{end}}<br>{{end}}{{else}}No threshold evidence{{end}}</td><td><details><summary>{{.Traffic.Status}}</summary>{{template "profile_traffic" .Traffic}}{{with .Traffic.RequestMix}}{{template "profile_request_mix" .}}{{end}}</details></td></tr>{{end}}</tbody></table>{{else if not .Data.CanaryProfileHistoryError}}<p>No retained stage assessments yet.</p>{{end}}{{if .Data.CanaryProfileHistoryMoreURL}}<p><a href="{{.Data.CanaryProfileHistoryMoreURL}}">Older canary stage assessments</a></p>{{end}}</section>{{end}}
     {{template "email-verification-banner" .}}
     {{if .Data}}
       <h1>Deployment <code>{{.Data.Deployment.ID}}</code></h1>
@@ -336,6 +343,37 @@
           {{if .SmokeErrorCode}}<dt>Error code</dt><dd><code>{{.SmokeErrorCode}}</code></dd>{{end}}
           {{if .SmokeError}}<dt>Details</dt><dd>{{.SmokeError}}</dd>{{end}}
         </dl>
+        {{if .RouteChecks}}
+          <h3>OpenAPI route checks</h3>
+          <p>
+            {{if eq .RouteCheckSetStatus "verified"}}<span class="badge smoke-verified">verified</span>
+            {{else if eq .RouteCheckSetStatus "failed"}}<span class="badge smoke-failed">failed</span>
+            {{else}}<span class="badge smoke-skipped">{{.RouteCheckSetStatus}}</span>{{end}}
+            {{len .RouteChecks}} selected routes
+          </p>
+          {{if .RouteCheckDocumentSHA256}}<p class="hosting-route-check-fingerprint">OpenAPI SHA-256: <code>{{.RouteCheckDocumentSHA256}}</code></p>{{end}}
+          <ul class="hosting-route-check-list">
+            {{range .RouteChecks}}
+              <li>
+                <p>
+                  <code>{{.Method}} {{.Path}}</code>
+                  {{if eq .Status "verified"}}<span class="badge smoke-verified">verified</span>
+                  {{else if eq .Status "failed"}}<span class="badge smoke-failed">failed</span>
+                  {{else}}<span class="badge smoke-skipped">{{.Status}}</span>{{end}}
+                </p>
+                {{if or .StatusCode .LatencyMS .VerifiedAt}}
+                  <p>
+                    {{if .StatusCode}}HTTP <code>{{.StatusCode}}</code>{{end}}
+                    {{if .LatencyMS}} · <code>{{.LatencyMS}} ms</code>{{end}}
+                    {{if .VerifiedAt}} · checked <code>{{.VerifiedAt}}</code>{{end}}
+                  </p>
+                {{end}}
+                {{if .ErrorCode}}<p>Error code: <code>{{.ErrorCode}}</code></p>{{end}}
+                {{if .Error}}<p>{{.Error}}</p>{{end}}
+              </li>
+            {{end}}
+          </ul>
+        {{end}}
         {{if eq .SmokeStatus "failed"}}
           <p><a href="/dashboard/apps/{{$.Data.App.Slug}}/logs?deployment={{$.Data.Deployment.ID}}">View deployment logs →</a></p>
         {{end}}

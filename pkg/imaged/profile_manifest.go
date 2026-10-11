@@ -2,6 +2,8 @@ package imaged
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -62,6 +64,12 @@ func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.Ap
 // image that omitted both Entrypoint and Cmd, then applies that command with
 // the same precedence used by source-built apps.
 func manifestFromImageConfigWithApp(config oci.ImageConfig, app state.App) (api.AppManifest, error) {
+	if app.Manifest.ProjectImage != "" {
+		if app.Manifest.ProjectImageCommand != nil {
+			config.Cmd = append([]string(nil), app.Manifest.ProjectImageCommand...)
+		}
+		return manifestFromImageConfig(config)
+	}
 	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if start := strings.TrimSpace(app.StartCommand); start != "" {
 			config.Cmd = shellCommand(start)
@@ -88,6 +96,30 @@ func manifestFromImageConfigWithDeployment(config oci.ImageConfig, app state.App
 				return api.AppManifest{}, state.ErrInvalidArgument
 			}
 		}
+	}
+	check, err := frameworkprofile.ImageHealthcheckFromProfile(dep.InferredProfile)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("imaged: frozen image healthcheck: %w", err)
+	}
+	var override *api.ComposeHealthcheck
+	if check != nil {
+		override = check.Override
+	} else if app.Manifest.ProjectImage != "" {
+		override = app.Manifest.ProjectImageHealthcheck
+	}
+	config, err = oci.ApplyComposeHealthcheck(config, override)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("imaged: project image healthcheck: %w", err)
+	}
+	command, err := frameworkprofile.ImageCommandFromProfile(dep.InferredProfile)
+	if err != nil {
+		return api.AppManifest{}, fmt.Errorf("imaged: frozen image command: %w", err)
+	}
+	if command != nil {
+		if command.Cmd != nil {
+			config.Cmd = slices.Clone(command.Cmd)
+		}
+		return manifestFromImageConfig(config)
 	}
 	return manifestFromImageConfigWithApp(config, app)
 }

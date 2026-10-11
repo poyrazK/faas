@@ -54,6 +54,39 @@ type clientTestTransport func(*http.Request) (*http.Response, error)
 
 func (f clientTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestProviderJSONPinsProductionOriginAndRefusesRedirects(t *testing.T) {
+	provider, err := New(testBackend(), func(string) string { return "test-only" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := provider.(*Provider)
+	var calls int
+	p.httpClient.Transport = clientTestTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Scheme != "https" || r.URL.Host != "console.neon.tech" || r.URL.User != nil {
+			t.Fatalf("caller changed production authority: %s", r.URL.Redacted())
+		}
+		status := http.StatusNoContent
+		header := make(http.Header)
+		if r.URL.Path == "/api/v2/redirect" {
+			status = http.StatusFound
+			header.Set("Location", "http://127.0.0.1/private")
+		}
+		return &http.Response{StatusCode: status, Header: header, Body: http.NoBody, Request: r}, nil
+	})
+	for _, path := range []string{"//127.0.0.1/private", "/https://127.0.0.1/private", "/projects/../private"} {
+		if err := p.doJSON(t.Context(), http.MethodGet, path, url.Values{"host": {"127.0.0.1"}}, nil, nil, http.StatusNoContent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := p.doJSON(t.Context(), http.MethodGet, "/redirect", nil, nil, nil, http.StatusNoContent); !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("redirect accepted: %v", err)
+	}
+	if calls != 4 {
+		t.Fatalf("redirect caused another request: %d calls", calls)
+	}
+}
+
 type clientTestBody struct{ read func([]byte) (int, error) }
 
 func (b clientTestBody) Read(p []byte) (int, error) { return b.read(p) }

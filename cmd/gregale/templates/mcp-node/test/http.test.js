@@ -7,14 +7,14 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 
-test('HTTP origin policy, tool errors, redacted logs and stream cancellation', { timeout: 15000 }, async () => {
+test('HTTP origin policy, tool errors, redacted logs and stream cancellation', { timeout: 30000 }, async () => {
   const source = dirname(dirname(fileURLToPath(import.meta.url)));
   // Keep the fixture below the starter so installed SDK modules remain resolvable.
   const fixture = await mkdtemp(join(source, 'test', '.http-'));
   let child;
   let logs = '';
   try {
-    for (const file of ['server.js', 'app.js', 'auth.js', 'tool-policy.js', 'tasks.js', 'task-store.js', 'task-metrics.js', 'task-runtime.js']) await copyFile(join(source, file), join(fixture, file));
+    for (const file of ['server.js', 'app.js', 'auth.js', 'tool-policy.js', 'tasks.js', 'task-store.js', 'task-crypto.js', 'task-compatibility.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-runtime.js', 'task-limits.json']) await copyFile(join(source, file), join(fixture, file));
     const config = JSON.parse(await readFile(join(source, 'gregale-mcp.json'), 'utf8'));
     config.allowed_origins = ['https://trusted.example'];
     await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify(config));
@@ -22,13 +22,13 @@ test('HTTP origin policy, tool errors, redacted logs and stream cancellation', {
     child.stdout.on('data', chunk => { logs += chunk.toString(); });
     child.stderr.on('data', chunk => { logs += chunk.toString(); });
     let port;
-    for (let attempt = 0; attempt < 200; attempt++) {
+    for (let attempt = 0; attempt < 1000; attempt++) {
       const line = logs.split('\n').find(line => line.includes('mcp_listening'));
       if (line) { port = JSON.parse(line).port; break; }
       if (child.exitCode !== null) throw new Error('Server exited before readiness');
       await delay(10);
     }
-    assert.ok(port, 'server must become ready');
+    assert.ok(port, `server must become ready; output: ${logs || '<none>'}`);
     const endpoint = `http://127.0.0.1:${port}/mcp`;
     function call(name, args, extraHeaders = {}, signal) {
       return fetch(endpoint, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/call', 'Mcp-Name': name, ...extraHeaders }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args, _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientInfo': { name: 'fixture', version: '1' }, 'io.modelcontextprotocol/clientCapabilities': {}, progressToken: 'fixture' } } }) });

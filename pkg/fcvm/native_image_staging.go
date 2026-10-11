@@ -31,7 +31,7 @@ func (v *JailerVMM) stageNativeWritableImageForOwner(ctx context.Context, owner 
 	if generation != owner.Generation || generation == "" || daemonLock == nil {
 		return "", errors.New("native image source: private clone lacks original daemon producer")
 	}
-	if _, err := daemonLock.Stat(); err != nil {
+	if err := r.checkDaemonOwnership(); err != nil {
 		return "", err
 	}
 	j := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources, helperGroups: r.helperGroups}

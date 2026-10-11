@@ -43,9 +43,10 @@ func accountWebhookCLISubcommand() cliSub {
 func alertPresetCLISubcommand() cliSub {
 	return cliSub{Name: "preset", Short: "Browse or enable catalog alert presets", Subcommands: []cliSub{
 		{Name: "list", Short: "List the global alert preset catalog"},
-		{Name: "enable", Short: "Create an app alert from a preset; supply a webhook secret via stdin or --webhook-secret", Positionals: []string{"<preset-name>"}, Flags: []cliFlag{
-			{Name: "app", Short: "app slug", Value: "slug", Req: true},
-			{Name: "webhook-url", Short: "HTTPS webhook receiver URL", Value: "URL", Req: true},
+		{Name: "enable", Short: "Create an app alert from a preset or choose one interactively", Examples: []string{"gregale alerts preset enable --app my-api --interactive"}, Positionals: []string{"[<preset-name>]"}, Flags: []cliFlag{
+			{Name: "interactive", Short: "choose a preset, review its rule, and enter a hidden signing secret", Bool: true},
+			{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
+			{Name: "webhook-url", Short: "HTTPS webhook receiver URL (required unless interactive)", Value: "URL"},
 			{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin"},
 			{Name: "webhook-secret", Short: "signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
 			{Name: "action", Short: "alert action (default webhook)", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
@@ -123,4 +124,59 @@ func debugRequestsCLISubcommand() cliSub {
 			{Name: "interval", Short: "poll interval (250ms..1m)", Value: "DURATION"},
 		}},
 	}}
+}
+
+func appTCPListenerCLISubcommand(slugPositional bool) cliSub {
+	command := cliSub{
+		Name:  "tcp",
+		Short: "Manage raw TCP listeners for an app",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List TCP listeners"},
+			{Name: "add", Short: "Create a TCP listener", Flags: []cliFlag{
+				{Name: "name", Short: "listener name", Value: "NAME", Req: true},
+				{Name: "guest-port", Short: "workload TCP port", Value: "PORT", Req: true},
+				{Name: "public-port", Short: "stable public TCP port (40000..49999)", Value: "PORT"},
+				{Name: "tls-mode", Short: "TLS mode (default passthrough)", Value: "MODE", ClosedSet: []string{string(api.TCPListenerTLSPassthrough), string(api.TCPListenerTLSTerminate)}},
+				{Name: "tls-hostname", Short: "verified app-owned hostname for TLS termination", Value: "HOST"},
+			}},
+			{Name: "tls", Short: "Update one listener's TLS policy", Positionals: []string{"<name>"}, FlagsAfterPositionals: true, Flags: []cliFlag{
+				{Name: "tls-mode", Short: "required TLS mode", Value: "MODE", Req: true, ClosedSet: []string{string(api.TCPListenerTLSPassthrough), string(api.TCPListenerTLSTerminate)}},
+				{Name: "tls-hostname", Short: "verified app-owned termination hostname", Value: "HOST"},
+			}},
+			{Name: "tls-status", Short: "Show certificate observations for a listener", Positionals: []string{"<name>"}},
+			{Name: "enable", Short: "Enable one listener", Positionals: []string{"<name>"}},
+			{Name: "disable", Short: "Disable one listener", Positionals: []string{"<name>"}},
+			{Name: "rm", Short: "Delete one listener", Positionals: []string{"<name>"}},
+			{Name: "delete", Short: "Alias for rm", Positionals: []string{"<name>"}},
+		},
+	}
+	if slugPositional {
+		command.Positionals = []string{"<slug>"}
+		command.SubcommandsAfterPositionals = true
+	}
+	return command
+}
+
+func appUDPListenerCLISubcommand(slugPositional bool) cliSub {
+	command := cliSub{
+		Name:  "udp",
+		Short: "Manage raw UDP listeners for an app",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List UDP listeners"},
+			{Name: "add", Short: "Create a UDP listener", Flags: []cliFlag{
+				{Name: "name", Short: "listener name", Value: "NAME", Req: true},
+				{Name: "guest-port", Short: "workload UDP port", Value: "PORT", Req: true},
+				{Name: "public-port", Short: "stable public UDP port", Value: "PORT"},
+			}},
+			{Name: "enable", Short: "Enable one listener", Positionals: []string{"<name>"}},
+			{Name: "disable", Short: "Disable one listener", Positionals: []string{"<name>"}},
+			{Name: "rm", Short: "Delete one listener", Positionals: []string{"<name>"}},
+			{Name: "delete", Short: "Alias for rm", Positionals: []string{"<name>"}},
+		},
+	}
+	if slugPositional {
+		command.Positionals = []string{"<slug>"}
+		command.SubcommandsAfterPositionals = true
+	}
+	return command
 }

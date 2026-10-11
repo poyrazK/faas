@@ -50,7 +50,7 @@ func cmdRoutesHealthExplain(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(entry))
 		}
-		renderRouteHealthExplanation(entry)
+		renderRouteHealthExplanation(entry, positional[0])
 		return 0
 	}
 	page, err := client.ListRouteHealthHistory(ctx, positional[0], *deployment, *limit, *before)
@@ -67,7 +67,7 @@ func cmdRoutesHealthExplain(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "No saved route health decisions in this page. Evidence is recorded when a selected-route guard evaluates an advance or commits automatic recovery.")
 		return 0
 	}
-	renderRouteHealthExplanation(page.Entries[0])
+	renderRouteHealthExplanation(page.Entries[0], positional[0])
 	_, _ = fmt.Fprintln(osStdout, "\nSaved decision timeline (newest first):")
 	for i, entry := range page.Entries {
 		transition := ""
@@ -160,7 +160,7 @@ func routeHealthHistoryTransition(before, after api.RouteHealthHistoryEntry) str
 	return ""
 }
 
-func renderRouteHealthExplanation(entry api.RouteHealthHistoryEntry) {
+func renderRouteHealthExplanation(entry api.RouteHealthHistoryEntry, appSlug string) {
 	_, _ = fmt.Fprintf(osStdout, "Saved rollout decision %s: %s\nObserved at: %s; source: %s\nTraffic: %d%%; requested: %d%%\n", entry.ID, entry.Decision.Status, entry.CheckedAt.UTC().Format(time.RFC3339), entry.Source, entry.TrafficPercent, entry.RequestedTrafficPercent)
 	if entry.Report.ObservationAnchor != nil {
 		_, _ = fmt.Fprintf(osStdout, "Observation anchor: %s\n", entry.Report.ObservationAnchor.UTC().Format(time.RFC3339Nano))
@@ -195,7 +195,7 @@ func renderRouteHealthExplanation(entry api.RouteHealthHistoryEntry) {
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "Saved thresholds: 5xx minimum %d requests, %d errors, %.0f%% rate, %.1fx stable and +%.0f percentage points; selected p95 minimum %d requests, %.1fx stable and +%.0fms.\n", entry.Policy.MinimumRequests, entry.Policy.MinimumErrors, entry.Policy.ErrorRateFloor*100, entry.Policy.ErrorRateFactor, entry.Policy.ErrorRateDelta*100, entry.Policy.MinLatencyRequests, entry.Policy.LatencyFactor, entry.Policy.LatencyDeltaMS)
-	renderRouteHealthReport(entry.Report)
+	renderRouteHealthReport(entry.Report, appSlug)
 }
 
 func healthEvidenceReason(reason string) string {

@@ -33,7 +33,7 @@ func TestQualificationAmbiguousRestoreCleanupRetainsExactPoint(t *testing.T) {
 	provider := &ambiguousQualificationRestoreProvider{qualificationProvider: qualificationProvider{capabilities: testCapabilities()}}
 	_, err := QualifyProvider(t.Context(), provider, QualificationOptions{ProviderName: "fake", ResourceID: "ambiguous-restore", Spec: testSpec(), Mutating: true})
 	if !errors.Is(err, ErrQualificationFailed) || provider.cleanup.ResourceID == "" || provider.cleanup.ProviderResourceID != "" ||
-		provider.cleanup.RestoreSourceResourceID != provider.resourceID || provider.cleanup.RestorePointInTime.IsZero() || !provider.cleanup.RestorePointInTime.Equal(provider.restorePoint) {
+		provider.cleanup.RestoreSourceResourceID != provider.resourceID+"/data" || provider.cleanup.RestorePointInTime.IsZero() || !provider.cleanup.RestorePointInTime.Equal(provider.restorePoint) {
 		t.Fatalf("ambiguous restore cleanup lost source/point: %+v, %v", provider.cleanup, err)
 	}
 }

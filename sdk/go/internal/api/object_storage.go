@@ -41,6 +41,9 @@ type ObjectEncryption struct {
 }
 
 type ObjectSignRequest struct {
+	VersionID          string                 `json:"version_id,omitempty"`
+	IfMatch            string                 `json:"if_match,omitempty"`
+	IfNoneMatch        string                 `json:"if_none_match,omitempty"`
 	Method             string                 `json:"method"`
 	Key                string                 `json:"key"`
 	ExpiresIn          int64                  `json:"expires_in,omitempty"`

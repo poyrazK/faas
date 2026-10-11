@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,7 +18,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
@@ -25,7 +26,7 @@ import (
 func authedClient() (*Client, error) {
 	tok := loadToken()
 	if tok == "" {
-		return nil, errAuth(errors.New("not logged in — run 'gregale login'"))
+		return nil, errAuth(errors.New("not logged in — " + authenticationHint()))
 	}
 	return NewClient(apiBase(), tok), nil
 }
@@ -36,7 +37,7 @@ func authedClient() (*Client, error) {
 func authedClientWithDeployTimeout(timeout time.Duration) (*Client, error) {
 	tok := loadToken()
 	if tok == "" {
-		return nil, errAuth(errors.New("not logged in — run 'gregale login'"))
+		return nil, errAuth(errors.New("not logged in — " + authenticationHint()))
 	}
 	return NewClientWithDeployTimeout(apiBase(), tok, timeout), nil
 }
@@ -77,6 +78,10 @@ func cmdLogin(args []string) int {
 		}
 	}
 
+	previousCredential := loginErrorCredential
+	loginErrorCredential = *token
+	defer func() { loginErrorCredential = previousCredential }()
+
 	// CI path — unchanged behavior. Keep --token working so build
 	// servers + scripts aren't broken by this change. Routes through
 	// finalizeLogin so the UX §8 first-run quickstart fires for the
@@ -93,6 +98,9 @@ func cmdLogin(args []string) int {
 		probeCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		return finalizeLogin(probeCtx, client, *token, "", acct)
+	}
+	if nonInteractive {
+		return printErr("Login requires a credential", errors.New("use login --token-stdin or login --token in non-interactive mode"))
 	}
 	if f, ok := osStdin.(*os.File); ok && f == os.Stdin && !stdinIsTTY() {
 		return printErr("Login requires input", errors.New("use --token-stdin or --token in a non-interactive shell"))
@@ -115,7 +123,7 @@ func cmdLogin(args []string) int {
 	// returns an error (no DISPLAY); we surface it but stay in
 	// paste mode — the user can either paste the code into this
 	// terminal or open the URL in a real browser on another box.
-	if err := browser.Open(codeResp.URL); err != nil {
+	if err := openBrowser(codeResp.URL); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", codeResp.URL)
 	}
@@ -133,8 +141,7 @@ func cmdLogin(args []string) int {
 		return waitForApproval(ctx, c, codeResp)
 	}
 	if len(pasted) != 8 {
-		PrintFail(os.Stderr, "Code should be 8 characters (XXXX-NNNN), got %d", len(pasted))
-		return 1
+		return printErr("Invalid login code", fmt.Errorf("code should be 8 characters (XXXX-NNNN), got %d; run gregale login again", len(pasted)))
 	}
 	return exchangeOnce(ctx, c, pasted)
 }
@@ -155,12 +162,11 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 	backoff := loginPollBackoff
 	for {
 		if !expiry.IsZero() && time.Now().After(expiry.Add(2*time.Second)) {
-			PrintFail(os.Stderr, "Code expired. Run 'gregale login' again.")
-			return 1
+			return printErr("Login code expired", errors.New("run gregale login again to obtain a new code"))
 		}
 		select {
 		case <-ctx.Done():
-			return 1
+			return printErr("Login interrupted", ctx.Err())
 		case <-time.After(backoff):
 		}
 		// Strip the dash so the server's normalizeCliAuthCode
@@ -177,8 +183,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			case api.CodeCliAuthPending:
 				continue // keep polling
 			case api.CodeCliAuthUnavailable:
-				renderAPIError(os.Stderr, ae)
-				return 1
+				return printErr("Login code unavailable", err)
 			default:
 				return printErr("Login failed", err)
 			}
@@ -207,6 +212,9 @@ func exchangeOnce(ctx context.Context, c *Client, normalized string) int {
 // browser-open flows can share it without duplicating the printer
 // or saveToken call.
 func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID string, acct api.AccountResponse) int {
+	previousCredential := loginErrorCredential
+	loginErrorCredential = plaintext
+	defer func() { loginErrorCredential = previousCredential }()
 	if err := saveToken(plaintext); err != nil {
 		return printErr("Could not save token", err)
 	}
@@ -439,6 +447,22 @@ func sanitizeSlug(s string) string {
 // Otherwise (UX §3.2), the leading `✗` glyph is dropped when stdout is
 // not a TTY or NO_COLOR is set; the body of each line is unchanged.
 func printErr(title string, err error) int {
+	if errors.Is(err, context.Canceled) {
+		var recovery *deployRecoveryError
+		if !errors.As(err, &recovery) {
+			problem := diagnosticProblem(transportProblem(err))
+			if jsonOutput {
+				_ = writeJSONProblemWithExit(os.Stderr, problem, 130)
+			} else {
+				renderAPIError(osStderr, &APIError{Problem: problem})
+			}
+			return 130
+		}
+	}
+	var recovery *deployRecoveryError
+	if errors.As(err, &recovery) {
+		return renderDeployRecoveryError(title, recovery)
+	}
 	// Strict secret-scan dispatch (PR-A v2): extract the typed error
 	// BEFORE the nested-marker-hint branch so the JSON envelope carries
 	// the full findings array (under `extra.findings`) plus a
@@ -453,7 +477,7 @@ func printErr(title string, err error) int {
 	// from the error chain BEFORE the jsonOutput branch so both modes
 	// can route it to stderr. The hint must NEVER appear on stdout (it
 	// would corrupt `gregale deploy --json | jq`), so JSON mode prints
-	// only the envelope and writes the hint via osStderr; text mode
+	// only the envelope with its hint field; text mode
 	// appends the hint to the existing PrintFail line.
 	var hintErr *NestedMarkerHintError
 	hasHint := errors.As(err, &hintErr)
@@ -465,10 +489,11 @@ func printErr(title string, err error) int {
 	if jsonOutput {
 		var ae *APIError
 		if errors.As(err, &ae) {
-			_ = writeJSONProblem(ae.Problem)
+			problem := ae.Problem
 			if hasHint {
-				PrintWarn(osStderr, "%s", hintErr.Hint)
+				problem.Hint = strings.TrimSpace(problem.Hint + " " + hintErr.Hint)
 			}
+			_ = writeJSONProblemWithExit(os.Stderr, diagnosticProblem(problem), exitCodeForStatus(problem.Status))
 			return exitCodeForStatus(ae.Problem.Status)
 		}
 		// Non-API errors — synthesise a Problem so scripts still see a
@@ -476,18 +501,25 @@ func printErr(title string, err error) int {
 		// failures as user errors (exit 1), while transport failures
 		// retain the platform/infra exit 3 classification.
 		platformErr := isTransportError(err)
-		problem := api.Problem{Status: 400, Code: "invalid_request", Title: title, Detail: err.Error()}
+		problem := api.Problem{Status: 400, Code: "invalid_request", Title: title, Detail: redactErrorText(err.Error())}
 		if platformErr {
 			problem = transportProblem(err)
 		}
 		if hasExit && ec.code == 2 {
 			problem.Status = 401
 			problem.Code = "unauthorized"
+			problem.Hint = authenticationHint()
 		}
-		_ = writeJSONProblem(problem)
 		if hasHint {
-			PrintWarn(osStderr, "%s", hintErr.Hint)
+			problem.Hint = strings.TrimSpace(problem.Hint + " " + hintErr.Hint)
 		}
+		code := 1
+		if hasExit {
+			code = ec.code
+		} else if platformErr {
+			code = 3
+		}
+		_ = writeJSONProblemWithExit(os.Stderr, diagnosticProblem(problem), code)
 		if hasExit {
 			return ec.code
 		}
@@ -500,14 +532,14 @@ func printErr(title string, err error) int {
 	if errors.As(err, &ae) {
 		renderAPIError(osStderr, ae)
 		if hasHint {
-			PrintWarn(osStderr, "%s", hintErr.Hint)
+			PrintWarn(osStderr, "%s", redactErrorText(hintErr.Hint))
 		}
 		return exitCodeForStatus(ae.Problem.Status)
 	}
 	if hasExit {
-		PrintFail(osStderr, "%s\n  %s", title, ec.msg)
+		PrintFail(osStderr, "%s\n  %s", redactErrorText(title), redactErrorText(ec.msg))
 		if hasHint {
-			PrintWarn(osStderr, "%s", hintErr.Hint)
+			PrintWarn(osStderr, "%s", redactErrorText(hintErr.Hint))
 		}
 		return ec.code
 	}
@@ -515,7 +547,7 @@ func printErr(title string, err error) int {
 		problem := transportProblem(err)
 		renderAPIError(osStderr, &APIError{Problem: problem})
 		if hasHint {
-			PrintWarn(osStderr, "%s", hintErr.Hint)
+			PrintWarn(osStderr, "%s", redactErrorText(hintErr.Hint))
 		}
 		return 3
 	}
@@ -527,10 +559,10 @@ func printErr(title string, err error) int {
 		// duplicate the cwd in the customer-visible output (issue #744
 		// review finding). The hint is the actionable next step; the
 		// error text is the context; the title is dropped.
-		PrintFail(osStderr, "%s\n  %s", err.Error(), hintErr.Hint)
+		PrintFail(osStderr, "%s\n  %s", redactErrorText(err.Error()), redactErrorText(hintErr.Hint))
 		return 1
 	}
-	PrintFail(osStderr, "%s\n  %s", title, err.Error())
+	PrintFail(osStderr, "%s\n  %s", redactErrorText(title), redactErrorText(err.Error()))
 	return 1
 }
 
@@ -541,11 +573,27 @@ const transportErrorCode = "transport_error"
 // server returned a Problem when the request never reached it.
 func transportProblem(err error) api.Problem {
 	detail := "The Gregale API could not be reached."
+	hint := "Check your network connection and FAAS_API endpoint; run gregale profile check. Inspect deployment status before retrying a deploy."
+	var dns *net.DNSError
+	var unknownCA x509.UnknownAuthorityError
+	var invalidCertificate x509.CertificateInvalidError
+	var hostname x509.HostnameError
+	var tlsHeader tls.RecordHeaderError
+	var network net.Error
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		detail = "The request timed out before the Gregale API responded."
 	case errors.Is(err, context.Canceled):
 		detail = "The request was canceled before the Gregale API responded."
+		hint = "Inspect deployment status before retrying a deploy; canceling the CLI request does not guarantee the server stopped it."
+	case errors.As(err, &network) && network.Timeout():
+		detail = "The request timed out before the Gregale API responded."
+	case errors.As(err, &dns):
+		detail = "The Gregale API hostname could not be resolved."
+		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale profile check."
+	case errors.As(err, &unknownCA) || errors.As(err, &invalidCertificate) || errors.As(err, &hostname) || errors.As(err, &tlsHeader):
+		detail = "The Gregale API TLS connection could not be verified or established."
+		hint = "Check the HTTPS endpoint and trusted certificates with gregale profile check."
 	default:
 		cause := err
 		var urlErr *url.Error
@@ -567,7 +615,7 @@ func transportProblem(err error) api.Problem {
 		Code:   transportErrorCode,
 		Title:  "Could not reach Gregale",
 		Detail: detail,
-		Hint:   "Check your network connection and FAAS_API endpoint, then retry.",
+		Hint:   hint,
 	}
 }
 
@@ -626,7 +674,7 @@ func renderStrictSecretScanError(title string, e *StrictSecretScanError) int {
 				Snippet:  f.Snippet,
 			})
 		}
-		_ = writeJSONProblem(api.Problem{
+		_ = writeJSONProblemWithExit(os.Stderr, api.Problem{
 			Status:         422,
 			Code:           api.CodeSecretScanStrict,
 			Title:          title,
@@ -634,7 +682,7 @@ func renderStrictSecretScanError(title string, e *StrictSecretScanError) int {
 			SecretFindings: findings,
 			SecretHint:     e.Hint,
 			DocsURL:        docsURLForCode(api.CodeSecretScanStrict),
-		})
+		}, 1)
 		return 1
 	}
 	PrintFail(osStderr, "%s", title)
@@ -663,10 +711,10 @@ func renderStrictSecretScanError(title string, e *StrictSecretScanError) int {
 // the row entirely (as the older renderer did) breaks the three-line
 // contract on its most common paths.
 func renderAPIError(w io.Writer, e *APIError) {
-	if e == nil || e.Problem.Title == "" {
+	if e == nil {
 		return
 	}
-	p := e.Problem
+	p := diagnosticProblem(e.Problem)
 	if p.DocsURL != "" {
 		p.DocsURL = normalizeDocsURL(p.DocsURL)
 	}
@@ -734,7 +782,13 @@ func exitCodeForStatus(status int) int {
 	switch {
 	case status == 401:
 		return 2
-	case status >= 500:
+	case status == 403:
+		return 6
+	case status == 404 || status == 410:
+		return 4
+	case status == 409 || status == 412:
+		return 5
+	case status == 408 || status == 429 || status >= 500:
 		return 3
 	default:
 		return 1

@@ -32,6 +32,17 @@ Admission reads provider-request attempts and egress counters from the same
 PostgreSQL ledger used by the data plane. Counters are joined to immutable
 bucket/account placement; a missing row means zero only for a newly eligible
 bucket. Deleted buckets retain current-month request/egress consumption.
+
+Customer control-plane native attempts use the same atomic request reservation
+as the gateway. This includes each multipart part-list page used by CLI resume,
+bucket configuration reads/preflight checks, tags, and version-protection
+reads/preflight checks. S3 object and part listing disable hidden SDK retries;
+a caller retry requires a new reservation. Failed native attempts remain counted; validation,
+ownership and permission denials make no reservation. Session status and other
+database-only inspection remain available at the ceiling. Inventory, accepted
+reconciliation and cleanup continue to record attempts without new-work budget
+admission, so an exhausted ceiling cannot strand accepted work.
+
 Capacity still uses complete inventories and conservative write/multipart
 reservations. Missing, future or stale inventories fail closed, including
 after UTC-month rollover. Legacy reports cannot override gateway counters.

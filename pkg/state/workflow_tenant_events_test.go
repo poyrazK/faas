@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,14 @@ import (
 )
 
 func TestTenantEventWorkflowAdmissionAndLinkRecheck(t *testing.T) {
+	for _, independent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("independent=%t", independent), func(t *testing.T) {
+			testTenantEventWorkflowAdmissionAndLinkRecheck(t, independent)
+		})
+	}
+}
+
+func testTenantEventWorkflowAdmissionAndLinkRecheck(t *testing.T, independent bool) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
@@ -70,7 +79,23 @@ func TestTenantEventWorkflowAdmissionAndLinkRecheck(t *testing.T) {
 		if recipient.PlatformTenantID != tenant.ID || recipient.AppID != app.ID || recipient.ID != workflowTenantEventRecipientID(app.ID, tenant.ID, "invoice-paid") {
 			t.Fatalf("tenant event recipient=%+v", recipient)
 		}
-		runID, err := store.(EventWorkflowStore).AdmitEventWorkflow(ctx, work.ID, work.ClaimToken, recipient.ID)
+		admit := func(work *PublishedEventWork) (string, error) {
+			if !independent {
+				return store.(EventWorkflowStore).AdmitEventWorkflow(ctx, work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID)
+			}
+			routing := store.(PublishedEventRecipientWorkStore)
+			if err := routing.InitializePublishedEventRecipients(ctx, work, time.Now().UTC()); err != nil {
+				return "", err
+			}
+			claimed, err := routing.ClaimDuePublishedEventRecipient(ctx, time.Now().UTC())
+			if err != nil {
+				return "", err
+			}
+			result, err := store.(EventWorkflowRecipientAdmissionStore).AdmitEventWorkflowRecipient(ctx,
+				PublishedEventRoutingClaim{OutboxID: work.ID, SubscriptionID: claimed.Recipient.ID, ClaimToken: claimed.ClaimToken, Generation: claimed.Generation})
+			return result.RunID, err
+		}
+		runID, err := admit(work)
 		if err != nil || runID == "" {
 			t.Fatalf("admit tenant workflow run=%q err=%v", runID, err)
 		}
@@ -83,8 +108,10 @@ func TestTenantEventWorkflowAdmissionAndLinkRecheck(t *testing.T) {
 			len(receipt.Recipients) != 1 || receipt.Recipients[0].WorkflowRunID != runID || receipt.Recipients[0].WorkflowRunStatus != string(run.Status) {
 			t.Fatalf("tenant receipt=%+v err=%v", receipt, err)
 		}
-		if err := store.(PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
-			t.Fatal(err)
+		if !independent {
+			if err := store.(PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		if err := publish("tenant-event-2"); err != nil {
@@ -97,7 +124,7 @@ func TestTenantEventWorkflowAdmissionAndLinkRecheck(t *testing.T) {
 		if _, err := tenantStore.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, PlatformTenantSuspended); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.(EventWorkflowStore).AdmitEventWorkflow(ctx, revocationWork.ID, revocationWork.ClaimToken, revocationWork.RecipientSnapshot[0].ID); !errors.Is(err, ErrWorkflowEventTargetUnavailable) {
+		if _, err := admit(revocationWork); !errors.Is(err, ErrWorkflowEventTargetUnavailable) {
 			t.Fatalf("admission after tenant suspension=%v", err)
 		}
 		if err := publish("tenant-event-3"); !errors.Is(err, ErrNotFound) {

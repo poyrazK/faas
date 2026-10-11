@@ -77,8 +77,10 @@ def sync_detailed(
 ) -> Response[CanaryRouteGate | Problem]:
     """Read canary route gate mode and revision.
 
-     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates
-    advances of an existing canary, not its initial activation.
+     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-
+    requirements evidence on canary advances and lifecycle declarations on production traffic increases,
+    including initial activation and ordinary cutovers. Dark staging, validated abort and automatic
+    incident recovery remain available.
 
     Args:
         slug (str):
@@ -109,8 +111,10 @@ def sync(
 ) -> CanaryRouteGate | Problem | None:
     """Read canary route gate mode and revision.
 
-     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates
-    advances of an existing canary, not its initial activation.
+     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-
+    requirements evidence on canary advances and lifecycle declarations on production traffic increases,
+    including initial activation and ordinary cutovers. Dark staging, validated abort and automatic
+    incident recovery remain available.
 
     Args:
         slug (str):
@@ -136,8 +140,10 @@ async def asyncio_detailed(
 ) -> Response[CanaryRouteGate | Problem]:
     """Read canary route gate mode and revision.
 
-     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates
-    advances of an existing canary, not its initial activation.
+     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-
+    requirements evidence on canary advances and lifecycle declarations on production traffic increases,
+    including initial activation and ordinary cutovers. Dark staging, validated abort and automatic
+    incident recovery remain available.
 
     Args:
         slug (str):
@@ -166,8 +172,10 @@ async def asyncio(
 ) -> CanaryRouteGate | Problem | None:
     """Read canary route gate mode and revision.
 
-     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates
-    advances of an existing canary, not its initial activation.
+     Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-
+    requirements evidence on canary advances and lifecycle declarations on production traffic increases,
+    including initial activation and ordinary cutovers. Dark staging, validated abort and automatic
+    incident recovery remain available.
 
     Args:
         slug (str):

@@ -29,9 +29,12 @@ func custodyLedgerFixture(t *testing.T, ctx context.Context, db interface {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	operation, run := uuid.NewString(), uuid.NewString()
+	workflowAdmissionFixture(t, ctx, tx, run, app, tenant)
 	insertBackendOperation(t, ctx, tx, operation, run, "workflow", account, app, definition, tenant)
-	workflowAdmissionFixture(t, ctx, tx, operation, run, app, tenant)
 	q := sqlc.New()
+	if n, err := markBackend(ctx, q, tx, "workflow", operation, run); err != nil || n != 1 {
+		t.Fatalf("custody workflow identity: %d %v", n, err)
+	}
 	if n, err := bindBackend(ctx, q, tx, "workflow", operation, run); err != nil || n != 1 {
 		t.Fatalf("custody backend binding: %d %v", n, err)
 	}

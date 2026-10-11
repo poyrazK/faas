@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -73,7 +73,13 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			th := newTestHarness(t, state.DeploymentKindImage, "pro", "")
 			th.app.SecurityPolicy = api.AppSecurityPolicyEnforce
-			th.dep.ImageDigest = "example.com/org/service:latest"
+			th.dep, err = th.store.CreateDeployment(t.Context(), state.Deployment{
+				AppID: th.app.ID, Kind: state.DeploymentKindImage,
+				ImageDigest: "example.com/org/service:latest", Status: state.DeployPending,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			p := &resolvingTestPuller{fakeManifestPuller: &fakeManifestPuller{}, resolution: oci.ImageResolution{
 				SourceDigest: source, SourceReference: "example.com/org/service@" + source,
 				Digest: child, Reference: "example.com/org/service@" + child}}
@@ -93,8 +99,13 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 				p.resolveErr = &oci.PlatformSelectionError{Reason: "no compatible image"}
 			}
 			h := New(th.store, th.notif, p, th.bld, "./init", th.appsR, silentLogger())
-			h.trustedPublishersCacheOK = true
-			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "publisher", PublicKey: &key.PublicKey}}}
+			der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := th.store.UpsertAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "publisher", der, th.app.AccountID); err != nil {
+				t.Fatal(err)
+			}
 			auth := &oci.BasicAuth{Username: "user", Password: "secret"}
 			ref, digest, err := h.prepareContainerImage(context.Background(), th.app, th.dep, auth)
 			if p.input != th.dep.ImageDigest || p.auth != auth {
@@ -103,6 +114,10 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 			if mode == "signed index" {
 				if err != nil || ref != p.resolution.Reference || digest != child {
 					t.Fatalf("resolution: %q %q %v", ref, digest, err)
+				}
+				dep, _ := th.store.DeploymentByID(t.Context(), th.dep.ID)
+				if dep.ImageDigest != p.resolution.SourceReference {
+					t.Fatalf("deployment did not pin signed source: %+v", dep)
 				}
 			} else {
 				if err == nil || ref != "" || digest != "" {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,7 +43,7 @@ func captureAutomationStdout(t *testing.T) *bytes.Buffer {
 
 func TestCmdAutomationsDispatchUsage(t *testing.T) {
 	code, output := runWithStderr(t, func() int { return cmdAutomations(nil) })
-	if code != 1 || !strings.Contains(output, "automations <list|get|health|pause|resume|revisions|restore|delete|validate|simulate|apply|publish>") {
+	if code != 1 || !strings.Contains(output, "automations <init|check|diff|list|get|health|runs|diagnose|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume>") {
 		t.Fatalf("exit=%d stderr=%q", code, output)
 	}
 	code, output = runWithStderr(t, func() int { return cmdAutomations([]string{"unknown"}) })
@@ -62,7 +63,7 @@ func writeAutomationJSONFixture(t *testing.T, name, contents string) string {
 
 func TestCmdAutomationsSimulateUsesSampleInputAndMocks(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"definition_valid":true,"complete":true,"issues":[],"warnings":[],"step_order":["lookup"],"trace":[{"step_name":"lookup","kind":"run","state":"mocked","input":{"id":"inv-1"},"output":{"paid":true},"run":"/lookup_invoice"}]}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"definition_valid":true,"complete":true,"issues":[],"warnings":[],"step_order":["lookup"],"trace":[{"step_name":"lookup","kind":"run","state":"mocked","input":{"id":"inv-1"},"output":{"paid":true},"run":"/lookup_invoice"},{"step_name":"send","kind":"outbound","state":"would_execute","integration_id":"00000000-0000-0000-0000-000000000001","method":"GET","path":"/contacts/contact%2042","raw_query":"email=a%2Bb%40example.com"}]}`, http.StatusOK)
 	output := captureAutomationStdout(t)
 	definition := writeAutomationFixture(t, automationDefinitionYAML)
 	input := writeAutomationJSONFixture(t, "input.json", `{"invoice_id":"inv-1"}`)
@@ -83,7 +84,7 @@ func TestCmdAutomationsSimulateUsesSampleInputAndMocks(t *testing.T) {
 	if string(request.Input) != `{"invoice_id":"inv-1"}` || string(request.MockOutputs["lookup"]) != `{"paid":true}` || len(request.MockItemOutputs["batch"]) != 2 || len(request.MockAttempts["record"]) != 2 || request.MockAttempts["record"][0].HTTPStatus == nil || *request.MockAttempts["record"][0].HTTPStatus != 503 {
 		t.Fatalf("simulation request did not preserve samples: %+v", request)
 	}
-	for _, want := range []string{"mocked", `{"id":"inv-1"}`, `{"paid":true}`} {
+	for _, want := range []string{"mocked", `{"id":"inv-1"}`, `{"paid":true}`, "GET /contacts/contact%2042?email=a%2Bb%40example.com"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("human trace %q missing %q", output.String(), want)
 		}
@@ -556,10 +557,48 @@ func TestCmdAutomationsHealthRendersHumanSummaryAndDefaultWindow(t *testing.T) {
 	if f.sawPath != "/v1/apps/billing/automations/paid-invoice/health" || f.sawQuery != "" {
 		t.Fatalf("request = %s?%s, want default health window", f.sawPath, f.sawQuery)
 	}
-	for _, want := range []string{"Automation health: billing/paid-invoice", "Runs: 4 (3 completed)", "Active now: 1, queued: 2", "Success rate: 66.7%", "p50 18ms, p95 92ms", "run-failure", "charge", "failed=1"} {
+	for _, want := range []string{"Automation health: billing/paid-invoice", "Runs: 4 (3 completed)", "Active now: 1, queued: 2", "Queue diagnostics: unavailable", "Success rate: 66.7%", "p50 18ms, p95 92ms", "run-failure", "charge", "failed=1"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("human output missing %q: %s", want, output.String())
 		}
+	}
+}
+
+func TestCmdAutomationsHealthRendersQueueDiagnostics(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%v", asJSON), func(t *testing.T) {
+			resetJSONOut(t)
+			jsonOutput = asJSON
+			var fixture api.AutomationHealthResponse
+			if err := json.Unmarshal([]byte(automationHealthResponseJSON), &fixture); err != nil {
+				t.Fatal(err)
+			}
+			fixture.Queue = &api.AutomationQueueHealth{ObservedAt: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC), WaitingRunCount: 3, DueRunCount: 2,
+				StaleRunCount: 1, OldestDueAgeSeconds: 42.5, AppRunningCount: 2, AppDispatchLimit: 2, TenantDispatchLimit: 1, AppAtCapacity: true,
+				ReasonCounts: map[string]int64{api.AutomationQueueReady: 0, api.AutomationQueueScheduled: 0, api.AutomationQueueRetryBackoff: 0,
+					api.AutomationQueueParkedWait: 1, api.AutomationQueueAppCapacity: 2, api.AutomationQueueTenantCapacity: 0, api.AutomationQueueWorkflowCapacity: 0}}
+			body, err := json.Marshal(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authedFakeAPI(t, string(body), http.StatusOK)
+			output := captureAutomationStdout(t)
+			if code := cmdAutomationsHealth([]string{"--app", "billing", "--name", "paid-invoice"}); code != 0 {
+				t.Fatalf("exit=%d", code)
+			}
+			if asJSON {
+				var got api.AutomationHealthResponse
+				if err := json.Unmarshal(output.Bytes(), &got); err != nil || got.Queue == nil || got.Queue.ReasonCounts[api.AutomationQueueAppCapacity] != 2 || got.Queue.OldestDueAgeSeconds != 42.5 {
+					t.Fatalf("queue JSON=%s err=%v", output.String(), err)
+				}
+				return
+			}
+			for _, want := range []string{"Queue observed: 2026-10-07T12:00:00Z", "App dispatch capacity: 2/2 (full), tenant limit: 1", "Waiting now: 3, due: 2, stale: 1, oldest due: 42.5s", "Waiting reasons: parked wait=1, app capacity=2"} {
+				if !strings.Contains(output.String(), want) {
+					t.Errorf("missing %q: %s", want, output.String())
+				}
+			}
+		})
 	}
 }
 
