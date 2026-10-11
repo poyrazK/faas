@@ -302,3 +302,5 @@ export type { OperationWorkflowDecisionOutcomeEvidence } from './customer-operat
 export type { OperationWorkflowRuleComparisonSummary, OperationWorkflowRuleComparison, OperationWorkflowRuleVersionStatistics, OperationWorkflowRuleVersionOutcome } from './customer-operations.js';
 
 export type { OperationWorkflowRuleVersionCohort, OperationWorkflowRuleVersionOverlap } from './customer-operations.js';
+
+export { type OperationWorkflowConditionOutcomeSummary, type OperationWorkflowConditionOutcomeGroup } from './customer-operations.js';

@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
     from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
     from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 
@@ -37,6 +38,11 @@ class OperationWorkflowPerformanceSummary:
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
    """
+    condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset = UNSET
+    """Observed condition/result associations with latest reported outcomes in the completed performance sample.
+    Only complete histories with a reported outcome and at most 256 exact condition identities qualify. Reasons and
+    selected-path decision facts at or before the first terminal report supply explicit results. Missing conditions
+    are unreported; unknown is explicit. Groups overlap and do not establish causation."""
     decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset = UNSET
     """Observed decision and path associations with latest reported outcomes in the completed performance cohort.
     Only complete histories with a reported outcome qualify. Repeated decision or path identities count once per
@@ -57,6 +63,10 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = self.ongoing.to_dict()
 
+        condition_outcomes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.condition_outcomes, Unset):
+            condition_outcomes = self.condition_outcomes.to_dict()
+
         decision_outcomes: dict[str, Any] | Unset = UNSET
         if not isinstance(self.decision_outcomes, Unset):
             decision_outcomes = self.decision_outcomes.to_dict()
@@ -73,6 +83,8 @@ class OperationWorkflowPerformanceSummary:
                 "ongoing": ongoing,
             }
         )
+        if condition_outcomes is not UNSET:
+            field_dict["condition_outcomes"] = condition_outcomes
         if decision_outcomes is not UNSET:
             field_dict["decision_outcomes"] = decision_outcomes
 
@@ -80,6 +92,7 @@ class OperationWorkflowPerformanceSummary:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
         from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
         from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 
@@ -96,6 +109,13 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = OperationWorkflowPerformanceCohort.from_dict(d.pop("ongoing"))
 
+        _condition_outcomes = d.pop("condition_outcomes", UNSET)
+        condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset
+        if isinstance(_condition_outcomes, Unset):
+            condition_outcomes = UNSET
+        else:
+            condition_outcomes = OperationWorkflowConditionOutcomeSummary.from_dict(_condition_outcomes)
+
         _decision_outcomes = d.pop("decision_outcomes", UNSET)
         decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset
         if isinstance(_decision_outcomes, Unset):
@@ -110,6 +130,7 @@ class OperationWorkflowPerformanceSummary:
             cohort_limit=cohort_limit,
             completed=completed,
             ongoing=ongoing,
+            condition_outcomes=condition_outcomes,
             decision_outcomes=decision_outcomes,
         )
 

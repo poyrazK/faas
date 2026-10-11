@@ -9,13 +9,14 @@ type OperationWorkflowPerformanceOptions struct {
 
 // OperationWorkflowPerformanceSummary compares complete retained histories by cohort.
 type OperationWorkflowPerformanceSummary struct {
-	DecisionOutcomes *OperationWorkflowDecisionOutcomeSummary `json:"decision_outcomes,omitempty"`
-	CohortToken      string                                   `json:"cohort_token"`
-	EvaluatedAt      time.Time                                `json:"evaluated_at"`
-	Workflow         string                                   `json:"workflow"`
-	CohortLimit      int                                      `json:"cohort_limit"`
-	Completed        OperationWorkflowPerformanceCohort       `json:"completed"`
-	Ongoing          OperationWorkflowPerformanceCohort       `json:"ongoing"`
+	ConditionOutcomes *OperationWorkflowConditionOutcomeSummary `json:"condition_outcomes,omitempty"`
+	DecisionOutcomes  *OperationWorkflowDecisionOutcomeSummary  `json:"decision_outcomes,omitempty"`
+	CohortToken       string                                    `json:"cohort_token"`
+	EvaluatedAt       time.Time                                 `json:"evaluated_at"`
+	Workflow          string                                    `json:"workflow"`
+	CohortLimit       int                                       `json:"cohort_limit"`
+	Completed         OperationWorkflowPerformanceCohort        `json:"completed"`
+	Ongoing           OperationWorkflowPerformanceCohort        `json:"ongoing"`
 }
 
 type OperationWorkflowDurationDistribution struct {
@@ -159,4 +160,34 @@ type OperationWorkflowRuleVersionOverlap struct {
 	Eligible          bool                                       `json:"eligible"`
 	EvidenceTruncated bool                                       `json:"evidence_truncated"`
 	Evidence          []OperationWorkflowDecisionOutcomeEvidence `json:"evidence"`
+}
+
+// OperationWorkflowConditionOutcomeSummary groups completed runs by explicitly reported condition results.
+type OperationWorkflowConditionOutcomeSummary struct {
+	MatchingWorkflowCount                  int64                                    `json:"matching_workflow_count"`
+	SampledWorkflowCount                   int64                                    `json:"sampled_workflow_count"`
+	LinkedWorkflowCount                    int64                                    `json:"linked_workflow_count"`
+	ChangingResultWorkflowCount            int64                                    `json:"changing_result_workflow_count"`
+	ExcludedIncompleteWorkflowCount        int64                                    `json:"excluded_incomplete_workflow_count"`
+	MissingOutcomeWorkflowCount            int64                                    `json:"missing_outcome_workflow_count"`
+	UnclassifiedWorkflowCount              int64                                    `json:"unclassified_workflow_count"`
+	ExcludedConditionEvidenceWorkflowCount int64                                    `json:"excluded_condition_evidence_workflow_count"`
+	CohortTruncated                        bool                                     `json:"cohort_truncated"`
+	GroupsTruncated                        bool                                     `json:"groups_truncated"`
+	Groups                                 []OperationWorkflowConditionOutcomeGroup `json:"groups"`
+}
+
+// OperationWorkflowConditionOutcomeGroup counts a workflow once per observed result; result groups may overlap.
+type OperationWorkflowConditionOutcomeGroup struct {
+	ContractVersion             int                                   `json:"contract_version"`
+	DecisionCode                string                                `json:"decision_code"`
+	RuleID                      string                                `json:"rule_id"`
+	RuleVersion                 string                                `json:"rule_version"`
+	ConditionID                 string                                `json:"condition_id"`
+	ConditionDescription        string                                `json:"condition_description"`
+	ConditionResult             string                                `json:"condition_result"`
+	OutcomeCode                 string                                `json:"outcome_code"`
+	ChangingResultWorkflowCount int64                                 `json:"changing_result_workflow_count"`
+	CompletionTime              OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime                 OperationWorkflowDurationDistribution `json:"blocked_time"`
 }

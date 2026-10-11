@@ -7,9 +7,14 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_decision_outcome_evidence_observed_condition_results_item import (
+    OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem,
+    check_operation_workflow_decision_outcome_evidence_observed_condition_results_item,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_business_condition_result import OperationBusinessConditionResult
     from ..models.operation_business_decision import OperationBusinessDecision
     from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
 
@@ -30,6 +35,15 @@ class OperationWorkflowDecisionOutcomeEvidence:
     revision: int
     state: str
     occurred_at: datetime.datetime
+    condition: OperationBusinessConditionResult | Unset = UNSET
+    """Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
+    unreported; unknown is explicit. No execution authority or causal inference."""
+    observed_condition_results: list[OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem] | Unset = (
+        UNSET
+    )
+    """All results reported before or at the first terminal report for the selected exact contract and decision and
+    rule and condition ID/description identity. Present on condition contributors; multiple results explain
+    overlapping group membership."""
     condition_comparison: OperationWorkflowConditionComparison | Unset = UNSET
     """Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
     and workflow run and pinned contract. Shares history comparison statuses; missing decisions on metadata reports
@@ -49,6 +63,17 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = self.state
 
         occurred_at = self.occurred_at.isoformat()
+
+        condition: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.condition, Unset):
+            condition = self.condition.to_dict()
+
+        observed_condition_results: list[str] | Unset = UNSET
+        if not isinstance(self.observed_condition_results, Unset):
+            observed_condition_results = []
+            for observed_condition_results_item_data in self.observed_condition_results:
+                observed_condition_results_item: str = observed_condition_results_item_data
+                observed_condition_results.append(observed_condition_results_item)
 
         condition_comparison: dict[str, Any] | Unset = UNSET
         if not isinstance(self.condition_comparison, Unset):
@@ -75,6 +100,10 @@ class OperationWorkflowDecisionOutcomeEvidence:
                 "occurred_at": occurred_at,
             }
         )
+        if condition is not UNSET:
+            field_dict["condition"] = condition
+        if observed_condition_results is not UNSET:
+            field_dict["observed_condition_results"] = observed_condition_results
         if condition_comparison is not UNSET:
             field_dict["condition_comparison"] = condition_comparison
         if from_state is not UNSET:
@@ -88,6 +117,7 @@ class OperationWorkflowDecisionOutcomeEvidence:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_business_condition_result import OperationBusinessConditionResult
         from ..models.operation_business_decision import OperationBusinessDecision
         from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
 
@@ -101,6 +131,28 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = d.pop("state")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
+
+        _condition = d.pop("condition", UNSET)
+        condition: OperationBusinessConditionResult | Unset
+        if isinstance(_condition, Unset):
+            condition = UNSET
+        else:
+            condition = OperationBusinessConditionResult.from_dict(_condition)
+
+        _observed_condition_results = d.pop("observed_condition_results", UNSET)
+        observed_condition_results: (
+            list[OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem] | Unset
+        ) = UNSET
+        if _observed_condition_results is not UNSET:
+            observed_condition_results = []
+            for observed_condition_results_item_data in _observed_condition_results:
+                observed_condition_results_item = (
+                    check_operation_workflow_decision_outcome_evidence_observed_condition_results_item(
+                        observed_condition_results_item_data
+                    )
+                )
+
+                observed_condition_results.append(observed_condition_results_item)
 
         _condition_comparison = d.pop("condition_comparison", UNSET)
         condition_comparison: OperationWorkflowConditionComparison | Unset
@@ -131,6 +183,8 @@ class OperationWorkflowDecisionOutcomeEvidence:
             revision=revision,
             state=state,
             occurred_at=occurred_at,
+            condition=condition,
+            observed_condition_results=observed_condition_results,
             condition_comparison=condition_comparison,
             from_state=from_state,
             milestone_id=milestone_id,

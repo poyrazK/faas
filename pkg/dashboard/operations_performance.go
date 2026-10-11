@@ -3,6 +3,7 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type WorkflowPerformanceData struct {
+	ConditionGroups                                                      []WorkflowConditionOutcomeLink
 	RuleComparisons                                                      []WorkflowRuleComparison
 	DecisionGroups                                                       []WorkflowDecisionOutcomeLink
 	AppSlug, Scope, TenantID, Workflow, EvaluatedAt, ListURL, SummaryURL string
@@ -49,4 +50,9 @@ type WorkflowRuleOverlap struct {
 type WorkflowRuleEvidence struct {
 	api.OperationWorkflowDecisionOutcomeEvidence
 	OperationURL string
+}
+
+type WorkflowConditionOutcomeLink struct {
+	api.OperationWorkflowConditionOutcomeGroup
+	CompletionURL, BlockedURL string
 }

@@ -94,6 +94,12 @@ func parseWorkflowPerformanceToken(raw string, query string, now time.Time) (wor
 	return token, nil
 }
 func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) error {
+	if conditionOutcomeDimension(g.Dimension) {
+		return validateConditionOutcomeGroup(g)
+	}
+	if g.ConditionID != "" || g.ConditionDescription != "" || g.ConditionResult != "" {
+		return ErrInvalidArgument
+	}
 	if decisionOutcomeDimension(g.Dimension) {
 		return validateDecisionOutcomeGroup(g)
 	}
@@ -163,7 +169,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	if err != nil || opts.Cohort != "completed" && opts.Cohort != "ongoing" || validateWorkflowPerformanceGroup(opts.OperationWorkflowPerformanceGroup) != nil {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
-	if decisionOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {
+	if businessOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
 	opts.OperationWorkflowPerformanceOptions = base
@@ -211,6 +217,20 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 		}
 	}
+	if conditionOutcomeDimension(opts.Dimension) {
+		out.ConditionOutcomes = workflowConditionOutcomes(cohort)
+		found := false
+		selector := workflowConditionOutcomeSelector(opts.OperationWorkflowPerformanceGroup)
+		for _, group := range out.ConditionOutcomes.Groups {
+			if workflowConditionOutcomeGroupKey(group) == selector {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+		}
+	}
 	type identity struct {
 		InstanceID, OperationID string
 		Subject                 api.OperationSubject
@@ -225,6 +245,10 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		var decisionEvidence *api.OperationWorkflowDecisionOutcomeEvidence
 		if decisionOutcomeDimension(opts.Dimension) {
 			seconds, decisionEvidence = workflowDecisionOutcomeContribution(i, opts.OperationWorkflowPerformanceGroup)
+			matched = decisionEvidence != nil
+		}
+		if conditionOutcomeDimension(opts.Dimension) {
+			seconds, decisionEvidence = workflowConditionOutcomeContribution(i, opts.OperationWorkflowPerformanceGroup)
 			matched = decisionEvidence != nil
 		}
 		if !matched {

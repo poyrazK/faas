@@ -192,6 +192,8 @@ type OperationWorkflowRevisionEvidence = api.OperationWorkflowRevisionEvidence
 
 type OperationWorkflowOutcomeLink = api.OperationWorkflowOutcomeLink
 
+type OperationWorkflowConditionOutcomeSummary = api.OperationWorkflowConditionOutcomeSummary
+type OperationWorkflowConditionOutcomeGroup = api.OperationWorkflowConditionOutcomeGroup
 type OperationWorkflowDecisionOutcomeSummary = api.OperationWorkflowDecisionOutcomeSummary
 type OperationWorkflowDecisionOutcomeGroup = api.OperationWorkflowDecisionOutcomeGroup
 

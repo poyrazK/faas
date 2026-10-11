@@ -9,6 +9,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.list_platform_tenant_self_workflow_performance_instances_cohort import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
 )
+from ...models.list_platform_tenant_self_workflow_performance_instances_condition_result import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult,
+)
 from ...models.list_platform_tenant_self_workflow_performance_instances_dimension import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
 )
@@ -40,6 +43,9 @@ def _get_kwargs(
     rule_version: str | Unset = UNSET,
     group_id: str | Unset = UNSET,
     path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_result: ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
@@ -87,6 +93,16 @@ def _get_kwargs(
     params["group_id"] = group_id
 
     params["path_id"] = path_id
+
+    params["condition_id"] = condition_id
+
+    params["condition_description"] = condition_description
+
+    json_condition_result: str | Unset = UNSET
+    if not isinstance(condition_result, Unset):
+        json_condition_result = condition_result
+
+    params["condition_result"] = json_condition_result
 
     params["outcome_code"] = outcome_code
 
@@ -177,6 +193,9 @@ def sync_detailed(
     rule_version: str | Unset = UNSET,
     group_id: str | Unset = UNSET,
     path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_result: ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
     """List ranked performance contributors for the authenticated customer.
@@ -198,6 +217,12 @@ def sync_detailed(
     omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
     dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
     business decision fact per contributor; reports after the first terminal revision do not qualify.
+    Condition dimensions also require completed cohort and cohort_token and an exact returned
+    condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown.
 
     Args:
         app_id (UUID):
@@ -218,6 +243,10 @@ def sync_detailed(
         rule_version (str | Unset):
         group_id (str | Unset):
         path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_result (ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult |
+            Unset):
         outcome_code (str | Unset):
 
     Raises:
@@ -247,6 +276,9 @@ def sync_detailed(
         rule_version=rule_version,
         group_id=group_id,
         path_id=path_id,
+        condition_id=condition_id,
+        condition_description=condition_description,
+        condition_result=condition_result,
         outcome_code=outcome_code,
     )
 
@@ -278,6 +310,9 @@ def sync(
     rule_version: str | Unset = UNSET,
     group_id: str | Unset = UNSET,
     path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_result: ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
     """List ranked performance contributors for the authenticated customer.
@@ -299,6 +334,12 @@ def sync(
     omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
     dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
     business decision fact per contributor; reports after the first terminal revision do not qualify.
+    Condition dimensions also require completed cohort and cohort_token and an exact returned
+    condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown.
 
     Args:
         app_id (UUID):
@@ -319,6 +360,10 @@ def sync(
         rule_version (str | Unset):
         group_id (str | Unset):
         path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_result (ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult |
+            Unset):
         outcome_code (str | Unset):
 
     Raises:
@@ -349,6 +394,9 @@ def sync(
         rule_version=rule_version,
         group_id=group_id,
         path_id=path_id,
+        condition_id=condition_id,
+        condition_description=condition_description,
+        condition_result=condition_result,
         outcome_code=outcome_code,
     ).parsed
 
@@ -374,6 +422,9 @@ async def asyncio_detailed(
     rule_version: str | Unset = UNSET,
     group_id: str | Unset = UNSET,
     path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_result: ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
     """List ranked performance contributors for the authenticated customer.
@@ -395,6 +446,12 @@ async def asyncio_detailed(
     omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
     dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
     business decision fact per contributor; reports after the first terminal revision do not qualify.
+    Condition dimensions also require completed cohort and cohort_token and an exact returned
+    condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown.
 
     Args:
         app_id (UUID):
@@ -415,6 +472,10 @@ async def asyncio_detailed(
         rule_version (str | Unset):
         group_id (str | Unset):
         path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_result (ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult |
+            Unset):
         outcome_code (str | Unset):
 
     Raises:
@@ -444,6 +505,9 @@ async def asyncio_detailed(
         rule_version=rule_version,
         group_id=group_id,
         path_id=path_id,
+        condition_id=condition_id,
+        condition_description=condition_description,
+        condition_result=condition_result,
         outcome_code=outcome_code,
     )
 
@@ -473,6 +537,9 @@ async def asyncio(
     rule_version: str | Unset = UNSET,
     group_id: str | Unset = UNSET,
     path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_result: ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
     outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
     """List ranked performance contributors for the authenticated customer.
@@ -494,6 +561,12 @@ async def asyncio(
     omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
     dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
     business decision fact per contributor; reports after the first terminal revision do not qualify.
+    Condition dimensions also require completed cohort and cohort_token and an exact returned
+    condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown.
 
     Args:
         app_id (UUID):
@@ -514,6 +587,10 @@ async def asyncio(
         rule_version (str | Unset):
         group_id (str | Unset):
         path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_result (ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult |
+            Unset):
         outcome_code (str | Unset):
 
     Raises:
@@ -545,6 +622,9 @@ async def asyncio(
             rule_version=rule_version,
             group_id=group_id,
             path_id=path_id,
+            condition_id=condition_id,
+            condition_description=condition_description,
+            condition_result=condition_result,
             outcome_code=outcome_code,
         )
     ).parsed

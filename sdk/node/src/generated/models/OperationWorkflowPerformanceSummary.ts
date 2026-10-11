@@ -2,12 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
 import type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
 import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
 /**
  * Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
  */
 export type OperationWorkflowPerformanceSummary = {
+  condition_outcomes?: OperationWorkflowConditionOutcomeSummary;
   decision_outcomes?: OperationWorkflowDecisionOutcomeSummary;
   /**
    * Opaque selector-bound token for opening consistent contributor views.

@@ -22,7 +22,7 @@ func workflowPerformanceContributorURL(path string, opts api.OperationWorkflowPe
 	if group.ContractVersion > 0 {
 		q.Set("contract_version", strconv.Itoa(group.ContractVersion))
 	}
-	for key, value := range map[string]string{"state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
+	for key, value := range map[string]string{"condition_id": group.ConditionID, "condition_description": group.ConditionDescription, "condition_result": group.ConditionResult, "state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
 		if value != "" {
 			q.Set(key, value)
 		}
@@ -38,6 +38,12 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		owner = "unassigned"
 	}
 	switch group.Dimension {
+	case "condition_completion", "condition_blocked":
+		measure := "Completion time"
+		if group.Dimension == "condition_blocked" {
+			measure = "Blocked time"
+		}
+		return fmt.Sprintf("%s · condition %s = %s · decision %s · rule %s / %s → %s · contract %d", measure, group.ConditionID, group.ConditionResult, group.DecisionCode, group.RuleID, group.RuleVersion, group.OutcomeCode, group.ContractVersion)
 	case "decision_completion", "decision_blocked":
 		return workflowDecisionOutcomeGroupLabel(group)
 	case "state":

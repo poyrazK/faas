@@ -712,3 +712,54 @@ bounds. Existing report payloads and persistence are unchanged; optional derived
 fields need no migration or new endpoint. Dashboard history, contributor views,
 SDK DTOs, and CLI output expose the comparison and references. Facts remain
 application-reported evidence and do not establish why a decision or outcome occurred.
+
+### Condition-based outcomes and contributors
+
+The performance summary optionally exposes `condition_outcomes` for its existing
+completed cohort. It associates explicitly reported condition results from
+application reasons and selected-path decision facts at or before the first
+terminal report with the latest reported workflow outcome. Only complete retained
+histories with a reported outcome qualify. Existing decision/path summaries,
+cohort selection, tokens, ownership, and rule comparisons are unchanged.
+
+An exact condition identity includes effective contract version, decision code,
+rule ID/version, condition ID, and its public description. Including description
+keeps distinct declared meanings separate even when IDs are reused by different
+milestone steps. The result and reported outcome complete the group identity.
+Repeated reports and reason/path references count once per workflow/result group.
+Missing conditions are unreported, never implicitly `unknown`. A workflow that
+reported several distinct results for one exact identity contributes to each
+observed result group. Group counts overlap and must not be summed.
+`changing_result_workflow_count` counts these contributors per group, and counts
+linked workflows once across all identities in overall coverage. A change across
+rule versions or descriptions creates separate identities and is not implicitly
+classified as a changing result for one predicate.
+
+Coverage partitions sampled workflows into incomplete history, missing outcome,
+excluded condition evidence, no reported conditions, and linked evidence. Linked
+and changing-result coverage includes identities omitted by the group display
+limit. The latest 100 completed workflows are sampled as before. A workflow with
+more than 256 distinct condition identities before the first terminal report is
+excluded entirely from condition groups and contributors, with an explicit
+coverage count. This prevents partial evidence from presenting a changing-result
+workflow as a single-result workflow. The identity limit is checked before the
+independent group display cap. Returned groups retain the lexically smallest 64
+contract/decision/rule/version/condition ID/description/result/outcome keys;
+monotonically decreasing retention ensures every returned group includes every
+eligible sampled contributor. All limits live in `pkg/api/limits.go`.
+
+Existing contributor routes add `condition_completion` and `condition_blocked`.
+They require completed cohort, nonempty cohort token, and the exact returned
+condition group via contract version, decision/rule triple, condition ID,
+description, result, and outcome. They reject unrelated kind/path/state/blocker/
+owner selectors; other dimensions reject condition selectors. Omitted groups
+cannot be queried. Existing changed-cohort handling requires a refreshed token.
+
+The summary and drilldown use the same condition membership calculation. Each
+contributor carries its earliest qualifying decision fact, the selected condition
+snapshot, all observed results for that exact identity, and the existing revision
+condition comparison. Ranking remains by full completed workflow duration or
+blocked duration with stable identity ties; these are not durations spent under
+that condition. Shared DTOs, Go/Node/Python clients, and dashboard links expose
+this evidence through existing ownership boundaries. No SQL, persistence,
+migration, predicate evaluation, action authority, or causal inference is added.

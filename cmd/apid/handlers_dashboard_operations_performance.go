@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.ConditionGroups = workflowConditionOutcomeLinks(data.SummaryURL, opts, summary)
 		if summary.DecisionOutcomes != nil {
 			data.DecisionGroups = workflowDecisionOutcomeLinks(data.SummaryURL, opts, summary)
 			if summary.DecisionOutcomes.RuleComparisons != nil {
@@ -133,4 +134,19 @@ func workflowRuleComparisonViews(summary *api.OperationWorkflowRuleComparisonSum
 		views = append(views, view)
 	}
 	return views
+}
+
+func workflowConditionOutcomeLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowConditionOutcomeLink {
+	links := []dashboard.WorkflowConditionOutcomeLink{}
+	if summary.ConditionOutcomes == nil {
+		return links
+	}
+	for _, value := range summary.ConditionOutcomes.Groups {
+		group := api.OperationWorkflowPerformanceGroup{Dimension: "condition_completion", ContractVersion: value.ContractVersion, DecisionCode: value.DecisionCode, RuleID: value.RuleID, RuleVersion: value.RuleVersion, ConditionID: value.ConditionID, ConditionDescription: value.ConditionDescription, ConditionResult: value.ConditionResult, OutcomeCode: value.OutcomeCode}
+		link := dashboard.WorkflowConditionOutcomeLink{OperationWorkflowConditionOutcomeGroup: value, CompletionURL: workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)}
+		group.Dimension = "condition_blocked"
+		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)
+		links = append(links, link)
+	}
+	return links
 }

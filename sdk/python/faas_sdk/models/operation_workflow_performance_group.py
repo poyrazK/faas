@@ -5,6 +5,10 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_performance_group_condition_result import (
+    OperationWorkflowPerformanceGroupConditionResult,
+    check_operation_workflow_performance_group_condition_result,
+)
 from ..models.operation_workflow_performance_group_dimension import (
     OperationWorkflowPerformanceGroupDimension,
     check_operation_workflow_performance_group_dimension,
@@ -23,6 +27,10 @@ class OperationWorkflowPerformanceGroup:
     """Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads."""
 
     dimension: OperationWorkflowPerformanceGroupDimension
+    condition_id: str | Unset = UNSET
+    condition_description: str | Unset = UNSET
+    """Exact public condition description in the returned group; UTF-8 byte bound without controls."""
+    condition_result: OperationWorkflowPerformanceGroupConditionResult | Unset = UNSET
     kind: OperationWorkflowPerformanceGroupKind | Unset = UNSET
     decision_code: str | Unset = UNSET
     rule_id: str | Unset = UNSET
@@ -39,6 +47,14 @@ class OperationWorkflowPerformanceGroup:
 
     def to_dict(self) -> dict[str, Any]:
         dimension: str = self.dimension
+
+        condition_id = self.condition_id
+
+        condition_description = self.condition_description
+
+        condition_result: str | Unset = UNSET
+        if not isinstance(self.condition_result, Unset):
+            condition_result = self.condition_result
 
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
@@ -75,6 +91,12 @@ class OperationWorkflowPerformanceGroup:
                 "dimension": dimension,
             }
         )
+        if condition_id is not UNSET:
+            field_dict["condition_id"] = condition_id
+        if condition_description is not UNSET:
+            field_dict["condition_description"] = condition_description
+        if condition_result is not UNSET:
+            field_dict["condition_result"] = condition_result
         if kind is not UNSET:
             field_dict["kind"] = kind
         if decision_code is not UNSET:
@@ -109,6 +131,17 @@ class OperationWorkflowPerformanceGroup:
         d = dict(src_dict)
         dimension = check_operation_workflow_performance_group_dimension(d.pop("dimension"))
 
+        condition_id = d.pop("condition_id", UNSET)
+
+        condition_description = d.pop("condition_description", UNSET)
+
+        _condition_result = d.pop("condition_result", UNSET)
+        condition_result: OperationWorkflowPerformanceGroupConditionResult | Unset
+        if isinstance(_condition_result, Unset):
+            condition_result = UNSET
+        else:
+            condition_result = check_operation_workflow_performance_group_condition_result(_condition_result)
+
         _kind = d.pop("kind", UNSET)
         kind: OperationWorkflowPerformanceGroupKind | Unset
         if isinstance(_kind, Unset):
@@ -142,6 +175,9 @@ class OperationWorkflowPerformanceGroup:
 
         operation_workflow_performance_group = cls(
             dimension=dimension,
+            condition_id=condition_id,
+            condition_description=condition_description,
+            condition_result=condition_result,
             kind=kind,
             decision_code=decision_code,
             rule_id=rule_id,

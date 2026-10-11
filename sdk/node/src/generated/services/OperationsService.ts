@@ -737,7 +737,7 @@ export class OperationsService {
   }
   /**
    * List ranked contributors to a workflow performance group.
-   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify.
+   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown.
    * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
    * @throws ApiError
    */
@@ -761,6 +761,9 @@ export class OperationsService {
     ruleVersion,
     groupId,
     pathId,
+    conditionId,
+    conditionDescription,
+    conditionResult,
     outcomeCode,
   }: {
     /**
@@ -782,7 +785,7 @@ export class OperationsService {
     /**
      * Overall measure or exact breakdown dimension.
      */
-    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked',
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked',
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
      */
@@ -840,6 +843,18 @@ export class OperationsService {
      */
     pathId?: string,
     /**
+     * Exact reported condition ID for account condition outcome dimensions.
+     */
+    conditionId?: string,
+    /**
+     * Exact public condition description for the account returned condition group; UTF-8 byte bound without controls.
+     */
+    conditionDescription?: string,
+    /**
+     * Exact observed condition result for the account condition outcome group.
+     */
+    conditionResult?: 'pass' | 'fail' | 'unknown',
+    /**
      * Exact latest reported outcome for decision outcome dimensions.
      */
     outcomeCode?: string,
@@ -869,6 +884,9 @@ export class OperationsService {
         'rule_version': ruleVersion,
         'group_id': groupId,
         'path_id': pathId,
+        'condition_id': conditionId,
+        'condition_description': conditionDescription,
+        'condition_result': conditionResult,
         'outcome_code': outcomeCode,
       },
       errors: {
@@ -886,7 +904,7 @@ export class OperationsService {
   }
   /**
    * List ranked performance contributors for the authenticated customer.
-   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify.
+   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown.
    * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors within the authenticated customer's selected group.
    * @throws ApiError
    */
@@ -909,6 +927,9 @@ export class OperationsService {
     ruleVersion,
     groupId,
     pathId,
+    conditionId,
+    conditionDescription,
+    conditionResult,
     outcomeCode,
   }: {
     /**
@@ -930,7 +951,7 @@ export class OperationsService {
     /**
      * Customer cohort duration measure or exact breakdown dimension.
      */
-    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked',
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked',
     /**
      * Contract version required when selecting a customer state or blocker group.
      */
@@ -984,6 +1005,18 @@ export class OperationsService {
      */
     pathId?: string,
     /**
+     * Exact reported condition ID for customer condition outcome dimensions.
+     */
+    conditionId?: string,
+    /**
+     * Exact public condition description for the customer returned condition group; UTF-8 byte bound without controls.
+     */
+    conditionDescription?: string,
+    /**
+     * Exact observed condition result for the customer condition outcome group.
+     */
+    conditionResult?: 'pass' | 'fail' | 'unknown',
+    /**
      * Exact latest reported outcome for decision outcome dimensions. Scoped to the authenticated customer.
      */
     outcomeCode?: string,
@@ -1010,6 +1043,9 @@ export class OperationsService {
         'rule_version': ruleVersion,
         'group_id': groupId,
         'path_id': pathId,
+        'condition_id': conditionId,
+        'condition_description': conditionDescription,
+        'condition_result': conditionResult,
         'outcome_code': outcomeCode,
       },
       errors: {

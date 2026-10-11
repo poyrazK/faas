@@ -724,3 +724,45 @@ condition descriptions. Links show the current retained Operation view. CLI
 history adds `workflow-condition-comparison`, `workflow-condition-change`, and
 `workflow-condition-evidence` rows, including side-specific fact references.
 No predicate evaluation, execution authority, or causal claim is added.
+
+### Explore condition-based outcomes
+
+The existing workflow performance summary now returns `condition_outcomes` for
+completed workflows. Groups show workflow counts, completion and blocked p50/p95,
+and latest reported outcomes for explicit `pass`, `fail`, or `unknown` condition
+results. A group includes the contract version, decision code, rule ID/version,
+condition ID, exact public description, result, and outcome. Descriptions remain
+part of the identity so reused IDs with different meanings are not merged.
+
+Only complete histories with a reported outcome qualify. Evidence comes from
+application reasons and selected-path decisions at or before the first terminal
+report. Legacy decisions without conditions count as unclassified in condition
+coverage. Missing conditions are not treated as unknown. Repeated references to
+one result count once per workflow/group.
+
+If a workflow reported both unknown and pass for one exact identity, it appears
+in both groups. `changing_result_workflow_count` makes this overlap visible; do
+not sum result group counts. Rule version or description changes remain separate
+identities. The counts show reported associations, not predicate evaluation or
+proof that a condition caused an outcome. Durations cover the full workflow,
+not time spent under a particular condition result.
+
+Open contributor lists using existing `/workflow-performance/instances` account
+or customer endpoints with `cohort=completed`, the summary's `cohort_token`, and
+`dimension=condition_completion` or `condition_blocked`. Supply the exact returned
+`contract_version`, `decision_code`, `rule_id`, `rule_version`, `condition_id`,
+`condition_description`, `condition_result`, and `outcome_code`. Encode these as
+query values with your SDK or URL encoder; do not interpolate public descriptions
+into raw URLs. These dimensions reject kind/path/state/blocker/owner selectors.
+Other dimensions reject condition selectors. Unreturned groups cannot be queried,
+and a changed or expired cohort requires refreshing the summary.
+
+Each contributor includes its earliest qualifying decision fact, `condition`,
+and `observed_condition_results`, plus the existing revision comparison and
+history links. The dashboard builds exact completion/blocked contributor links
+for each summary group and shows overlap alongside the qualifying evidence.
+The summary returns up to 64 canonical groups in a sample of at most 100 completed
+workflows. Runs exceeding 256 distinct condition identities are excluded entirely
+and counted in `excluded_condition_evidence_workflow_count`; display truncation
+is separate. Coverage counts include eligible workflows whose groups were omitted.
+No new migration or endpoint is needed.
