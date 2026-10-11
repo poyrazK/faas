@@ -106,6 +106,13 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	if err := m.ValidateForPlan(plan); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
+	if len(m.Functions) > 0 {
+		// ADR-976: a functions manifest fans out into one app per function in
+		// the CLI. A repository deploy targets one app, so applying it here
+		// would silently deploy the repository root instead.
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest",
+			"functions: is deployed with `gregale deploy` from a checkout, one app per function; point this app at a single function's root instead")
+	}
 	if err := resolveSourceOperations(sourcePath, name, app.Slug, plan, m); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid operation schema", err.Error())
 	}
