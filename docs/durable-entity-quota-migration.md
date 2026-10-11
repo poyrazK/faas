@@ -96,3 +96,23 @@ Do not TTL or delete `tenant-quotas/v1/`. Migration fencing, progress and retain
 reservations share that authority object. Native acceptance must cover multi-node
 holds, stopped legacy writers, restart/lost acknowledgements, listing completeness,
 clock boundaries, policy changes and verification gaps before production release.
+
+## Qualification
+
+[CI run 38148515484](https://github.com/poyrazK/faas/actions/runs/38148515484)
+passed both jobs for source commit
+`b53d608f63db6f522367a4d6ccdcb27a1d930fa0`. The Node build, 16 focused SDK tests,
+packed-starter acceptance, four Go durable packages under the race detector,
+focused CLI checks and 23 top-level API race tests passed. The API suite completed
+in 2.636s, including historical-state backfill, admission hold, verification,
+stale revision rejection, read-only authorization and feature prerequisites.
+
+New package coverage includes bounded inventory pagination, tenant filtering,
+legacy identity rejection, read-only planning, checkpoint restart, stale/replaced
+workers, live-connection drain, missing/over-cap usage, budget shortfalls,
+verification gaps, and committed-but-unacknowledged start/page writes.
+
+No local tests/builds or native acceptance were run. No PR was created and no
+production gate was enabled. The independent acceptance agent must qualify the
+operator quiescence/listing/failure contract above before populated-scope rollout.
+See [ADR 974](adr/974-fenced-durable-entity-quota-migration.md).
