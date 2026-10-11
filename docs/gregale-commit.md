@@ -1109,7 +1109,7 @@ current delivery completion, complete recipient-page coverage, or that an
 unknown replay succeeded. Unknown saved attempts stay unknown.
 
 Preserved observations are historical samples, not a fresh poll. To reread
-them, start a status call without --resume. Source ownership is checked again;
+them with a comparison, use --refresh; a call without --resume also starts a fresh observation. Source ownership is checked again;
 Node/Python retain their bounded one-page validation refresh of the full
 publication selection, without replacing copied observations. Every input,
 including the saved status file, retains the 64 MiB CLI limit. Page budgets
@@ -1133,3 +1133,49 @@ next_status = await aget_commit_recovery_status(
 ~~~
 
 See [ADR-939](adr/939-resumable-commit-recovery-status.md).
+
+
+### Refresh saved recovery observations
+
+Refresh validates the same plan, apply result and saved selection, then rereads
+its delivery evidence. Refresh and resume cannot be supplied together.
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --refresh recovery-status.json \
+  --limit 50 > recovery-refresh.json
+
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --resume recovery-refresh.json \
+  --limit 50 > recovery-refresh-next.json
+~~~
+
+The result sets refreshing to true and records each row's previous_observation.
+Changes compare delivery status/reason, routing generation/relation,
+acknowledged-execution attribution and observed execution ID/state. Each change
+includes before/after values and available observation timestamps. A timestamp
+update alone is not a change. Unread or failed observations do not produce a
+comparison, and unread rows do not inherit old evidence.
+
+Resume continues the refresh against the same baseline; another refresh uses
+the supplied current observations as a new baseline. Counts, remaining and
+changes are recomputed. Unknown saved attempts stay unknown even when delivery
+advances. This remains read-only and uses the existing bounds and timeout.
+
+~~~go
+fresh, err := client.RefreshCommitRecoveryStatus(ctx, plan, applied, previous, 50, 5)
+~~~
+
+~~~ts
+const fresh = await getCommitRecoveryStatus(source, plan, applied, {
+  refresh: previous, limit: 50, recipientPages: 5,
+});
+~~~
+
+~~~python
+fresh = await aget_commit_recovery_status(
+    client, source, plan, applied, refresh=previous, limit=50, recipient_pages=5,
+)
+~~~
+
+See [ADR-940](adr/940-refresh-commit-recovery-status.md).

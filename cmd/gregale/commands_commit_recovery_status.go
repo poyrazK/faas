@@ -18,11 +18,12 @@ func cmdCommitRecoveryStatus(args []string) int {
 	planPath := fs.String("plan", "", "reviewed recovery plan JSON")
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
+	refreshPath := fs.String("refresh", "", "saved recovery status; reread selection and track changes")
 	limit := fs.Int("limit", api.CommitRecoveryStatusMax, "subscriber observations")
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour {
+	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -47,12 +48,20 @@ func cmdCommitRecoveryStatus(args []string) int {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	var out api.CommitRecoveryStatusResult
-	if *resumePath != "" {
+	if *resumePath != "" || *refreshPath != "" {
+		statusPath := *resumePath
+		if *refreshPath != "" {
+			statusPath = *refreshPath
+		}
 		var previous api.CommitRecoveryStatusResult
-		if readErr := readCommitRecoveryStatusFile(*resumePath, &previous); readErr != nil {
+		if readErr := readCommitRecoveryStatusFile(statusPath, &previous); readErr != nil {
 			return printErr("Cannot read saved recovery status", readErr)
 		}
-		out, err = client.ResumeCommitRecoveryStatus(ctx, plan, result, previous, *limit, *pages)
+		if *refreshPath != "" {
+			out, err = client.RefreshCommitRecoveryStatus(ctx, plan, result, previous, *limit, *pages)
+		} else {
+			out, err = client.ResumeCommitRecoveryStatus(ctx, plan, result, previous, *limit, *pages)
+		}
 	} else {
 		out, err = client.GetCommitRecoveryStatus(ctx, plan, result, *limit, *pages)
 	}

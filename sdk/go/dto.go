@@ -405,3 +405,6 @@ type CommitRecoveryStatusResult = api.CommitRecoveryStatusResult
 type CommitRecoveryStatusItem = api.CommitRecoveryStatusItem
 
 type CommitRecoveryStatusSelection = api.CommitRecoveryStatusSelection
+
+type CommitRecoveryStatusObservation = api.CommitRecoveryStatusObservation
+type CommitRecoveryStatusChange = api.CommitRecoveryStatusChange

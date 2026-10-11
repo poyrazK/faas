@@ -15,8 +15,30 @@ type CommitRecoveryStatusSelection struct {
 	Reviewed    CommitRecoveryPlanItem `json:"reviewed"`
 }
 
+// CommitRecoveryStatusObservation captures a compact refresh baseline.
+type CommitRecoveryStatusObservation struct {
+	Status             string     `json:"status"`
+	Reason             string     `json:"reason,omitempty"`
+	Attribution        string     `json:"attribution"`
+	ObservedAt         *time.Time `json:"observed_at,omitempty"`
+	Generation         *int64     `json:"generation,omitempty"`
+	GenerationRelation string     `json:"generation_relation,omitempty"`
+	ExecutionID        string     `json:"execution_id,omitempty"`
+	ExecutionState     string     `json:"execution_state,omitempty"`
+}
+
+// CommitRecoveryStatusChange records a changed observation field.
+type CommitRecoveryStatusChange struct {
+	Field              string          `json:"field"`
+	Previous           json.RawMessage `json:"previous"`
+	Current            json.RawMessage `json:"current"`
+	PreviousObservedAt *time.Time      `json:"previous_observed_at,omitempty"`
+	ObservedAt         *time.Time      `json:"observed_at,omitempty"`
+}
+
 // CommitRecoveryStatusResult samples delivery evidence without submitting recovery.
 type CommitRecoveryStatusResult struct {
+	Refreshing     bool                       `json:"refreshing,omitempty"`
 	SubscriptionID string                     `json:"subscription_id,omitempty"`
 	Remaining      int                        `json:"remaining"`
 	SourceID       string                     `json:"source_id"`
@@ -25,30 +47,39 @@ type CommitRecoveryStatusResult struct {
 	Complete       bool                       `json:"complete"`
 }
 type CommitRecoveryStatusItem struct {
-	Selection          *CommitRecoveryStatusSelection `json:"selection,omitempty"`
-	Attempt            CommitRecoveryApplyItem        `json:"attempt"`
-	Status             string                         `json:"status"`
-	Reason             string                         `json:"reason,omitempty"`
-	Attribution        string                         `json:"attribution"`
-	ObservedAt         *time.Time                     `json:"observed_at,omitempty"`
-	ExpectedGeneration *int64                         `json:"expected_generation,omitempty"`
-	Generation         *int64                         `json:"generation,omitempty"`
-	GenerationRelation string                         `json:"generation_relation,omitempty"`
-	Recipient          json.RawMessage                `json:"recipient,omitempty"`
+	PreviousObservation *CommitRecoveryStatusObservation `json:"previous_observation,omitempty"`
+	Changes             []CommitRecoveryStatusChange     `json:"changes,omitempty"`
+	ExecutionID         string                           `json:"execution_id,omitempty"`
+	ExecutionState      string                           `json:"execution_state,omitempty"`
+	Selection           *CommitRecoveryStatusSelection   `json:"selection,omitempty"`
+	Attempt             CommitRecoveryApplyItem          `json:"attempt"`
+	Status              string                           `json:"status"`
+	Reason              string                           `json:"reason,omitempty"`
+	Attribution         string                           `json:"attribution"`
+	ObservedAt          *time.Time                       `json:"observed_at,omitempty"`
+	ExpectedGeneration  *int64                           `json:"expected_generation,omitempty"`
+	Generation          *int64                           `json:"generation,omitempty"`
+	GenerationRelation  string                           `json:"generation_relation,omitempty"`
+	Recipient           json.RawMessage                  `json:"recipient,omitempty"`
 }
 
 // GetCommitRecoveryStatus keeps unknown attempt outcomes unknown, even if delivery advanced.
 // It reads only guarded receipt evidence and never follows saved action URLs.
 func (c *Client) GetCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, limit, pages int) (CommitRecoveryStatusResult, error) {
-	return c.getCommitRecoveryStatus(ctx, reviewed, applied, nil, limit, pages)
+	return c.getCommitRecoveryStatus(ctx, reviewed, applied, nil, false, limit, pages)
 }
 
 // ResumeCommitRecoveryStatus preserves successful observations and retries unread items before failed reads.
 func (c *Client) ResumeCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
-	return c.getCommitRecoveryStatus(ctx, reviewed, applied, &previous, limit, pages)
+	return c.getCommitRecoveryStatus(ctx, reviewed, applied, &previous, false, limit, pages)
 }
 
-func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
+// RefreshCommitRecoveryStatus starts a new observation pass with a fixed comparison baseline.
+func (c *Client) RefreshCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
+	return c.getCommitRecoveryStatus(ctx, reviewed, applied, &previous, true, limit, pages)
+}
+
+func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int) (CommitRecoveryStatusResult, error) {
 	out := CommitRecoveryStatusResult{SourceID: reviewed.Report.SourceID, Items: []CommitRecoveryStatusItem{}, Counts: map[string]int{}}
 	raw, err := json.Marshal(struct {
 		Plan     CommitRecoveryPlan
@@ -144,7 +175,23 @@ func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRec
 			if row.Attribution == "matches_acknowledged_execution" && row.Attempt.Status != "queued" {
 				return out, ErrValidation("invalid acknowledged attribution")
 			}
+			if saved.Previous.Refreshing != (row.PreviousObservation != nil) {
+				return out, ErrValidation("invalid saved refresh baseline")
+			}
+			if row.PreviousObservation != nil {
+				if err := validateRecoveryStatusObservation(*row.PreviousObservation, row.Attempt.Status); err != nil {
+					return out, err
+				}
+			}
 			out.Items[i] = row
+		}
+		out.Refreshing = saved.Previous.Refreshing
+	}
+	if refresh {
+		out.Refreshing = true
+		for i, old := range out.Items {
+			baseline := recoveryStatusObservation(old)
+			out.Items[i] = CommitRecoveryStatusItem{Attempt: old.Attempt, Selection: old.Selection, ExpectedGeneration: old.ExpectedGeneration, PreviousObservation: &baseline, Status: "not_observed", Reason: "status_budget", Attribution: "unproven"}
 		}
 	}
 	recountCommitRecoveryStatus(&out)
@@ -170,7 +217,7 @@ func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRec
 			break
 		}
 		old := out.Items[index]
-		row := CommitRecoveryStatusItem{Attempt: old.Attempt, Selection: old.Selection, ExpectedGeneration: old.ExpectedGeneration, Status: "unresolved", Reason: "evidence_unavailable", Attribution: "unproven"}
+		row := CommitRecoveryStatusItem{PreviousObservation: old.PreviousObservation, Attempt: old.Attempt, Selection: old.Selection, ExpectedGeneration: old.ExpectedGeneration, Status: "unresolved", Reason: "evidence_unavailable", Attribution: "unproven"}
 		original := publications[strings.ToLower(row.Attempt.EventID)]
 		original.Subscribers = []CommitDeliveryReportSubscriber{}
 		current, readErr := c.RefreshCommitDeliveryReport(ctx, CommitDeliveryReport{SourceID: plan.Report.SourceID, SubscriptionID: strings.ToLower(row.Attempt.SubscriptionID), Items: []CommitDeliveryReportItem{original}}, pages)
@@ -213,7 +260,9 @@ func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRec
 func recountCommitRecoveryStatus(out *CommitRecoveryStatusResult) {
 	out.Counts = map[string]int{}
 	out.Remaining = 0
-	for _, row := range out.Items {
+	for i := range out.Items {
+		row := &out.Items[i]
+		row.Changes = compareRecoveryStatusObservation(row.PreviousObservation, recoveryStatusObservation(*row))
 		out.Counts[row.Status]++
 		if row.Status == "not_observed" || row.Status == "read_error" {
 			out.Remaining++
@@ -307,6 +356,8 @@ func classifyCommitRecoveryStatus(out *CommitRecoveryStatusItem, raw json.RawMes
 	}
 	state := r.Routing.State
 	if observed != nil {
+		out.ExecutionID = observed.ID
+		out.ExecutionState = observed.State
 		state = observed.State
 	}
 	if observed == nil && len(r.Cancellation) > 0 && string(r.Cancellation) != "null" {
@@ -331,6 +382,60 @@ func classifyCommitRecoveryStatus(out *CommitRecoveryStatusItem, raw json.RawMes
 			out.Reason = "evidence_unavailable"
 		}
 	}
+}
+
+func recoveryStatusObservation(row CommitRecoveryStatusItem) CommitRecoveryStatusObservation {
+	executionID, executionState := row.ExecutionID, row.ExecutionState
+	if executionID == "" && len(row.Recipient) > 0 {
+		derived := row
+		classifyCommitRecoveryStatus(&derived, row.Recipient)
+		executionID, executionState = derived.ExecutionID, derived.ExecutionState
+	}
+	return CommitRecoveryStatusObservation{Status: row.Status, Reason: row.Reason, Attribution: row.Attribution, ObservedAt: row.ObservedAt, Generation: row.Generation, GenerationRelation: row.GenerationRelation, ExecutionID: executionID, ExecutionState: executionState}
+}
+func validateRecoveryStatusObservation(observation CommitRecoveryStatusObservation, attempt string) error {
+	switch observation.Status {
+	case "completed", "active", "failed", "unresolved", "unsupported_recipient", "read_error", "not_observed":
+	default:
+		return ErrValidation("invalid saved refresh observation")
+	}
+	if observation.ObservedAt != nil && observation.ObservedAt.IsZero() {
+		return ErrValidation("invalid saved refresh timestamp")
+	}
+	if observation.Attribution != "unproven" && observation.Attribution != "matches_acknowledged_execution" {
+		return ErrValidation("invalid saved refresh attribution")
+	}
+	if observation.Attribution == "matches_acknowledged_execution" && attempt != "queued" {
+		return ErrValidation("invalid saved refresh acknowledgement")
+	}
+	return nil
+}
+func compareRecoveryStatusObservation(previous *CommitRecoveryStatusObservation, current CommitRecoveryStatusObservation) []CommitRecoveryStatusChange {
+	if previous == nil || previous.Status == "not_observed" || previous.Status == "read_error" || current.Status == "not_observed" || current.Status == "read_error" {
+		return nil
+	}
+	changes := []CommitRecoveryStatusChange{}
+	fields := []struct {
+		name              string
+		previous, current any
+	}{
+		{"status", previous.Status, current.Status},
+		{"reason", previous.Reason, current.Reason},
+		{"generation", previous.Generation, current.Generation},
+		{"generation_relation", previous.GenerationRelation, current.GenerationRelation},
+		{"attribution", previous.Attribution, current.Attribution},
+		{"execution_id", previous.ExecutionID, current.ExecutionID},
+		{"execution_state", previous.ExecutionState, current.ExecutionState},
+	}
+	for _, field := range fields {
+		if reflect.DeepEqual(field.previous, field.current) {
+			continue
+		}
+		before, _ := json.Marshal(field.previous)
+		after, _ := json.Marshal(field.current)
+		changes = append(changes, CommitRecoveryStatusChange{Field: field.name, Previous: before, Current: after, PreviousObservedAt: previous.ObservedAt, ObservedAt: current.ObservedAt})
+	}
+	return changes
 }
 
 const CommitRecoveryStatusMax = 50

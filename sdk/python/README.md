@@ -824,3 +824,6 @@ are recomputed, and unknown attempts remain unknown.
 Pass resume=previous to aget_commit_recovery_status.
 
 Older status files without selection snapshots require a fresh status read. Resume keeps historical samples; omit resume to reread them.
+
+
+Refresh saved Commit recovery observations with `aget_commit_recovery_status(client, source, plan, applied, refresh=previous)`. Refresh clears current evidence and reports before/after changes against a compact saved baseline. Use resume to finish a bounded refresh pass; refresh and resume are mutually exclusive. Unknown apply attempts remain unknown. See [the Commit guide](../../docs/gregale-commit.md#refresh-saved-recovery-observations).

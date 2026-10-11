@@ -9,14 +9,23 @@ import type { EventReceiptRecipientResponse } from './generated/models/EventRece
 export interface CommitRecoveryStatusSelection {
   publication: CommitEventPublication; reviewed: CommitRecoveryPlanItem;
 }
+export interface CommitRecoveryStatusObservation {
+  status: string; reason?: string; attribution: string; observed_at?: string;
+  generation?: number; generation_relation?: string; execution_id?: string; execution_state?: string;
+}
+export interface CommitRecoveryStatusChange {
+  field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
+}
 export interface CommitRecoveryStatusItem {
+  previous_observation?: CommitRecoveryStatusObservation; changes?: CommitRecoveryStatusChange[];
+  execution_id?: string; execution_state?: string;
   selection?: CommitRecoveryStatusSelection;
   attempt: CommitRecoveryApplyItem; status: string; reason?: string; attribution: string;
   observed_at?: string; expected_generation?: number; generation?: number; generation_relation?: string;
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryStatusResult {
-  source_id: string; subscription_id?: string; remaining: number; items: CommitRecoveryStatusItem[]; counts: Record<string, number>; complete: boolean;
+  source_id: string; refreshing?: boolean; subscription_id?: string; remaining: number; items: CommitRecoveryStatusItem[]; counts: Record<string, number>; complete: boolean;
 }
 export class CommitRecoveryStatusError extends Error {
   constructor(readonly result: CommitRecoveryStatusResult, cause: unknown) {
@@ -35,12 +44,9 @@ function observe(row: CommitRecoveryStatusItem, evidence?: CommitDeliveryReportI
       : row.generation > row.expected_generation ? 'advanced' : row.generation < row.expected_generation ? 'regressed' : 'unchanged';
   }
   if (recipient.workflow_name) { row.status = 'unsupported_recipient'; row.reason = 'unsupported_recipient'; return; }
-  let execution = recipient.recovery?.latest_replay ?? recipient.execution;
-  const ack = row.attempt.result as { id?: unknown } | undefined;
-  if (row.attempt.status === 'queued' && typeof ack?.id === 'string' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ack.id)) {
-    const matching = [recipient.execution, recipient.recovery?.latest_replay].find(item => item?.invocation_id.toLowerCase() === (ack.id as string).toLowerCase());
-    if (matching) { execution = matching; row.attribution = 'matches_acknowledged_execution'; }
-  }
+  const { execution, matched } = selectedExecution(row);
+  if (matched) row.attribution = 'matches_acknowledged_execution';
+  row.execution_id = execution?.invocation_id; row.execution_state = execution?.state;
   let state: string | undefined = execution?.state ?? recipient.routing?.state;
   if (!execution && recipient.cancellation) state = 'cancelled';
   if (!execution && recipient.execution_unavailable && state !== 'cancelled') { row.status = 'unresolved'; row.reason = recipient.execution_unavailable; return; }
@@ -50,9 +56,10 @@ function observe(row: CommitRecoveryStatusItem, evidence?: CommitDeliveryReportI
 }
 /** Read guarded evidence only. An unknown attempt remains unknown even when delivery advances. */
 export async function getCommitRecoveryStatus(source: string, reviewed: CommitRecoveryPlan, applied: CommitRecoveryApplyResult,
-  options: { limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
+  options: { limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal } = options;
-  const plan = structuredClone(reviewed), result = structuredClone(applied), previous = options.resume ? structuredClone(options.resume) : undefined;
+  if (options.resume && options.refresh) throw new TypeError('choose resume or refresh');
+  const plan = structuredClone(reviewed), result = structuredClone(applied), previous = options.resume || options.refresh ? structuredClone(options.resume ?? options.refresh!) : undefined;
   const out: CommitRecoveryStatusResult = { source_id: source, subscription_id: plan.report.subscription_id, remaining: 0, items: [], counts: Object.create(null), complete: false };
   if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(recipientPages) || recipientPages < 1 || recipientPages > 20 || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 86400000 || plan.report.source_id !== source || result.source_id.toLowerCase() !== source.toLowerCase() || plan.report.items.length > 200 || plan.items.length > 200*200*20 || result.items.length > 200*200*20) throw new TypeError('invalid recovery status budgets or source');
   const publications = new Map(plan.report.items.map(item => [item.acceptance.event_id.toLowerCase(), item]));
@@ -75,6 +82,7 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
       expected_generation: generation !== undefined && Number.isSafeInteger(generation) && generation >= 0 ? generation : undefined });
   }
   if (previous) {
+    if (previous.refreshing !== undefined && typeof previous.refreshing !== 'boolean') throw new TypeError('invalid saved refresh flag');
     if (previous.items.some(row => !row.selection)) throw new TypeError('saved status lacks selection snapshots; run recovery-status without --resume');
     if (previous.source_id.toLowerCase() !== source.toLowerCase() || (previous.subscription_id ?? '').toLowerCase() !== (out.subscription_id ?? '').toLowerCase() || previous.items.length !== out.items.length) throw new TypeError('saved status selection mismatch');
     for (let i = 0; i < previous.items.length; i++) {
@@ -82,8 +90,18 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
       if (!row.selection || !sameSelection(row.selection, expected.selection!) || canonical(row.attempt) !== canonical(expected.attempt) || row.expected_generation !== expected.expected_generation) throw new TypeError('saved status does not match reviewed plan and apply result');
       if (row.observed_at !== undefined && (typeof row.observed_at !== 'string' || !sameAcceptance(row.observed_at, row.observed_at))) throw new TypeError('invalid saved observation timestamp');
       if (!['completed', 'active', 'failed', 'unresolved', 'unsupported_recipient', 'read_error', 'not_observed'].includes(row.status) || !['unproven', 'matches_acknowledged_execution'].includes(row.attribution) || (row.attribution === 'matches_acknowledged_execution' && row.attempt.status !== 'queued')) throw new TypeError('invalid saved observation or attribution');
+      if (Boolean(previous.refreshing) !== Boolean(row.previous_observation)) throw new TypeError('invalid saved refresh baseline');
+      if (row.previous_observation) validateObservation(row.previous_observation, row.attempt.status);
     }
     out.items = previous.items;
+    out.refreshing = previous.refreshing;
+  }
+  if (options.refresh) {
+    out.refreshing = true;
+    out.items = out.items.map(old => ({
+      attempt: old.attempt, selection: old.selection, expected_generation: old.expected_generation,
+      previous_observation: observation(old), status: 'not_observed', reason: 'status_budget', attribution: 'unproven',
+    }));
   }
   recount(out);
   const pending = ['not_observed', 'read_error'].flatMap(status => out.items.map((row, index) => row.status === status ? index : -1).filter(index => index >= 0));
@@ -96,7 +114,7 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
     for (const index of pending.slice(0, limit)) {
       if (controller.signal.aborted) { cause ??= new Error('status interrupted'); break; }
       const old = out.items[index]!;
-      const row: CommitRecoveryStatusItem = { attempt: old.attempt, selection: old.selection, expected_generation: old.expected_generation, status: 'unresolved', reason: 'evidence_unavailable', attribution: 'unproven' };
+      const row: CommitRecoveryStatusItem = { previous_observation: old.previous_observation, attempt: old.attempt, selection: old.selection, expected_generation: old.expected_generation, status: 'unresolved', reason: 'evidence_unavailable', attribution: 'unproven' };
       out.items[index] = row;
       const original = publications.get(row.attempt.event_id.toLowerCase())!;
       try {
@@ -129,8 +147,48 @@ function sameSelection(a: CommitRecoveryStatusSelection, b: CommitRecoveryStatus
 function recount(out: CommitRecoveryStatusResult): void {
   out.counts = Object.create(null); out.remaining = 0;
   for (const row of out.items) {
+    row.changes = compareObservation(row.previous_observation, observation(row));
     out.counts[row.status] = (out.counts[row.status] ?? 0) + 1;
     if (['not_observed', 'read_error'].includes(row.status)) out.remaining++;
   }
   out.complete = out.remaining === 0;
+}
+
+
+function selectedExecution(row: CommitRecoveryStatusItem) {
+  const recipient = row.recipient;
+  if (recipient?.workflow_name) return { execution: undefined, matched: false };
+  let execution = recipient?.recovery?.latest_replay ?? recipient?.execution;
+  let matched = false;
+  const ack = row.attempt.result as { id?: unknown } | undefined;
+  if (row.attempt.status === 'queued' && typeof ack?.id === 'string' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ack.id)) {
+    const matching = [recipient?.execution, recipient?.recovery?.latest_replay].find(item => item?.invocation_id.toLowerCase() === (ack.id as string).toLowerCase());
+    if (matching) { execution = matching; matched = true; }
+  }
+  return { execution, matched };
+}
+function observation(row: CommitRecoveryStatusItem): CommitRecoveryStatusObservation {
+  const { execution } = selectedExecution(row);
+  return {
+    status: row.status, reason: row.reason || undefined, attribution: row.attribution,
+    observed_at: row.observed_at, generation: row.generation, generation_relation: row.generation_relation || undefined,
+    execution_id: row.execution_id || execution?.invocation_id, execution_state: row.execution_state || execution?.state,
+  };
+}
+function validateObservation(previous: CommitRecoveryStatusObservation, attempt: string): void {
+  if (!['completed', 'active', 'failed', 'unresolved', 'unsupported_recipient', 'read_error', 'not_observed'].includes(previous.status)
+    || !['unproven', 'matches_acknowledged_execution'].includes(previous.attribution)
+    || (previous.attribution === 'matches_acknowledged_execution' && attempt !== 'queued')) throw new TypeError('invalid saved refresh observation');
+  if (previous.observed_at !== undefined && (typeof previous.observed_at !== 'string' || !sameAcceptance(previous.observed_at, previous.observed_at))) throw new TypeError('invalid saved refresh timestamp');
+}
+function compareObservation(previous: CommitRecoveryStatusObservation | undefined, current: CommitRecoveryStatusObservation): CommitRecoveryStatusChange[] | undefined {
+  if (!previous || ['not_observed', 'read_error'].includes(previous.status) || ['not_observed', 'read_error'].includes(current.status)) return undefined;
+  const changes: CommitRecoveryStatusChange[] = [];
+  const fields = ['status', 'reason', 'generation', 'generation_relation', 'attribution', 'execution_id', 'execution_state'] as const;
+  for (const field of fields) {
+    const fallback = field === 'generation' ? null : '';
+    const before = previous[field] ?? fallback, after = current[field] ?? fallback;
+    if (canonical(before) !== canonical(after)) changes.push({ field, previous: before, current: after, previous_observed_at: previous.observed_at, observed_at: current.observed_at });
+  }
+  return changes.length ? changes : undefined;
 }

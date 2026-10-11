@@ -55,20 +55,14 @@ def _observe(row: dict[str, Any], evidence: dict[str, Any] | None) -> None:
     if recipient.get("workflow_name"):
         row.update(status="unsupported_recipient", reason="unsupported_recipient")
         return
-    original = recipient.get("execution")
-    latest = (recipient.get("recovery") or {}).get("latest_replay")
-    execution = latest or original
-    ack = row["attempt"].get("result")
-    if row["attempt"]["status"] == "queued" and isinstance(ack, dict) and isinstance(ack.get("id"), str):
-        try:
-            acknowledged = str(UUID(ack["id"]))
-        except ValueError:
-            acknowledged = None
-        if acknowledged:
-            for candidate in (original, latest):
-                if candidate and candidate.get("invocation_id", "").lower() == acknowledged:
-                    execution = candidate
-                    row["attribution"] = "matches_acknowledged_execution"
+    execution, matched = _selected_execution(row)
+    if matched:
+        row["attribution"] = "matches_acknowledged_execution"
+    if execution:
+        if execution.get("invocation_id"):
+            row["execution_id"] = execution["invocation_id"]
+        if execution.get("state"):
+            row["execution_state"] = execution["state"]
     state = execution.get("state") if execution else recipient.get("routing", {}).get("state")
     if not execution and recipient.get("cancellation"):
         state = "cancelled"
@@ -97,11 +91,14 @@ async def aget_commit_recovery_status(
     recipient_pages: int = 1,
     timeout: float = 120,
     resume: dict[str, Any] | None = None,
+    refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read guarded evidence only; never resolve an unknown write from delivery advancement."""
+    if resume is not None and refresh is not None:
+        raise ValueError("choose resume or refresh")
     source = str(UUID(str(source)))
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
-    previous = copy.deepcopy(resume)
+    previous = copy.deepcopy(resume if resume is not None else refresh)
     out: dict[str, Any] = {
         "source_id": source,
         "subscription_id": plan["report"].get("subscription_id", ""),
@@ -171,6 +168,8 @@ async def aget_commit_recovery_status(
             row["expected_generation"] = generation
         out["items"].append(row)
     if previous is not None:
+        if "refreshing" in previous and not isinstance(previous["refreshing"], bool):
+            raise ValueError("invalid saved refresh flag")
         if any(not row.get("selection") for row in previous["items"]):
             raise ValueError("saved status lacks selection snapshots; run recovery-status without --resume")
         if (
@@ -207,7 +206,28 @@ async def aget_commit_recovery_status(
                 not isinstance(observed_at, str) or not _same_acceptance(observed_at, observed_at)
             ):
                 raise ValueError("invalid saved observation timestamp")
+            if bool(previous.get("refreshing", False)) != (row.get("previous_observation") is not None):
+                raise ValueError("invalid saved refresh baseline")
+            if row.get("previous_observation") is not None:
+                _validate_observation(row["previous_observation"], row["attempt"]["status"])
         out["items"] = previous["items"]
+        out["refreshing"] = previous.get("refreshing", False)
+    if refresh is not None:
+        out["refreshing"] = True
+        rows = []
+        for old in out["items"]:
+            row = {
+                "attempt": old["attempt"],
+                "selection": old["selection"],
+                "previous_observation": _observation(old),
+                "status": "not_observed",
+                "reason": "status_budget",
+                "attribution": "unproven",
+            }
+            if "expected_generation" in old:
+                row["expected_generation"] = old["expected_generation"]
+            rows.append(row)
+        out["items"] = rows
     _recount(out)
     pending = [
         index
@@ -234,6 +254,8 @@ async def aget_commit_recovery_status(
                 }
                 if "expected_generation" in old:
                     row["expected_generation"] = old["expected_generation"]
+                if "previous_observation" in old:
+                    row["previous_observation"] = old["previous_observation"]
                 out["items"][index] = row
                 original = copy.deepcopy(publications[row["attempt"]["event_id"].lower()])
                 original["subscribers"] = []
@@ -295,8 +317,90 @@ def _same_selection(left: dict[str, Any], right: dict[str, Any]) -> bool:
 def _recount(out: dict[str, Any]) -> None:
     out["counts"], out["remaining"] = {}, 0
     for row in out["items"]:
+        changes = _compare_observation(row.get("previous_observation"), _observation(row))
+        if changes:
+            row["changes"] = changes
+        else:
+            row.pop("changes", None)
         status = row["status"]
         out["counts"][status] = out["counts"].get(status, 0) + 1
         if status in {"not_observed", "read_error"}:
             out["remaining"] += 1
     out["complete"] = out["remaining"] == 0
+
+
+def _selected_execution(row: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    recipient = row.get("recipient") or {}
+    if recipient.get("workflow_name"):
+        return None, False
+    original = recipient.get("execution")
+    latest = (recipient.get("recovery") or {}).get("latest_replay")
+    execution = latest or original
+    matched = False
+    ack = row["attempt"].get("result")
+    if row["attempt"]["status"] == "queued" and isinstance(ack, dict) and isinstance(ack.get("id"), str):
+        try:
+            acknowledged = str(UUID(ack["id"]))
+        except ValueError:
+            acknowledged = None
+        if acknowledged:
+            for candidate in (original, latest):
+                if candidate and candidate.get("invocation_id", "").lower() == acknowledged:
+                    execution, matched = candidate, True
+    return execution, matched
+
+
+def _observation(row: dict[str, Any]) -> dict[str, Any]:
+    execution, _ = _selected_execution(row)
+    observation = {"status": row["status"], "attribution": row["attribution"]}
+    for field in ("reason", "observed_at", "generation", "generation_relation"):
+        if row.get(field) is not None and row[field] != "":
+            observation[field] = row[field]
+    for field, key in (("execution_id", "invocation_id"), ("execution_state", "state")):
+        value = row.get(field) or (execution or {}).get(key)
+        if value:
+            observation[field] = value
+    return observation
+
+
+def _validate_observation(previous: dict[str, Any], attempt: str) -> None:
+    if (
+        previous["status"]
+        not in {"completed", "active", "failed", "unresolved", "unsupported_recipient", "read_error", "not_observed"}
+        or previous["attribution"] not in {"unproven", "matches_acknowledged_execution"}
+        or (previous["attribution"] == "matches_acknowledged_execution" and attempt != "queued")
+    ):
+        raise ValueError("invalid saved refresh observation")
+    observed_at = previous.get("observed_at")
+    if observed_at is not None and (not isinstance(observed_at, str) or not _same_acceptance(observed_at, observed_at)):
+        raise ValueError("invalid saved refresh timestamp")
+
+
+def _compare_observation(previous: dict[str, Any] | None, current: dict[str, Any]) -> list[dict[str, Any]]:
+    if (
+        previous is None
+        or previous["status"] in {"not_observed", "read_error"}
+        or current["status"] in {"not_observed", "read_error"}
+    ):
+        return []
+    changes = []
+    for field in (
+        "status",
+        "reason",
+        "generation",
+        "generation_relation",
+        "attribution",
+        "execution_id",
+        "execution_state",
+    ):
+        fallback = None if field == "generation" else ""
+        before, after = previous.get(field, fallback), current.get(field, fallback)
+        if _same_json(before, after):
+            continue
+        change = {"field": field, "previous": before, "current": after}
+        if previous.get("observed_at"):
+            change["previous_observed_at"] = previous["observed_at"]
+        if current.get("observed_at"):
+            change["observed_at"] = current["observed_at"]
+        changes.append(change)
+    return changes
