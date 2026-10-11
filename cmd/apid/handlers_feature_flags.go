@@ -39,7 +39,10 @@ func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct s
 		return state.FeatureFlagScope{}, nil, false
 	}
 	if !s.featureFlagsEnabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags require operator qualification"))
+		// Without a hint the CLI falls back to its generic 403 advice to
+		// check the profile and credentials, which this is not (hunt #9 H9-43).
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags require operator qualification").
+			WithHint("Feature flags are not enabled on this Gregale installation; an operator must qualify them first. Your credentials are not the cause."))
 		return state.FeatureFlagScope{}, nil, false
 	}
 	project, ok := s.loadProject(w, r, acct)

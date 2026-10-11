@@ -42,7 +42,7 @@ func cmdEdgeRuleLists(args []string) int {
 
 func cmdEdgeRuleListsList(args []string) int {
 	fs := newFlagSet("edge-rule-lists list", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	client, err := authedClient()
@@ -90,7 +90,7 @@ func printEdgeRuleList(l api.EdgeRuleListResponse) int {
 
 func cmdEdgeRuleListsGet(args []string) int {
 	fs := newFlagSet("edge-rule-lists get", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	name, ok := edgeRuleListNameArg(fs, "get", "<name>")
@@ -138,7 +138,7 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	var items multiFlag
 	fs.Var(&items, "item", "list item (repeat)")
 	itemsFile := fs.String("items-file", "", "file with one item per line, or - for stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	const usage = "<name> --kind ip|country|host|string|asn [--item V]... [--items-file path|-] [--description D]"
@@ -177,7 +177,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 	fs.Var(&add, "add", "item to add (repeat)")
 	fs.Var(&remove, "remove", "item to remove (repeat)")
 	replaceFile := fs.String("replace-file", "", "replace every item from a file (one per line), or - for stdin")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
@@ -209,7 +209,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 
 func cmdEdgeRuleListsRm(args []string) int {
 	fs := newFlagSet("edge-rule-lists rm", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
