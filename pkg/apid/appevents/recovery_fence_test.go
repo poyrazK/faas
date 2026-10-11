@@ -1,4 +1,4 @@
-package apidserver
+package appevents
 
 import (
 	"net/http"
