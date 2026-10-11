@@ -1,0 +1,58 @@
+=== RUN   TestPostgresStarterRestoreManifest
+--- PASS: TestPostgresStarterRestoreManifest (0.01s)
+=== RUN   TestPostgresStarterSQLRecovery
+    postgres_recovery_test.go:71:
+        > rest-api-postgres@0.1.0 test:postgres
+        > node --test test/postgres.integration.js
+
+        ▶ generated PostgreSQL starter survives real TLS/SCRAM connection failures
+          ✔ serving rejects migration credentials without exposing either URL (118.817042ms)
+          ✔ release session termination fails safely and a subsequent migration succeeds (46.44375ms)
+          ✔ runtime HTTP writes use the release-created schema and cannot perform DDL (95.105084ms)
+          ✔ idle connection termination is handled and restore replaces sessions without writes (37.743875ms)
+          ✔ HTTP cancellation before commit cannot leave a delayed write (40.032083ms)
+          ✔ active session termination rejects once and subsequent requests recover (30.3055ms)
+          ✔ a missing workload fails restore and keeps readiness closed (34.045917ms)
+          ✔ retired held and fresh credentials fail; replacement preserves data (50.465708ms)
+          ✔ public restore attempts cannot reset a pool (2.35775ms)
+        ✔ generated PostgreSQL starter survives real TLS/SCRAM connection failures (565.714583ms)
+        ℹ tests 10
+        ℹ suites 0
+        ℹ pass 10
+        ℹ fail 0
+        ℹ cancelled 0
+        ℹ skipped 0
+        ℹ todo 0
+        ℹ duration_ms 730.602
+
+--- PASS: TestPostgresStarterSQLRecovery (3.53s)
+=== RUN   TestDataAPIRPCSharedCatalog
+--- PASS: TestDataAPIRPCSharedCatalog (0.16s)
+=== RUN   TestSecretReloadNodeStarterHelper
+--- PASS: TestSecretReloadNodeStarterHelper (1.69s)
+=== RUN   TestCustomerPlatformStarterHTTPIsolation
+--- PASS: TestCustomerPlatformStarterHTTPIsolation (0.62s)
+=== RUN   TestCustomerPlatformStarterCredentialRecovery
+--- PASS: TestCustomerPlatformStarterCredentialRecovery (0.30s)
+=== RUN   TestDataAPIStarterMigrationConfiguration
+--- PASS: TestDataAPIStarterMigrationConfiguration (0.27s)
+=== RUN   TestSecretReloadNodeStarterOptsIntoSIGHUP
+--- PASS: TestSecretReloadNodeStarterOptsIntoSIGHUP (0.00s)
+=== RUN   TestEventWorkerStarterReadsParsedAndRawEnvelope
+--- PASS: TestEventWorkerStarterReadsParsedAndRawEnvelope (0.07s)
+=== RUN   TestQueueWorkerStarterReadsParsedAndRawPayload
+--- PASS: TestQueueWorkerStarterReadsParsedAndRawPayload (0.07s)
+=== RUN   TestCronWorkerStarterVerifiesQStashJWT
+--- PASS: TestCronWorkerStarterVerifiesQStashJWT (0.10s)
+=== RUN   TestAIChatStarterUsesAServedClaudeModel
+--- PASS: TestAIChatStarterUsesAServedClaudeModel (0.00s)
+=== RUN   TestGoFunctionStarterEncodesRequestFields
+--- PASS: TestGoFunctionStarterEncodesRequestFields (0.80s)
+=== RUN   TestS3UploaderStarterKeepsRawBodyForEveryContentType
+--- PASS: TestS3UploaderStarterKeepsRawBodyForEveryContentType (0.00s)
+=== RUN   TestPostgresStarterMigrationCredentialBoundary
+--- PASS: TestPostgresStarterMigrationCredentialBoundary (0.66s)
+=== RUN   TestPostgresStarterConnectionRecovery
+--- PASS: TestPostgresStarterConnectionRecovery (0.40s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/gregale/templates	11.505s

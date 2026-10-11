@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 )
 
-// adr: 846 — consumer usage carries its bounded billing route; anonymous
+// adr: 952 — consumer usage carries its bounded billing route; anonymous
 // traffic and the overflow label never do.
 func TestHandlerObserveJournalsBillingRouteForConsumers(t *testing.T) {
 	cases := []struct {

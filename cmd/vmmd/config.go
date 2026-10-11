@@ -31,6 +31,10 @@ type Config struct {
 	// NativeProcessRecovery enables journal-backed launch and strict recovery.
 	// Experimental until the dedicated native VM/leak acceptance gates pass.
 	NativeProcessRecovery bool `toml:"native_process_recovery"`
+	// NativeSnapshotPublicationRoot is a pre-created private persistent
+	// directory for immutable capture receipts and authorized retirement
+	// tombstones. It is experimental and requires NativeProcessRecovery.
+	NativeSnapshotPublicationRoot string `toml:"native_snapshot_publication_root"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -533,6 +537,9 @@ func LoadConfig(path string) (*Config, error) {
 	} else if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("vmmd: parse %q: %w", path, err)
 	}
+	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
+		return nil, err
+	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_VMMD_ROLE. Setting Role in
 	// the defaults-struct literal lets toml.Unmarshal overwrite it,
@@ -821,6 +828,19 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
+	if root == "" {
+		return nil
+	}
+	if !nativeRecovery {
+		return fmt.Errorf("vmmd: native_snapshot_publication_root requires native_process_recovery = true")
+	}
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator) {
+		return fmt.Errorf("vmmd: native_snapshot_publication_root must be a clean absolute non-root path")
+	}
+	return nil
 }
 
 func splitNonEmpty(raw string) []string {

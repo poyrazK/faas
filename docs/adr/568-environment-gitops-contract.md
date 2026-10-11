@@ -69,50 +69,41 @@
 
 ## Remaining implementation sequence
 
-1. Complete deployment preparation against the persisted source/runtime specification
-   against the original environment UUID, logical workload and mapped app ID,
-   rather than update the shared `apps.manifest`. Adopted
-   apps keep their IDs; creation must be idempotent under the current approved
-   generation. Existing build owners and scheduler admission remain authoritative.
-   Immutable image candidates now capture scoped inputs and commit a durable
-   imaging handoff, including runtime-only ownership that inherits a reviewed
-   immutable live image. Pinned Git source and Dockerfile candidates now publish
-   held build rows from verified archives. Functions, new workload creation and
-   inherited non-image source provenance still need preparation adapters.
-2. Prepare the dependency graph using immutable source artifacts and durable
-   deployment/effect identities. Qualify API and worker candidates before release
-   activation. The preparation journal now captures every reviewed workload,
-   candidate, retained live identity, original queue binding and private consumer.
-   Its prepared phase records completed artifacts and grants no execution or
-   activation authority. Complete prepared cohorts now publish durable runtime
-   qualification requests with separate bounded execution leases. Dedicated
-   scheduler instance admission now binds the current attempt and preserves
-   reservation limits. Attempt-bound runtime publication and a bounded scheduler
-   VM execution primitive and bounded node-owned page consumer are now available.
-   Production polling, durable qualification/smoke/restore completion receipts,
-   release commands and activation
-   remain to be implemented. Retry and crash recovery resume the journaled operation;
-   an older generation cannot activate a replacement approved graph. Release coordination
-   must expose partial execution across database, edge and runtime boundaries.
-   Host lifecycle consumers must use the same frozen contract as the guest.
-   Ordinary console deployment, retry and rollback paths must respect the current
-   manager's serving authority, as well as the candidate's immutable input hold.
-3. Add scoped service-binding adapters that publish the qualified target identity
-   and authorization policy. A missing dependency blocks the graph; it must not
-   fall back to another environment or mutate an application-wide binding.
-   Restore queue consumer projections using the original private consumer and
-   receipt namespace, with reviewed repair for ambiguous/missing identities.
-4. Qualify every valid catalog environment name across storage constraints,
-   secret references, deployment/runtime receipt paths, queue admission and
-   public clients. The portable storage and client compatibility checks now
-   pass for short and numeric names, including retained queue statistics and
-   dead-letter replay after membership changes. Native delivery acceptance
-   remains outstanding. Default and all-scopes sentinel semantics stay explicit.
-5. Publish graph preparation, qualification, activation and serving convergence
-   separately from source freshness and applied intent. Exercise supersession,
-   outage, overrides, failed preparation, recovery and retained work on the
-   supported native Linux KVM hosts. Only then start the approved-intent worker
-   in apid, initially qualifying report mode before continuous enforcement.
+1. Pass dedicated Linux capture/restore acceptance for owner-authorized
+   retirement of immutable capture artifacts. With the experimental journal
+   root configured, vmmd discovers and retries durable retirement records
+   before admission, then retries at most 64 per periodic page. The cursor
+   advances past failed deletes so later records progress and wraps to retry
+   failures. The Manager restore path is wired through vmmd, including version
+   checks, verified input staging, native load, private guest channels and
+   target receipts. Keep native production capture and restore closed until
+   acceptance proves complete, leak-free cleanup.
+2. Keep the node-bound schedd qualification poller disabled until that native
+   gate passes. The internal HTTP/HTTPS graph runner, guest configuration and
+   framework-ready receipts, capture/restore evidence, policy-derived HTTP
+   smoke, push/pull worker probes, and isolated one-shot Job probes are wired.
+   Scheduled Job qualification now supports reviewed graph-scoped service
+   bindings with held start, guest config acknowledgement and exact route
+   validation. Never route qualification through customer queues or `JobRun`.
+   After native acceptance, qualify the production polling and recovery path
+   before enabling it for customer workload activation.
+3. Pass dedicated Linux acceptance for service-bound scheduled Jobs. The Job
+   caller identity, held private qualification route check, attempt-bound guest
+   configuration receipt, graph activation binding comparison and scheduled
+   serving acknowledgement are implemented. Acceptance must exercise timeout,
+   target failure, supersession, restart recovery and changed bindings before
+   the production polling gate advances. Job targets, queue bindings and secret
+   references remain unsupported; reviewed non-secret variables are supported.
+4. Extend inherited source provenance beyond the supported GitHub archive paths
+   and resolve incomplete or conflicting provider evidence through reviewed
+   import/adoption flows. Missing workload reservations and pinned function
+   runners do not imply that every provider or runtime is supported.
+5. Pass end-to-end acceptance for graph activation and serving convergence.
+   Exercise supersession, source outages, overrides, failed preparation,
+   recovery, queue and scheduled-job evidence, gateway-roster changes, retained
+   workloads and rollback before enabling continuous qualification or
+   enforcement in apid. Qualification, activation and serving remain separate
+   facts and status signals.
 
 For the API/worker/queue example, the final acceptance flow is: approve an exact
 reviewed definition, preview and adopt existing identities, prepare and qualify
@@ -162,6 +153,21 @@ Imaging consumes frozen settings, preserves exact guest duration values and appl
 explicit scoped fields after image inference and deployment overrides. Changes to
 the shared app after review invalidate a new preparation but cannot alter an
 existing candidate's build inputs.
+
+Candidate inputs also pin each desired, active queue binding by its original
+UUID and normalized reviewed contract. Preparation requires the matching
+source-owned identity and a complete consumer projection; PostgreSQL compares
+the frozen contract with both the approved revision and the active scoped
+binding before insert. Queue-owned workloads remain unqualified, and a retry
+conflicts if an existing candidate does not carry the same frozen queue
+authority. This records which queue a future qualified worker may use; it does
+not authorize the candidate to dispatch or consume messages.
+
+When pruning removes a workload's last candidate-owned field, the applied
+removal remains in that generation's run steps. Candidate preparation retries
+use that evidence to create the queue-free replacement even though ownership is
+already released; the PostgreSQL insert guard checks the same applied removal.
+This keeps queue-only removal in the qualification graph across worker restarts.
 
 Runtime-only ownership can now prepare that same held candidate without importing
 source intent or transferring source ownership. Preparation captures every live
@@ -2279,3 +2285,2203 @@ attempts too, so repeated process crashes cannot grow history indefinitely.
 Foreign field ownership requests are bounded to 1,024 paths in the API limits
 registry. These limits do not prune approval provenance or native execution
 journals.
+
+### Report scheduling hardening — 2026-10-05
+
+Run completion compares the current intent version under the source authority
+lock with the final plan's observation. A newer write leaves the next attempt
+immediately due instead of overwriting its wakeup with the periodic interval.
+Failures without a complete plan use the claim's intent version. A write already
+included in the final observation does not require an extra attempt. Stale
+convergence still cannot advance the applied revision.
+
+Override expiry is a time-dependent planning change without a new intent write.
+Completion bounds the next attempt by the earliest override used by the plan;
+expiry during the attempt leaves the next check immediately due. Expired records
+that a fresh plan no longer uses do not create an unbounded retry loop. Both
+memory and PostgreSQL stores use the same scheduling rules, while retaining the
+existing lease, generation, approved-revision and historical-report fences.
+
+## Function reservations, scoped bindings and capture evidence — 2026-10-05
+
+The internal apid executor can reserve a cohort of missing HTTP/function/worker
+apps only under the current approved enforce lease and reviewed plan. It assigns
+private stable identities, respects account quotas, and journals mappings, scoped
+source/runtime/binding intent and ownership atomically. It launches no deployment
+or VM. A subsequent attempt observes the new identities before applying other
+intent. Collision or quota failure rolls back the entire reservation; an absent
+previously mapped app remains blocked. Customer enforcement stays unavailable.
+
+The definition adds `source.kind: function` with an explicit supported runner.
+Function candidates freeze that runner and the original app type, and use the
+exact approved Git archive plus the durable builder handoff. Existing function
+apps may also retain the established `source` form. Source changes cannot silently
+change shared app type or runner metadata. Job reservations remain blocked until
+the separate job execution adapter is available.
+
+Scoped service bindings pin logical workload names to original mapped app IDs
+and freeze those identities in candidate runtime inputs. Observation and storage
+reject self, foreign, missing or rebound targets, duplicate environment keys,
+variable/reference collisions and excess binding counts. Generated keys consume
+the existing app-wide variable quota across environments. Ordinary enforced
+writes cannot overwrite those keys. Qualification discovery and runtime reject
+binding candidates until a private graph transport with scoped authorization
+is implemented; shared manifests and public environment URLs grant no substitute
+authority. Target qualification, scoped policy enforcement and private transport
+remain implementation requirements.
+
+The scheduler can retain a vmmd capture result in an immutable receipt for the
+original execution frame. Receipt publication rechecks the current request lease,
+complete graph inputs, dispatched running incarnation and actual fresh runtime
+acknowledgement. Storage keys must name the original deployment and private
+capture UUID. Exact retry preserves the first receipt; changed evidence, a
+foreign frame or retired execution is rejected. Physical retirement must match
+the captured native generation and original kernel boot. Capture history survives
+retirement and remains separate from reusable serving snapshots.
+
+An internal graph assessment reports current prepared artifacts and capture
+counts while naming missing smoke, restore, activation and serving receipts.
+Capture counts cannot mark a graph qualified, activate a deployment or advance
+the applied revision. Changed artifacts invalidate the complete cohort's capture
+assessment. This is diagnostic evidence, not activation capability.
+
+Native snapshot publication, isolated smoke/restore proof, whole-graph private
+binding execution, activation, serving convergence and dedicated native KVM
+`test-metal`/`leakcheck` acceptance remain outstanding. No production qualification
+polling, recovery opt-in or continuous enforcement gate is opened by these changes.
+
+Checkpoint validation passed the environment compiler/controller, real PostgreSQL
+integration suite, builder, scheduler, qualification wire and focused apid tests,
+plus capture-evidence race checks and Go/Node/Python SDK tests. Linux lint reported
+zero issues, SQLC regeneration matched the checked-in output, and both new
+migrations completed a down/up round trip against an empty validation database.
+These portable and database checks do not replace the dedicated native acceptance
+listed above.
+
+## Private graph execution checkpoint
+
+The scheduler can now read the complete persisted qualification cohort under the
+original source fence and open one dependency-ordered runtime window. It validates
+every claimed member before VM effects, rejects omitted or substituted members,
+cycles and unsupported dependency targets, and keeps dependency VMs alive until
+all callers retire. The existing admission, lease, native dispatch and retirement
+fences own every member. Success returns from the visitor; it grants no completed
+qualification, activation or serving authority.
+
+An explicit internal node-local HTTP bridge resolver injects graph binding URLs
+into the boot payload without adding generated values to customer variable
+intent. No production startup path wires this opt-in. The guest listener checks
+its observed network slot and both original VM frames, the current source/graph
+inputs, current leases, node/account eligibility and fresh scoped runtime receipts.
+Frozen logical caller allowlists and method/path scopes constrain target calls.
+It strips guest identity claims and stamps the exact target for the real vmmd
+forwarding bridge. It never resolves a serving alias, wakes a production target,
+retries a sibling or grants the gateway a cleanup token. Active streams retain
+the original deadline and are cancelled when either execution loses authority.
+Ordinary service HTTP, raw service TCP and service discovery reject these private
+callers. An unnamed legacy listener cannot authorize private graph execution.
+
+The adapter supports post-publication HTTP calls to explicit reviewed ports.
+Private HTTPS requires scoped DNS delivery through the existing verified
+`*.internal` contract; HTTPS policies block this adapter before graph VM effects.
+Pre-readiness dependency calls need a separately fenced native network publication
+step. Neither runtime readiness nor a callback's success proves generated binding
+delivery, isolated smoke or restored readiness. Captured private URLs also need an
+explicit transition before serving activation; they cannot be reused as approved
+serving bindings. Native publication, restore/completion receipts, graph activation
+and serving convergence remain implementation gates.
+
+The internal test node is `gregale-prod / us-east1-b / gregale-internal-test-1`
+under the supplied Google account. It is fleet-excluded, has KVM and nested
+virtualization enabled. The user explicitly authorized this node for lifecycle
+testing on 2026-10-05. Portable Linux, isolated PostgreSQL and privileged lifecycle
+tests use the task's own scratch directory; privileged tests hold the shared
+acceptance lock and run mount fixtures in private namespaces. Results from this
+node are identified as nested KVM, without claiming bare-metal capture/restore
+evidence. No enforcement, production qualification polling or native recovery
+gate is opened.
+
+## Owned snapshot output readers and Linux staging — 2026-10-05
+
+Native memory and device-state publication can now consume a read-only,
+close-on-exec descriptor for the original completed output binding. The boundary
+rechecks the original incoming capture start, native process generation,
+PID/start time, physical lease, kernel boot and exact output epoch. It holds the
+physical and source locks until the synchronous consumer returns and closes the
+descriptor. Unknown kinds, changed producer authority, substituted or empty
+inodes and incomplete or retired bindings are refused. Reading supplies no pause,
+capture completion, restore or graph qualification evidence.
+
+Privileged tests on the authorized internal node exposed a staging failure:
+directly binding an unlinked anonymous disk inode returned `ENOENT`, including
+when tried through detached descriptor mounts. Staging now starts anonymously,
+persists the original inode/epoch/reference intent, then creates an exclusive
+temporary link at `points/<epoch>.source`. A connected descriptor for that same
+inode supplies the original anchor and jail binds. Preparation closes and removes
+the link before returning; completed writable bindings retain zero hardlinks.
+Producer death may leave the temporary link, already owned by that durable epoch.
+Inventory verifies its original inode, exclusive reference, link count and
+published metadata transition; recovery cannot promote it into a ready producer.
+Original-owner retirement removes it only after revocation and confirmed process
+exit. Substituted files, symlinks, additional aliases and unowned names block
+cleanup. Frozen publication copies retain `O_EXCL` and never acquire a name.
+
+This staging profile requires the anonymous data and the native journal on the
+same filesystem. Production places the native journal on the jail's host-lifetime
+tmpfs and images on disk. That layout needs a durable disk ownership adapter
+before it can use temporary links; it is not covered by disk-only fixtures.
+Preparation rejects the mismatch before cloning, creating an output or writing
+a jail marker. A privileged tmpfs regression verifies that refusal leaves both
+the jail and the data directory untouched. No disk name is created under
+tmpfs-only ownership, and the production capture gate remains closed.
+
+The graph HTTP bridge refuses HTTP/2 and gRPC targets at preflight, boot dispatch
+and route resolution. Memory-store app edits now apply the protocol selector,
+allowing revocation tests to exercise the same guard as PostgreSQL. Production
+qualification polling, native capture publication, isolated restored smoke,
+binding delivery receipts, graph activation and serving convergence remain gated.
+
+Checkpoint validation on the authorized nested KVM node passed all nine
+`TestMetalNative*` ownership fixtures (20.644 s) under the shared acceptance lock,
+followed by a clean `make leakcheck`. The jail-device fixture now supplies the
+same helper-group backend to TUN retirement; the network fixture uses Pro for
+its declared extra-port update, preserving Hobby's 80/443 policy. These tests
+exercise real kernel file, mount, namespace, helper and cleanup ownership; they
+do not boot, capture or restore a qualification microVM.
+
+Linux graph/gateway/scheduler/native reader and staging race checks passed, as
+did the focused memory/PostgreSQL private-route and protocol-revocation tests.
+Normal Linux lint across the six changed production packages reported zero
+issues. SQLC regeneration, the memory-store stub gate, formatting and diff checks
+passed. Supplemental full-package lint with the `metal` tag reported 13 existing
+issues in untouched files; those are not represented as a clean full-package
+metal lint result. Lint filtered to this checkpoint's changed lines with the
+`metal` tag reported zero issues. The task's isolated PostgreSQL cluster was
+stopped after validation. Production capture/restore and the tmpfs/disk ownership
+adapter still require separate implementation and evidence.
+
+### Persistent disk staging ownership checkpoint (2026-10-05)
+
+An explicit startup-only `WithNativeImageStagingRoot` adapter addresses the
+production tmpfs-jail/disk-image boundary without moving image bytes to tmpfs or
+placing disk names under volatile-only ownership. Configure a pre-existing,
+private, owned `0700` directory outside the jail before enabling the native
+recovery adapter. Its filesystem must be the original ext4/XFS/Btrfs image
+filesystem. A separate close-on-exec process-lifetime directory lock prevents
+another daemon or jail root from concurrently borrowing that ownership.
+
+After the original physical and image intent is durable, but before `linkat`,
+the adapter persists a versioned exclusive claim containing the disk directory
+identity, jail placement and complete original pre-anchor image intent. The
+claim binds the kernel boot, native generation, physical lease, source inode,
+mount namespace, reference and allowed metadata transition. It is an immutable
+cleanup record, not a recovered VM/capture capability. A connected descriptor
+for the same inode supplies the original tmpfs anchor and jail binds. Producer
+close removes the original link and then the claim, syncing each removal.
+
+Startup validates the entire disk claim directory before any cleanup. Same-boot
+claims must match their original host-lifetime image journal. Loss of that journal
+requires quarantine rather than guessed retirement. Claims from a different
+kernel boot may remove only their original temporary disk name: the prior
+process and its bind mounts cannot survive kernel reboot, and no launch generation
+is registered or permission changed from that claim. Crash before link or after
+unlink is an idempotent cleanup case. Invalid, missing, duplicate or trailing
+fields, oversized or aliased claim files, another jail/directory, substituted
+source inodes, symlinks, extra source aliases, unexpected metadata and unowned
+entries prevent cleanup. Original-owner retirement still requires revocation,
+confirmed process exit and original image-reference retirement on the same boot.
+
+The disk adapter remains explicit startup/test wiring. Production vmmd
+configuration, qualification polling and capture/publication gates are unchanged.
+The native capture producer, real qualification restore/smoke, binding delivery
+and graph activation/serving evidence remain separate implementation work.
+
+The final disk checkpoint passed all ten `TestMetalNative*` ownership fixtures
+(18.624 s) under the acceptance lock on the authorized nested KVM node, followed
+by a clean `make leakcheck`. Focused native/qualification race checks and normal
+Linux fcvm lint passed. Metal-tag lint filtered to the changed lines reported
+zero issues; the earlier full-package metal baseline remains outstanding. These
+fixtures validate kernel ownership and crash cleanup, not VM capture/restore.
+
+### Pinned native snapshot control checkpoint (2026-10-05)
+
+The Linux control primitive retains a pidfd for the original physical process
+through a single Unix API request. It checks original start time and the socket's
+kernel peer PID/UID/GID before sending any bytes, and checks process liveness
+again after the response. No cached HTTP transport, redirect, pooled connection
+or automatic replay can substitute another peer or repeat an uncertain snapshot
+effect. Context cancellation closes the connection and the original deadline
+bounds I/O. The physical lock, original incoming capture start, local generation
+and both daemon ownership locks fence the request. Creation also checks the
+original private writable drive and both original output bindings; names derive
+only from the original capture UUID and cannot contain host paths.
+
+Real Unix socket/pidfd tests cover one-shot effects, lost responses, redirects,
+changed peer/process credentials and cancellation. Journal fixtures cover missing,
+incomplete, retired, read-only and foreign-capture output bindings. These tests
+grant no Firecracker capture acceptance. The primitive is not wired into the
+native snapshot entry point and supplies no pause/freeze/resume sequence,
+publication receipt or completion authority. The native qualification support
+gate remains closed.
+
+### Exclusive storage publication checkpoint (2026-10-05)
+
+Native publication must request an explicit exclusive writer rather than borrow
+ordinary `StorageBackend.Put`, whose local/cache/compression adapters create named
+scratch files. The optional capability consumes the original reader synchronously,
+never reopens its filename, checks its exact logical size and refuses replacement.
+The caller still owns durable destination intent, source locks and original cleanup
+authority. Capability preflight is neither a reservation nor an existence receipt.
+
+GCS implements this writer with `DoesNotExist` object conditions. Zstandard encoding
+streams through one joined pipe producer, keeping the existing memory/drive
+compression and logical-size metadata without disk spooling. A failed, cancelled
+or prematurely returning consumer closes the pipe and joins the producer before
+source ownership is released. A source error at its last bytes, wrapped EOF, short
+input or extra data prevents successful publication. Prefix routing retains the
+selected backend; migration fallback writes only to its canonical primary; the
+cache wrapper deliberately skips named spools and generation files. Unsupported
+delegates refuse before effects, with no ordinary-write fallback.
+
+The Linux local writer requires a pre-existing owned backend root without shared
+write permission on ext4/XFS/Btrfs. It resolves directories through `openat2`
+without symlinks or descendant mount crossings, creates only canonical object
+directories, and copies into `O_TMPFILE`. Sparse copying applies even when a
+router strips the logical artifact prefix. After complete exact-size copying,
+permission finalization and fsync, it rechecks the original destination directory
+identity and publishes with exclusive `linkat`, then syncs that directory. It
+creates no named scratch file. Failure before the link closes the anonymous
+output; failure after the link preserves the uncertain original destination.
+
+An internal native output adapter derives all four publication keys from the
+original incoming capture and preflights the complete storage cohort before
+opening any output reader. Memory/device-state writes retain the original
+physical and output epoch locks, consume the read-only descriptor synchronously,
+then recheck incoming capture and local daemon authority before supplying success.
+The adapter grants no phase or complete-capture receipt. The frozen drive, backing
+sidecar, pause/create/freeze/resume sequence and artifact cleanup still need the
+complete native producer; the public native snapshot support gate is unchanged.
+That producer also needs publication intent that survives loss of the jail's
+host-lifetime journal. The image staging claim owns temporary disk links; it
+does not own local or remote capture objects across reboot. The internal reader
+adapter is not a substitute for that persistent publication ownership contract.
+
+An uncertain commit may leave the original immutable object present. Subsequent
+publication cannot overwrite it, and a failure supplies no deletion authority.
+The production capture adapter is still unavailable. This capability alone does
+not complete native pause/freeze/resume, artifact cleanup, capture/restore, isolated
+smoke, binding delivery or graph activation and serving evidence.
+
+### Persistent publication intent checkpoint (2026-10-05)
+
+Before any capture object write, the original producer must persist an immutable
+intent in a separate pre-existing private disk directory outside the jail and
+image staging root. It contains the original incoming execution, capture start,
+physical PID/start-time and lease, jail placement, directory and intent inode
+identities, and all four derived logical object keys. A process-lifetime directory lock, exclusive
+anonymous-file publication and directory fsync fence the write. An existing or
+uncertain intent cannot be replaced or adopted as a new producer.
+
+Only the original successful begin call creates an in-memory publication
+capability. It pins the original storage backend for the whole object cohort;
+changing the VMM's configured backend cannot redirect a later object. Each write
+checks that the original durable intent remains intact before opening its source
+and after storage IO, in addition to the existing physical/incoming/source fences.
+Startup inventories every intent without deleting, completing or replaying it.
+Intent survives journal loss and reboot but grants no recovered VM, capture,
+restore or deletion authority. Corrupt, aliased, substituted or unowned entries
+require quarantine. Backend-specific committed object identity and cleanup
+receipts remain required before any automatic artifact retirement is implemented.
+
+The persistent adapter is startup/test opt-in only, configured through
+`WithNativeSnapshotPublicationRoot` before `WithNativeProcessRecovery`.
+The full native producer must begin this intent before its first pause/create
+effect. Capture/publication
+integration, restore/smoke and graph activation gates remain closed.
+
+### Delayed native loop retirement checkpoint (2026-10-05)
+
+The final ownership regression run exposed an intermittent failure after a
+successful loop detach ioctl: the original loop token was still present at the
+immediate retirement check. The [Linux implementation](https://github.com/torvalds/linux/blob/v6.8/drivers/block/loop.c#L1161-L1179)
+can defer teardown through AUTOCLEAR while another descriptor remains open.
+Native retirement now closes its own descriptor, then makes bounded read-only
+observations of the original token before acknowledging retirement. It never
+replays detach, unmounts another resource or treats a timeout as removal proof.
+Every observation closes before waiting, allowing the last opener to release.
+The original journal and VM reservation remain retained on failed confirmation.
+
+A privileged regression fixture holds an additional original loop descriptor
+through unmount and releases it later, making the previous race deterministic.
+The same fixture still verifies mismatched source rejection and original-owner
+crash recovery. Capture/restore and publication support gates remain unchanged.
+
+The ownership regression gate passed all ten `TestMetalNative*` fixtures
+(28.810 s), including the delayed descriptor release, on the user-authorized
+nested KVM node. `make leakcheck` was clean. Native/qualification and ordinary
+snapshot race regressions passed (31.982 s). The exclusive local storage test
+also published and verified 512 MiB of dense data under `MemoryMax=256M` and
+`MemorySwapMax=0` (9.35 s); this validates bounded disk writes, not VM capture.
+
+### Final publication intent validation (2026-10-05)
+
+The final code passed native/qualification and ordinary snapshot race regressions
+(21.223 s) on the authorized nested KVM node. Normal fcvm/storage lint and metal
+lint filtered to this checkpoint's changed lines each reported zero issues;
+the previously recorded full-package metal baseline is not represented as clean.
+Portable exclusive publication tests also passed on macOS (15.777 s).
+
+Under the shared acceptance lock, `make test-metal` passed all ten native ownership
+fixtures and all seven publication intent fixtures (19.141 s), including every
+corruption/alias/unsafe-root case, process exit, volatile-journal loss, startup
+lock rollback and intent loss during storage IO. `make leakcheck` was clean.
+SHA-256 checks confirmed that all 33 changed Go files on the node matched the
+local checkpoint. These are ownership/publication primitive results, not complete
+Firecracker capture/restore or graph activation evidence. The production support
+gates remain closed and the combined PR is deferred until the requested scope is
+ready.
+
+### Native capture sequence contract (2026-10-05)
+
+The internal native producer begins persistent publication intent before output
+preparation or Firecracker effects. It requires the configured private disk
+staging directory, original private drive, output reader/frozen-drive capabilities
+and exclusive publication for the complete four-object cohort before pause.
+Output epochs are prepared once. The original physical VM lock then spans the
+one-shot pause and full snapshot, anonymous drive freeze, one-shot resume and
+synchronous memory, device-state, drive and backing-identity publication. Source
+epoch locks and read-only descriptors remain owned until their IO has joined.
+The drive is frozen while paused; every upload follows confirmed resume.
+
+An uncertain API effect is never replayed, including a failed resume. A failure
+after pause leaves the private VM for the existing revoke/stop owner to retire;
+the producer does not invoke legacy resume or failed-capture deletion. Partial
+objects and durable intent remain retained without granting deletion or recovered
+capture authority. Cancellation, changed original authority, publication failure
+or descriptor/lock close failure yields no usable result. Only the Manager may
+record capture completion, after every object and its own final original-physical
+checks. This sequence uses disk-backed outputs and retains the original VM memory
+fence; it does not use the legacy pathname-based cgroup widening helper.
+
+The native support gate remains closed pending backend object-generation/cleanup
+receipts and real cold-boot/capture/restore/smoke acceptance. Implementing or
+testing this sequence does not enable production qualification polling, native
+capture, graph activation or serving convergence. The combined PR remains
+deferred until the requested scope is ready.
+
+Live output preparation also accounts for the jail ownership handoff at boot.
+Ordinary prepared-root staging continues to require vmmd ownership. The complete
+capture preflight requires the live jail's original VM UID/GID, marker and an
+inode match against the original process's `/proc/PID/root`, with PID/start time
+checked through a retained pidfd. Live output preparation repeats those checks
+and retains the original directory descriptor; it never changes the jail owner
+or creates a replacement live-root marker. Missing capture authority, another
+process/chroot or changed start time refuses before output production.
+
+The complete kernel protocol fixture exposed a normal staging-close bug that
+the earlier crash-only fixtures did not exercise. The immutable disk claim
+shared the live journal's reference slice; binding acknowledgements changed the
+producer's expected claim in memory and prevented retirement of the durable
+pre-anchor claim. Claim creation now copies the reference slice. A focused
+regression mutates the live reference acknowledgements and verifies that the
+original claim remains unchanged and can retire its original temporary link.
+
+### Native capture protocol validation (2026-10-05)
+
+Native/qualification and ordinary snapshot race regressions passed on the
+user-authorized nested KVM node (44.838 s), as did the portable Manager cohort
+and exclusive publication tests on macOS (4.106 s). Normal fcvm/storage lint and
+metal lint filtered to all changed lines, including new files, reported zero
+issues. The existing full-package metal lint baseline remains separate.
+
+Under the shared acceptance lock, `make test-metal` passed eleven native
+ownership/protocol fixtures and seven publication intent fixtures (22.312 s).
+The new capture fixture uses actual anonymous files, bind mounts, a tmpfs jail
+handed to the VM UID, pidfds, kernel Unix peer credentials, disk-backed immutable
+intent and exclusive local storage. Its static chrooted API peer models capture
+and resume effects; it is not Firecracker. The complete, lost-create-response and
+lost-resume-response cases verify original frozen-drive bytes, effect ordering,
+uncertain-result retention and joined process/source retirement. `make leakcheck`
+was clean. SHA-256 checks cover all nineteen changed Go files.
+
+These results establish the internal protocol and kernel ownership boundary.
+They do not establish real VM capture/restore, backend generation/cleanup
+receipts, graph activation or serving convergence. Production support remains
+closed and the combined PR is still deferred.
+
+### Original VM namespace capture handoff (2026-10-06)
+
+The opt-in real Firecracker fixture exposed two boundaries that the earlier
+trusted-process fixtures did not model. First, the jailer pivots away from the
+host root and detaches the old mounts, including procfs. Device setup now pins
+the locked helper thread's proc directory before namespace entry, confines its
+root to the original pinned jail and attaches device mounts through detached
+mount descriptors. It never mounts host procfs into the jail or falls back to
+host pathnames. Root, namespace, pidfd, TUN and mount identities remain checked.
+
+Second, a writable output bind created in the host namespace after cold boot is
+absent from the VM's private namespace. Firecracker sees its empty root-owned
+placeholder rather than the original disk output. Capture now requires a
+separate one-shot output handoff before pause. The original physical lock and
+both output epoch locks span source descriptor ownership, gated helper launch,
+namespace effects, joined retirement and receipt acknowledgement. The helper
+receives only pinned root, namespace, pidfd and read-only output descriptors;
+the two target names derive from the original capture UUID.
+
+Linux also requires a connected source dentry when attaching the detached copy.
+Live outputs retain their original immutable disk claims and single temporary
+links through handoff, while closing the staging producer's input descriptors.
+Only the two exact output epochs may pass handoff inspection with those links;
+ordinary image admission and publication still require their removal. The joined
+handoff removes only the original names and claims before pause, under both
+epoch locks. Failure retains incomplete capture and original retirement
+authority; it never creates another link or adopts another source.
+
+Before any effect, the original generation persists the exact capture, process,
+namespace, source epoch/inode and placeholder identities, parent input copies
+and exclusive helper cgroup. Parent copies close before gate authorization.
+The helper verifies the original private mounted root and both empty private
+output inodes, clones the host output mounts into detached descriptors before
+namespace entry, enters only the original VM namespace, validates both
+placeholders and attaches writable nosuid/nodev/noexec mounts through those
+descriptors. Detached copies close on every failure and after attachment; no
+host path or procfs mount is supplied to the VM. It confirms
+the new output identities and distinct mount IDs. Only a matching complete
+receipt after helper and cgroup retirement acknowledges handoff. An existing or
+uncertain handoff frame refuses replay; exit status or recovered ownership
+alone cannot supply readiness. Original namespace removal remains required
+before output anchors and physical VM ownership can retire.
+
+The real VM test uses the internal producer and restores the resulting artifacts
+through the existing ordinary restore path in a separate private jail root. It
+does not exercise native qualification restore or create graph activation,
+backend generation, artifact cleanup or serving receipts. Its locally assembled
+two-drive guest has a modeled admission scan sidecar, which supplies no Grype
+evidence. The UUID marker is owned by the app UID in the layer's overlay upper;
+the guest fixture does not need write access to root-owned configuration.
+Production native capture and qualification polling remain gated. Validation
+results must be recorded separately before this checkpoint is considered tested.
+
+
+### Original snapshot cgroup allowance (2026-10-06)
+
+Actual Firecracker 1.7 capture on the approved internal nested test node reached
+snapshot creation after the namespace handoff. Its buffered 128 MiB memory
+write charged disk page cache to the original 136 MiB VM cgroup and triggered a
+memcg OOM kill. Disk placement alone therefore cannot preserve the ordinary VM
+fence throughout full snapshot creation. This supersedes the earlier capture
+checkpoint's decision to retain that fence without a temporary allowance.
+
+Use the existing `api.SnapshotMemoryMaxMB` policy, with admission and billing
+unchanged and the existing tenant aggregate fence retained. The internal native
+producer pins the original process, cgroup directory and `memory.max` file. It
+verifies PID/start time, credentials, exact cgroup membership, cgroup v2 and
+original inode before effects. It refuses missing controllers, unexpected
+initial limits, symlinks and replacement cgroups; it never invokes the legacy
+pathname-based controller repair or widening helper.
+
+The joined original snapshot-output frame receives a strict optional memory
+scope. The producer writes planned ownership before pause, raises the allowance
+only after confirmed pause, and restores the ordinary limit after capture and
+private-drive freezing. Durable restoration plus exact readback precede resume
+and publication. Lost limit or journal acknowledgements cannot replay capture
+or supply readiness. A bounded live cleanup capability can restore the original
+fence after the effect deadline, but cannot resume or publish; changed physical,
+incoming, capture, intent, daemon or kernel ownership refuses all writes.
+
+Restart inventory never reconstructs this live capability. Revocation and
+confirmed original-process exit permit disposal only of the recorded original
+empty cgroup. Cgroup disposal is journaled before physical resource acknowledgement
+or generation replacement. A missing pathname requires a bounded, descriptor-based
+unified-hierarchy inventory proving the original cgroup inode is absent. A
+retained inode, changed filesystem, crossed mount, concurrent inventory failure or
+parser limit retains ownership; inventory never deletes any discovered scope.
+The diagnostic bounds live in `pkg/api/limits.go`, not the tenant quota table.
+An unfinished allowance cannot disappear behind a
+completed owner, and a replacement inode never authorizes cgroup deletion.
+
+The real-VM test checks the ordinary limit and OOM counter before and after
+capture, its restored receipt, and disposal after original VM retirement. The
+trusted protocol peer models the allowance explicitly because it has no VM
+cgroup; it supplies namespace/control protocol evidence only. Production native
+qualification/capture, restore and graph activation gates remain closed.
+Validation results must be recorded separately before this checkpoint is
+considered tested.
+
+
+### Actual native capture and retirement validation (2026-10-06)
+
+The final changed Go source matched byte-for-byte between this checkout and the
+user-authorized `gregale-internal-test-1` nested x86_64 KVM node (33 SHA-256
+fingerprints). Go 1.25.13 native/qualification and ordinary snapshot race checks
+passed (`pkg/jailsetup` 1.026 s, `pkg/fcvm` 33.836 s). Portable macOS regressions
+also passed (`pkg/fcvm` 21.048 s); the final focused memory suite passed separately
+(1.366 s), including strict frames, effect/journal ordering, original-policy
+restoration and the lost restoration-journal acknowledgement case.
+
+Under `/var/lock/faas-builder-acceptance.lock`, `make test-metal` passed the
+native ownership/recovery, publication intent, trusted capture protocol, actual
+VM and empty-cgroup retirement fixtures (`pkg/fcvm` 33.702 s). The actual
+Firecracker 1.7.0 VM captured 134,217,728 memory bytes, 13,696 device-state bytes
+and a frozen 64 MiB private drive. The original guest resumed with its original
+readiness UUID, the normal 136 MiB cgroup limit and no OOM-kill counter increase;
+its physical owner and original cgroup then retired. The four published objects
+restored through the ordinary two-drive path into a new guest with a fresh
+readiness/entropy UUID and no cold fallback. This does not establish native
+qualification restore or complete graph evidence.
+
+The empty-cgroup cases proved retained-inode detection, refusal to remove a
+replacement inode, removal acknowledgement after original-inode absence, and
+repair of a lost disposal journal acknowledgement. An initial rename fixture
+was invalid because the test kernel forbids cgroup-v2 renaming; it was replaced
+with deletion/recreation and retained-inode cases rather than counted as passed.
+All final cases ran, and `make leakcheck` reported zero leaked netns, TAPs, jails,
+cgroups, processes, mounts or native loop devices.
+
+Normal fcvm/jailsetup lint and metal lint filtered to every changed line,
+including new files, both reported zero issues. Full-package metal lint still
+reports thirteen baseline findings in untouched files; their contents match
+HEAD and this checkpoint does not change that baseline. Final logs, source
+fingerprints and the source patch are retained in the task's
+`outputs/gitops-hardening-20261005` artifacts directory, with earlier failure
+logs preserved separately on the node.
+
+This is supported evidence for the explicitly approved nested-node experiment,
+not bare-metal/reboot/power-loss qualification. Backend object-generation and
+allocated-size receipts, artifact cleanup, native qualification restore/smoke,
+complete graph binding delivery and serving transition evidence remain pending.
+Production qualification polling, native capture, enforcement and graph
+activation gates remain closed. The combined PR remains deferred until those
+requested parts are ready.
+
+
+### Original artifact receipts and pinned reads (2026-10-06)
+
+The internal capture producer now preflights a separate original-receipt storage
+capability for all four objects. Only the original acknowledged exclusive writer
+supplies a receipt: logical and canonical keys, canonical location, source length
+and SHA-256, encoded/allocated stored bytes, and either the original GCS
+object generation or local root/parent/output inode observations. GCS reads the
+successful writer response; it never looks up the destination after an uncertain
+commit to manufacture a receipt. Any source, response, cancellation or joined
+close failure supplies no receipt. Old exclusive-only delegates remain usable
+through their old API but cannot satisfy native capture preflight.
+
+Receipts are append-only anonymous-file publications in the original persistent
+intent directory, bound to the exact intent inode and capture. Each object must
+have its own acknowledged durable receipt before publication succeeds. The
+complete cohort rechecks all four original receipt files before supplying a
+result. Startup validates retained receipts without replay, cleanup or producing
+a live capability. Substitution, aliases, duplicate/missing/unknown fields,
+foreign keys, orphan receipts and corrupt generations retain the original records
+and refuse ownership. Parser bounds live in `pkg/api/limits.go`.
+
+Receipt-bound reads bypass caches and fallback stores. GCS opens only the recorded
+generation, including original encoded size; local opens pin the canonical owned
+directory and original inode observations. The complete reader verifies logical
+length and SHA-256 to the original EOF. Early close, mutation and read failure
+supply no complete content evidence. Local inode observations alone are not
+cross-reboot generation authority: content verification remains required.
+Compressed receipt reads have a 64 MiB streaming decoder window limit, with
+logical size checked separately.
+
+`SnapshotInfo.StoredBytes` now sums the original memory/state/private-drive
+encoded or allocated observations rather than logical source lengths. It retains
+the existing exclusion of the small backing sidecar, whose receipt is nevertheless
+required. Local allocation can change later through filesystem compression or
+deduplication; the receipt is an original commit-time observation, not a permanent
+allocation promise.
+
+GCS retirement uses the exact acknowledged generation and generation-match
+precondition in the deletion operation. A missing original generation is
+idempotent evidence; a replacement is never deleted. This primitive grants no
+owner authorization or native automatic-retirement wiring. Local retirement is
+explicitly unsupported: Linux has no conditional inode-matching unlink operation,
+and a stat followed by unlink can delete a replacement. Original local objects
+are retained pending a separately proven retirement protocol. Never downgrade
+that refusal to ordinary `StorageBackend.Delete`.
+
+Production qualification polling, native capture, native qualification restore,
+graph activation and serving convergence stay gated. Real VM acceptance and
+ordinary restoration are distinct from graph/qualification restoration. Artifact
+retirement wiring, local retirement, native qualification restore/smoke, generated
+binding delivery and complete graph evidence remain outstanding. The combined PR
+is deferred until the requested scope is ready.
+
+### Capture complete private graph cohorts before retirement (2026-10-07)
+
+After an internal graph visitor succeeds, scheduler dispatch now captures every
+member through the snapshot adapter in dependency-first order while the whole
+private cohort is still live. Durable capture support is checked before the
+graph is claimed. A partial capture failure leaves earlier member receipts
+available for diagnosis, marks dispatch incomplete, and retires the entire
+cohort. Retirement errors now identify the workload whose durable execution
+retirement failed.
+
+Focused scheduler tests cover complete and partial cohorts, exact capture to
+retirement generation matching, visitor failure before capture, capture
+replay/substitution, and refusal before claim when the durable capture adapter
+is absent. The environment-qualification scheduler test family passes on the
+local development host. This does not lift the native capture gate: vmmd still
+fails closed until artifact retirement and qualification restore acceptance
+are implemented. Qualification polling, isolated smoke, restored readiness,
+graph activation and serving convergence remain gated; the combined PR remains
+deferred.
+
+
+### Original artifact receipt validation (2026-10-06)
+
+All 21 Go source fingerprints match the validation checkout on the
+user-authorized internal nested KVM node. Full storage race tests passed
+(7.116 s), as did native/qualification and ordinary snapshot race regressions
+(34.279 s). Normal storage/fcvm lint and changed-code metal lint each reported
+zero issues. The previous full-metal lint baseline of thirteen untouched findings
+is not represented as clean. The actual GCS SDK upload/read/delete fixture also
+passed under the macOS race detector (3.999 s); its HTTP service and generation
+replacement cases are modeled, not live GCS bucket acceptance. That fixture
+caught and corrected incompatibility between the JSON client and the explicit
+compressed-read option; final reads pin the generation and reject unexpected
+SDK decompression.
+
+Under the shared acceptance lock, `make test-metal` passed native recovery,
+trusted capture protocol, actual Firecracker capture/ordinary restore and the
+persistent intent/object-receipt corruption and restart fixtures (37.289 s).
+`make leakcheck` was clean. The actual VM child passed in 13.66 s (14.75 s
+including its namespace wrapper). All four objects were reopened through their
+original receipts and verified to EOF. Memory was 134,217,728 logical and
+63,950,848 allocated bytes; device state was 13,696 logical and 16,384 allocated;
+the private drive was 67,108,864 logical and 86,016 allocated. The required backing
+sidecar was 177 logical and 4,096 allocated bytes. `StoredBytes` was exactly
+64,053,248, excluding that sidecar, instead of the 201,340,288 logical-byte sum.
+The original VM resumed and retired, its original memory fence was restored
+without an OOM kill, and ordinary restore produced a fresh guest readiness UUID.
+The locally assembled guest's scan admission remains explicitly modeled.
+
+The final exclusive writer separately published and SHA-256-verified 512 MiB of
+dense data under `MemoryMax=256M` and `MemorySwapMax=0` (10.99 s). This exercised
+the receipt-capable writer's bounded dirty-page copy and original metadata
+observation, not an additional VM lifecycle. Logs, patch/archive and matching
+source fingerprints are retained under `outputs/gitops-hardening-20261005`.
+
+These are scoped nested-node, original-publication and content-read results.
+They do not establish native qualification restore, complete graph readiness,
+binding delivery, serving convergence, live GCS retirement or local conditional
+retirement. Those gates stay closed and the combined PR stays deferred.
+
+### Receipt-bound restore input barrier (2026-10-06)
+
+The internal restore preparation boundary now reads the original immutable
+publication intent and all four durable object receipts as one complete cohort.
+A missing receipt returns no partial cohort. The original completed capture must
+match the intent's instance, generation, boot and start frame, logical memory and
+device-state sizes, and the sum of the first three original encoded/allocated
+sizes. Aliased receipt files, canonical object keys or local inode observations,
+reordered objects and accounting overflow refuse before storage IO. The backing
+sidecar is excluded from accounting but remains required.
+
+Materialization uses only receipt-bound storage readers, sequentially copying
+verified logical bytes with bounded sparse writes into anonymous `O_TMPFILE`
+inodes on a pinned private ext4/XFS/Btrfs disk outside the jail. The shared storage
+copy helper includes exact EOF, logical SHA-256, size and original reader Close
+verification in its result. An uncertain or incomplete source supplies no usable
+copy receipt. Ordinary Get, LocalPath, cache fallbacks and caller-selected host
+artifact paths cannot replace that proof. The directory's original inode and
+placement and all original intent/receipt files are checked before each copy and
+again before the synchronous consumer receives any descriptor.
+
+Only after all four source readers have closed successfully are the output
+descriptors handed to the consumer: original anonymous inodes at offset zero,
+mode 0400 and read-only access; the sole writable description is already closed.
+The backing JSON parser rejects ambiguous, missing, null, duplicate, unknown and
+trailing fields and requires equality with the completed capture's original
+backing identity. Its bound is `api.NativeSnapshotBackingRecordMaxBytes` (4096).
+Every output descriptor closes before this boundary returns, including on
+consumer failure, cancellation or a final journal-check failure. Failed copies
+leave no named staging files and never delete canonical objects or receipts.
+
+This is a verified-byte barrier, not execution authorization. Reading retained
+evidence cannot create a recovered producer, a new native generation, launch,
+qualification restore, isolated smoke, readiness, artifact retirement or graph
+activation authority. Production support gates remain closed. The real-VM
+acceptance fixture materializes the verified bytes into a separate disposable
+test-only store and exercise ordinary two-drive restore there; production inputs
+remain anonymous pending native staging ownership and the original qualification
+restore execution frame. Owner-authorized retirement, local conditional
+retirement, qualification restore/smoke, binding delivery and serving evidence
+remain outstanding. No new PR is opened until the requested combined scope is
+ready.
+
+### Restore input barrier validation (2026-10-06)
+
+On the user-approved nested GCP KVM node with Go 1.25.13, the complete storage
+race suite passed (6.854 s), as did the final native/qualification/snapshot race
+suite (36.136 s). Normal storage/fcvm lint and changed-code metal lint each
+reported zero issues. The existing unrelated full-metal lint findings remain
+outside this change. macOS receipt-materialization race tests also passed
+(1.892 s; the existing linker `LC_DYSYMTAB` warning was non-fatal).
+
+The final `make test-metal` selection passed (39.337 s), including native
+ownership/recovery, persistent publication intent/receipt corruption and the
+new restore-input fault cases. `make leakcheck` reported no leaked namespaces,
+TAPs, jails, cgroups, processes, mounts or native loops. Actual Firecracker
+capture and receipt-verified ordinary restore passed in the isolated child
+(13.50 s; 14.59 s including the namespace parent). The original VM resumed,
+retired and restored through verified copies without cold fallback; the fresh
+guest supplied a new readiness/entropy UUID. Its original receipts observed
+134,217,728 logical / 65,171,456 allocated memory bytes, 13,696 logical / 16,384
+allocated device-state bytes and 67,108,864 logical / 86,016 allocated drive
+bytes. The 177-byte / 4096-allocated-byte backing sidecar was required but
+excluded from the 65,273,856-byte stored total.
+
+A separate compiled storage test published, materialized and hashed dense
+536,870,912-byte source data under `MemoryMax=256M`, `MemorySwapMax=0` (18.67 s).
+Its private copy retained `nlink=0`; this exercises bounded dirty-page copying
+while the original artifact and second anonymous disk copy both exist. All nine
+changed Go fingerprints match the final node validation source. The first metal
+attempt stopped on a test diagnostic formatting error; the next refused restore
+because the separate test store lacked the fixture's modeled scan sidecar.
+Both had clean leak checks. The final run preserved that modeled admission
+evidence in the disposable store and passed without weakening the scan guard.
+
+This is scoped nested-node lifecycle and verified-byte evidence, not Grype,
+bare-metal/reboot/power-loss, native qualification restore, complete graph smoke,
+binding delivery, serving convergence or artifact-retirement acceptance.
+Production gates stay closed and the combined PR stays deferred.
+
+### Descriptor-backed native restore staging (2026-10-06)
+
+The next internal boundary joins the complete original capture/receipt cohort
+to a separately prepared native target's existing image ownership journal.
+It requires the target's original local generation and live daemon/disk locks,
+exact physical lease and kernel boot, canonical jail root, unrevoked prepared
+state, all four private read-only anonymous receipt-sized descriptors and the
+original backing identity and digest. The target cannot reuse the capture's
+instance or physical generation. These checks precede any staging effect;
+original receipts and target authority are rechecked between the three images
+and at the end. This boundary grants staging only, never a qualification restore
+execution frame, Firecracker load, cold fallback, smoke, readiness or activation.
+
+The Linux adapter copies from the still-open input FD into a new anonymous
+ext4/XFS/Btrfs inode on the configured persistent staging disk outside the jail.
+An independently reopened original FD gives the copy its own offset; no ordinary
+Get, LocalPath, cache resolver or caller-selected source pathname is used.
+Source metadata, read-only access, close-on-exec, link count and original length
+are checked before copying; the staging root and clone identities are checked
+again afterwards. Reflink or bounded buffered copy produces a distinct inode;
+the clone's full logical SHA-256 must match its original object receipt before
+image epoch publication, a source name, a mount or a permission grant.
+
+All three clones remain exclusive to one target reference. The pre-existing
+image journal and separate persistent disk claim precede the temporary source
+link and original anchor bind. Memory and device-state clones receive read-only
+jail binds with nodev/nosuid/noexec attributes; the private drive receives the
+target UID/GID and its own writable bind. The verified inputs retain their
+original mode and inode and cannot receive guest writes. Disk claim validation
+allows read-only anonymous clones only for the canonical memory/device-state
+input names, initial mode 0600, original vmmd UID and the exact read permission
+grant; sharing, hardlink references and arbitrary read-only names still refuse.
+
+Producer descriptors and temporary names join before staging returns; original
+image anchors and references retain the clone through input descriptor closure.
+An interrupted effect or uncertain producer Close returns failure and preserves
+the owning epoch. Retrying cannot produce another clone for that occupied
+target. Existing same-boot quarantine, original-epoch retirement, full inventory
+and different-boot exclusion rules apply to these new read-only claims as well.
+No canonical object or publication receipt is removed. Persistent disk claims
+are staging cleanup evidence and confer no artifact-retirement authority.
+
+Production qualification capture and restore, restore execution ownership,
+isolated smoke, complete graph readiness, binding delivery and serving
+convergence remain gated. The combined PR stays deferred until the requested
+scope has its required implementation and acceptance evidence.
+
+### Native restore staging validation (2026-10-06)
+
+The final native/qualification/snapshot race selection passed on the approved
+nested GCP KVM node with Go 1.25.13 (45.993 s). Normal storage/fcvm lint and
+changed-code metal lint reported zero issues. The known unrelated full-metal
+lint findings were not modified or reclassified by this checkpoint.
+
+`make test-metal` passed its native ownership/recovery, publication, verified
+restore-input and disk-staging selection (54.612 s). The persistent-disk fixture
+joined fifteen actual producer exits across drive, output, memory-input,
+device-state-input and restore-drive preparation, each interrupted at source,
+anchor and binding acknowledgement. Its isolated child passed in 6.96 s
+(8.05 s including the parent). These use modeled guest data and original
+prepared journal owners, with real disk inodes, persistent claims, mounts,
+read-only attributes and cleanup. The successful staging case joins actual
+four-object local writer/read receipts to the original daemon's prepared target,
+preserves the verified inputs during drive writes, keeps data off jail tmpfs,
+removes temporary names and retains original anchors after input closure.
+
+The final real VM regression also passed (14.07 s in the isolated child, 15.16 s
+including the parent). Its original native VM paused, captured, resumed and
+retired; receipt-verified copies restored through the separate ordinary
+lifecycle fixture with fresh readiness/entropy and no cold fallback. Original
+writer receipts observed 134,217,728 logical / 64,901,120 allocated memory bytes,
+13,696 logical / 16,384 allocated device-state bytes and 67,108,864 logical /
+86,016 allocated drive bytes. The required 177-byte backing sidecar was excluded
+from the 65,003,520-byte stored total. `make leakcheck` reported no leaked
+namespaces, TAPs, jails, cgroups, processes, mounts or native loops.
+
+Modeled fault tests refuse changed target generation/boot/lease, recovered or
+missing daemon authority, incomplete receipts or descriptors, writable/named/
+changed-size/changed-mode inputs, missing close-on-exec, changed backing identity
+or original backing bytes, and cancellation before staging. Real descriptor
+copy tests check original digest, independent source offset and clone inode,
+private write isolation and no name on failed verification. Lost anchor
+acknowledgement or producer Close blocks recopy until original-owner retirement.
+Read-only different-boot cleanup is modeled, not a real reboot acceptance test.
+
+These results supply staging and ordinary VM regression evidence. They do not
+establish native qualification restore execution, format/backing validation at
+load, isolated graph smoke, binding delivery, serving convergence, live GCS
+retirement, local conditional retirement or bare-metal/reboot/power-loss
+acceptance. Production gates remain closed and no PR is opened.
+
+### Separate qualification restore admission (2026-10-06)
+
+Schedd can internally reserve one restore target for the same reviewed
+qualification attempt after the original capture producer has complete native
+retirement evidence. The source reservation and immutable capture receipt stay
+unchanged. The target has its own instance, wake, placement and cleanup token,
+consumes normal node/worker/service capacity, and retains the source capture ID
+in both its immutable execution frame and database association. Admission and
+dispatch recheck the current source/graph lease and captured runtime inputs.
+This is a reservation contract, not native restore or readiness evidence.
+
+Memory and PostgreSQL stores refuse a second target, replacement placement,
+stale inputs, generic producer dispatch and duplicate restore dispatch. A lost
+dispatch response does not authorize replay. The current capture protobuf and
+native v2 incoming journal reject restore frames rather than erase their source
+identity. Existing capture journal JSON remains unchanged and readable. A
+dedicated restore protocol and original native owner must join this reservation
+to the receipt-bound descriptor staging primitive before any load can execute.
+
+Every unretired VM belonging to a request blocks attempt replacement, including
+the target after the producer has retired. Recovery uses the target's original
+node and the source attempt's lease, retains the capture association through
+control-plane purge, and grants cleanup only. Generic terminal/deletion writes
+cannot release an unretired target. A dispatched target requires its own native
+retirement proof and cannot borrow the captured producer's physical generation;
+an undispatched target accepts only exact never-dispatched evidence. Retained
+execution IDs cannot be reused after instance collection. Database triggers
+protect the same identities and the additive migration preserves them on replay.
+
+Native restore execution/load, backing compatibility, isolated smoke and fresh
+restored readiness, original-owner artifact retirement, generated binding
+delivery, complete graph evidence and serving convergence remain outstanding.
+Production qualification, activation and enforcement gates stay closed. The
+combined PR remains deferred until the full requested scope is reviewable.
+
+The final Linux restore/retirement/compatibility race selections passed with
+Go 1.25.13 on the approved nested GCP node: state (1.754 s), PostgreSQL/memory
+contracts (26.645 s), qualification wire (1.072 s) and native qualification
+guards (1.275 s). The broader GitOps/qualification PostgreSQL selection passed
+(153.779 s), as did scheduler (24.122 s) and wire (0.024 s) regressions. Contract
+coverage includes concurrent/idempotent admission, independent cleanup tokens,
+node admission, source retirement and wake separation, stale inputs before
+admission/dispatch, no dispatch replay, no generic terminal/readiness writes,
+no borrowed producer retirement, expiry/purge recovery, new-attempt refusal to
+adopt prior capture, raw SQL guards and migration replay. These capture and
+retirement records are storage fixtures, not native restore evidence.
+
+Linux lint for state, PostgreSQL integration, qualification wire and fcvm and
+changed-code metal lint reported zero issues. Repository-pinned sqlc v1.31.1
+regeneration matched the checked-in bindings. Local Darwin regressions and
+focused race selections also passed; full Darwin lint retained nineteen unused
+findings in unchanged helpers with Linux-only callers. They were not suppressed
+or treated as passing full-platform lint. Prior unrelated full-metal lint
+findings remain outside this checkpoint.
+
+`make test-metal` passed native ownership, publication, input/staging and capture
+regressions (54.911 s). The disk image fixture joined fifteen producer exits and
+successful descriptor staging (6.22 s child / 7.31 s parent). The actual VM
+capture, resume, retirement and receipt-verified ordinary restore regression
+passed (14.18 s child / 15.27 s parent), with 134,217,728 logical / 64,684,032
+allocated memory bytes, 13,696 logical / 16,384 allocated device-state bytes,
+67,108,864 logical / 86,016 allocated drive bytes and 64,786,432 stored bytes.
+The required 177-byte backing sidecar remains excluded from that stored total.
+Its scan sidecar is modeled. `make leakcheck` found no leaked namespaces, TAPs,
+jails, cgroups, processes, mounts or native loops. All 8,307 Go source
+fingerprints matched the validated upload. These checks preserve the ordinary
+VM regression and capture protocol; native qualification restore/load remains
+unimplemented and production gates stay closed.
+
+### Separate native restore incoming authority
+
+The target reservation now has an internal native incoming profile distinct
+from the unchanged v2 capture journal. It retains the exact restore frame,
+original capture namespace/completion and a target-specific cleanup token,
+bounded deadline and incoming generation. Creation requires the original
+source frame, same attempt, RAM and node, a completed capture and fully retired
+source physical record. Wake and cleanup identities must differ even under
+alternate UUID spellings. Cross-node capture adoption and restore-of-restore
+remain unsupported. The profile is not yet exposed through scheduler dispatch
+or the private RPC transport.
+
+Capture, restore and ordinary UUID producers acquire the same canonical incoming
+lock before any physical publication. Each target receives its own durable
+physical generation before launch preparation; it cannot adopt prior capture
+or ordinary physical ownership. The producer rechecks original capture evidence
+before binding and launch. A lost acknowledgement cannot replay admission or
+physical preparation. Recovery retains an uncertain planned target lease,
+validates source and target identities, and grants no runtime/producer/readiness
+authority. The qualification binding still forbids generic generation
+replacement and cold fallback.
+
+The Linux staging operation holds that target incoming lock through the original
+receipt reads, descriptor verification and image epoch preparation. It imposes
+the target's original dispatch deadline, requires its live registered daemon
+and prepared physical owner, and compares publication intent with the exact
+retired source incoming frame and original jail base. Memory/device-state
+remain read-only clones and the private drive remains independently writable.
+This joins the existing anonymous input and native staging primitives without
+ordinary storage lookup, path fallback or artifact deletion authority.
+
+Target revocation joins the launch gate before fencing its own physical record.
+Only that target's confirmed process exit and complete resource removal supply
+its retirement receipt. A missing physical record or incoming tombstone cannot
+release the target. Once admitted, cleanup does not depend on re-reading source
+capture evidence, so damage there cannot transfer or remove target cleanup
+authority. Production capture, qualification polling, activation and enforcement
+remain gated. Snapshot format/backing validation, dedicated load/resume,
+isolated smoke/fresh readiness, artifact retirement, scoped binding delivery
+and graph/serving evidence remain outstanding; the combined PR remains deferred.
+
+The dedicated restore admission/binding/staging and existing capture/input
+race selection passed on the approved nested Linux node with Go 1.25.13
+(17.006 s). Broader native/qualification/restore regressions passed for fcvm
+(55.354 s), qualification wire (0.048 s), vmmd RPC (0.103 s) and scheduler
+(24.046 s). Full normal Linux fcvm lint and changed-code metal lint reported
+zero issues. The local Darwin native qualification race selection also passed
+(17.176 s); full Darwin lint was not rerun. The previous platform-specific
+unused findings and unrelated full-metal lint findings remain unchanged.
+
+`make test-metal` passed the native ownership, publication, receipt inputs,
+staging and actual VM regression selection (58.322 s), and `make leakcheck`
+reported no leaked resources. Actual source capture/resume/retirement and
+receipt-verified ordinary restore passed (14.49 s child / 15.58 s parent),
+with 134,217,728 logical / 64,339,968 allocated memory bytes, 13,696 logical /
+16,384 allocated device-state bytes, 67,108,864 logical / 86,016 allocated
+drive bytes and 64,442,368 stored bytes. The 177-byte backing sidecar remains
+excluded from that stored total. The new restore profile's ownership/staging
+tests use modeled source evidence and its guest load/resume is not implemented.
+The VM regression's scan sidecar remains modeled. Exact inventory and hashes
+matched all 8,312 Go files; no Go source changed after those checks. No production
+gate or PR was opened by this checkpoint.
+
+### Original backing paths and descriptor custody (2026-10-06)
+
+Qualification capture now records the original native kernel/base reference
+names, content digests, sizes, inode identities and source epochs before its
+publication intent or snapshot effects. It hashes pinned read-only source
+anchors while retaining the source epoch and original incoming/physical
+locks; ordinary key resolution and current jail paths cannot supply that
+evidence. Both observed image digests must match the backing identity of the
+running workload. The current internal profile accepts exactly the kernel and
+base read-only bindings; additional workload drives need their own complete
+path/content contract before qualification restore can support them.
+
+This separate, bounded private record leaves the existing capture journal,
+publication intent and three-field backing sidecar formats unchanged. It is
+written once; an uncertain first publication cannot be overwritten or adopted.
+Recovery validates the original capture relationship and strict JSON shape
+without granting producer authority. Captures predating this evidence remain
+retained but cannot supply the dedicated backing staging operation.
+
+The first restore target producer now stages the kernel and base using the
+captured names. Caller paths supply candidate bytes only. Both candidates are
+opened as pinned regular-file descriptors, streamed into anonymous files on
+the configured private disk, checked against the original sizes and digests,
+then sealed; candidate and writable descriptors close before target image
+effects. Only verified copies reach the native staging backend. A candidate may
+live on another filesystem or have a different basename; neither changes the
+captured drive path. Changed bytes,
+missing evidence, source-reference substitution, expired/revoked targets and
+recovered owners fail closed. Partial native epochs block replay.
+
+A v2 persistent disk claim carries the exact captured backing witness for each
+new exclusive read-only clone. The v1 read-only disk claim remains restricted
+to its fixed memory/device-state names. Both profiles retain the target's own
+native image epoch before a temporary disk name or permission grant, and
+recovery/retirement never borrow the source capture's inode or generation.
+All record and filename parser bounds remain in `pkg/api/limits.go`.
+
+Dedicated snapshot load/resume, snapshot format compatibility, restored
+readiness/entropy, scoped binding delivery and graph/serving evidence remain
+outstanding. This checkpoint does not open qualification dispatch, capture,
+activation or enforcement, and the combined PR remains deferred.
+
+The final backing custody race selection passed locally on Darwin (4.124 s)
+and on the approved nested Linux node (6.363 s), with Go 1.25.13. The broader
+Linux native/qualification/restore race selection passed (43.373 s); regressions
+passed for fcvm (53.035 s), qualification wire (0.028 s), vmmd RPC (0.063 s)
+and scheduler (24.087 s). Full normal Linux fcvm lint and changed-code metal
+lint reported zero issues. These checks matched the exact inventory and hashes
+of all 8,318 Go files. The existing Darwin linker warning and unrelated
+full-metal lint findings remain unchanged.
+
+`make test-metal` passed the expanded native selection (94.503 s), including
+21 disk producer-death cases and actual capture/resume/source retirement,
+separate target backing staging and target retirement. `make leakcheck` found
+no leaked resources. The actual VM regression passed in 19.70 s child / 20.79 s
+parent, with 134,217,728 logical / 64,663,552 allocated memory bytes,
+13,696 logical / 16,384 allocated device-state bytes, 67,108,864 logical /
+86,016 allocated private-drive bytes and 64,765,952 stored bytes. The backing
+sidecar remains excluded from the stored total. That target has its own native
+generation, slot, UID, IP, wake and cleanup identity; it does not load the
+snapshot. The separate receipt-verified ordinary restore regression also
+passed with fresh guest UUIDs. Scan evidence remains modeled in this fixture.
+
+### Dedicated restore effect boundary (2026-10-06)
+
+The internal native restore loader joins the original completed capture and
+publication receipts to five exclusive target image epochs: captured kernel
+and base names, fixed memory/device-state names and the writable private drive.
+Before its first effect it opens their original anchors, verifies inode identity,
+size and complete content digest, and closes each descriptor under its source
+lock. Linux additionally requires the original anonymous disk claim; backing
+claims retain the exact original capture witness. Missing, substituted, extra
+or aliased bindings cannot reach a load effect. Logical memory must equal the
+original target RAM reservation. Ordinary storage/path lookup and cold fallback
+cannot supply this operation.
+
+The restore binding requires guest RAM to equal the captured execution's
+reservation before physical publication. The existing cgroup policy adds its
+billable overhead once. An oversized lease, including a lease that already
+includes that overhead, cannot manufacture a larger normal restore fence.
+
+Verified restore clones use a separate v3 disk-claim profile. Their original
+staging capability removes its exact temporary source link while retaining
+the immutable pre-anchor claim, including the captured backing witness where
+applicable. Same-boot inventory requires the original image epoch and preserves
+this custody until original anchor retirement; missing native authority is
+quarantined. The claim grants neither staging replay nor load authority. Older
+v1/v2 transient staging behavior is unchanged, and a transient or missing claim
+cannot be adopted by the loader. Different-boot cleanup retains the existing
+original disk identity and exclusion checks.
+
+A separate bounded `qualifications/restores/loads/<target>.json` record binds
+the target incoming generation, original PID/start time, native generation and
+kernel boot to exact hashes of its incoming/capture/backing evidence and all
+five target image witnesses. Six ordered phases persist intent before load,
+resume and the mandatory guest hook, then acknowledgement afterwards. The
+loader holds target incoming and physical locks throughout. Any uncertain
+effect or journal acknowledgement stops the sequence; another delivery or
+recovered record cannot load, resume or run the hook again. Recovery validates
+the retained source/target relationship and image epochs without granting
+producer or readiness authority. Target revocation and independent retirement
+retain the original evidence.
+
+The original incoming context also retains a process-local one-shot load permit.
+It is consumed before the first load journal publication, and rebuilding that
+same context cannot reset it. Even a lost or damaged journal file cannot let
+the original live caller replay a load. Inventory cannot recreate this permit.
+The loader also retains read-only original cgroup, limit and pidfd descriptors
+throughout all effects. Its record binds the original cgroup inode and path;
+every phase checks exact process membership, credentials, original inode and
+normal billable RAM limit. Restore cannot request capture headroom or adopt a
+replacement cgroup. All these descriptors close under the physical lock.
+
+The fixed native API adapter pins the original target pidfd and Unix peer for
+each single request. Load explicitly leaves the guest paused; only its durable
+load acknowledgement permits a separately recorded resume. The native resume
+hook uses the existing entropy/clock payload once, with original PID/start-time
+and Unix peer checks before handshake, before payload and after acknowledgement.
+Ordinary serving keeps its existing resume transport and fallback behavior.
+The effect record supplies no graph, serving, scoped binding or activation
+evidence. Scheduler/RPC integration and qualification readiness remain gated.
+
+Firecracker 1.7's load API has no vsock override. The captured guest CID therefore
+needs a scoped channel identity contract before integration with Manager's
+fresh slot index; a separate jail and pinned peer alone cannot supply that
+contract. Explicit original Firecracker binary/version provenance, scoped
+binding delivery and isolated graph evidence remain outstanding. Firecracker
+itself checks snapshot format compatibility at the synchronous load boundary;
+a rejected load cannot enter ordinary fallback. The combined PR remains
+deferred until the agreed implementation pieces are ready.
+
+The final portable restore journal/capability/exact-RAM race selection passed
+on Darwin (5.340 s). The expanded Linux restore, custody, control and resume
+race selection passed on the approved nested KVM node (91.651 s), with Go
+1.25.13. Broader regressions passed for fcvm (142.234 s), qualification wire
+(0.024 s), vmmd RPC (0.162 s) and scheduler (1.966 s). Full normal Linux fcvm
+lint and changed-code metal lint reported zero issues. Exact inventory and
+hashes matched all 8,332 Go files; no Go source changed after those checks.
+The existing Darwin linker warning and unrelated full-metal lint findings
+remain unchanged.
+
+`make test-metal` passed the expanded native selection (161.926 s), and
+`make leakcheck` reported no leaked resources. Actual source capture/resume/
+retirement, dedicated target load/resume/entropy hook/independent retirement,
+and the separate receipt-verified ordinary restore passed in 27.77 s child /
+28.88 s parent. Original memory was 134,217,728 logical / 64,937,984 allocated
+bytes, device state 13,696 logical / 16,384 allocated bytes, and private drive
+67,108,864 logical / 86,016 allocated bytes; stored total was 65,040,384 bytes,
+excluding the backing sidecar. The dedicated target retained five anonymous
+exclusive image epochs and original v3 claims across same-boot inventory. It
+used a read-only pinned normal RAM fence, received fresh guest entropy, had
+distinct UID, IP and netns, rejected load replay and retired under its own
+physical generation. Scan evidence remains modeled in this fixture. These
+checks supply scoped nested-node VM evidence; they grant no production dispatch,
+graph qualification, serving convergence, activation or enforcement. No PR was
+opened by this checkpoint.
+
+### Dedicated restored platform channel identity (2026-10-06)
+
+A restored qualification target retains the captured guest CID but has a fresh
+native lease and host namespace. Its platform traffic must never resolve through
+Manager's slot-derived CID index or its ordinary serving receivers. The internal
+restore path therefore uses a separate per-target receiver group for the guest
+event, workload identity and runtime configuration ports. Each callback receives
+the immutable original target execution frame and an authority-bound stream.
+Callbacks are selected explicitly; missing or additional handlers fail before
+endpoint publication. There is no default serving callback or credential fallback.
+Ordinary receiver preparation refuses a retained private restore target.
+
+Only the original live load producer, after observing the durable entropy/clock
+hook acknowledgement, can open this group. The same process-local load permit
+retains an acknowledgement bit and a separate one-shot channel publication bit.
+Lost hook/journal acknowledgements, retained completed records, daemon restart,
+revocation, expiry and partially published endpoints cannot recreate it. The
+receivers open after the hook: early guest traffic cannot reach a readiness or
+credential adapter while the restore sequence is incomplete. Future guest runtime
+delivery must use the explicit private adapters rather than mutate the published
+private drive before load or publish the target into Manager's serving indexes.
+
+Preparation holds original incoming and physical authority and pins the live
+target's read-only process/cgroup fence. It pins the original jail directory and
+each newly bound socket inode before granting endpoint metadata. Permission and
+ownership changes use those descriptors. The `Fchmodat2`/`AT_EMPTY_PATH` capability
+is required; unsupported hosts retain original target ownership and fail closed.
+Existing paths are never removed or adopted. The target directory and endpoint
+inode, private permissions and ownership are checked again for every stream.
+The group leaves closed endpoint names for original physical jail retirement;
+neither a late accept loop nor old cleanup unlinks a replacement socket pathname.
+
+Each accepted connection acquires its own original read-only cgroup and pidfd
+custody. Its kernel Unix credentials must match the original Firecracker PID,
+UID and GID, and the pinned process/start time, cgroup membership/inode and normal
+RAM fence must remain intact. Around every read/write it also checks the original
+target, live daemon generation, immutable load/capture/backing evidence and all
+five target image epochs. Revoked input is cleared before returning to the
+callback. A possibly completed write is reported as uncertain and never retried
+by the transport. Cancellation closes connections; deadlines cannot be extended
+past the original target or the five-second stream budget. Admission is bounded
+to 64 concurrent streams per port. Original retirement closes and joins the
+receiver group and its descriptors before releasing the jail.
+
+This is a transport identity contract, not fresh runtime publication, scoped
+binding installation, application acknowledgement, graph smoke or readiness.
+Private adapters must independently join their current reviewed graph/runtime
+contract before state or binding effects. Production Manager/RPC dispatch,
+Firecracker binary/version provenance and activation remain gated. The combined
+PR stays deferred until the agreed implementation pieces are ready.
+
+The approved nested x86_64 KVM test node ran the restored-guest metadata path
+with the captured CID deliberately occupied, refused a host Unix peer, and
+joined a blocked stream on target retirement. The focused native VM test,
+leakcheck and metal lint passed. A full inventory of 8,337 Go files matched the
+local source hashes exactly. Earlier Linux race, portable race, normal lint and
+restore/custody regression selections also passed. These results validate this
+transport checkpoint only; runtime publication, scoped binding delivery,
+original Firecracker provenance, complete graph smoke and serving convergence
+still need their own evidence. The test node was user-approved for this work;
+this scoped result does not claim production acceptance.
+
+### Restored target runtime receipt and service selection (2026-10-06)
+
+Restoring a captured workload creates a distinct instance and execution frame.
+Runtime publication now requires that exact current restore admission, the
+original capture identity, durable dispatch, current source/account/node
+authority and fresh runtime inputs. The target transitions to running and gets
+its own immutable runtime-input receipt in the same state transaction. Exact
+replays are idempotent; a changed runtime identity or input receipt is rejected.
+The PostgreSQL receipt trigger applies the same restored-frame fence to direct
+writes and keeps it in force if application binaries roll back.
+
+The private HTTP resolver follows a workload's current restore reservation once
+present; it never substitutes the retired capture instance. It rejects a
+reserved or dispatched target until that target has published its own runtime
+receipt. Both the restored caller and restored dependency must have current,
+fresh receipts before a graph route is returned. A route remains bounded by the
+qualification lease and uses only the explicit reviewed target port.
+
+Race-enabled scheduler and in-memory store/integration selections passed. The
+approved internal x86_64 KVM node passed PostgreSQL-backed restore publication,
+service-routing and migration-replay selections in 15.058 seconds; migration
+replay and trigger guards passed, and the full Go-source inventory matched all
+8,340 local hashes. Changed-code lint reported zero issues. This is a
+state-store receipt and route-selection contract, not evidence that the
+production scheduler dispatched a native restore or that a guest received its
+runtime configuration or bindings. Manager/RPC dispatch, the private guest
+delivery adapter, application acknowledgement, graph smoke and serving
+convergence remain gated. The combined PR remains deferred until the agreed
+implementation pieces are ready.
+
+### Candidate dependency preflight and function creation coverage (2026-10-07)
+
+Newly reserved function workloads now have an end-to-end regression through
+reviewed source request, candidate publication and graph pinning. The test
+confirms the selected runner, approved commit, original service-binding target
+ID and execution hold survive reservation into build preparation.
+
+Candidate preparation rejects a scoped service binding before publishing any
+candidate or build unless the original target is itself in the same prepared
+graph, uses the HTTP workload class and has an explicitly reviewed port. A
+retained live deployment or inherited app port is not a substitute: the private
+qualification router only supports same-graph attempts and the explicit frozen
+port. Memory/PostgreSQL integration cases and scheduler graph tests pass. The
+full `pkg/state` test command could not finish because the host ran out of disk
+while linking its test binaries. This preflight does not enable production
+qualification dispatch; durable graph dispatch, guest binding acknowledgement,
+smoke/restore evidence and activation remain gated.
+
+### Internal atomic service-binding graph dispatch (2026-10-07)
+
+Durable discovery now pages complete prepared HTTP service-binding graphs rather
+than exposing their members as independently claimable work. Each page is
+advisory. The claim transaction rechecks current source authority, every frozen
+candidate artifact, graph completeness, same-node ownership, supported HTTP
+execution mode and the absence of active or unretired attempts. It then assigns
+distinct lease tokens and reserved instance IDs to all members in one commit;
+a stale or ineligible member rolls back the whole cohort.
+The per-request claim API also refuses binding members, so a caller cannot
+bypass graph dispatch by supplying a discovered request ID directly.
+
+The internal scheduler adapter requires the private node-local binding resolver
+and attempt-aware execution and retirement adapters. It pins every graph member
+to the node that atomically claimed the cohort, opens runtimes dependency-first
+for one lease-bounded visitor, then retires callers before dependencies. This
+supports the scoped HTTP binding graph during
+qualification without allowing a caller to substitute a retained deployment,
+serve through production routing, or qualify only part of its graph.
+
+Memory/PostgreSQL tests cover split ownership, direct per-member claim refusal,
+HTTPS/non-HTTP exclusion, and graph claim atomicity; scheduler tests cover graph
+execution, binding-route resolution and reverse retirement. This adapter is not
+wired into production polling and supports neither HTTPS nor worker/job graphs. A
+successful visitor still grants no guest acknowledgement, isolated smoke,
+restore evidence, readiness or activation. Production qualification and
+serving convergence remain gated.
+
+### Dedicated qualification restore RPC boundary (2026-10-07)
+
+The restore path now has its own additive vmmd RPC, scheduler client capability
+and wire encoder/decoder. The restore-only execution profile carries the
+separate capture instance ID; ordinary create/capture encoding and decoding
+continue to reject that authority. Retirement accepts either the original
+capture frame or its distinct restore target, and the native Manager routes a
+target cleanup through the restore journal. The RPC server and client both
+require an exact `WAKE_RESTORE` result, so ordinary Wake's cold-boot fallback
+cannot satisfy restore. Older vmmd implementations remain unsupported for this
+optional capability.
+
+Wire, scheduler, vmmd gRPC and focused native journal tests pass, as does
+`make proto-check`. This establishes the protocol and cleanup boundary only:
+the production native Manager still lacks the restore producer, and the
+scheduler does not yet reserve, dispatch, publish and validate restored graph
+runtimes. Guest configuration and binding delivery, application
+acknowledgement, isolated graph smoke and serving convergence therefore remain
+gated. The combined PR remains deferred until the agreed implementation pieces
+are ready.
+
+### Internal two-phase graph restore smoke dispatch (2026-10-07)
+
+The scheduler now has an explicit restore-capable graph dispatch option. It
+runs the candidate graph visitor, records a capture for each member only after
+that visitor succeeds, and waits for the complete source cohort to retire
+before opening any restore target. Restore admission is a distinct charged
+instance on the same pinned node, and publication uses the target's own runtime
+receipt. A second visitor receives the restored graph; dependency bindings
+resolve to restored targets, and nested cleanup retires the restored callers
+before their dependencies. Missing restore admission, publication or native
+restore capability is rejected before a graph claim or VM effect. Restore
+failure still leaves candidate deployments held.
+
+Scheduler tests exercise source capture/retirement ordering, distinct target
+identity, same-node placement, restored service routing, independent target
+retirement and capability preflight. The internal path now persists an immutable
+per-attempt restore receipt only after the dedicated restore RPC succeeds, the
+target publishes its own fresh runtime-input receipt, and native retirement
+completes. Assessment verifies the receipt belongs to the current capture and
+attempt, and clears the restore-evidence blocker only when every candidate has
+one. The second visitor remains unrecorded smoke evidence, so the isolated-smoke
+blocker stays. This does not enable production polling: the native Manager
+restore producer, guest runtime/binding delivery, application acknowledgement,
+isolated graph smoke and serving convergence remain gated; the combined PR
+remains deferred.
+
+### Captured Firecracker version is part of immutable evidence (2026-10-07)
+
+The qualification capture record now stores the exact Firecracker version used
+for capture. That value is returned in the private vmmd protocol and is
+mandatory when either state store accepts a capture receipt. A missing,
+whitespace-padded or oversized version is rejected, and the native restore
+journal compares its retained value against the capture record. This prevents
+an incomplete or old-format capture from silently losing its compatibility
+provenance as it moves through graph assessment and restore admission.
+
+Wire and state validation tests cover the pinned value and reject omission.
+The native restore claim now requires the configured running version and
+compares it with the original capture before publishing target authority. The
+load path repeats the comparison before consuming its one-shot load permit or
+issuing the native snapshot-load effect. Linux restore tests cover mismatch
+refusal at both boundaries, and the native qualification restore regression
+selection passed on the approved internal Linux node.
+
+This still does not wire the production Manager restore producer: it must pass
+the detected vmmd Firecracker version into both guards and orchestrate the
+dedicated restore lifecycle. The real-VM acceptance could not be rerun in this
+turn because the test-metal build exhausted the internal node's temporary build
+space before launching a VM. Guest configuration and binding delivery,
+application acknowledgement, isolated smoke and serving convergence remain
+gated.
+
+### Capture retirement binds its exact evidence identity (2026-10-08)
+
+Native retirement of a captured qualification VM now requires the retirement
+receipt ID to equal the capture record's `CaptureID`, alongside the existing
+native-generation and kernel-boot match. Restore admission checks the same link
+before it accepts a retired source capture. The memory store, PostgreSQL store,
+and PostgreSQL trigger enforce the same contract, including direct SQL writes;
+restore receipts also refuse source evidence without that exact association.
+
+The focused capture, restore-admission, restored-runtime, service-route,
+activation-evidence and raw SQL guard tests pass on the approved internal test
+node. The production native Manager restore producer and guest-level qualification
+gates remain open.
+
+The final test-only refinement separates target retirement failures for a
+borrowed capture generation, a foreign kernel boot and a reused capture receipt.
+That refinement is formatted but unverified: the authorized node could not be
+reached because this session could not resolve `compute.googleapis.com`, and the
+local Go build stopped with `no space left on device` while writing vet inputs.
+The earlier passing selection covers the implementation before this table-driven
+test refinement; no production gate is advanced by this checkpoint.
+
+### Durable post-visitor smoke evidence (2026-10-08)
+
+The internal restored-graph dispatcher now writes one immutable smoke receipt per
+member only after the complete restored graph visitor succeeds and the restore
+runtime window retires every target. Memory and PostgreSQL stores bind each
+receipt to the current request claim, graph, capture, restore receipt, stopped
+target and fresh runtime inputs. PostgreSQL direct writes use the same trigger
+fence. Activation assessment counts smoke separately from capture and restore;
+the second visitor alone does not clear the blocker without these receipts.
+
+The receipt proves that the configured internal visitor completed. It does not
+provide a production application-health policy, establish guest-level workload
+readiness, or authorize activation or serving. Production restore orchestration,
+guest configuration and binding acknowledgement, readiness, activation and
+serving convergence remain gated. This addition is formatted but unverified in
+this checkout: the earlier local Go test attempt exhausted available build space.
+
+### Restore-smoke receipt identity and local regression follow-up (2026-10-08)
+
+Idempotent smoke-receipt writes and activation assessment now verify that the
+restore receipt belongs to the same request attempt and target named by the
+smoke receipt. PostgreSQL retries read and validate the immutable restore row
+before returning an existing smoke receipt; the memory store applies the same
+check. This closes the path where a stale or mismatched restore record could be
+mistaken for a successful retry.
+
+The focused state evidence test, restored-graph smoke dispatch test and complete
+`pkg/fcvm` unit suite pass locally. The full fcvm suite required local Unix and
+TCP socket access. Earlier full state and scheduler runs also passed before this
+last identity refinement. PostgreSQL integration tests and native nested-KVM
+acceptance were not rerun in this follow-up. The production Manager restore
+producer, guest runtime/binding delivery, application-level smoke policy,
+activation and serving convergence remain gated.
+
+### Explicit per-member smoke reports (2026-10-08)
+
+The restored-graph visitor now returns a typed report for every graph member.
+The dispatcher requires exact resource and restored-instance coverage, a
+passing result, a policy ID, and lowercase SHA-256 digests for the evaluated
+policy and sanitized result. Empty, duplicate, failed, unexpected or
+cross-instance reports fail the dispatch before smoke evidence is written.
+Memory and PostgreSQL receipt writes retain those identifiers and digests;
+retries are idempotent only when the report matches the original result, and
+PostgreSQL checks that the report resource equals the currently claimed
+workload.
+
+This makes a receipt auditable and prevents a no-op visitor from counting as a
+successful smoke run. It does not define or approve an application health
+policy: production still needs a reviewed policy and visitor, plus the native
+Manager restore producer, guest configuration/binding delivery, readiness,
+activation and serving convergence. The focused scheduler and state tests,
+the PG-integration-package test with database-backed cases skipped, and
+`make sqlc-check` pass. Database trigger execution and native KVM acceptance
+were not run for this change.
+
+### HTTPS service bindings in the internal graph runner (2026-10-08)
+
+The internal graph runner now accepts HTTPS service-binding policy when its
+configured resolver supplies the verified internal HTTPS listener. It rewrites
+each frozen target to that workload's single-label `.internal` alias and emits
+the graph-scoped private route. Gateway DNS permits discovery only for a
+currently active held qualification caller and an alias in its frozen graph
+bindings; HTTP forwarding still enters the private graph handler, which checks
+the exact caller execution, graph, lease, binding, runtime receipts and target
+before routing. The scheduler validates the selected node's listener URL and
+all frozen graph transports before instance admission or VM boot, then reuses
+that node-bound listener throughout capture and restore windows. Ordinary
+service identity checks continue to reject held qualification callers, and DNS
+answers do not grant request authority.
+
+Focused scheduler, gateway alias and in-memory private-route tests pass. The
+PostgreSQL integration-test package and changed integration tests compile, but
+the PostgreSQL-backed assertions were not run because this checkout has no
+configured test database. The production graph dispatcher, durable guest
+binding delivery acknowledgement, inherited non-image source provenance,
+application-level health policy, activation and serving convergence remain
+gated.
+
+### Durable guest configuration acknowledgement for graph attempts (2026-10-08)
+
+The internal qualification scheduler computes a SHA-256 digest over the exact
+API environment prepared for each graph member, including its scoped service
+URLs. It persists that digest only after vmmd returns from the attempt-bound
+guest-init acknowledgement. The durable receipt binds request, attempt, graph,
+instance and (for restore) capture identity; it contains no environment values
+or secrets. Memory and PostgreSQL stores reject stale claims, unpublished or
+retired frames, stale runtime inputs and mismatched restore reservations. The
+database trigger makes the row immutable and applies the same fence to direct
+writes.
+
+A restore receipt now requires both the original capture runtime and the
+restored target to have guest configuration receipts. PostgreSQL has a separate
+restore-receipt trigger for that prerequisite. Private alias discovery and
+service routing fail closed without the current guest receipt, and graph
+activation assessment reports guest acknowledgement separately from capture,
+restore and smoke. Missing acknowledgement leaves its own blocker in place.
+
+Focused state evidence tests, scheduler graph/restore/service tests, and
+in-memory qualification/route integration tests pass. The PostgreSQL integration
+package compiles, but database-backed assertions and migration replay were not
+run because this checkout has no configured test database. This evidence
+confirms guest configuration loading for the internal graph path; it does not
+prove application health or enable production graph polling, activation,
+readiness or serving convergence.
+
+### Inherited GitHub workload provenance (2026-10-08)
+
+Adoption now reconstructs source, Dockerfile or function intent from an existing
+GitHub build only when each live deployment has an immutable repository and
+commit matching the environment repository. It accepts Gregale's pinned
+`github://owner/repository@commit` form and the pinned
+`https://codeload.github.com/owner/repository/tar.gz/commit` URLs written by
+GitHub webhook builds. The commit column and source root must agree across live
+deployments. The observed deployed commit is retained as source revision during
+adoption; a subsequent reviewed plan can advance it to a newer approved
+commit. Other providers, cross-repository builds, mutable or incomplete
+references, mixed commits and inconsistent roots remain blocked. The PostgreSQL
+observation query now carries only the non-secret provenance fields needed for
+this decision.
+
+The state package and in-memory GitOps integration suite pass, including source,
+Dockerfile and function adoption, legacy codeload URL adoption, and malformed or
+cross-repository provenance rejection. SQLC generation and `git diff --check`
+pass. PostgreSQL-backed assertions and migration/database acceptance were not
+run in this environment.
+
+### Bind isolated smoke receipts to reviewed health policy (2026-10-08)
+
+Smoke evidence now derives its accepted policy from each qualification request's
+frozen `runtime.healthz` and `runtime.port` values. Both fields must be explicitly
+owned; inherited health paths or ports and TCP startup readiness do not satisfy
+this app-level contract. The policy digest covers graph resource, app identity,
+port, HTTP method, accepted 2xx range and timeout. A visitor cannot record a
+receipt for a different policy or reuse a well-formed arbitrary digest. The gRPC,
+worker, job and queue smoke policies are not implemented and are rejected for
+now; the HTTP policy applies only to request/service workloads.
+
+This closes the policy-selection gap at evidence validation, but it does not
+prove a production visitor performed the request or that the restored guest
+was application-ready. Production restore dispatch, exact policy execution,
+result sanitization, readiness, activation and serving convergence remain
+gated. Focused state policy/receipt tests, the scheduler restored-graph smoke
+test and the in-memory activation-evidence integration test pass. The full
+scheduler package hits this sandbox's denied loopback `httptest` bind in an
+unrelated test; PostgreSQL-backed assertions were skipped because no test
+database is configured.
+
+### Keep qualification restore receivers separate from serving handlers (2026-10-08)
+
+Private native restores now require a separate daemon-registered handler for
+each platform channel. A normal serving callback cannot satisfy this registry
+or be selected as a fallback. The private framework channel accepts only the
+attempt-bound guest configuration receipt; ordinary readiness and workload
+events are rejected. Dynamic app environment, secret refresh and federated
+workload identity remain unavailable to a qualification target until their
+reviewed, attempt-scoped projections are implemented. The Manager/RPC restore
+orchestrator still does not open these channels, so this closes the receiver
+composition boundary without enabling production restore.
+
+### Record restored framework readiness separately (2026-10-08)
+
+The private framework channel also accepts the restored guest's framework-ready
+event and stores an immutable receipt bound to its request, attempt, graph,
+capture and restored instance. PostgreSQL and memory stores reject stale claims,
+retired or unpublished targets, changed capture/runtime inputs, and replacement
+events; direct SQL writes have the same database guard. The normal serving
+receiver and ordinary readiness index are not used. Framework readiness remains
+separate from guest config acknowledgement and the reviewed HTTP health smoke.
+When the reviewed workload declares a supported runtime, the reported runner
+must match that frozen runtime. Custom-image workloads without a declared
+runner retain their reviewed image contract but do not gain a runner-name
+constraint from this receipt.
+
+Graph evidence now reports each of those proofs separately and sets `Qualified`
+only when every candidate has complete, current qualification evidence.
+Activation and serving blockers remain after that point, and no deployment is
+released. Production qualification polling still does not invoke the internal
+dispatcher or visitor. Focused state, vmmd receiver and PostgreSQL evidence tests
+plus migration replay validate the evidence path; they do not prove production
+qualification or activation.
+
+### Smoke-authorized native capture artifact retirement (2026-10-08)
+
+The internal graph dispatcher now requests capture-artifact retirement only
+after it has persisted a passing smoke receipt for the restored target. vmmd
+requires the exact source and restore execution frames, verifies both original
+native retirement journals, and checks the receipt identity before it touches
+storage. The publication journal loads all four immutable object receipts
+before starting. Each GCS delete is conditioned on its original generation.
+Local storage continues to refuse deletion because its backend cannot safely
+unlink by inode identity.
+
+Before the first delete, vmmd writes a durable retirement-intent marker. This
+immediately prevents the capture from being restored while a partial delete is
+being retried. After all four objects are retired, a second durable tombstone
+marks completion; duplicate calls then return safely, and restart inventory
+validates both records against the original object receipts. When the native
+publication root is configured, Manager startup recovery discovers these
+in-progress markers and retries the receipt-conditional deletes before native
+admission. A storage failure leaves the marker in place for later retry.
+Dedicated Linux capture/restore acceptance remains required, so qualification
+and capture gates stay closed.
+
+### Close restart recovery and unsupported-worker preflight gaps (2026-10-09)
+
+Manager startup now invokes pending retirement recovery before native allocation
+recovery. Recovery discovers only validated `.retiring.json` journal records,
+re-reads the original object receipts, and retries generation-conditional GCS
+deletes; a completed tombstone is idempotent. Backends that cannot prove
+exclusive conditional deletion are rejected before a retirement marker is
+written, so an unsupported backend cannot strand a capture in the retiring
+state. A storage failure keeps the marker for retry; periodic retry is covered
+by the follow-up below.
+
+The graph runtime also rejects worker and job modes before it reads or executes
+the graph cohort. The dispatcher already excludes those modes; this direct
+runtime guard closes the lower-level path before VM effects. It does not add
+worker, job, or queue qualification semantics. The focused retirement/storage
+checks, Linux/amd64 `fcvm` test-binary compile, and worker/job preflight test pass
+locally; the dedicated Linux capture/restore acceptance could not be completed
+because the internal test node was unreachable. Production qualification and
+enforcement remain gated.
+
+### Retry authorized capture artifact retirement periodically (2026-10-09)
+
+vmmd accepts an optional `native_snapshot_publication_root` only with
+`native_process_recovery = true`. The configured directory is pre-existing and
+must pass the native journal's private-directory, identity, and separation
+checks. Startup still validates and retries pending retirement records before
+admission. A minute-based vmmd worker then retries the same durable
+`.retiring.json` records in pages of at most 64 per bounded request context. A
+cursor advances after each attempted record even when deletion fails, so later
+captures progress; reaching the end wraps to retry failures. It cannot create a
+retirement marker, infer deletion authority from inventory, or enable capture,
+restore, qualification polling, or activation. Failed storage operations leave
+their markers intact for retry. The example config documents the opt-in; the
+production templates leave it unset. Local worker/config tests pass; the
+dedicated Linux acceptance remains blocked because the active GCP credentials
+lack `compute.instances.get` on the internal test node.
+
+### Verify scoped service routes around graph qualification (2026-10-09)
+
+Before the source graph is captured and before the restored graph is smoke
+tested, the scheduler now resolves every frozen service binding and verifies
+that the returned caller and target frames identify the exact live instances in
+the claimed graph. It also checks target port, transport, lease deadline and
+absence of cleanup tokens. The route-store capability is checked before claim;
+a mismatched route aborts the attempt, retires the temporary cohort, and writes
+no capture or smoke receipt. Focused graph qualification tests pass with Go vet
+enabled. This exercises the in-memory store and fake VMM only; native Linux
+acceptance and production polling remain gated.
+
+### Close direct worker/job qualification claim paths (2026-10-09)
+
+The node-bound single-request path continues to exclude jobs. Worker
+capture/restore remains available as an internal primitive, but the activation
+assessment deliberately leaves workers unqualified because there is no
+queue-specific smoke receipt. Service-binding graph discovery and atomic claim
+reject worker/job members until their graph contracts exist. The memory-backed
+job-discovery test passes; its PostgreSQL case was skipped because no local
+Postgres server is configured. Production polling remains gated.
+
+### Retry abandoned qualification VM retirement from schedd (2026-10-09)
+
+Schedd now scans the durable qualification-execution recovery index at startup
+and once per minute. It uses the configured owner UUID, or resolves the exact
+synthetic `default-local` row in legacy single-box mode. Recovery is restricted
+to that node and consumes the immutable original frame; the state store
+rechecks the lease under lock before vmmd can retire anything. The cursor moves
+between bounded pages even when one execution fails, so a temporarily
+unreachable host retains its reservation for retry without starving later
+cleanup records. This loop cannot create a VM, renew an attempt, record
+qualification evidence, or release a candidate.
+
+Focused `cmd/schedd` recovery tests pass. This is separate from native capture
+artifact retirement, which vmmd retries at startup and periodically only when
+the publication root is explicitly configured. Qualification polling, graph
+activation and serving convergence remain gated pending dedicated Linux
+acceptance and the remaining workload policies.
+
+### Report current workload qualification evidence without authority (2026-10-09)
+
+The GitOps status API and dashboard now expose the evidence assessment for the
+exact current approved graph: generation, intent version, graph phase, prepared
+artifacts, capture/restore/configuration/smoke/readiness counts, and blockers.
+The query uses a repeatable-read, read-only Postgres transaction and takes no
+GitOps lease. Memory and Postgres implementations omit graphs whose revision,
+generation, intent version, or plan hash is no longer current. The response
+labels activation and serving separately and does not authorize either. The
+focused held-candidate API workflow, stale-intent omission, dashboard rendering,
+state package, sqlc consistency check, OpenAPI lint/mirror check, Node SDK build
+and Python SDK syntax check pass locally. The broader apid GitOps test selection
+cannot bind its loopback HTTP fixture under this sandbox. This improves
+observability only; native Linux acceptance, worker/job/queue smoke policies,
+production qualification polling, activation, and serving convergence remain
+gated.
+
+### Check source graph health before capture (2026-10-09)
+
+The internal graph visitor can now run the same frozen HTTP health policy
+against the live candidate before capture. Source execution frames must name
+the reserved source instance and contain no capture identity; restored frames
+must remain bound to their distinct restore target and original capture. The
+source check gates its caller but creates no smoke receipt. Only the subsequent
+restored-target check can contribute smoke evidence, and it still requires
+successful retirement of the complete restored cohort. This keeps source
+readiness separate from qualification while giving the future polling worker
+a real pre-capture application check. Focused source and restored graph visitor
+tests pass locally. Production polling, worker/job/queue smoke contracts,
+activation and serving convergence remain outstanding.
+
+### Isolate qualification guest egress (2026-10-09)
+
+Native qualification source and restored VMs now use a dedicated
+drop-by-default netns policy. It admits the node-local scoped service proxy on
+`10081`, its opt-in private-CA HTTPS endpoint on `443`, and pinned DNS. Tenant
+CIDR allowlists, operator exceptions, generic egress-port rules, static egress,
+private-network routes, service-address shortcuts and the compatibility proxy
+on `10080` are excluded. App-level live policy reconciles and ordinary egress
+telemetry do not enumerate qualification instances, so an app update cannot
+widen a candidate after boot. The proxy still performs graph, caller, binding
+and target checks for every service request.
+
+The complete `pkg/netns` and `pkg/fcvm` test suites pass with bounded build
+parallelism. The dedicated native VM acceptance did not reach Firecracker:
+serialized compilation exhausted the internal node's remaining root-disk space,
+so the exact test process was stopped and its task-specific build cache removed.
+The shared lock is free and 1.8 GB is available; retry after the node has more
+headroom. Production qualification polling, worker/job/queue smoke policies,
+activation and serving convergence remain gated.
+
+### Admit standalone HTTP graphs and fence completed smoke attempts (2026-10-09)
+
+Qualification graph discovery no longer requires a service binding: a reviewed
+standalone request or service workload can use the same source-check, capture,
+restore and isolated HTTP-health path. Discovery and claim require the frozen
+runtime to contain an explicit `healthz` path and numeric `port`, and the
+state-store policy rejects unsupported protocols and modes. The memory store,
+PostgreSQL query, and PostgreSQL claim path apply the same eligibility rules.
+This preserves service-binding routes for linked graphs while allowing an
+independent HTTP workload to qualify without a service-proxy URL.
+
+A passing current-attempt smoke receipt now removes both its individual request
+and its graph from later qualification discovery. Claiming also rechecks the
+receipt under the store transaction, so a stale discovery result cannot boot a
+VM after another worker has completed that attempt. Worker and job members
+remain excluded until isolated queue and execution smoke contracts exist.
+
+Focused qualification regressions pass in `pkg/state`, `pkg/sched`, and the
+PostgreSQL integration package; the full `pkg/state` and
+`pkg/environmentsync/pgintegration` suites also pass. The full scheduler suite
+was not verified in this checkout because its large test-binary link exhausted
+local disk, and its first attempt was also blocked by the sandbox's loopback
+listener restriction. This does not advance native Linux acceptance or enable
+production qualification polling, activation, or serving convergence.
+
+### Correct PostgreSQL qualification graph replay selection (2026-10-09)
+
+PostgreSQL graph discovery had the smoke-receipt predicate inverted: it selected
+graphs whose current attempts were already complete and filtered graphs that
+still needed qualification. Discovery now requires at least one member with no
+receipt for its current attempt, matching the memory store and atomic claim
+path. A PostgreSQL regression covers both an expired, incomplete graph remaining
+discoverable and the same graph disappearing after its smoke receipt is stored.
+The focused integration package passes with its in-memory tests; this checkout
+has no configured PostgreSQL server, so the database-backed assertions skip
+locally. `sqlc-check` confirms generated queries match the corrected SQL.
+
+### Bound qualification smoke response processing (2026-10-09)
+
+The private HTTP health visitor discards response bytes, but it previously
+accepted an unlimited number of frames until the three-second timeout. It now
+fails closed if one response exceeds 1 MiB or 256 body frames. Oversized or
+continuously streamed health output creates no smoke receipt. This bounds
+scheduler work without retaining candidate response content and does not alter
+the production qualification gate.
+
+The status assessment now distinguishes the missing worker queue-consumption
+smoke contract from the missing isolated job execution and outcome contract.
+This keeps held candidates and production gates unchanged while showing the
+actual reason each mode cannot qualify.
+
+### Isolated push-worker smoke contract (2026-10-09)
+
+The reviewed workload definition may now include one JSON `queue_smoke.payload`
+for each enabled push-mode worker binding. Inputs are limited to 16 bindings
+and 64 KiB per payload, frozen with the candidate, and included in its reviewed
+policy digest. Qualification sends each input to the exact private candidate
+VM's frozen queue-trigger route with a deterministic synthetic item identity.
+It creates no customer queue record, invocation, or trigger record. Only a
+complete 2xx response without a matching `batchItemFailures` entry can produce
+the sanitized smoke receipt. The handler runs actual candidate code, so the
+payload must be a harmless, non-secret test fixture.
+
+This implements push-worker smoke in the internal graph visitor. Pull-mode
+workers and jobs still lack isolated execution contracts, and production
+qualification polling remains gated on dedicated Linux capture/restore
+acceptance. No activation, serving, or enforcement authority follows from the
+new receipt.
+
+### Add isolated one-shot job qualification (2026-10-09)
+
+Reviewed jobs with an explicit `job_smoke` command now use a dedicated private
+one-shot VM path. It runs the frozen argv with its reviewed timeout, waits for
+the matching task lease's terminal status, and stores only a sanitized passing
+exit receipt after attempt-bound native retirement. Guest output and output
+manifests are discarded, and this path does not create customer `JobRun`, task,
+or queue records. Service and queue bindings remain unsupported for jobs and
+are rejected during discovery, claim, admission, and receipt validation.
+
+Mixed graphs dispatch job candidates separately from the HTTP source and
+capture path. The remaining graph runtime may omit a job only when its current
+attempt has a matching durable job receipt; it cannot silently skip a service
+member. A service binding cannot target a job; the dispatcher validates the
+whole dependency graph before starting any private job VM, so an unsupported
+edge cannot cause partial job execution. Activation evidence counts job
+receipts without requiring capture or restore for those one-shot candidates.
+This remains internal qualification only. Native Linux acceptance, production
+polling, activation, and serving are still gated. `sqlc generate`, Go
+formatting, diff checks, and `go list -test ./pkg/sched` pass. The focused Go
+test did not complete: dependency compilation ran out of local disk space, so
+its task-specific temporary cache and build directory were removed. The
+user-authorized internal nested-KVM node is available for scoped testing, but
+its results do not establish dedicated native acceptance.
+
+### Keep held GitOps candidates out of generic activation paths (2026-10-09)
+
+Ordinary and dark per-deployment promotion now reject deployments carrying
+frozen GitOps workload inputs, and project release-set publication refuses to
+retain such deployments as members. The promotion guards run before cron
+reactivation or lifecycle effects. PostgreSQL applies the hold check while
+locking the candidate row; MemStore enforces the same rule in both normal and
+compare-and-swap release publication. This closes a path where a single held
+candidate could be marked live and routed without a qualified whole graph.
+Dedicated graph-scoped activation remains unimplemented, so these checks keep
+the existing candidate hold intact rather than granting activation authority.
+
+Regression coverage verifies that a held candidate stays pending after either
+per-deployment promotion attempt and cannot enter an active release set even if
+a legacy path left its status live. `gofmt`, `git diff --check` and
+`make sqlc-check` pass. Go tests could not run: the shared disk has about 622 MiB
+free, and the configured Go cache is outside this sandbox's file access. The
+user-authorized internal nested-KVM node is available for scoped testing, but
+its results do not establish dedicated native acceptance.
+
+### Preserve unsupported queue qualification blockers (2026-10-09)
+
+The prepared graph now records whether queue bindings are configured separately
+from the subset that is enabled. Job qualification rejects any configured
+queue binding, matching the one-shot runner's frozen-input validation even when
+the binding is disabled. Enabled push bindings on workers and HTTP functions
+use reviewed synthetic messages against the exact private candidate route;
+pull workers still lack a private receive/ack visitor. Empty graphs and unknown
+persisted execution or queue modes also remain unqualified. These checks only
+refine qualification status and leave activation disabled.
+
+### Verify retained workload members against the active release (2026-10-09)
+
+Qualification status now counts unchanged HTTP and worker members separately
+from new candidates. A retained member counts only when the current active
+release set selects the exact live, unheld deployment listed in the reviewed
+graph for that app and environment. Persisted graph IDs alone are not proof.
+This allows a partial candidate graph to preserve unchanged services without
+waiving the private one-shot smoke receipt required by jobs. The API, SDKs, and
+dashboard expose the retained count. Memory and Postgres use the same fail-closed
+contract; no activation authority is added. Formatting, OpenAPI parity, Python
+model syntax, and diff checks pass. The targeted Go test did not compile because
+the shared volume ran out of disk while writing the test binary. Graph
+activation and serving receipts, pull-worker receive/ack, and dedicated native
+acceptance remain outstanding.
+
+### Report exact graph activation separately from qualification (2026-10-09)
+
+The read-only workload evidence now recognizes activation only when the
+current active release set selects the exact candidate deployment for every
+candidate member and the exact live retained deployment for every unchanged
+member. Selected deployments must remain live and unheld. Qualification stays
+true or false based only on its own preparation, guest, restore, readiness and
+smoke evidence; it is no longer inferred from the activation and serving
+placeholder blockers. Serving remains false until a separate convergence
+receipt is implemented. This reports an existing release-set fact and grants
+no authority to unhold, boot, release, or route a candidate. Memory coverage
+checks candidate and retained IDs, mismatches, and the distinction between
+activation and serving. Production graph activation, serving receipts, pull
+worker receive/ack, and dedicated native acceptance remain outstanding.
+
+### Diagnose activation before qualification (2026-10-09)
+
+The read-only workload status adds
+`environment_activation_before_qualification` when the exact reviewed graph is
+already selected by the active release set but its qualification evidence is
+incomplete. This distinguishes an ordering violation from the normal
+`environment_activation_evidence_missing` state. The diagnostic does not
+change deployment or release-set state; graph-scoped activation remains gated.
+
+### Keep frozen runtime inputs after activation (2026-10-09)
+
+The immutable `environment_workload_runtime` payload is no longer also the
+execution hold marker. A new `environment_workload_held` column records that
+state explicitly, and the candidate payload remains attached when the hold is
+eventually released so normal runtime configuration can continue to read the
+reviewed source, settings, and deployment inputs. Existing payload-bearing
+rows are backfilled as held. Legacy in-memory candidates without an explicit
+flag remain held. This separates persisted intent from execution eligibility;
+it does not itself provide graph activation or change production execution.
+
+### Activate qualified workload graphs as one release (2026-10-09)
+
+Graph activation now revalidates the current lease, approved plan, frozen
+candidate identities and complete qualification evidence before changing any
+deployment. It constructs a whole-project release set, preserving unmanaged
+members from the current active set. When no set exists, a fallback route must
+be an exact 100% live deployment; weighted or missing routes block activation.
+The shortest positive project revision-pin TTL bounds the new release set.
+
+The transaction switches every candidate from held/snapshotting to unheld/live
+at zero weighted traffic, captures the normal API snapshots, and changes the
+active release set together. A retry recognizes the exact active graph and
+returns its release ID. Candidates that are part of a live GitOps release now
+reject later rootfs changes, preserving the artifact that passed qualification.
+Postgres locks project, release, apps and deployments in release-set order;
+MemStore serializes the same transition under its store lock. Database triggers
+require the current GitOps lease, source generation, revision, prepared graph,
+and exact candidate membership to unhold or activate a candidate.
+
+Generic release-set publishers now preserve every active GitOps-managed member,
+and generic release-set deactivation or environment promotion fails closed when
+it would remove or replace one. The graph activation transaction is the only
+path that can replace those members. Generic per-deployment activation, direct
+status promotion, rollback, traffic rebalancing, minimum-instance edits, and
+source-metadata edits remain unavailable for managed candidates after their
+temporary execution hold is lifted. PostgreSQL guards the live transition for
+both managed candidates and unmanaged deployments in the same managed scope.
+
+The read-only status treats activation and serving as different facts. An active
+release set proves activation; the separate serving receipt is described in the
+following checkpoint. Production qualification polling remains disabled pending
+dedicated Linux acceptance. SQL generation consistency and diff checks pass.
+Go tests are not yet verified because the shared volume ran out of space during
+compilation.
+
+### Persist request/service serving convergence (2026-10-09)
+
+After the qualified graph is activated dark, the next lease-fenced phase moves
+supported request/service workloads to their exact active release-set targets.
+Candidate deployments receive 100% traffic and their live siblings receive 0%;
+ordinary canary/service rollout state must already be stable before that
+cutover. Retained deployments are routed and acknowledged without changing their
+traffic weights, because those splits are not owned by the environment
+definition. Status requires the selected retained deployment to already have a
+positive traffic share. PostgreSQL protects candidate weight changes with the
+current GitOps lease, exact active graph and release-set member. Generic state
+APIs and direct SQL cannot rebalance a managed route.
+
+The serving receipt stores the graph and release-set identity, the current
+serving-gateway roster and a unique route generation per app. Acknowledgements
+are durable per route and gateway. Reconciliation repeats notifications after a
+restart and does not report serving until every expected gateway has acknowledged
+every route. A changed gateway roster resets those generations and requires fresh
+acks. Status also checks that the active release set, candidate 100/0 traffic
+weights and retained-route traffic still match the receipt. If candidate weights
+drift, reconciliation repairs them under the current lease, creates new route
+generations and requires fresh gateway acknowledgements; old acks cannot survive
+a traffic change.
+
+Request/service graphs without queue bindings, push-worker graphs and request
+graphs for HTTP functions with reviewed push bindings can enter this phase.
+Activation requires both route acknowledgements and a completed named-queue
+delivery for every enabled function binding. Isolated pull-worker and job
+qualification does not prove production consumption or scheduled-job dispatch,
+so those graphs remain blocked with
+`environment_workload_production_execution_adapter_missing`.
+Production qualification polling and continuous enforcement remain disabled
+pending dedicated Linux acceptance and the remaining production execution
+adapters. `sqlc generate`, `gofmt` and `git diff --check` pass. The focused Go
+test build did not reach execution because its temporary build area ran out of
+space; migration and PostgreSQL integration tests remain unverified.
+
+### Qualify pull-worker invocation handling in isolation (2026-10-09)
+
+Enabled pull-mode worker bindings now require the same reviewed bounded
+`queue_smoke` payload as push workers. The isolated visitor sends the frozen
+payload to the exact candidate VM using the production generic queue invocation
+shape: `POST /`, an attempt-derived invocation ID, and source `queue`. A complete
+2xx response is the acknowledgement, matching the generic queue drain contract.
+Push bindings continue to use the frozen trigger route and validate its
+single-item acknowledgement. The response is bounded and never persisted; no
+customer invocation, trigger record, or queue row is created. Mixed push/pull
+workers qualify only after every enabled binding has a reviewed smoke input.
+
+This adds isolated qualification evidence only. The external pull consumer
+projection and generic production queue dispatch still lack a GitOps serving
+receipt, so worker graphs remain blocked from activation. Production polling
+and native acceptance gates remain closed.
+
+### Bind push-worker serving proof to completed queue delivery (2026-10-09)
+
+The named push-queue consumer now returns the deployment actually selected by
+the gateway for each successful invocation. Queue completion, trigger receipt,
+and the optional GitOps serving acknowledgement commit in one transaction, so a
+delivery cannot complete while losing the proof that it ran on the reviewed
+active deployment. The receipt remains limited to exact active graph members
+and their reviewed push bindings; a route acknowledgement alone still cannot
+prove queue consumption.
+
+At this checkpoint, the broad production-adapter blocker remained alongside
+missing adapters for pull workers, scheduled jobs, and service-bound execution.
+The pull-worker gap is closed in the following section. Production qualification
+polling and native Linux acceptance remain gated, and no enforcement default is
+enabled.
+
+### Bind pull-worker serving proof to generic queue completion (2026-10-09)
+
+Pull-mode worker bindings now participate in the same serving receipt contract
+without inventing a trigger identity. The generic queue drain records the
+deployment returned by the internal gateway and asks the state store to finish
+the claimed invocation with its attempt number. In PostgreSQL, invocation
+completion, quota release, destination enqueue, and an eligible GitOps serving
+acknowledgement share one transaction; MemStore applies the same attempt fence
+and receipt update under its lock. A stale worker cannot complete or acknowledge
+a newer claim.
+
+The acknowledgement is accepted only for the exact active pull binding on the
+current reviewed graph and release deployment. Push bindings still require
+their named trigger and successful trigger record; HTTP functions remain
+push-only. Jobs, service-bound production execution, production qualification
+polling, and native Linux acceptance remain gated.
+
+### Serve queue-bound HTTP functions through reviewed push consumers (2026-10-09)
+
+Queue-bound HTTP functions now use the existing server-managed push trigger and
+gateway dispatch path. Qualification already exercises that exact trigger with
+a bounded synthetic item; activation and serving now accept only request-mode
+members marked as functions whose complete enabled binding set is push-only,
+`workload_class: http`, and frozen to canonical binding and trigger IDs. Regular
+HTTP apps, pull bindings, service-bound functions and mixed unsupported modes
+remain rejected.
+
+Queue delivery completion and its serving acknowledgement remain one
+transaction. PostgreSQL validates the reviewed graph contract, exact scoped
+binding and trigger, completed invocation, selected live deployment and release
+membership before accepting the acknowledgement. Serving readiness requires
+both the function route acknowledgements and one named-queue acknowledgement
+per enabled binding, so neither kind of receipt can stand in for the other.
+The memory store and status evaluator enforce the same contract. Dedicated
+Linux acceptance still gates production qualification polling and enforcement;
+scheduled-job dispatch and service-bound production execution remain open gaps.
+
+### Activate scheduled Jobs from the reviewed release (2026-10-09)
+
+Scheduled Job graphs now have an explicit production adapter when the graph
+binds a canonical Job ID, reviewed schedule and isolated `job_smoke`, with no
+unsupported queue or service bindings. Activation checks the linked Job's
+scoped intent, exact immutable image digest, schedule and ready materialized
+artifact while the Job remains paused. PostgreSQL locks that binding during
+activation; the in-memory adapter applies the same check under its store lock.
+Both adapters open the Job in the same transaction/locked transition that
+publishes the release set, so a failed publication leaves it paused.
+
+Serving readiness additionally requires a successful scheduled occurrence
+started and completed after release publication for the active Job's current
+schedule revision. The JobRun must reference that exact occurrence and match
+the active Job's image reference, resolved digest and storage key, command,
+RAM, parallelism, retry and timeout policy, failure rules, and effective
+environment snapshot. Empty command snapshots are valid when the image
+provides its own entrypoint. The persisted serving receipt is revisited by the
+GitOps worker until that evidence exists; unrelated, stale-revision and
+pre-activation runs cannot satisfy it. Service-bound production execution,
+dedicated Linux acceptance and production qualification polling remain gated.
+The focused Go and PostgreSQL integration tests have not yet been run in this
+worktree because the host has less than 500 MiB free.
+
+### Serve request/service bindings from the reviewed workload graph (2026-10-09)
+
+Prepared graph members now freeze each scoped service binding's logical name,
+environment key and pinned target app ID. Production readiness accepts these
+bindings only for request/service callers whose target is another request/service
+member in the same graph, with a valid distinct app identity and noncolliding
+environment keys. The caller and target must enter the release together or both
+remain retained; mixed candidate/retained pairs cannot satisfy readiness
+because their runtime identities are not compatible. The SQL guard applies the
+same contract, and each live request still resolves the exact caller, target
+and release member before routing. Service-bound workers and Jobs remain
+unsupported. Production qualification polling and native Linux acceptance
+remain gated; Go and PostgreSQL tests were not run on this disk-constrained
+checkout.
+
+### Allow reviewed workers to call graph-scoped services (2026-10-09)
+
+Queue-backed workers may now use scoped service bindings to request/service
+members in the same prepared graph and active release. The worker still needs
+its complete reviewed push/pull queue contract and current consumer
+acknowledgement; service routing does not replace execution evidence. The
+memory serving gate and PostgreSQL graph predicate accept the same caller mode.
+The live resolver accepts request/service/worker caller modes only when the
+running instance supplies the exact app/deployment identity; it continues to
+reject worker or Job targets and mixed candidate/retained identities. Job
+instances currently lack that caller identity, so service-bound Jobs remain
+unsupported. Dedicated Linux acceptance and production qualification polling
+remain gated.
+
+### Hold managed Job commands until their service identity is published (2026-10-09)
+
+The scheduled-Job runtime now has a fail-closed path for frozen scoped service
+bindings. Schedd loads the linked workload intent by account and Job ID, checks
+the active Job and run against its reviewed immutable image, schedule, resources,
+retry/timeout policy and empty environment snapshots, then injects only the
+reviewed aliases. A binding-key collision aborts admission. The live-instance
+resolver now derives app/deployment identity for the exact claimed scheduled
+occurrence only while its Job, source generation, frozen runtime and active
+release member still match; ordinary service routing still rejects Job targets.
+
+When bindings exist, schedd calls a distinct `JobColdBootHeld` RPC. Older vmmd
+servers return `Unimplemented` before boot rather than ignoring an added request
+field. The guest opens its start-control vsock before waiting, accepts
+idempotent release and cancellation frames, and does not start the customer
+timeout until release. Schedd persists the runtime network identity and commits
+the running transition before calling `ReleaseJobStart`. If release is
+ambiguous, the scheduler waits for the normal terminal receipt; a guest that
+never receives release reports a bounded infrastructure failure. The 90-second
+gate timeout is included in the exit-wait deadline.
+
+This closes the production Job caller-identity and start-ordering prerequisites;
+it does not qualify the scoped service calls. Private Job qualification still
+rejects service bindings and its smoke path does not publish an attempt-bound
+caller configuration receipt. A service-bound Job therefore remains blocked
+until a dependency-pinned Job visitor, route evidence and serving contract are
+implemented and covered by dedicated acceptance. Formatting and
+`git diff --check` pass. The focused scheduler test reached dependency compile
+but ran out of local disk before execution; no Go or PostgreSQL test result is
+claimed here. Production qualification polling and enforcement remain disabled.
+
+### Qualify scheduled Jobs with graph-scoped service bindings (2026-10-09)
+
+Scheduled Job callers may now bind to request/service members in the same
+reviewed graph. Graph qualification executes dependencies first and keeps their
+private instances live while the Job boots held. vmmd waits for guest-init to
+acknowledge the exact staged Job environment; Gregale then publishes the
+attempt-bound runtime identity, verifies each caller and target frame, and
+releases the command only after route validation succeeds. A passing sanitized
+Job smoke receipt requires both native retirement and the same attempt's
+configuration receipt.
+
+The activation graph and scheduled-serving acknowledgement carry the exact
+frozen binding map, so changed or missing bindings cannot reuse prior evidence.
+Queue bindings and Job secret references remain blocked at GitOps planning until
+the isolated Job smoke path carries sealed references and records version-bound
+configuration evidence. Customer Job execution now has the held-start, exact
+scope delivery plumbing; it rechecks captured variables, reference mappings and
+secret versions before release, and records delivery only after release ACK.
+Job targets remain forbidden, and production polling/enforcement remain gated
+on dedicated Linux acceptance. The focused Go and PostgreSQL suites have not yet
+run on this disk-constrained checkout.
+
+### Require the held-start release capability before scheduled Job boot (2026-10-09)
+
+Review found that schedd previously logged and continued when a service-bound
+Job's VM client lacked `ReleaseJobStart`. That left a guest held until its
+timeout while the scheduler returned a successful dispatch. Schedd now verifies
+the capability before `JobColdBoot`; a missing method fails the claimed attempt
+without starting a VM. A focused regression covers both this refusal and the
+supported path, where runtime identity is persisted before release.
+
+Formatting and `git diff --check` pass. The focused scheduler test could not
+compile in this checkout because the Go build temporary directory ran out of
+disk space; no test pass is claimed. Dedicated Linux acceptance remains
+required before production qualification polling or enforcement is enabled.
+
+### Fail closed on unattributed host-IP collisions for Job callers (2026-10-09)
+
+Review of the live caller lookup found that its cached-list path ignored rows
+without an app ID. A running unmanaged Job sharing an address with an app could
+therefore be attributed to that app. Both cached and indexed lookup now treat
+every live row on the node and address as part of disambiguation; any
+unattributed row makes the address unusable. The indexed PostgreSQL lookup only
+attributes a scheduled Job after its current claimed occurrence, immutable Job
+contract, frozen service bindings, source generation and active release member
+all agree. Regression cases cover the managed-Job identity and the
+unattributed-address collision. Formatting and `git diff --check` pass; Go and
+PostgreSQL tests remain unrun because the checkout has under 500 MiB free.
+Dedicated Linux acceptance and the production polling gate are unchanged.
+
+### Preserve reviewed non-secret variables for scheduled Jobs (2026-10-09)
+
+Scheduled Jobs now accept the workload's reviewed non-secret `variables` map.
+Per-key variable ownership flows through the scoped intent, candidate runtime,
+private Job qualification, linked Gregale Job, activation graph and successful
+post-activation run proof. Each stage compares the exact map, so console-only
+changes cannot be mistaken for the reviewed contract. Database guards validate
+the same uppercase environment-key grammar and platform key, value and count
+limits, and reject collisions with service-binding variables. Secret references
+and queue bindings remain unsupported for Jobs.
+
+The candidate-creation database fence now also compares the frozen variable map
+with scoped intent and recognizes per-key variable removals. Regression coverage
+includes a valid-lease SQL insert with a changed value and separate schedule and
+variable removal cases. The focused Go and PostgreSQL tests still need to run on
+a host with sufficient free disk; dedicated Linux acceptance remains required
+before production qualification polling or enforcement is enabled.
+
+### Block unsupported Job queue enablement during planning (2026-10-09)
+
+An enabled queue binding on a Job workload now becomes an explicit unsupported
+plan blocker before the consumer projection can be applied. This moves the
+existing execution limitation earlier than qualification and prevents GitOps
+from enabling or retaining an active queue consumer without a Job execution
+adapter. A reviewed disable can retire an existing consumer; a disabled
+binding remains reservable for review. Neither state establishes qualification,
+activation or serving evidence. Focused regressions cover both cases.
+
+### Qualify scheduled Job secret references before activation (2026-10-09)
+
+The earlier Job-secret blocker is removed now that candidate snapshots retain
+the effective scoped alias map and secret-only definition changes create a new
+candidate graph. The private Job smoke runner resolves only the frozen aliases,
+sends sealed ciphertext to vmmd, records the matching secret delivery versions
+with the qualification runtime receipt, and releases the command only after
+the scoped alias map and versions remain fresh. Guest-init's attempt-bound
+configuration acknowledgement now proves that the secrets file was read and
+that its key set matches the sealed entries staged for the held Job. Policy
+evidence hashes the alias map without storing secret values; runtime receipts
+bind the source versions. Queue bindings remain unsupported for Jobs, and
+dedicated Linux acceptance is still required before production polling or
+enforcement is enabled.

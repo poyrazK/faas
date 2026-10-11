@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EdgeRuleValidateParameters } from './EdgeRuleValidateParameters.js';
 /**
  * Customer-supplied JSON Schema (Draft 2020-12) evaluated against
  * the inbound request body BEFORE the wake gate fires. The
@@ -19,10 +20,13 @@
  * ship an external `$ref`.
  *
  * Field-by-field:
- * * `schema` — required JSON Schema document (Draft 2020-12).
- * Capped at 64 KiB. External `$ref` / `$id` URLs are
- * rejected at create-time; internal pointers (`#/definitions/Foo`)
- * pass through.
+ * * `schema` — JSON Schema document (Draft 2020-12) for the
+ * request body. Capped at 64 KiB. External `$ref` / `$id` URLs
+ * are rejected at create-time; internal pointers
+ * (`#/definitions/Foo`) pass through. Optional when
+ * `parameters` is set, so a body-less request can be validated.
+ * * `parameters` — optional path, query, and header schemas,
+ * checked before the body is read (ADR-091 amendment).
  * * `content_types` — optional media-type allowlist.
  * Closed set `application*`. Empty = match any.
  * * `apply_while_streaming` — per-rule opt-in for the
@@ -34,6 +38,7 @@
  * * `max_body_bytes` — per-rule inbound body cap. 0 =
  * inherit `MaxRequestBodyBytes` (per-plan 25 MB buffered /
  * 100 MB streaming). Must be > 0 and <= `MaxRequestBodyBytes`.
+ * At least one of `schema` and `parameters` is required.
  *
  */
 export type EdgeRuleValidateAction = {
@@ -43,7 +48,8 @@ export type EdgeRuleValidateAction = {
    * so the SHA-256 cache key in `pkg/edgevalidate` is stable.
    *
    */
-  schema: Record<string, any>;
+  schema?: Record<string, any>;
+  parameters?: EdgeRuleValidateParameters;
   /**
    * Optional media-type allowlist. Every entry must start
    * with `application/`. Empty array = match any Content-Type.

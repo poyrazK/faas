@@ -57,7 +57,12 @@ func TestPgWatchedClientErrorsCustomerRegressionAndAdvisoryGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := &sqlc.Queries{}
-	windows := routehealth.Windows(time.Now())
+	// Seed the following comparison windows too: the database clock can
+	// cross an ingestion boundary while these weighted rows are inserted.
+	// Every window has identical evidence, so the exact-count assertions
+	// also verify that rows at the next window's start are excluded.
+	windows := routeHealthClientErrorFixtureWindows(time.Now())
+	outsideWindows := windows[len(windows)-1].End
 	insert := func(dep, route, method, consumerID, tenantID string, count, status int32, at time.Time) {
 		t.Helper()
 		p := sqlc.InsertRequestTelemetryParams{AccountID: mustPgUUID(t, a.ID), AppID: mustPgUUID(t, app.ID), DeploymentID: mustPgUUID(t, dep), Route: method + " " + route, Method: method, Status: status, LatencyMs: 100, Count: count, ReceivedAt: state.NewPgtypeTime(at), UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__", GuestRuntime: "__unknown__", GuestOutcome: "missing", FlagEvidenceJson: "[]"}
@@ -86,7 +91,7 @@ func TestPgWatchedClientErrorsCustomerRegressionAndAdvisoryGate(t *testing.T) {
 			// These rows must never be joined by either advisory query.
 			insert(dep, "/checkout", "GET", consumer.ID, tenant.ID, 999, 403, w.Start)
 			insert(dep, "/checkout/123", "POST", consumer.ID, tenant.ID, 999, 403, w.Start)
-			insert(dep, "/checkout", "POST", consumer.ID, tenant.ID, 999, 403, windows[1].End)
+			insert(dep, "/checkout", "POST", consumer.ID, tenant.ID, 999, 403, outsideWindows)
 		}
 	}
 	ids := []string{}
@@ -225,6 +230,39 @@ func TestPgWatchedClientErrorsCustomerRegressionAndAdvisoryGate(t *testing.T) {
 				if w.Candidate.Requests != 0 || w.Stable.Requests != 0 {
 					t.Fatal("non-entitled counts leaked")
 				}
+			}
+		}
+	}
+}
+
+func routeHealthClientErrorFixtureWindows(now time.Time) []api.RouteHealthWindowEvidence {
+	windows := routehealth.Windows(now)
+	for range api.RouteHealthWindows {
+		start := windows[len(windows)-1].End
+		windows = append(windows, api.RouteHealthWindowEvidence{Start: start, End: start.Add(api.RouteHealthWindow)})
+	}
+	return windows
+}
+
+func TestRouteHealthClientErrorFixtureCoversIngestionBoundary(t *testing.T) {
+	boundary := time.Date(2026, 10, 9, 11, 13, 0, 0, time.UTC).Add(api.RouteHealthIngestionLag)
+	before := boundary.Add(-100 * time.Millisecond)
+	seeded := routeHealthClientErrorFixtureWindows(before)
+	for shift := range api.RouteHealthWindows {
+		now := boundary.Add(time.Duration(shift) * api.RouteHealthWindow)
+		for _, observed := range routehealth.Windows(now) {
+			found := false
+			for _, fixture := range seeded {
+				if fixture.Start.Equal(observed.Start) && fixture.End.Equal(observed.End) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("database window after ingestion boundary lacks fixture evidence: %+v", observed)
+			}
+			if seeded[len(seeded)-1].End.Before(observed.End) {
+				t.Fatal("out-of-window sentinel could enter the comparison")
 			}
 		}
 	}

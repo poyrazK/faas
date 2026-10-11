@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -171,6 +172,11 @@ var geoipDBPath = envOrGateway("FAAS_GEOIP_DB_PATH", "/var/lib/faas/geoip/dbip-c
 // ConfigMap, etc.). The auto-refresh path is for environments
 // where the daemon is the canonical source of the DB.
 var geoipAutoRefresh = envOrGateway("FAAS_GEOIP_AUTO_REFRESH", "0")
+
+// geoipASNDBPath is the DB-IP ASN Lite .mmdb file behind the asn match
+// field (ADR-966). A missing file leaves the field absent: conditions on
+// asn then never match, the same posture as an unknown country.
+var geoipASNDBPath = envOrGateway("FAAS_GEOIP_ASN_DB_PATH", "/var/lib/faas/geoip/dbip-asn-lite.mmdb")
 
 // controlAddr is the private control-plane listener — never reachable from
 // the internet; bound to the loopback interface by default so an
@@ -504,6 +510,10 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 
 func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
 	var err error
+	inv, err = a.restoreDurableQueueIdentity(ctx, appID, inv)
+	if err != nil {
+		return inv, 0, err
+	}
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
 		return inv, 0, err
@@ -736,13 +746,17 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // server echoes the status to schedd so a runner-generated handler error is
 // reported with its real HTTP code and retryable 5xx responses remain distinct.
 func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
+	var err error
+	inv, err = a.restoreDurableQueueIdentity(ctx, appID, inv)
+	if err != nil {
+		return inv, 0, err
+	}
 	if inv.ExclusiveClaim != nil {
 		parts := strings.Split(inv.ExclusiveClaim.IncarnationID, "/")
 		if len(parts) != 3 || target.InstanceID != parts[0] || target.WakeID != parts[1] || target.NodeID != parts[2] {
 			return inv, 0, fmt.Errorf("gateway synth: target does not match exclusive owner incarnation")
 		}
 	}
-	var err error
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
 		return inv, 0, err
@@ -784,6 +798,34 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	target.AppID = appID
 	inv.InstanceID = target.InstanceID
 	return a.forwardInvocationWithStatus(ctx, target, inv)
+}
+
+// restoreDurableQueueIdentity recovers the authoritative scope and tenant
+// identity for an in-platform queue delivery. The trigger batch carries only
+// a claimed row ID and attempt fence; those fields are checked against the
+// durable row before its environment can select a deployment.
+func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	if inv.Source != "esm" || inv.Attempts == 0 {
+		return inv, nil
+	}
+	if a.store == nil || inv.ID == "" || inv.AppID != appID || inv.Attempts < 1 || inv.ReplayGeneration < 0 {
+		return inv, state.ErrConflict
+	}
+	stored, err := a.store.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		return inv, fmt.Errorf("gateway synth: load durable queue delivery: %w", err)
+	}
+	if stored.ID != inv.ID || stored.AppID != appID ||
+		(stored.Source != state.InvocationQueue && stored.Source != state.InvocationDelayedTask) ||
+		stored.State != state.InvocationDispatching || stored.Attempts != inv.Attempts ||
+		stored.ReplayGeneration != inv.ReplayGeneration || !bytes.Equal(stored.Payload, inv.Payload) {
+		return inv, state.ErrConflict
+	}
+	inv.AccountID = stored.AccountID
+	inv.PlatformTenantID = stored.PlatformTenantID
+	inv.DeploymentScope = stored.DeploymentScope
+	inv.QueueBindingID = stored.QueueBindingID
+	return inv, nil
 }
 
 // forwardInvocation delivers a synthetic invocation through the same
@@ -1010,6 +1052,8 @@ type runDeps struct {
 	// both; the synth socket stays HTTP). nil in tests; production
 	// wires it after the Handler + EgressSink are constructed.
 	egressGRPC *egressGRPCListener
+	// Tests use a private ledger; an empty value retains the production path.
+	egressPendingPath string
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
 	// schedFlushSink.
@@ -1172,6 +1216,9 @@ type runDeps struct {
 	// not auto-downloaded). Production wires a Watcher with a
 	// 168h (weekly) cadence if FAAS_GEOIP_AUTO_REFRESH=1.
 	geoWatcher *geoip.Watcher
+	// asnReader / asnWatcher back the asn match field (ADR-966).
+	asnReader  *geoip.Reader
+	asnWatcher *geoip.Watcher
 	// publicAuthCache (issue #477 / ADR-079) is the unsealed
 	// basic-auth credential cache shared between the Handler
 	// (enforcePublicAuthBasic reads through it) and the
@@ -1872,6 +1919,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
+			inv.ResolvedDeploymentID = deploymentID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
 	}
@@ -2182,7 +2230,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
-	deps.requireAuthnAudit = newGatewaydAuditor(deps.pgStore, log)
+	// Request-path audit rows (authn gates, edge-rule denials and matches)
+	// go through one bounded async writer so attack traffic cannot turn into
+	// synchronous Postgres inserts on the request path.
+	requestPathAudit := newAsyncAuditStore(ctx, deps.pgStore, asyncAuditQueueCapacity, log)
+	deps.requireAuthnAudit = newGatewaydAuditor(requestPathAudit, log)
 	// Build the validate adapter before the edge-rule matcher captures it.
 	// Assigning a nil *edgeValidateAdapter to the validateCompiler interface
 	// produces a non-nil interface whose first CompileSchema call panics.
@@ -2208,7 +2260,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// single-consumer queue.
 	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
-	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
+	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(requestPathAudit, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
 	// is nil-safe: a missing file logs a WARN and the reader
@@ -2252,6 +2304,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
+	openASNReader(ctx, &deps, log)
 	// Issue #561 / ADR-091 PR 5 — build the per-URL JWKS cache
 	// + JWT verifier that applyEdgeRuleJWT consults. Lazy
 	// registration on first match; the cache uses an HTTP client
@@ -2688,6 +2741,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	// ADR-978: order the warm-capacity queue by route priority. Rules are
+	// read only for requests that have to queue, through a 30 s cache.
+	if pgStore := deps.pgStore; pgStore != nil {
+		handler.SetRoutePrioritySource(func(ctx context.Context, accountID, appID string) ([]api.RoutePriorityRule, error) {
+			_, setting, err := state.EffectiveRoutePriorities(ctx, pgStore, accountID, appID)
+			return setting.Routes, err
+		})
+	}
 	if plans := newConsumerPlanStore(deps.pgStore); plans != nil {
 		handler.WithConsumerPlanStore(plans)
 	}
@@ -2772,6 +2833,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}
+	// ADR-831 — kind=waf. Rule sets compile lazily on first use, so a node
+	// with no WAF rules pays nothing. FAAS_EDGE_WAF_INLINE_DISABLED=1 is the
+	// operator kill switch for in-path checks: warn and block rules then
+	// behave like observe (amendment 4).
+	wafInspector := edgewaf.New(deps.metrics, log)
+	go wafInspector.Run(ctx)
+	handler.WithWAFInspector(wafInspector)
+	if os.Getenv("FAAS_EDGE_WAF_INLINE_DISABLED") != "1" {
+		handler.WithWAFInlineChecker(wafInspector)
+	} else {
+		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
+	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev
@@ -2790,6 +2863,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// no-op and the gate fail-opens.
 	if deps.geoReader != nil {
 		handler.WithGeoReader(deps.geoReader)
+	}
+	if deps.asnReader != nil {
+		handler.WithASNReader(deps.asnReader)
+	}
+	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
+	// a store with the hit-count capability gets a recorder, so test and
+	// legacy wiring keep counting disabled.
+	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
+		hitCounter := newEdgeRuleHitCounter()
+		handler.WithEdgeRuleHitRecorder(hitCounter)
+		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
 	// applyEdgeRuleValidate consults. nil-safe:
@@ -2850,7 +2934,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressgrpc.DefaultPendingPath)
+	egressPendingPath := deps.egressPendingPath
+	if egressPendingPath == "" {
+		egressPendingPath = egressgrpc.DefaultPendingPath
+	}
+	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressPendingPath)
 	if err != nil {
 		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
 	}
@@ -3316,6 +3404,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		if cfg.NodeName != "" {
+			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
+		}
 		go manager.Run(ctx)
 	}
 
@@ -3473,10 +3564,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The order is httpsec.Nonce outer / httpsec.Static inner so the
 	// CSP can be set before Static runs (it doesn't matter for the
 	// static headers, but keeps the middleware chain readable).
-	publicHandler = httpsec.Static(httpsec.Nonce(
-		func(r *http.Request) bool { return isApidPath(r.URL.Path) },
-		publicHandler,
-	))
+	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
+	// hosts this hop sets nothing so the app's own value is the only copy
+	// gatewayd-public sees, and gatewayd-public fills defaults.
+	appsDomain := deps.appsDomain
+	publicHandler = httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		false,
+		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
+	)
 
 	// HSTS is seeded from the environment before the listener is built and
 	// then reconciled by the runtime-config watcher above. Do not re-read the
@@ -3679,11 +3775,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// the public path (H4-68), tuned per app by kind=circuit_breaker.
 		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
 		handler.WithCircuitBreaker(breaker)
+		// ADR-977: opt-in wake-ahead along service edges measured by this
+		// gateway. A prediction restores through the same wake path as a
+		// call, with its own trigger and below the fleet residency guard.
+		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		handler.SetWakeAhead(gateway.WakeAheadConfig{
+			Learner:   wakeAheadLearner,
+			Enabled:   pgStore.ServiceWakeAheadEnabled,
+			Residency: pgStore.ServiceWakeAheadFleetResidency,
+			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
+		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider:   serviceEndpointProvider,
-			Resolve:    newServiceProxyResolver(pgStore),
-			Authorize:  newServiceProxyAuthorizer(pgStore),
-			AllowAlias: guestServiceAliasAllowed,
+			Provider:                  serviceEndpointProvider,
+			Resolve:                   newServiceProxyResolver(pgStore),
+			Authorize:                 newServiceProxyAuthorizer(pgStore),
+			AllowAlias:                guestServiceAliasAllowed,
+			ResolveEnvironmentBinding: newServiceProxyEnvironmentBindingResolver(pgStore),
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
@@ -3698,6 +3805,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
@@ -3729,16 +3837,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			debugTunnel.setTargets(controlServices)
 		}
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
-			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
-			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
-			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
+			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
+				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
+					return "", "", err
+				}
+				return identityResolver.ResolveIdentity(ctx, remote)
+			}
+			guestServiceCallerResolver = func(ctx context.Context, remote string) (string, error) {
+				// DNS only publishes an alias address. Let the separate
+				// qualification alias check consider frozen graph bindings;
+				// the ordinary HTTP authorizer retains its held-caller guard.
+				appID, _, err := identityResolver.ResolveIdentity(ctx, remote)
+				return appID, err
+			}
+			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
 				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
 			}
 			guestServices = gateway.NewServiceProxy(serviceProxyConfig)
-			guestServiceProxy = guestServices
+			guestServiceProxy = newEnvironmentQualificationServiceProxy(pgStore, cfg.NodeName, deps.nodeCache.Forwarding(), guestServices)
 		}
 	}
 

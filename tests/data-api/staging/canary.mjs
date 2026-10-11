@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { captureContract, qualifyRollout } from './rollout.mjs'
 import { CanaryFailure, requireValue } from './checks.mjs'
 import { verifiedSync, verifiedContract, matchingRuntimeLog, verifiedDiagnostic } from './workflow.mjs'
 export { CanaryFailure, requireValue } from './checks.mjs'
@@ -142,7 +143,7 @@ export class Canary {
     const workflow = {
       output: 'database.types.ts',
       migrate: { directory: migrationDir, command: [this.cli, 'deploy', '--name', migrator.slug, '--dockerfile', '--source', 'worktree', '--wait', '--timeout', '15m', '--healthcheck-path', '/healthz', '--no-doctor', '--no-require-authn'] },
-      check: { directory: '.', command: [compiler, '--strict', '--skipLibCheck', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts', 'workflow-client.ts'] },
+      check: { directory: '.', command: [compiler, '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts', 'workflow-client.ts'] },
     }
     if ((await readFile(join(migrationDir, 'version'), 'utf8')).trim() === '2') {
       await writeFile(join(clientDir, 'priority.ts'), 'import {createDataClient} from "@gregale/data"; import type {Database} from "./database.types.js"; const db=createDataClient<Database>({url:"https://unused.example",accessToken:"unused"}).schema("api"); db.from("notes").insert({subject:"alice",body:"new",priority:1});')
@@ -160,6 +161,8 @@ export class Canary {
     await this.deployed(await this.request(`/v1/deployments/${fresh[0].id}`), migrator)
     return verified
   }
+  captureContract(...args) { return captureContract(this, ...args) }
+  qualifyRollout(options) { return qualifyRollout(this, options) }
   async contract(url, token, expected) {
     const response = await this.publicFetch(url + '/__gregale/schema', { headers: { Authorization: `Bearer ${token}` } })
     requireValue(response.ok, 'serving_contract_unavailable')
@@ -238,10 +241,10 @@ export class Canary {
       const issuerURL = this.appURL(issuer)
       const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
       const jwk = { ...publicKey.export({ format: 'jwk' }), kid: this.prefix, alg: 'ES256', use: 'sig' }
-      const jwt = (sub, audience = this.prefix, lifetime = 300) => {
+      const jwt = (sub, audience = this.prefix, lifetime = 300, tenant = 'canary') => {
         const enc = value => Buffer.from(JSON.stringify(value)).toString('base64url')
         const now = Math.floor(Date.now() / 1000)
-        const data = `${enc({ alg: 'ES256', kid: this.prefix })}.${enc({ sub, iss: issuerURL, aud: audience, exp: now + lifetime, iat: now, role: 'postgres' })}`
+        const data = `${enc({ alg: 'ES256', kid: this.prefix })}.${enc({ sub, iss: issuerURL, aud: audience, exp: now + lifetime, iat: now, tenant, role: 'postgres' })}`
         return `${data}.${sign('sha256', Buffer.from(data), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
       }
       const issuerDir = join(this.workspace, 'issuer'); await mkdir(issuerDir)
@@ -288,6 +291,13 @@ export class Canary {
       const id = await this.check('typed_crud_and_subject_isolation', () => client.exercise(url, jwt('alice'), jwt('bob'), clientFetch))
       const { createDataClient } = await this.loadModule(join(clientDir, 'node_modules/@gregale/data/dist/index.js'))
       const alice = createDataClient({ url, accessToken: () => jwt('alice'), fetch: clientFetch }).schema('api')
+      await this.check('same_subject_tenant_isolation', async () => {
+        const otherTenant = createDataClient({ url, accessToken: () => jwt('alice', this.prefix, 300, 'other-tenant'), fetch: clientFetch }).schema('api')
+        const hidden = await otherTenant.from('notes').select('id').eq('id', id).retry(false)
+        requireValue(!hidden.error && hidden.data?.length === 0, 'cross_tenant_read_allowed')
+        const denied = await otherTenant.from('notes').insert({ subject: 'alice', body: 'forbidden-tenant' }).retry(false)
+        requireValue(denied.error?.code === '42501', 'cross_tenant_write_allowed')
+      })
       const rpcCheck = async () => {
         const observations = []
         await workflowClient.exerciseRPC(url, jwt('alice'), jwt('bob'), clientFetch, info => { observations.push(info) })
@@ -323,6 +333,7 @@ export class Canary {
         const running = await this.wait(() => this.request(`/v1/apps/${app.slug}/instances`), xs => xs.some(x => x.state === 'RUNNING' && x.deployment_id === deployment))
         this.report.instances.push(...record(running))
       })
+      const olderPath = await this.captureContract(app, clientDir, 'older')
       await writeFile(join(migrationDir, 'version'), '2')
       const beforeMigration = this.report.syncs.at(-1).fingerprint
       await this.check('schema_migration_sync_native_build', () => this.sync(app, migrator, migrationDir, clientDir, jwt('alice', this.prefix, 1800)))
@@ -352,6 +363,8 @@ export class Canary {
         const deleted = await alice.from('notes').delete().eq('id', id).select('id')
         requireValue(!deleted.error && deleted.data.length === 1, 'typed_delete_failed')
       })
+      const currentPath = await this.captureContract(app, clientDir, 'current')
+      await this.qualifyRollout({ app, url, token: () => jwt('alice'), createDataClient, olderPath, currentPath, clientDir })
       this.report.result = 'passed'
     } catch (error) {
       this.report.result = 'failed'

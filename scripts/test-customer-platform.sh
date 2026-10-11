@@ -14,7 +14,7 @@ export GREGALE_CUSTOMER_PLATFORM_DIR="$starter_dir"
 cd "$task_root"
 "${GO:-go}" test -p 1 ./pkg/state -count=1 \
   -run 'Test(MemPlatformTenantInvocationLifecycle|PgPlatformTenantInvocationLifecycle|PgPlatformTenantInvocationIdentityImmutable|PgCreateAppPersistsPlatformTenantRequired|PgProjectPlatformTenantPolicyLifecycle|PgApplyProjectPlanPersistsPlatformTenantPolicy|PgPlatformTenantCrossAppLifecycle)$'
-"${GO:-go}" test -p 1 ./cmd/apid -count=1 \
+"${GO:-go}" test -p 1 ./pkg/apid/apidserver -count=1 \
   -run '^Test(CustomerPlatformStarterTwoCustomerAcceptance|PlatformTenantInvocationSelfService)$'
 
 "${GO:-go}" test -p 1 ./pkg/gateway ./cmd/gatewayd-internal -count=1 \

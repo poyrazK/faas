@@ -68,8 +68,8 @@ def test_automation_health_window_and_current_or_legacy_queue(with_queue):
             "billing",
             "paid-invoice",
             client=client,
-            created_after=datetime.datetime(2026, 10, 1, tzinfo=datetime.timezone.utc),
-            created_before=datetime.datetime(2026, 10, 5, 23, 59, 59, tzinfo=datetime.timezone.utc),
+            created_after=datetime.datetime(2026, 10, 1, tzinfo=datetime.UTC),
+            created_before=datetime.datetime(2026, 10, 5, 23, 59, 59, tzinfo=datetime.UTC),
         )
 
     assert result is not None and result.run_count == 0 and result.automation_name == "paid-invoice"

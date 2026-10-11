@@ -8,12 +8,17 @@ import (
 	"github.com/google/uuid"
 )
 
-func (m *MemStore) CreatePlatformTenantRateCard(_ context.Context, accountID, tenantID, currency string, price int64, effectiveFrom time.Time) (PlatformTenantRateCard, error) {
-	currency = normalizePlatformTenantRateCardCurrency(currency)
-	effectiveFrom = effectiveFrom.UTC()
-	if err := validatePlatformTenantRateCardInput("CreatePlatformTenantRateCard", accountID, tenantID, currency, price, effectiveFrom); err != nil {
+func (m *MemStore) CreatePlatformTenantRateCard(ctx context.Context, accountID, tenantID, currency string, price int64, effectiveFrom time.Time) (PlatformTenantRateCard, error) {
+	return m.CreatePlatformTenantRateCardVersion(ctx, PlatformTenantRateCardInput{AccountID: accountID, TenantID: tenantID,
+		Currency: currency, PriceMillicentsPerUnit: price, EffectiveFrom: effectiveFrom})
+}
+
+func (m *MemStore) CreatePlatformTenantRateCardVersion(_ context.Context, in PlatformTenantRateCardInput) (PlatformTenantRateCard, error) {
+	in, err := normalizePlatformTenantRateCardInput(in)
+	if err != nil {
 		return PlatformTenantRateCard{}, err
 	}
+	accountID, tenantID, currency, effectiveFrom := in.AccountID, in.TenantID, in.Currency, in.EffectiveFrom
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tenant, ok := m.platformTenants[tenantID]
@@ -34,7 +39,8 @@ func (m *MemStore) CreatePlatformTenantRateCard(_ context.Context, accountID, te
 	card := PlatformTenantRateCard{
 		ID: uuid.NewString(), AccountID: accountID, TenantID: tenantID,
 		Currency: currency, Unit: PlatformTenantRateCardUnitRequest,
-		PriceMillicentsPerUnit: price, EffectiveFrom: effectiveFrom, CreatedAt: time.Now().UTC(),
+		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit, IncludedUnitsPerMonth: in.IncludedUnitsPerMonth,
+		Tiers: in.Tiers, EffectiveFrom: effectiveFrom, CreatedAt: time.Now().UTC(),
 	}
 	m.platformTenantRateCards[card.ID] = card
 	return card, nil

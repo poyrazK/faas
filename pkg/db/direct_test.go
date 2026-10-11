@@ -187,6 +187,7 @@ var pooledAcquireOK = map[string]string{
 	"pkg/db/warmup.go":                                   "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
 	"pkg/db/pgtest/pgtest.go":                            "test harness; never runs against a pooler",
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
+	"pkg/e2etest/postgresprobe/pool.go":                  "private customer pools: reads and explicit transactions are pooler-safe; Acquire only borrows semaphore permits",
 	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
 }
 

@@ -4,11 +4,18 @@ const key = location.hash.slice(1)
 history.replaceState(null, '', location.pathname)
 let session, selected = '', fingerprint = '', busy = false
 const show = (id, value) => { element(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
+function showResource(kind, resource) {
+  const computedRelationships = session.snapshot.functions.filter(f => f.schema === resource.schema && f.setof?.from === resource.name)
+  show('schema', kind === 'tables' && computedRelationships.length ? { ...resource, computedRelationships: computedRelationships.map(f => ({ name: f.name, target: f.setof.to, one_to_one: f.setof.one_to_one })) } : resource)
+  const json = kind === 'tables' && resource.columns.find(c => c.type === 'Json' && !/["\\\u0000-\u001f\u007f]/.test(c.name))
+  element('json-help').hidden = !json
+  if (json) show('json-example', `select=status:"${json.name}"->>status,details:"${json.name}"->details\n${json.name}->>status=eq.paid\nselectJson(db.from(${JSON.stringify(resource.name)}), '', { status: jsonText(${JSON.stringify(json.name)}, 'status') })`)
+}
 function selectResource() {
   selected = element('resource').value
   const [kind, name] = JSON.parse(selected)
   const resource = session.snapshot[kind].find(item => `${item.schema}.${item.name}` === name)
-  show('schema', resource)
+  showResource(kind, resource)
   element('path').value = `/rest/v1/${kind === 'functions' ? 'rpc/' : ''}${encodeURIComponent(resource.name)}${kind === 'tables' ? '?select=*' : ''}`
   element('method').value = kind === 'functions' ? 'POST' : 'GET'
   element('body').value = '{}'
@@ -19,6 +26,12 @@ async function refresh() {
     const response = await fetch('session', { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' })
     if (!response.ok) throw new Error('Open the inspector URL printed by gregale data-api dev to connect.')
     session = await response.json()
+    const identity = element('identity').value
+    element('identity').replaceChildren()
+    for (const [name, value] of Object.entries(session.identities)) {
+      const option = document.createElement('option'); option.value = name; option.textContent = `${name} (${value.subject})`; element('identity').append(option)
+    }
+    if (Object.hasOwn(session.identities, identity)) element('identity').value = identity
     show('status', `${session.status} · API ${session.ready ? 'ready' : 'paused'} · client checks ${session.client_checked ? 'passed' : 'not verified'}`)
     show('detail', session.detail ?? '')
     show('fingerprint', `Schema: ${session.fingerprint}`)
@@ -28,13 +41,13 @@ async function refresh() {
       element('resource').replaceChildren()
       for (const kind of ['tables', 'functions']) for (const resource of session.snapshot[kind]) {
         const option = document.createElement('option')
-        option.value = JSON.stringify([kind, `${resource.schema}.${resource.name}`]); option.textContent = `${kind === 'tables' ? 'Table' : 'RPC'} · ${resource.schema}.${resource.name}`
+        option.value = JSON.stringify([kind, `${resource.schema}.${resource.name}`]); option.textContent = `${kind === 'tables' ? 'Table' : resource.setof?.from ? 'RPC + relationship' : 'RPC'} · ${resource.schema}.${resource.name}`
         element('resource').append(option)
       }
       if ([...element('resource').options].some(option => option.value === selected)) {
         element('resource').value = selected
         const [kind, name] = JSON.parse(selected)
-        show('schema', session.snapshot[kind].find(item => `${item.schema}.${item.name}` === name))
+        showResource(kind, session.snapshot[kind].find(item => `${item.schema}.${item.name}` === name))
       } else if (element('resource').value) selectResource()
     }
     element('send').disabled = !session.ready || busy
@@ -46,6 +59,9 @@ element('send').addEventListener('click', async () => {
     const path = element('path').value
     const target = new URL(path, location.origin)
     if (target.origin !== location.origin || !target.pathname.startsWith('/rest/v1/') || target.username || target.password || target.hash) throw new Error('Use a local /rest/v1/ API path.')
+    const expectedFingerprint = element('expected-fingerprint').value.trim()
+    if (expectedFingerprint && !/^[a-f0-9]{64}$/.test(expectedFingerprint)) throw new Error('Use a 64-character lowercase schema fingerprint.')
+    if (expectedFingerprint) target.pathname = `/__gregale/contract/${expectedFingerprint}${target.pathname}`
     const method = element('method').value
     const body = ['POST', 'PATCH'].includes(method) ? JSON.stringify(JSON.parse(element('body').value)) : undefined
     const response = await fetch(target, { method, body, signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${session.identities[element('identity').value].token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' } })
@@ -97,13 +113,14 @@ element('load-saved').addEventListener('click', savedAction(async () => {
   element('request-name').value = request.name; element('method').value = request.method; element('path').value = request.path; element('identity').value = request.identity
   element('body').value = JSON.stringify(request.body ?? {}, null, 2); element('expected-status').value = request.expect.status
   element('expected-json').value = 'json' in request.expect ? JSON.stringify(request.expect.json, null, 2) : ''
+  element('expected-fingerprint').value = request.expectedSchemaFingerprint ?? ''
   element('capture').value = request.capture ? JSON.stringify(request.capture, null, 2) : ''
   show('saved-status', `Loaded ${request.name}.`)
 }))
 element('save-request').addEventListener('click', savedAction(async () => {
   if (!collection) throw new Error('Reload the collection first.')
   const method = element('method').value
-  const request = { name: element('request-name').value.trim(), method, path: element('path').value, identity: element('identity').value, ...(element('capture').value.trim() ? { capture: JSON.parse(element('capture').value) } : {}), ...(['POST', 'PATCH'].includes(method) ? { body: JSON.parse(element('body').value) } : {}), expect: { status: Number(element('expected-status').value), ...(element('expected-json').value.trim() ? { json: JSON.parse(element('expected-json').value) } : {}) } }
+  const request = { ...(element('expected-fingerprint').value.trim() ? { expectedSchemaFingerprint: element('expected-fingerprint').value.trim() } : {}), name: element('request-name').value.trim(), method, path: element('path').value, identity: element('identity').value, ...(element('capture').value.trim() ? { capture: JSON.parse(element('capture').value) } : {}), ...(['POST', 'PATCH'].includes(method) ? { body: JSON.parse(element('body').value) } : {}), expect: { status: Number(element('expected-status').value), ...(element('expected-json').value.trim() ? { json: JSON.parse(element('expected-json').value) } : {}) } }
   const requests = [...currentScenario().requests]; const index = requests.findIndex(item => item.name === request.name)
   if (index < 0) requests.push(request); else requests[index] = request
   await collectionRequest('PUT', updatedCollection(requests)); element('saved').value = request.name

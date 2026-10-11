@@ -11,6 +11,7 @@ import "net/http"
 // Body is copied while compiling so the host cache never aliases the state
 // store's JSON buffer.
 type EdgeRuleRespondResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string

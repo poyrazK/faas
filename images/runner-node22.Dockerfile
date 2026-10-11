@@ -13,9 +13,11 @@ FROM public.ecr.aws/docker/library/node:22-alpine@sha256:76789712cd1ae89a1225eac
 # already reserves uid 1000 for `node`; reuse that identity under the
 # platform's canonical `app` name instead of attempting a duplicate uid.
 COPY --chmod=0644 guest/profiling/node/package*.json /opt/gregale/profiling/
-RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt chmod 0755 /opt/gregale /opt/gregale/profiling && \
+COPY --chmod=0644 guest/tracing/node/package*.json /opt/gregale/tracing/
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt chmod 0755 /opt/gregale /opt/gregale/profiling /opt/gregale/tracing && \
     apk add --no-cache libstdc++ && apk add --no-cache --virtual .profiling-build python3 make g++ && \
-    cd /opt/gregale/profiling && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev && apk del .profiling-build && \
+    cd /opt/gregale/profiling && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev && \
+    cd /opt/gregale/tracing && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --ignore-scripts && apk del .profiling-build && \
     rm -rf /root/.npm
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apk upgrade --no-cache && \
     apk add --no-cache bash && \
@@ -27,4 +29,5 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt ap
 # The function runner shim (guest/runners/node22) is layered in for `type:
 # function` deploys at M7; plain Node apps bring their own entrypoint.
 COPY --chmod=0644 guest/profiling/node.cjs /opt/gregale/profiling/node.cjs
+COPY --chmod=0644 guest/tracing/node.cjs /opt/gregale/tracing/node.cjs
 WORKDIR /app

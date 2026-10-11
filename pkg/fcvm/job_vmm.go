@@ -80,6 +80,7 @@ type JobManifest struct {
 	Command             []string          `json:"command,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`
 	TaskTimeoutSec      int               `json:"task_timeout_s,omitempty"`
+	StartHeld           bool              `json:"start_held,omitempty"`
 	VsockJobExitPort    int               `json:"vsock_job_exit_port,omitempty"`
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
 }
@@ -160,6 +161,8 @@ func (s JobColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: job cold boot: lease token exceeds 1024 bytes")
 	case len(s.Env) > 256:
 		return fmt.Errorf("fcvm: job cold boot: env has %d entries (>256)", len(s.Env))
+	case len(s.SecretsEnvJSON) > JobManifestMaxBytes:
+		return fmt.Errorf("fcvm: job cold boot: sealed env projection exceeds %d bytes", JobManifestMaxBytes)
 	case s.VcpuCount < 1:
 		return fmt.Errorf("fcvm: job cold boot: vcpu_count %d < 1", s.VcpuCount)
 	case s.MemSizeMiB < 1:
@@ -200,9 +203,11 @@ const JobMaxTaskTimeoutSec = 5400
 const JobManifestMaxBytes = 16 * 1024 * 1024
 
 const (
-	VsockJobControlPort        = 1028
-	VsockJobCancelMsgType      = 5
-	vsockJobControlAckOK  byte = 0
+	VsockJobControlPort          = 1028
+	VsockJobCancelMsgType        = 5
+	VsockJobStartMsgType         = 6
+	vsockJobControlAckOK    byte = 0
+	vsockJobControlAckError byte = 1
 )
 
 // JobDestroyWaitDefault is the default firecracker destroy timeout
@@ -214,6 +219,11 @@ const (
 // the host's accepted task timeout plus cleanup grace, not 30 minutes:
 // the old ceiling ended a valid Scale 3600s task 30 minutes early.
 const JobDestroyWaitDefault = time.Duration(JobMaxTaskTimeoutSec+90) * time.Second
+
+// JobStartGateTimeout is the bounded pre-execution window for held Jobs.
+// guest/init uses the same 90-second bound and exits with an infrastructure
+// receipt if the scheduler never releases the start gate.
+const JobStartGateTimeout = 90 * time.Second
 
 // EffectiveDestroyWait returns the destroy timeout the engine
 // should pass to vmmdgrpc at job wake time. Mirrors
@@ -283,6 +293,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 		Command:             spec.Command,
 		Env:                 spec.Env,
 		TaskTimeoutSec:      spec.TaskTimeoutSec,
+		StartHeld:           spec.StartHeld,
 		VsockJobExitPort:    VsockJobExitPort,
 		VsockJobExitMsgType: VsockJobExitMsgType,
 	}
@@ -291,7 +302,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 	// binds the guest-initiated vsock listener before Firecracker receives its
 	// config. A short job therefore cannot beat the host listener, and the
 	// customer image/cache is never modified to carry per-run state.
-	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, nil, nil, "", false, &manifest)
+	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, spec.SecretsEnvJSON, nil, "", false, &manifest)
 }
 
 // stageJobManifest writes the JSON-encoded JobManifest to the private drive1
@@ -833,6 +844,60 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 		}
 	}
 	return fmt.Errorf("vmm: signal job %s: %w", l.Instance, lastErr)
+}
+
+// ReleaseJobStart tells a held guest Job to execute its command. Repeated
+// calls are safe: the guest acknowledges both the first release and retries
+// after an ambiguous host-side transport failure.
+func (v *JailerVMM) ReleaseJobStart(ctx context.Context, l Lease) error {
+	if v == nil || l.Instance == "" || v.chrootBase == "" {
+		return fmt.Errorf("vmm: release job start: invalid VMM or instance")
+	}
+	end := time.Now().Add(resumeHookDialDeadline)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(end) {
+		end = deadline
+	}
+	lastErr := context.DeadlineExceeded
+	for time.Now().Before(end) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("vmm: release job start %s: %w", l.Instance, err)
+		}
+		conn, err := net.DialTimeout("unix", v.vsockUDSSock(l.Instance), 200*time.Millisecond)
+		if err != nil {
+			lastErr = err
+		} else {
+			_ = conn.SetDeadline(end)
+			if err = writeJobControlFrame(conn, []byte(fmt.Sprintf("CONNECT %d\n", VsockJobControlPort))); err == nil {
+				var ack string
+				ack, err = readConnectAck(conn)
+				if err == nil && ack != "OK" {
+					err = fmt.Errorf("CONNECT rejected: %q", ack)
+				}
+			}
+			if err == nil {
+				var frame [8]byte
+				binary.BigEndian.PutUint32(frame[:4], VsockJobStartMsgType)
+				if err = writeJobControlFrame(conn, frame[:]); err == nil {
+					var reply [1]byte
+					_, err = io.ReadFull(conn, reply[:])
+					if err == nil && reply[0] != vsockJobControlAckOK {
+						err = fmt.Errorf("guest rejected held-job release (ack=%d)", reply[0])
+					}
+				}
+			}
+			_ = conn.Close()
+			if err == nil {
+				return nil
+			}
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("vmm: release job start %s: %w", l.Instance, ctx.Err())
+		case <-time.After(resumeHookDialStep):
+		}
+	}
+	return fmt.Errorf("vmm: release job start %s: %w", l.Instance, lastErr)
 }
 
 func writeJobControlFrame(w io.Writer, payload []byte) error {

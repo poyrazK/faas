@@ -1,0 +1,112 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "notes-rls",
+      "requests": [
+        {
+          "name": "Alice creates owned note",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 201
+          },
+          "body": {
+            "subject": "alice",
+            "body": "Private Alice note"
+          },
+          "capture": {
+            "note_id": "/0/id"
+          }
+        },
+        {
+          "name": "Bob cannot read Alice note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Bob cannot update Alice note",
+          "method": "PATCH",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "body": "Forbidden"
+          }
+        },
+        {
+          "name": "Bob cannot delete Alice note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Alice cannot insert as Bob",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "subject": "bob",
+            "body": "Forbidden ownership"
+          }
+        },
+        {
+          "name": "Alice note remains unchanged",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id,body,version",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}",
+                "body": "Private Alice note",
+                "version": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "Alice deletes owned note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}&select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{note_id}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Verify owned note cleanup",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{note_id}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    }
+  ]
+}

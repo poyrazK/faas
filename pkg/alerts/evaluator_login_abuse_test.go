@@ -56,6 +56,52 @@ func TestLoginTargetAlertSendsObservationLinkWithoutDeploymentAction(t *testing.
 	}
 }
 
+// Edge security alerts are driven by external traffic: they must notify but
+// never run a deployment action, even when a stored row carries one.
+func TestEdgeSecurityAlertsAreWebhookOnly(t *testing.T) {
+	for _, tc := range []struct {
+		metric      state.AlertMetric
+		querySeries string
+		wantLinks   bool
+	}{
+		{state.AlertMetricPreAuthPressure, "gateway_pre_auth_rate_limit_total", true},
+		{state.AlertMetricEdgeValidationFailures, "gateway_validate_failures_total", false},
+		{state.AlertMetricEdgeRejections, "gateway_edge_rejections_total", false},
+		{state.AlertMetricEdgeWAFDetections, "gateway_waf_inspections_total", false},
+	} {
+		t.Run(string(tc.metric), func(t *testing.T) {
+			store := state.NewMemStore()
+			rule, ident, _ := seedRule(t, store, tc.metric, state.AlertGt, 100)
+			window, action := state.AlertWindow15m, "rollback"
+			if _, err := store.UpdateAlertRule(context.Background(), rule.ID, state.UpdateAlertRuleParams{
+				WindowSpec: &window, Action: &action,
+			}); err != nil {
+				t.Fatalf("seed invalid stored action: %v", err)
+			}
+			prom := &selectivePromQL{fn: func(query string) (float64, error) {
+				if !strings.Contains(query, tc.querySeries) || !strings.Contains(query, "[15m]") {
+					t.Errorf("query %q, want %s over 15m", query, tc.querySeries)
+				}
+				return 250, nil
+			}}
+			dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+			actions := &recordingActionExecutor{}
+			ev, _ := makeEvaluatorWithAction(t, store, prom, ident, dispatch, actions)
+			stats, err := ev.RunOnce(context.Background())
+			if err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+			if stats.Fired != 1 || stats.ActionSkipped != 1 || actions.calls != 0 || dispatch.callCount() != 1 {
+				t.Fatalf("stats=%+v actions=%d webhooks=%d, want one webhook-only fire", stats, actions.calls, dispatch.callCount())
+			}
+			_, hasLink := dispatch.calls[0].Payload["observations_path"]
+			if hasLink != tc.wantLinks {
+				t.Fatalf("payload=%v, observations link present=%v want %v", dispatch.calls[0].Payload, hasLink, tc.wantLinks)
+			}
+		})
+	}
+}
+
 func TestLoginTargetAlertSkipsDegradedSource(t *testing.T) {
 	store := state.NewMemStore()
 	_, ident, _ := seedRule(t, store, state.AlertMetricPreAuthTargetThreshold, state.AlertGt, 5)

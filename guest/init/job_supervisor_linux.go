@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	osSignal "os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,6 +67,25 @@ func RunJob(log *slog.Logger) error {
 			LeaseToken: "",
 		}, log)
 	}
+	secrets, err := loadSecrets(log)
+	if err != nil {
+		// A one-shot attempt must not silently run with a partial environment.
+		log.Error("runJob: load runtime secrets", "err", err)
+		return shipAndPoweroff(JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}, log)
+	}
+	defer clear(secrets)
+	apiEnv := make(map[string]string, len(manifest.Env))
+	for key, value := range manifest.Env {
+		apiEnv[key] = value
+	}
+	receiptToken, receiptMACKey, receiptErr := takeQualificationConfigReceiptControl(apiEnv)
+	if receiptErr != nil || receiptToken != "" && !manifest.StartHeld {
+		clear(receiptMACKey)
+		log.Error("runJob: invalid qualification configuration controls", "err", receiptErr)
+		return shipAndPoweroff(JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}, log)
+	}
+	manifest.Env = apiEnv
+	defer clear(receiptMACKey)
 	if len(manifest.Command) == 0 {
 		return shipAndPoweroff(JobExitPayload{
 			ExitCode:   126, // POSIX "command found but not executable" sentinel
@@ -73,9 +93,37 @@ func RunJob(log *slog.Logger) error {
 			LeaseToken: manifest.LeaseToken,
 		}, log)
 	}
+	if manifest.StartHeld {
+		control, err := listenJobStartGate(log)
+		if err != nil {
+			log.Error("runJob: start gate unavailable", "err", err)
+			return shipAndPoweroff(JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}, log)
+		}
+		defer control.Close()
+		if receiptToken != "" {
+			emitQualificationConfigReceipt(log, "main", receiptToken, receiptMACKey, apiEnv, secrets, nil)
+		}
+		released, cancelSignal := waitForJobStart(control.started, control.signals, JobStartGateTimeout)
+		if !released {
+			payload := JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}
+			if cancelSignal != nil {
+				signal := syscall.SIGTERM
+				if got, ok := cancelSignal.(syscall.Signal); ok {
+					signal = got
+				}
+				payload.ExitCode = 128 + int32(signal)
+				payload.ErrorClass = "cancelled"
+				payload.Signal = int32(signal)
+			}
+			return shipAndPoweroff(payload, log)
+		}
+		env := buildEnvForJobWithSecrets(*manifest, secrets)
+		payload := superviseJobCommandWithSignals(*manifest, env, jobTerminationGrace, log, os.Stdout, os.Stderr, control.signals)
+		return shipAndPoweroff(payload, log)
+	}
 
 	// Build merged env (systemEnv ⊕ job.Env ⊕ jobEnvBaseline).
-	env := buildEnvForJob(*manifest)
+	env := buildEnvForJobWithSecrets(*manifest, secrets)
 	return runViaOSExec(*manifest, env, log)
 }
 
@@ -95,14 +143,21 @@ func superviseJobCommand(m JobManifest, env []string, grace time.Duration, log *
 // tests can provide bounded in-memory writers without redirecting process-wide
 // stdout/stderr.
 func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer) JobExitPayload {
+	return superviseJobCommandWithSignals(m, env, grace, log, stdout, stderr, nil)
+}
+
+func superviseJobCommandWithSignals(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer, controlSignals chan os.Signal) JobExitPayload {
 	if log == nil {
 		log = slog.Default()
 	}
-	stopSignals := make(chan os.Signal, 2)
-	osSignal.Notify(stopSignals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP)
-	defer osSignal.Stop(stopSignals)
-	closeControl := listenJobCancellation(stopSignals, log)
-	defer closeControl()
+	stopSignals := controlSignals
+	if stopSignals == nil {
+		stopSignals = make(chan os.Signal, 2)
+		osSignal.Notify(stopSignals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP)
+		defer osSignal.Stop(stopSignals)
+		closeControl := listenJobCancellation(stopSignals, log)
+		defer closeControl()
+	}
 
 	cmd := exec.Command(m.Command[0], m.Command[1:]...)
 	cmd.Env = env
@@ -220,6 +275,120 @@ func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Durat
 			// uninterruptible-task case so one guest cannot pin its lease forever.
 			return jobExitPayloadFromWait(jobWaitResult{err: errors.New("job did not exit after SIGKILL")}, reason, stopSignal, m.LeaseToken)
 		}
+	}
+}
+
+type jobStartControl struct {
+	fd        int
+	started   chan struct{}
+	signals   chan os.Signal
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func listenJobStartGate(log *slog.Logger) (*jobStartControl, error) {
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("create job start-gate vsock: %w", err)
+	}
+	addr := &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: VsockJobControlPort}
+	if err := unix.Bind(fd, addr); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("bind job start-gate vsock: %w", err)
+	}
+	if err := unix.Listen(fd, 8); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("listen job start-gate vsock: %w", err)
+	}
+	control := &jobStartControl{fd: fd, started: make(chan struct{}), signals: make(chan os.Signal, 2)}
+	go control.accept(log)
+	return control, nil
+}
+
+func (c *jobStartControl) Close() {
+	if c != nil {
+		c.closeOnce.Do(func() { _ = unix.Close(c.fd) })
+	}
+}
+
+func (c *jobStartControl) accept(log *slog.Logger) {
+	for {
+		raw, peer, err := unix.Accept4(c.fd, unix.SOCK_CLOEXEC)
+		if err != nil {
+			return
+		}
+		vmPeer, ok := peer.(*unix.SockaddrVM)
+		if !ok || vmPeer.CID != unix.VMADDR_CID_HOST {
+			_ = unix.Close(raw)
+			continue
+		}
+		go handleJobStartControl(raw, c.started, c.signals, &c.startOnce)
+	}
+}
+
+func handleJobStartControl(fd int, started chan struct{}, signals chan<- os.Signal, startOnce *sync.Once) {
+	f := os.NewFile(uintptr(fd), "job-control")
+	if f == nil {
+		_ = unix.Close(fd)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if err := setSockTimeout(fd, unix.SO_RCVTIMEO, 1500*time.Millisecond); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	if err := setSockTimeout(fd, unix.SO_SNDTIMEO, 1500*time.Millisecond); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	var frame [8]byte
+	if _, err := io.ReadFull(f, frame[:]); err != nil {
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		return
+	}
+	msgType, value := binary.BigEndian.Uint32(frame[:4]), binary.BigEndian.Uint32(frame[4:])
+	switch msgType {
+	case VsockJobStartMsgType:
+		if value != 0 {
+			_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+			return
+		}
+		startOnce.Do(func() { close(started) })
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckOK})
+	case VsockJobCancelMsgType:
+		sig := syscall.Signal(value)
+		switch sig {
+		case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+		default:
+			_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+			return
+		}
+		select {
+		case signals <- sig:
+			_, _ = unix.Write(fd, []byte{VsockJobControlAckOK})
+		default:
+			_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+		}
+	default:
+		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
+	}
+}
+
+func waitForJobStart(started <-chan struct{}, signals <-chan os.Signal, timeout time.Duration) (bool, os.Signal) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-started:
+		select {
+		case signal := <-signals:
+			return false, signal
+		default:
+			return true, nil
+		}
+	case signal := <-signals:
+		return false, signal
+	case <-timer.C:
+		return false, nil
 	}
 }
 

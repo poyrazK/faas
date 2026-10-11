@@ -30,6 +30,8 @@ func edgeRuleKindQuota(kind EdgeRuleKind, limits api.Limits) (int, bool) {
 		return limits.EdgeRulesRetryPerApp, true
 	case EdgeRuleKindCircuitBreaker:
 		return limits.EdgeRulesCircuitBreakerPerApp, true
+	case EdgeRuleKindWAF:
+		return limits.EdgeRulesWAFPerApp, true
 	default:
 		return 0, false
 	}

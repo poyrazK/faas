@@ -53,10 +53,12 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	nativeRecovery *nativeProcessRecoveryRuntime // opt-in, configured before admission
-	chrootBase     string                        // /srv/fc/jail
-	fcName         string                        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout   time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
+	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
+	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	chrootBase                    string                        // /srv/fc/jail
+	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
 	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
 	// nil uses net.DialTimeout; configure only before the VMM is used.
 	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)
@@ -104,6 +106,13 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// Private restored channels have their own callbacks and live producer
+	// authority. They never borrow daemon serving handlers or the CID index.
+	nativeRestoreChannels map[string]*nativeQualificationRestoreChannels
+	// Native qualification restore callbacks are a separate capability from
+	// ordinary guest receivers. They receive the frozen execution frame and
+	// must not resolve tenant identity through Manager.live.
+	nativeQualificationRestoreStreamHandlers map[uint32]nativeQualificationRestoreStreamHandler
 	// guestVsockStreamHandlers receive Firecracker guest-initiated streams on
 	// the per-instance <uds_path>_<port> endpoints. The outer compute VM cannot
 	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
@@ -254,9 +263,14 @@ type restoreTimingBreakdown struct {
 	// PreBootJoinWaitMs is how long the restore waited for the concurrent
 	// pre-boot write after the rest of the jail was staged. Operator-only.
 	PreBootJoinWaitMs int64
-	StageSnapshotMs   int64
-	HelperMs          int64
-	StartJailerMs     int64
+	// StageWritableMs is the per-instance drive clone inside StageDrivesMs,
+	// and PreBootSkipped reports whether the pre-boot write was skipped
+	// because the captured drive already held it. Operator-only.
+	StageWritableMs int64
+	PreBootSkipped  bool
+	StageSnapshotMs int64
+	HelperMs        int64
+	StartJailerMs   int64
 	// NetworkWaitMs is how long the restore blocked on the overlapped wake
 	// network before startJailer (wake_network.go). Operator-only, like the
 	// TUN subphases: it is not on the customer wake.restore_breakdown event.
@@ -2023,6 +2037,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
 		StageSnapshotMs:      tMemState.Sub(tSnapshotStart).Milliseconds(),
 		PreBootJoinWaitMs:    tPreBootJoined.Sub(tHelper).Milliseconds(),
+		StageWritableMs:      tStageWritable.Sub(tStageWritableStart).Milliseconds(),
+		PreBootSkipped:       preBootSkipped,
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
 		StartJailerMs:        tStartJailer.Sub(tNetworkReady).Milliseconds(),
 		NetworkWaitMs:        networkWait.Milliseconds(),
@@ -2043,6 +2059,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
+	v.wakePhaseMetrics.ObserveRestorePhases(breakdown)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
 	// The durable wake event above is the operator-facing record. Keep the
 	// duplicate structured log at Debug so a slow journald sink cannot delay
@@ -2173,6 +2190,14 @@ func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, e
 // unhealthy; serving a VM without its platform channels would make lifecycle
 // and identity behavior silently incomplete.
 func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+	if v.nativeRecovery != nil {
+		path, err := v.nativeRecovery.journal.qualifications("").restores().path(l.Instance)
+		if err == nil {
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				return errors.Join(err, errors.New("private native restore requires original scoped channels"))
+			}
+		}
+	}
 	v.mu.Lock()
 	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
 	for port, handler := range v.guestVsockStreamHandlers {
@@ -2328,6 +2353,7 @@ func (v *JailerVMM) closeGuestVsockListeners(instance string) {
 	if v == nil || instance == "" {
 		return
 	}
+	v.closeNativeQualificationRestoreChannels(instance)
 	v.mu.Lock()
 	listeners := make(map[uint32]*net.UnixListener)
 	for key, ln := range v.guestVsockListeners {
@@ -2514,6 +2540,10 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 }
 
 func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	return v.triggerResumeHookOnceWithPeer(ctx, l, hostTimeUnixNano, nil)
+}
+
+func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -2548,6 +2578,12 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 		attempts++
 		c, err = net.DialTimeout("unix", sock, 20*time.Millisecond)
 		if err == nil {
+			if validatePeer != nil {
+				if err := validatePeer(c); err != nil {
+					_ = c.Close()
+					return err
+				}
+			}
 			_ = c.SetDeadline(time.Now().Add(500 * time.Millisecond))
 			// Step 1: FC CONNECT-port handshake. "CONNECT <port>\n" — ASCII,
 			// newline-terminated. Guest listens on port VsockResumePort (1024).
@@ -2627,6 +2663,11 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
 	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
 	copy(msg[8:], body)
+	if validatePeer != nil {
+		if err := validatePeer(conn); err != nil {
+			return err
+		}
+	}
 	if _, err := conn.Write(msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
 	}
@@ -2650,6 +2691,11 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	}
 	if err := readResumeCapabilities(conn); err != nil {
 		return err
+	}
+	if validatePeer != nil {
+		if err := validatePeer(conn); err != nil {
+			return err
+		}
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
@@ -3173,7 +3219,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	}
 
 	if !memPublishedLocally {
-		memTmp, tmpErr := os.CreateTemp("", "faas-snap-*.mem")
+		memTmp, tmpErr := os.CreateTemp("", snapshotTempPattern(l.Instance, ".mem"))
 		if tmpErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: alloc snapshot mem tmp: %w", tmpErr)
 		}
@@ -7263,7 +7309,7 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 			return path, nil
 		}
 	}
-	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-snap-*.bin", "materialised")
+	tmp, err := v.newMaterialisedFile(instanceID, "", snapshotTempPattern(instanceID, ".bin"), "materialised")
 	if err != nil {
 		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
 	}
@@ -7570,6 +7616,18 @@ func layerCloneTempPattern(instance string) string {
 	// across a daemon restart. ReapOrphanedLayerClones applies the same
 	// durable liveness gate as the jail sweep before removing one.
 	return ".faas-layer-" + instance + "-*"
+}
+
+// snapshotTempPattern names a snapshot memory or materialised-artifact temp
+// file in vmmd's TMPDIR. Like layerCloneTempPattern it carries the instance id,
+// so a file stranded by a vmmd crash is reclaimed by ReapOrphanedLayerClones
+// behind the same durable liveness gate instead of lingering for good
+// (production compute-1 held 12 unnamed ones, 2026-10-01..06).
+func snapshotTempPattern(instance, ext string) string {
+	if !looksLikeInstanceID(instance) {
+		return "faas-snap-*" + ext
+	}
+	return "faas-snap-" + instance + "-*" + ext
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

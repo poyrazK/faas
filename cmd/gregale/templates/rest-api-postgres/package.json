@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node handler.js",
     "migrate": "node migrate.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:postgres": "node --test test/postgres.integration.js"
   },
   "dependencies": {
     "express": "^4.19.2",

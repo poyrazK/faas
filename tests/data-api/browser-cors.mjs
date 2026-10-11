@@ -20,7 +20,7 @@ export async function browserOrigins(root) {
   return { allowed: allowed.url, denied: denied.url, close: async () => { for (const item of [allowed, denied]) { item.server.closeAllConnections(); await new Promise(resolve => item.server.close(resolve)) } } }
 }
 
-export async function verifyBrowserCORS({ origins, url, token, expired, subject, gateway, expectedID }) {
+export async function verifyBrowserCORS({ origins, url, token, expired, subject, gateway, expectedID, expectedSchemaFingerprint }) {
   const profile = await mkdtemp(join(tmpdir(), 'gregale-cors-chromium-'))
   const requests = []
   const capture = req => requests.push({ path: req.url, method: req.method, origin: req.headers.origin, cookie: req.headers.cookie, authorization: Boolean(req.headers.authorization) })
@@ -74,15 +74,17 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     }
     await navigate(origins.allowed)
     await evaluate("document.cookie='browser_cookie_sentinel=private; SameSite=Strict; path=/'")
-    const input = JSON.stringify({ url, subject, token, expired })
+    const input = JSON.stringify({ url, subject, token, expired, expectedSchemaFingerprint })
     const allowed = await evaluate(`(async () => {
       const input = ${input}; const { readBrowserNotes } = await import('/client.js');
       const diagnostics = [];
-      const result = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), onResponse: info => diagnostics.push(info) });
+      const result = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), onResponse: info => diagnostics.push(info), expectedSchemaFingerprint: input.expectedSchemaFingerprint });
       const raw = await fetch(input.url+'/rest/v1/notes?select=id', { headers: { Authorization:'Bearer '+input.token, 'Accept-Profile':'api', Prefer:'count=exact' }, credentials:'omit' });
       const health = await fetch(input.url+'/healthz', { credentials:'omit' });
       const invalid = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.expired, signal: AbortSignal.timeout(5000) });
-      return { diagnostics, ids: result.data?.map(row => row.id), error: result.error?.code ?? null, count: result.count, requestID: raw.headers.get('X-Request-Id'), range: raw.headers.get('Content-Range'), preference: raw.headers.get('Preference-Applied'), health: health.status, invalidStatus: invalid.status, invalidCode: invalid.error?.code };
+      const different = input.expectedSchemaFingerprint && (input.expectedSchemaFingerprint[0] === 'a' ? 'b' : 'a') + input.expectedSchemaFingerprint.slice(1);
+      const mismatch = different && await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), expectedSchemaFingerprint: different });
+      return { diagnostics, ids: result.data?.map(row => row.id), error: result.error?.code ?? null, count: result.count, requestID: raw.headers.get('X-Request-Id'), range: raw.headers.get('Content-Range'), preference: raw.headers.get('Preference-Applied'), health: health.status, invalidStatus: invalid.status, invalidCode: invalid.error?.code, mismatchStatus: mismatch?.status, mismatchCode: mismatch?.error?.code };
     })()`)
     assert.equal(allowed.error, null)
     assert.equal(allowed.diagnostics.length, 1)
@@ -100,11 +102,15 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     assert.ok(requests.some(req => req.path === '/healthz' && req.origin === origins.allowed && !req.authorization && !req.cookie), 'health_requires_no_credentials')
     assert.equal(allowed.invalidStatus, 401)
     assert.equal(allowed.invalidCode, 'token_invalid')
+    if (expectedSchemaFingerprint) {
+      assert.equal(allowed.mismatchStatus, 409)
+      assert.equal(allowed.mismatchCode, 'schema_contract_mismatch')
+    }
     assert.ok(requests.some(req => req.origin === origins.allowed && req.method === 'OPTIONS' && !req.authorization), 'preflight_not_observed')
     assert.ok(requests.filter(req => req.origin === origins.allowed).every(req => !req.cookie), 'browser_credentials_leaked')
     const before = requests.length
     await navigate(origins.denied)
-    const denied = await evaluate(`(async () => { const input=${input}; const {readBrowserNotes}=await import('/client.js'); const result=await readBrowserNotes({url:input.url,subject:input.subject,accessToken:()=>input.token,signal:AbortSignal.timeout(5000)}); return {status:result.status,hasError:Boolean(result.error)} })()`)
+    const denied = await evaluate(`(async () => { const input=${input}; const {readBrowserNotes}=await import('/client.js'); const result=await readBrowserNotes({url:input.url,subject:input.subject,accessToken:()=>input.token,signal:AbortSignal.timeout(5000),expectedSchemaFingerprint:input.expectedSchemaFingerprint}); return {status:result.status,hasError:Boolean(result.error)} })()`)
     assert.equal(denied.status, 0)
     assert.equal(denied.hasError, true)
     assert.ok(requests.slice(before).some(req => req.method === 'OPTIONS' && req.origin === origins.denied))

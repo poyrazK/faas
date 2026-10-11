@@ -86,21 +86,22 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
 	}
 	return fcvm.JobBootRequest{
-		Instance:       req.GetInstance(),
-		AccountID:      req.GetAccountId(),
-		NodeID:         req.GetNodeId(),
-		Plan:           plan,
-		RunID:          req.GetRunId(),
-		TaskIndex:      int(req.GetTaskIndex()),
-		ImageRef:       req.GetImageRef(),
-		KernelKey:      req.GetKernelKey(),
-		BaseKey:        req.GetBaseKey(),
-		Command:        append([]string(nil), req.GetCommand()...),
-		Env:            cloneStringMap(req.GetEnv()),
-		VcpuCount:      int(req.GetVcpuCount()),
-		MemSizeMiB:     int(req.GetMemSizeMib()),
-		TaskTimeoutSec: int(req.GetTaskTimeoutSec()),
-		LeaseToken:     req.GetLeaseToken(),
+		Instance:         req.GetInstance(),
+		AccountID:        req.GetAccountId(),
+		NodeID:           req.GetNodeId(),
+		Plan:             plan,
+		RunID:            req.GetRunId(),
+		TaskIndex:        int(req.GetTaskIndex()),
+		ImageRef:         req.GetImageRef(),
+		KernelKey:        req.GetKernelKey(),
+		BaseKey:          req.GetBaseKey(),
+		Command:          append([]string(nil), req.GetCommand()...),
+		Env:              cloneStringMap(req.GetEnv()),
+		SealedEnvEntries: sealedFromProto(req.GetSealedEnv()),
+		VcpuCount:        int(req.GetVcpuCount()),
+		MemSizeMiB:       int(req.GetMemSizeMib()),
+		TaskTimeoutSec:   int(req.GetTaskTimeoutSec()),
+		LeaseToken:       req.GetLeaseToken(),
 	}, nil
 }
 
@@ -165,6 +166,7 @@ func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.Ex
 			DeploymentID: ref.GetDeploymentId(), VMStatePath: ref.GetVmstatePath(),
 			FCVersion: ref.GetFcVersion(), StorageKey: ref.GetStorageKey(),
 			VMStateStorageKey: ref.GetVmstateStorageKey(), Networkless: true,
+			MemBytes: ref.GetMemBytes(),
 		}
 	}
 	return fcvm.ExecutionWakeRequest{
@@ -409,6 +411,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			FCVersion:         snap.GetFcVersion(),
 			StorageKey:        snap.GetStorageKey(),
 			VMStateStorageKey: snap.GetVmstateStorageKey(),
+			MemBytes:          snap.GetMemBytes(),
 		}
 	}
 	return wr, nil

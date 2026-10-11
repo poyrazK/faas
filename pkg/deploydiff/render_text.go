@@ -1,8 +1,10 @@
 package deploydiff
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -256,12 +258,29 @@ func printScalar(w io.Writer, c Change) {
 	}
 	switch c.Kind {
 	case ChangeAdd:
-		_, _ = fmt.Fprintf(w, "  %s+ %v\n", label, c.After.Value)
+		_, _ = fmt.Fprintf(w, "  %s+ %s\n", label, c.After.text())
 	case ChangeRemove:
-		_, _ = fmt.Fprintf(w, "  %s- %v\n", label, c.Before.Value)
+		_, _ = fmt.Fprintf(w, "  %s- %s\n", label, c.Before.text())
 	default:
-		_, _ = fmt.Fprintf(w, "  %s%v → %v\n", label, c.Before.Value, c.After.Value)
+		_, _ = fmt.Fprintf(w, "  %s%s → %s\n", label, c.Before.text(), c.After.text())
 	}
+}
+
+// text renders a change value for the text diff. Scalars print as-is;
+// structs, slices, maps and pointers print as compact JSON. %v on those
+// printed Go internals: a deployment.workflows change showed pointer
+// addresses and step inputs as byte arrays (production-us hunt #9).
+func (a anyJSON) text() string {
+	if a.Value == nil {
+		return "<nil>"
+	}
+	switch reflect.ValueOf(a.Value).Kind() {
+	case reflect.Struct, reflect.Slice, reflect.Array, reflect.Map, reflect.Pointer, reflect.Interface:
+		if b, err := json.Marshal(a); err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprint(a.Value)
 }
 
 // printBreak emits one "⚠ code — reason" line. Stable wire shape

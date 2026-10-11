@@ -12,4 +12,13 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt mk
     chmod 0755 /opt/gregale /opt/gregale/profiling /opt/gregale/profiling/python && \
     PIP_CERT=/etc/ssl/certs/ca-certificates.crt pip install --no-cache-dir --require-hashes --only-binary=:all: -r /opt/gregale/profiling/requirements.txt
 COPY --chmod=0644 guest/profiling/python/sitecustomize.py /opt/gregale/profiling/python/sitecustomize.py
+COPY --chmod=0644 guest/tracing/python/requirements.txt /opt/gregale/tracing/requirements.txt
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt mkdir -p /opt/gregale/tracing/python/lib && \
+    chmod 0755 /opt/gregale/tracing /opt/gregale/tracing/python /opt/gregale/tracing/python/lib && \
+    PIP_CERT=/etc/ssl/certs/ca-certificates.crt pip install --no-cache-dir --require-hashes --only-binary=:all: \
+      --target /opt/gregale/tracing/python/lib -r /opt/gregale/tracing/requirements.txt && \
+    mkdir -p /opt/gregale/tracing/python/deps && cd /opt/gregale/tracing/python/lib && \
+    for f in *; do case "$f" in opentelemetry*) ;; *) mv "$f" ../deps/ ;; esac; done && \
+    chmod 0755 /opt/gregale/tracing/python/deps
+COPY --chmod=0644 guest/tracing/python/sitecustomize.py /opt/gregale/tracing/python/sitecustomize.py
 WORKDIR /app

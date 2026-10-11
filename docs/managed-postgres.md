@@ -142,6 +142,16 @@ requires restart recovery, encrypted secret delivery, SQL workload preservation
 through rotation, and cleanup verification. Version-7 evidence remains a
 historical provider result; it cannot authorize new provisioning under v8.
 
+The separate [deployed SQL acceptance](ops/managed-postgres-native-acceptance.md)
+exercises release/runtime credential separation, retained writer/reader pools,
+the application's restore reconnect hook, real guest SQL, rotation, snapshot
+restore and cleanup using a disposable PostgreSQL fixture. Run
+`make test-managed-postgres-native` on a designated isolated acceptance host.
+Provider management is simulated; a nested-node run remains diagnostic and
+does not replace fresh provider v8 and supported native-host qualification.
+The probe verifies writer and reader readiness in parallel within the bounded
+restore callback; both must succeed before it accepts traffic.
+
 Save the JSON output as an operator-owned artifact and verify it without making
 provider calls:
 
@@ -357,6 +367,11 @@ finish. Queued tasks load the new generation when dispatched. Retirement disable
 login and terminates sessions before deleting grants and the role. It refuses
 to delete a role that owns objects, preserving application data for operator
 repair. Stable schema objects survive migration credential retirement.
+
+Migration owners may create custom schemas in their customer database. SQL
+verification accepts that database `CREATE` privilege only for migration access;
+runtime credentials still reject it. The administrative `CREATEDB` role
+attribute, temporary-object access, and unsafe owner memberships remain denied.
 
 Existing preview administrator bindings require deliberate rotation to adopt
 restricted credentials. Existing table ownership is preserved; an operator may

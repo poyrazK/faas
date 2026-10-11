@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.environment_git_ops_run import EnvironmentGitOpsRun
     from ..models.environment_git_revision_approval import EnvironmentGitRevisionApproval
     from ..models.environment_git_source import EnvironmentGitSource
+    from ..models.environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
 
 
 T = TypeVar("T", bound="EnvironmentGitOpsStatusResponse")
@@ -19,13 +20,20 @@ T = TypeVar("T", bound="EnvironmentGitOpsStatusResponse")
 
 @_attrs_define
 class EnvironmentGitOpsStatusResponse:
-    """Source authority and the twenty most recent durable reconciliation attempts."""
+    """Source authority, current workload qualification evidence, and the twenty most recent durable reconciliation
+    attempts.
+
+    """
 
     source: EnvironmentGitSource
     """Durable environment authority with separate approved and fully applied revision pointers."""
     runs: list[EnvironmentGitOpsRun]
     approval: EnvironmentGitRevisionApproval | Unset = UNSET
     """Immutable reviewed-merge evidence bound to the approved definition and source generation."""
+    workload_evidence: EnvironmentWorkloadActivationEvidence | Unset = UNSET
+    """Evidence summary for the exact current reviewed workload graph; retained workloads count only when their
+    exact live deployment remains in the active release set. This evidence does not authorize candidate activation
+    or serving."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +48,10 @@ class EnvironmentGitOpsStatusResponse:
         if not isinstance(self.approval, Unset):
             approval = self.approval.to_dict()
 
+        workload_evidence: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workload_evidence, Unset):
+            workload_evidence = self.workload_evidence.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -50,6 +62,8 @@ class EnvironmentGitOpsStatusResponse:
         )
         if approval is not UNSET:
             field_dict["approval"] = approval
+        if workload_evidence is not UNSET:
+            field_dict["workload_evidence"] = workload_evidence
 
         return field_dict
 
@@ -58,6 +72,7 @@ class EnvironmentGitOpsStatusResponse:
         from ..models.environment_git_ops_run import EnvironmentGitOpsRun
         from ..models.environment_git_revision_approval import EnvironmentGitRevisionApproval
         from ..models.environment_git_source import EnvironmentGitSource
+        from ..models.environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
 
         d = dict(src_dict)
         source = EnvironmentGitSource.from_dict(d.pop("source"))
@@ -76,10 +91,18 @@ class EnvironmentGitOpsStatusResponse:
         else:
             approval = EnvironmentGitRevisionApproval.from_dict(_approval)
 
+        _workload_evidence = d.pop("workload_evidence", UNSET)
+        workload_evidence: EnvironmentWorkloadActivationEvidence | Unset
+        if isinstance(_workload_evidence, Unset):
+            workload_evidence = UNSET
+        else:
+            workload_evidence = EnvironmentWorkloadActivationEvidence.from_dict(_workload_evidence)
+
         environment_git_ops_status_response = cls(
             source=source,
             runs=runs,
             approval=approval,
+            workload_evidence=workload_evidence,
         )
 
         environment_git_ops_status_response.additional_properties = d

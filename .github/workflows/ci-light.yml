@@ -126,7 +126,7 @@ jobs:
         if: steps.select.outputs.vet != ''
         env:
           PKGS: ${{ steps.select.outputs.vet }}
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 10GiB
           GOMAXPROCS: 4
         run: |
@@ -138,7 +138,7 @@ jobs:
       # before every release; a lint-config change is validated here by
       # `config verify` and fully exercised by the next mega run.
       - name: install linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
           install-only: true
@@ -151,7 +151,7 @@ jobs:
         if: steps.select.outputs.changed != ''
         env:
           PKGS: ${{ steps.select.outputs.changed }}
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 10GiB
           GOGC: 100
           GOMAXPROCS: 4
@@ -341,12 +341,16 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Allow cold race builds and separate 25-minute API/state test budgets.
+    # Cover cold API compilation, sequential ordinary/API/state race runs,
+    # and container setup. State batches keep their own 12m timeouts and
+    # default runtime settings, on the separate PostgreSQL service.
     timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Shards 4-6 split cmd/apid's long suite across dedicated PostgreSQL
+        # services; its database DDL cannot race pkg/state's catalogue checks.
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -362,10 +366,28 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # Native clone fixtures pin pg_database/pg_roles across SQL phases.
+      # Private databases still share those catalogues with other packages;
+      # their concurrent create/drop cleanup must not mutate state fixtures.
+      postgres_state:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       # Handler fixtures clone one fully migrated template database.
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      SPLIT_DATABASE_URL: postgres://faas:faas@localhost:5433/faas?sslmode=disable
     steps:
       - uses: actions/checkout@v7
         with:
@@ -410,25 +432,57 @@ jobs:
       - name: enable PostgreSQL TLS for credential qualification
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
-        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+          SPLIT_POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres_state.id }}
+        run: |
+          bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+          bash scripts/ci/enable_postgres_tls.sh "$SPLIT_POSTGRES_SERVICE_CONTAINER"
+      - uses: actions/setup-node@v7
+        if: matrix.shard == 1
+        with:
+          node-version: '22'
+      - name: generated PostgreSQL starter TLS recovery
+        if: matrix.shard == 1
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+          GREGALE_POSTGRES_STARTER_TEST: '1'
+        run: |
+          if ! grep -qE '^(cmd/gregale/templates/(rest-api-postgres/|postgres_recovery_test.go|starter_handlers_test.go)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
+          NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.
       #
       # Two phases. The race build of cmd/apid can exhaust hosted-runner
       # memory, so test binaries are compiled first under the mega pg shard 1
-      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Those bounds must not reach the
-      # tests themselves: inherited by the test binaries, GOGC=10 on two cores
-      # pushed a third of pkg/state past the shard's 15-minute timeout. The
-      # run phase reuses the compiled binaries from the build cache.
+      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Ordinary-package tests retain
+      # those proven bounds: two unbounded APID runs lost their hosted runner
+      # after compilation. State tests use default runtime settings because
+      # GOGC=10 on two cores previously exhausted their execution budget.
+      # The run phase reuses the compiled binaries from the build cache.
       - name: race tests (changed packages and invariants)
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
-          SPLIT="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 6 < "$RUNNER_TEMP/changed-paths.txt")"
+          if (( SHARD > 3 )); then
+            SPLIT="$PKGS"
+            PKGS=""
+            SPLIT_SHARD=$((SHARD - 3))
+          else
+            selected_split="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
+            SPLIT=""
+            for pkg in $selected_split; do
+              if [[ "$pkg" == ./pkg/state ]]; then
+                SPLIT="$pkg"
+              fi
+            done
+            SPLIT_SHARD="$SHARD"
+          fi
           if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0
@@ -441,15 +495,35 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=25m $PKGS || status=1
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS || status=1
           fi
-          # Split API/state suites run sequentially after the package set.
-          # This avoids overlapping large race binaries and keeps state clone
-          # fixtures' cluster-wide database catalogue stable between snapshots.
+          # Main's dedicated API jobs retain their three batches. State jobs
+          # retain each original third as two sequential sixths.
+          # Verify every selected package's complete compiled inventory.
           for pkg in $SPLIT; do
-            run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
-            echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=25m -run "$run" "$pkg" || status=1
+            (
+              if [[ "$pkg" == ./pkg/state ]]; then
+                export DATABASE_URL="$SPLIT_DATABASE_URL"
+                shards=6
+                batches=("$SHARD" "$((SHARD + 3))")
+              else
+                export GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2
+                shards=3
+                batches=("$SPLIT_SHARD")
+              fi
+              echo "checking complete test inventory: $pkg"
+              inventory="$(mktemp "$RUNNER_TEMP/light-test-inventory-${SHARD}.XXXXXX")"
+              go test -race -list . "$pkg" > "$inventory" || exit 1
+              go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -check -list-file="$inventory" || exit 1
+              split_status=0
+              for test_shard in "${batches[@]}"; do
+                run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -shard="$test_shard")" || exit 1
+                echo "testing: $pkg (test batch $test_shard/$shards)"
+                go test -race -count=1 -timeout=12m -run "$run" "$pkg" || split_status=1
+              done
+              exit "$split_status"
+            ) || status=1
+
           done
           exit "$status"
       - name: save Go build + test cache

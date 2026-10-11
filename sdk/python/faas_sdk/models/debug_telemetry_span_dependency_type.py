@@ -1,10 +1,11 @@
 from typing import Literal
 
 DebugTelemetrySpanDependencyType = Literal[
-    "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
+    "app_dependency", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
 ]
 
 DEBUG_TELEMETRY_SPAN_DEPENDENCY_TYPE_VALUES: set[DebugTelemetrySpanDependencyType] = {
+    "app_dependency",
     "guest_transport",
     "managed_binding",
     "outbound_integration",

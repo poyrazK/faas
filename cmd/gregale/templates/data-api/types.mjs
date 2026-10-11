@@ -6,6 +6,7 @@ import { databaseURL, schemaNames, limits } from './config.mjs'
 // Fixed, parameterized catalog reads run in the customer's workload using
 // its restricted binding. No SQL text or database URL comes from a request.
 const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relkind AS kind,
+ c.oid::text AS id, a.attnum AS number,
  a.attname AS name, a.atttypid::text AS type, a.attnotnull AS required,
  a.attidentity AS identity, a.attgenerated AS generated, d.oid IS NOT NULL AS defaulted,
  has_column_privilege(c.oid,a.attnum,'INSERT') AS insertable,
@@ -21,9 +22,24 @@ const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relki
 const typesQuery = `SELECT t.oid::text AS id, t.typname AS name, n.nspname AS schema,
  t.typtype AS kind, t.typbasetype::text AS base, t.typelem::text AS element,
  t.typnotnull AS required,
+ has_schema_privilege(COALESCE($1::name,current_user),n.oid,'USAGE')
+ AND has_type_privilege(COALESCE($1::name,current_user),t.oid,'USAGE') AS accessible,
+ CASE WHEN c.relkind IN ('r','p','v','m') THEN
+ has_table_privilege(COALESCE($1::name,current_user),c.oid,'SELECT') ELSE false END AS selectable,
  ARRAY(SELECT e.enumlabel::text FROM pg_enum e WHERE e.enumtypid=t.oid ORDER BY e.enumsortorder) AS labels
- FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+ FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace LEFT JOIN pg_class c ON c.oid=t.typrelid
  ORDER BY t.oid LIMIT ${limits.types + 1}`
+
+// Standalone CREATE TYPE ... AS (...) objects only. Table row types must keep
+// using the privilege-filtered relation contract, never unrestricted attributes.
+const compositesQuery = `SELECT t.oid::text AS id, n.nspname AS schema, t.typname AS name,
+ a.attname AS field, a.atttypid::text AS type, a.attnotnull AS required
+ FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+ JOIN pg_class c ON c.oid=t.typrelid AND c.relkind='c'
+ LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+ WHERE n.nspname=ANY($1::text[]) AND has_schema_privilege(COALESCE($2::name,current_user),n.oid,'USAGE')
+ AND has_type_privilege(COALESCE($2::name,current_user),t.oid,'USAGE')
+ ORDER BY n.nspname,t.typname,a.attnum LIMIT ${limits.columns + 1}`
 
 const relationsQuery = `SELECT n.nspname AS schema, c.relname AS relation, x.conname AS name,
  rn.nspname AS referenced_schema, rc.relname AS referenced_relation,
@@ -35,9 +51,142 @@ const relationsQuery = `SELECT n.nspname AS schema, c.relname AS relation, x.con
  AND u.conkey @> x.conkey AND u.conkey <@ x.conkey) AS one_to_one
  FROM pg_constraint x JOIN pg_class c ON c.oid=x.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_class rc ON rc.oid=x.confrelid JOIN pg_namespace rn ON rn.oid=rc.relnamespace
- WHERE x.contype='f' AND n.nspname=ANY($1::text[]) AND rn.nspname=ANY($1::text[])
+ WHERE x.contype='f' AND x.conparentid=0 AND n.nspname=ANY($1::text[]) AND rn.nspname=ANY($1::text[])
  AND has_table_privilege(c.oid,'SELECT') AND has_table_privilege(rc.oid,'SELECT')
  ORDER BY n.nspname,c.relname,x.conname LIMIT ${limits.relations + 1}`
+
+// The engine follows resorigtbl/resorigcol in pg_rewrite's root target list.
+// Budget the complete input before returning definitions to the workload.
+const viewsQuery = `WITH views AS (
+ SELECT c.oid::text AS id,n.nspname AS schema,c.relname AS relation,r.ev_action::text AS action
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ JOIN pg_rewrite r ON r.ev_class=c.oid AND r.rulename='_RETURN'
+ WHERE c.relkind='v' AND n.nspname=ANY($1::text[])
+ AND has_schema_privilege(n.oid,'USAGE') AND has_any_column_privilege(c.oid,'SELECT')
+), budget AS (SELECT sum(octet_length(action)) AS bytes FROM views)
+ SELECT id,schema,relation,CASE WHEN bytes<=${limits.outputBytes} THEN action ELSE NULL END AS action
+ FROM views CROSS JOIN budget ORDER BY schema,relation LIMIT ${limits.relations + 1}`
+
+// Read PostgreSQL's structural node format, never SQL text or view names.
+// Escaped delimiters stay inside their token; nested query targets cannot be
+// mistaken for the root projection. Unsupported definitions have no lineage.
+export function viewOrigins(action) {
+  if (typeof action !== 'string' || Buffer.byteLength(action) > limits.outputBytes) return []
+  try {
+    const tokens = []
+    for (let i = 0; i < action.length;) {
+      if (/\s/.test(action[i])) { i++; continue }
+      if ('(){}'.includes(action[i])) { tokens.push(action[i++]); continue }
+      const start = i
+      while (i < action.length && !/\s/.test(action[i]) && !'(){}'.includes(action[i])) {
+        if (action[i] === '\\') { if (++i === action.length) throw new Error('Invalid token') }
+        i++
+      }
+      tokens.push(action.slice(start, i))
+    }
+    function end(start) {
+      const pairs = { '(': ')', '{': '}' }, stack = []
+      if (!pairs[tokens[start]]) return start + 1
+      for (let i = start; i < tokens.length; i++) {
+        const token = tokens[i]
+        if (pairs[token]) stack.push(pairs[token])
+        else if (token === ')' || token === '}') {
+          if (stack.pop() !== token) throw new Error('Invalid nesting')
+          if (!stack.length) return i + 1
+        }
+      }
+      throw new Error('Incomplete node')
+    }
+    function node(start, tag) {
+      if (tokens[start] !== '{' || tokens[start + 1] !== tag) throw new Error('Invalid node')
+      const stop = end(start), fields = new Map()
+      for (let i = start + 2; i < stop - 1;) {
+        const key = tokens[i++]
+        if (!key.startsWith(':')) throw new Error('Invalid field')
+        const value = i, next = end(i)
+        if (next >= stop || fields.has(key)) throw new Error('Invalid value')
+        fields.set(key, [value, next])
+        i = next
+      }
+      return fields
+    }
+    if (tokens[0] !== '(' || tokens.at(-1) !== ')' || end(1) !== tokens.length - 1) return []
+    const query = node(1, 'QUERY')
+    const scalar = (fields, name) => {
+      const range = fields.get(name)
+      return range && range[1] === range[0] + 1 ? tokens[range[0]] : undefined
+    }
+    if (scalar(query, ':commandType') !== '1' || scalar(query, ':setOperations') !== '<>') return []
+    const target = query.get(':targetList')
+    if (!target || tokens[target[0]] !== '(') return []
+    const origins = []
+    for (let i = target[0] + 1; i < target[1] - 1; i = end(i)) {
+      const entry = node(i, 'TARGETENTRY')
+      const integer = key => {
+        const value = scalar(entry, key)
+        return /^[1-9][0-9]*$/.test(value ?? '') && Number.isSafeInteger(Number(value)) ? Number(value) : 0
+      }
+      const number = integer(':resno'), id = integer(':resorigtbl'), column = integer(':resorigcol')
+      if (number && id && column && scalar(entry, ':resjunk') === 'false') origins.push({ number, id: String(id), column })
+    }
+    return origins
+  } catch { return [] }
+}
+
+export function viewRelationships(columns, relationships, views) {
+  const readable = new Map(columns.filter(c => c.id && c.number).map(c => [`${c.id}:${c.number}`, c]))
+  const origins = new Map(), projected = new Map()
+  for (const view of views) for (const origin of viewOrigins(view.action)) {
+    const key = `${view.id}:${origin.number}`
+    if (readable.has(key)) origins.set(key, `${origin.id}:${origin.column}`)
+  }
+  function base(key) {
+    const seen = new Set()
+    while (origins.has(key)) {
+      if (seen.has(key) || seen.size > 12) return null
+      seen.add(key); key = origins.get(key)
+      if (!readable.has(key)) return null
+    }
+    const column = readable.get(key)
+    return column && ['r', 'p'].includes(column.kind) ? key : null
+  }
+  for (const view of views) {
+    const mapping = new Map()
+    for (const c of columns.filter(c => c.id === view.id)) {
+      const key = base(`${c.id}:${c.number}`)
+      if (key) mapping.set(key, [...(mapping.get(key) ?? []), c.name])
+    }
+    projected.set(view.id, mapping)
+  }
+  function candidates(schema, relation, names) {
+    const keys = names.map(name => columns.find(c => c.schema === schema && c.relation === relation && c.name === name)).map(c => c && `${c.id}:${c.number}`)
+    if (keys.some(key => !key)) return []
+    const result = [{ schema, relation, columns: names }]
+    for (const view of views.filter(v => v.schema === schema)) {
+      const options = keys.map(key => projected.get(view.id).get(key))
+      if (options.some(names => !names?.length)) continue
+      let combinations = [[]]
+      for (const names of options) {
+        if (combinations.length * names.length > limits.relations) throw new Error('Too many inferred view relationships')
+        combinations = combinations.flatMap(prefix => names.map(name => [...prefix, name]))
+      }
+      result.push(...combinations.map(columns => ({ schema, relation: view.relation, columns })))
+      if (result.length > limits.relations) throw new Error('Too many inferred view relationships')
+    }
+    return result
+  }
+  const inferred = []
+  for (const r of relationships) {
+    if (r.schema !== r.referenced_schema) continue
+    const sources = candidates(r.schema, r.relation, r.columns), targets = candidates(r.referenced_schema, r.referenced_relation, r.referenced_columns)
+    for (const source of sources) for (const target of targets) {
+      if (source.relation === r.relation && target.relation === r.referenced_relation) continue
+      inferred.push({ ...r, schema: source.schema, relation: source.relation, columns: source.columns, referenced_schema: target.schema, referenced_relation: target.relation, referenced_columns: target.columns })
+      if (inferred.length + relationships.length > limits.relations) throw new Error('Too many inferred view relationships')
+    }
+  }
+  return inferred
+}
 
 // An exact annotation is the owner's explicit RPC opt-in. Count every overload,
 // including inaccessible ones: PostgREST dispatch must never select another body.
@@ -45,6 +194,7 @@ const functionsQuery = `SELECT n.nspname AS schema, p.proname AS name,
  p.prorettype::text AS return_type, p.proretset AS setof,
  p.proargnames AS names, p.proargtypes::oid[]::text[] AS arguments,
  p.pronargdefaults AS defaults, p.proargmodes AS modes,
+ p.provolatile AS volatility, p.prorows AS rows,
  (SELECT count(*) FROM pg_proc other WHERE other.pronamespace=p.pronamespace AND other.proname=p.proname) AS overloads
  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname=ANY($1::text[]) AND p.prokind='f' AND NOT p.prosecdef
@@ -52,6 +202,25 @@ const functionsQuery = `SELECT n.nspname AS schema, p.proname AS name,
  AND ($2::boolean OR has_function_privilege(p.oid,'EXECUTE'))
  AND obj_description(p.oid,'pg_proc')='@gregale:rpc'
  ORDER BY n.nspname,p.proname LIMIT ${limits.relations + 1}`
+
+// A computed relationship is callable inside select, outside the RPC route
+// allowlist. Its serving-role EXECUTE grant must agree with the approved
+// contract. Inspect every engine-recognized signature, including unsupported
+// bodies, overloads and annotations, without exporting their definitions.
+export async function computedPermissionBlockers(client, schemas, role, snapshot) {
+  const candidates = (await client.query(`SELECT n.nspname AS schema,p.proname AS name
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    JOIN pg_class source ON source.reltype=p.proargtypes[0] AND source.relkind IN ('r','p','v','m','f')
+    JOIN pg_namespace source_schema ON source_schema.oid=source.relnamespace
+    JOIN pg_class target ON target.reltype=p.prorettype AND target.relkind IN ('r','p','v','m','f')
+    WHERE n.nspname=ANY($1::text[]) AND source_schema.nspname=ANY($1::text[]) AND p.pronargs=1
+    AND has_schema_privilege(COALESCE($2::name,current_user),n.oid,'USAGE')
+    AND has_function_privilege(COALESCE($2::name,current_user),p.oid,'EXECUTE')
+    ORDER BY n.nspname,p.proname,p.oid LIMIT ${limits.relations + 1}`, [schemas, role])).rows
+  if (candidates.length > limits.relations) throw new Error('Too many executable computed relationships')
+  const approved = new Set(snapshot.functions.filter(f => f.setof?.from).map(f => `${f.schema}.${f.name}`))
+  return [...new Set(candidates.filter(f => !approved.has(`${f.schema}.${f.name}`)).map(f => `computed_relationship_not_approved:${f.schema}.${f.name}`))]
+}
 
 export async function inspect(connection, schemas) {
   const client = new pg.Client({ connectionString: databaseURL(connection), connectionTimeoutMillis: limits.queryMs, query_timeout: limits.queryMs })
@@ -65,24 +234,40 @@ export async function inspect(connection, schemas) {
   } finally { await client.end() }
 }
 
-export async function inspectClient(client, schemas, { includeUnexecutable = false } = {}) {
+export async function inspectClient(client, schemas, { includeUnexecutable = false, privilegeRole = null } = {}) {
   const columns = (await client.query(columnsQuery, [schemas])).rows
-  const types = (await client.query(typesQuery)).rows
+  const types = (await client.query(typesQuery, [privilegeRole])).rows
   const relations = (await client.query(relationsQuery, [schemas])).rows
   if (columns.length > limits.columns || types.length > limits.types || relations.length > limits.relations) throw new Error('Schema exceeds generation limits')
   const functions = (await client.query(functionsQuery, [schemas, includeUnexecutable])).rows
   if (functions.length > limits.relations) throw new Error('Too many opted-in functions')
-  return normalize(columns, types, relations, schemas, functions)
+  const composites = (await client.query(compositesQuery, [schemas, privilegeRole])).rows
+  if (columns.length + composites.length > limits.columns) throw new Error('Schema exceeds generation limits')
+  const views = (await client.query(viewsQuery, [schemas])).rows
+  if (views.length > limits.relations || views.some(v => v.action === null)) throw new Error('View lineage exceeds generation limits')
+  const snapshot = normalize(columns, types, [...relations, ...viewRelationships(columns, relations, views)], schemas, functions, composites)
+  if (!includeUnexecutable && (await computedPermissionBlockers(client, schemas, privilegeRole, snapshot)).length) throw new Error('Unapproved computed relationship execution; revoke serving-role grants and PUBLIC execution or approve a supported signature')
+  return snapshot
 }
 
-export function normalize(columns, types, relationships, schemas, functions = []) {
+export function normalize(columns, types, relationships, schemas, functions = [], compositeFields = []) {
   const byID = new Map(types.map(t => [t.id, t]))
+  const compositeByID = new Map()
+  for (const field of compositeFields) {
+    const type = byID.get(field.id)
+    if (type?.kind !== 'c' || type.accessible === false || !schemas.includes(field.schema)) continue
+    const composite = compositeByID.get(field.id) ?? { schema: field.schema, name: field.name, fields: [] }
+    if (field.field !== null) composite.fields.push(field)
+    compositeByID.set(field.id, composite)
+  }
+  const compositeRef = c => `Database[${JSON.stringify(c.schema)}]["CompositeTypes"][${JSON.stringify(c.name)}]`
   const enums = {}
   const seen = new Set()
   function tsType(id, depth = 0) {
     const t = byID.get(id)
-    if (!t || depth > 12) return 'unknown'
+    if (!t || t.accessible === false || depth > 12) return 'unknown'
     if (t.kind === 'd') return tsType(t.base, depth + 1)
+    if (t.kind === 'c') return compositeByID.has(id) ? compositeRef(compositeByID.get(id)) : 'unknown'
     if (t.kind === 'e') {
       if (schemas.includes(t.schema)) enums[`${t.schema}.${t.name}`] = t.labels
       return t.labels.map(JSON.stringify).join(' | ') || 'never'
@@ -99,7 +284,7 @@ export function normalize(columns, types, relationships, schemas, functions = []
   for (const c of columns) {
     const key = `${c.schema}.${c.relation}`
     seen.add(key)
-    if (seen.size > limits.relations) throw new Error('Too many exposed relations')
+    if (seen.size + compositeByID.size > limits.relations) throw new Error('Too many exposed relations or composite types')
     const table = tables.get(key) ?? { schema: c.schema, name: c.relation, view: ['v', 'm'].includes(c.kind), columns: [], relationships: [] }
     const column = { name: c.name, type: tsType(c.type), nullable: !(c.required || byID.get(c.type)?.required),
       optional: c.defaulted || c.identity !== '' || !(c.required || byID.get(c.type)?.required),
@@ -116,30 +301,56 @@ export function normalize(columns, types, relationships, schemas, functions = []
     if (!table || !target || !r.columns.every(n => table.columns.some(c => c.name === n)) || !r.referenced_columns.every(n => target.columns.some(c => c.name === n))) continue
     table.relationships.push({ foreignKeyName: r.name, columns: r.columns, isOneToOne: r.one_to_one, referencedRelation: r.referenced_relation, referencedColumns: r.referenced_columns })
   }
+  const supportCache = new Map()
   function supported(id, depth = 0) {
     const type = byID.get(id)
-    if (!type || depth > 12) return false
-    if (type.kind === 'd') return supported(type.base, depth + 1)
-    if (type.kind === 'e') return type.labels.length > 0
-    if (type.element !== '0') return supported(type.element, depth + 1)
-    return tsType(id) !== 'unknown'
+    if (!type || type.accessible === false || depth > 12) return false
+    const key = `${id}:${depth}`
+    if (supportCache.has(key)) return supportCache.get(key)
+    const result = type.kind === 'd' ? supported(type.base, depth + 1)
+      : type.kind === 'c' ? compositeByID.has(id) && compositeByID.get(id).fields.every(f => supported(f.type, depth + 1))
+        : type.kind === 'e' ? type.labels.length > 0
+          : type.element !== '0' ? supported(type.element, depth + 1) : tsType(id) !== 'unknown'
+    supportCache.set(key, result)
+    return result
   }
   const callable = []
+  const foreignKeyNames = new Set(relationships.map(r => `${r.schema}.${r.name}`))
+  const relationKinds = new Map(columns.map(c => [`${c.schema}.${c.relation}`, c.kind]))
+  const rowRef = table => `Database[${JSON.stringify(table.schema)}][${JSON.stringify(table.view ? 'Views' : 'Tables')}][${JSON.stringify(table.name)}]['Row']`
+  const readableRow = id => {
+    const type = byID.get(id)
+    const key = type && `${type.schema}.${type.name}`
+    return type?.kind === 'c' && type.accessible !== false && type.selectable && ['r', 'p', 'v'].includes(relationKinds.get(key)) ? tables.get(key) : null
+  }
   for (const f of functions) {
     if (Number(f.overloads) !== 1 || !/^[a-z][a-z0-9_]{0,62}$/.test(f.name) ||
         f.modes?.some(mode => mode !== 'i') || (f.names ?? []).length !== f.arguments.length || new Set(f.names ?? []).size !== f.arguments.length) continue
-    const args = f.arguments.map((id, i) => ({ name: f.names[i], type: tsType(id), optional: i >= f.arguments.length - f.defaults }))
-    if (args.some(a => !a.name) || f.arguments.some(id => !supported(id))) continue
     const result = byID.get(f.return_type)
+    const composite = result?.kind === 'c' ? compositeByID.get(f.return_type) : null
     const table = result?.kind === 'c' ? tables.get(`${result.schema}.${result.name}`) : null
-    if (result?.kind === 'c' && (!table || !f.setof)) continue
-    let returns = table ? `Database[${JSON.stringify(table.schema)}][${JSON.stringify(table.view ? 'Views' : 'Tables')}][${JSON.stringify(table.name)}]['Row']` : tsType(f.return_type)
+    const source = f.arguments.length === 1 ? readableRow(f.arguments[0]) : null
+    const computed = source && f.setof && readableRow(f.return_type) && f.schema === source.schema && f.schema === table.schema &&
+      ['s', 'i'].includes(f.volatility) && f.defaults === 0 && !tables.has(`${f.schema}.${f.name}`) && !foreignKeyNames.has(`${f.schema}.${f.name}`) &&
+      !source.columns.some(c => c.name === f.name) && columns.filter(c => c.schema === source.schema && c.relation === source.name).every(c => supported(c.type))
+    const args = f.arguments.map((id, i) => ({ name: f.names[i], type: computed ? rowRef(source) : tsType(id), optional: i >= f.arguments.length - f.defaults }))
+    if (args.some(a => !a.name) || !computed && f.arguments.some(id => !supported(id))) continue
+    if (result?.kind === 'c' && !composite && (!table || !f.setof)) continue
+    let returns = table ? rowRef(table) : tsType(f.return_type)
     if (result?.schema === 'pg_catalog' && result.name === 'void') returns = 'undefined'
     if (!table && returns !== 'undefined' && !supported(f.return_type)) continue
-    returns = f.setof ? table ? `${returns}[]` : `(${returns} | null)[]` : returns === 'undefined' ? returns : `${returns} | null`
-    callable.push({ schema: f.schema, name: f.name, args, returns })
+    returns = f.setof ? table || composite ? `${returns}[]` : `(${returns} | null)[]` : composite || returns === 'undefined' ? returns : `${returns} | null`
+    const fn = { schema: f.schema, name: f.name, args, returns }
+    if (table && f.setof && f.schema === table.schema && readableRow(f.return_type)) fn.setof = { from: computed ? source.name : '', to: table.name, one_to_one: Boolean(computed && Number(f.rows) === 1) }
+    callable.push(fn)
   }
-  return { version: 1, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), functions: callable.sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))) }
+  if (compositeByID.size > limits.relations) throw new Error('Too many exposed composite types')
+  const composites = [...compositeByID.values()].map(c => ({ schema: c.schema, name: c.name,
+    // Composite attributes have no NOT NULL constraints. A NULL composite RPC
+    // result expands to an object of nulls, including attributes using domains.
+    fields: c.fields.map(f => ({ name: f.field, type: tsType(f.type), nullable: true }))
+  })).sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`))
+  return { version: 3, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), functions: callable.sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))), composites }
 }
 
 export function fingerprint(snapshot) {
@@ -148,7 +359,7 @@ export function fingerprint(snapshot) {
 
 export function generate(snapshot) {
   const hash = fingerprint(snapshot)
-  const lines = [`// Generated by gregale data-api types. Do not edit.`, `// Schema fingerprint: ${hash}`, 'export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]', 'export type Database = {']
+  const lines = [`// Generated by gregale data-api types. Do not edit.`, `// Schema fingerprint: ${hash}`, `export const schemaFingerprint = ${JSON.stringify(hash)}`, 'export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]', 'export type Database = {']
   for (const schema of snapshot.schemas) {
     lines.push(`  ${JSON.stringify(schema)}: {`)
     for (const [group, view] of [['Tables', false], ['Views', true]]) {
@@ -174,13 +385,33 @@ export function generate(snapshot) {
     for (const f of snapshot.functions ?? []) if (f.schema === schema) {
       lines.push(`      ${JSON.stringify(f.name)}: {`, '        Args: {')
       for (const a of f.args) lines.push(`          ${JSON.stringify(a.name)}${a.optional ? '?' : ''}: ${a.type} | null`)
-      lines.push('        }', `        Returns: ${f.returns}`, '      }')
+      // ROWS 1 embeds an object, while a direct RPC still returns an array.
+      // postgrest-js wraps the single Returns type for the RPC transport.
+      lines.push('        }', `        Returns: ${f.setof?.one_to_one ? f.returns.slice(0, -2) : f.returns}`)
+      if (f.setof) lines.push(`        SetofOptions: ${JSON.stringify({ from: f.setof.from, to: f.setof.to, isOneToOne: f.setof.one_to_one, isSetofReturn: true, isNotNullable: false })}`)
+      lines.push('      }')
     }
     lines.push('    }', '    Enums: {')
     for (const [key, labels] of Object.entries(snapshot.enums)) if (key.startsWith(`${schema}.`)) lines.push(`      ${JSON.stringify(key.slice(schema.length + 1))}: ${labels.map(JSON.stringify).join(' | ')}`)
-    lines.push('    }', '    CompositeTypes: Record<string, never>', '  }')
+    lines.push('    }', '    CompositeTypes: {')
+    for (const c of snapshot.composites ?? []) if (c.schema === schema) {
+      lines.push(`      ${JSON.stringify(c.name)}: {`)
+      for (const f of c.fields) lines.push(`        ${JSON.stringify(f.name)}: ${f.type}${f.nullable ? ' | null' : ''}`)
+      lines.push('      }')
+    }
+    lines.push('    }', '  }')
   }
   lines.push('}', '')
+  const defaultSchema = JSON.stringify(snapshot.schemas.includes('api') ? 'api' : snapshot.schemas[0])
+  lines.push(
+    'type Relations<S extends keyof Database> = Database[S]["Tables"] & Database[S]["Views"]',
+    `export type Tables<Name extends keyof Relations<S>, S extends keyof Database = ${defaultSchema}> = Relations<S>[Name] extends { Row: infer Row } ? Row : never`,
+    `export type TablesInsert<Name extends keyof Database[S]["Tables"], S extends keyof Database = ${defaultSchema}> = Database[S]["Tables"][Name] extends { Insert: infer Insert } ? Insert : never`,
+    `export type TablesUpdate<Name extends keyof Database[S]["Tables"], S extends keyof Database = ${defaultSchema}> = Database[S]["Tables"][Name] extends { Update: infer Update } ? Update : never`,
+    `export type Enums<Name extends keyof Database[S]["Enums"], S extends keyof Database = ${defaultSchema}> = Database[S]["Enums"][Name]`,
+    `export type CompositeTypes<Name extends keyof Database[S]["CompositeTypes"], S extends keyof Database = ${defaultSchema}> = Database[S]["CompositeTypes"][Name]`,
+    ''
+  )
   const result = lines.join('\n')
   if (Buffer.byteLength(result) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
   return result
@@ -200,6 +431,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export function contractSchema(type) {
   if (type.endsWith(' | null')) return { ...contractSchema(type.slice(0, -7)), 'x-nullable': true }
   if (type.endsWith(')[]') && type.startsWith('(')) return { type: 'array', items: contractSchema(type.slice(1, -3)) }
+  const composite = /^Database\[("(?:[^"\\]|\\.)*")\]\["CompositeTypes"\]\[("(?:[^"\\]|\\.)*")\](\[\])?$/.exec(type)
+  if (composite) {
+    const ref = { $ref: `#/definitions/${pointer(`${JSON.parse(composite[1])}.${JSON.parse(composite[2])}.Composite`)}` }
+    return composite[3] ? { type: 'array', items: ref } : ref
+  }
   const row = /^Database\[("(?:[^"\\]|\\.)*")\]\[("Tables"|"Views")\]\[("(?:[^"\\]|\\.)*")\]\['Row'\](\[\])?$/.exec(type)
   if (row) {
     const ref = { $ref: `#/definitions/${pointer(`${JSON.parse(row[1])}.${JSON.parse(row[3])}.Row`)}` }
@@ -222,6 +458,12 @@ export function enrichOpenAPI(document, snapshot, schema) {
   document.security = [{ bearer: [] }]
   document.definitions ??= {}
   const ref = name => ({ $ref: `#/definitions/${pointer(name)}` })
+  // Nested references may cross exposed schemas. Include their definitions,
+  // while paths remain restricted to the selected profile.
+  for (const c of snapshot.composites ?? []) document.definitions[`${c.schema}.${c.name}.Composite`] = {
+    type: 'object', properties: Object.fromEntries(c.fields.map(f => [f.name, { ...contractSchema(f.type), ...(f.nullable ? { 'x-nullable': true } : {}) }])),
+    ...(c.fields.length ? { required: c.fields.map(f => f.name) } : {}), additionalProperties: false,
+  }
   const object = (columns, kind) => {
     const properties = Object.fromEntries(columns.filter(c => kind === 'Row' || (kind === 'Insert' ? c.insertable : c.updatable)).map(c => [c.name, { ...contractSchema(c.type), ...(c.nullable ? { 'x-nullable': true } : {}), ...(kind === 'Insert' && c.optional ? { description: 'May be omitted; the database default or null applies.' } : {}) }]))
     const required = columns.filter(c => kind === 'Row' || kind === 'Insert' && c.insertable && !c.optional).map(c => c.name)
@@ -245,11 +487,14 @@ export function enrichOpenAPI(document, snapshot, schema) {
       }
       for (const [status, response] of Object.entries(operation.responses ?? {})) if (/^2/.test(status) && status !== '204') response.schema = { type: 'array', items: ref(`${schema}.${table.name}.Row`) }
       operation.description = `${operation.description ?? ''}\nRow-level security controls visibility. Use select for projections, column=operator.value for filters, order, limit and offset for pagination. Range and Prefer: count=exact enable Content-Range totals; Prefer: return=representation requests write rows. Projections and object media types change the response shape.`.trim()
+      const computed = snapshot.functions.filter(f => f.schema === schema && f.setof?.from === table.name)
+      if (computed.length) operation['x-gregale-computed-relationships'] = computed.map(f => ({ name: f.name, target: f.setof.to, one_to_one: f.setof.one_to_one }))
     }
   }
   for (const fn of (snapshot.functions ?? []).filter(f => f.schema === schema)) {
     const operation = document.paths?.[`/rpc/${fn.name}`]?.post
     if (!operation) continue
+    if (fn.setof) operation['x-gregale-result-relation'] = fn.setof
     const name = `${schema}.${fn.name}.Args`
     const required = fn.args.filter(a => !a.optional).map(a => a.name)
     document.definitions[name] = { type: 'object', properties: Object.fromEntries(fn.args.map(a => [a.name, { ...contractSchema(a.type), 'x-nullable': true }])), ...(required.length ? { required } : {}), additionalProperties: false }

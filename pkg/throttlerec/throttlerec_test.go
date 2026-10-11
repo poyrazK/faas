@@ -588,6 +588,11 @@ func TestThrottleRec_DryRunPreview_HappyPath(t *testing.T) {
 			// Map per-route to its pinned over-cap count. The
 			// query embeds the route label, which is enough to
 			// disambiguate.
+			if !strings.Contains(query, "> bool 5)") {
+				// H9-46: without bool the filter keeps the rate value
+				// and the sum is not a count of minutes.
+				return 0, fmt.Errorf("query does not count minutes: %s", query)
+			}
 			if strings.Contains(query, `route="GET /a"`) {
 				return 0, nil
 			}
@@ -632,8 +637,8 @@ func TestThrottleRec_DryRunPreview_HappyPath(t *testing.T) {
 	if p := byRoute["POST /b"]; p.OverCapCount != 3 || p.CandidateRPS != 5 {
 		t.Errorf("POST /b preview = %+v, want OverCapCount=3 CandidateRPS=5", p)
 	}
-	if p := byRoute["GET /a"]; p.WindowStart != "2026-08-18T12:00:00Z" || p.WindowEnd != "2026-08-18T12:00:00Z" {
-		t.Errorf("GET /a window start/end = %q/%q, want 2026-08-18T12:00:00Z/2026-08-18T12:00:00Z (NowFn pin)",
+	if p := byRoute["GET /a"]; p.WindowStart != "2026-08-18T11:55:00Z" || p.WindowEnd != "2026-08-18T12:00:00Z" {
+		t.Errorf("GET /a window start/end = %q/%q, want 2026-08-18T11:55:00Z/2026-08-18T12:00:00Z (5m range before the NowFn pin)",
 			p.WindowStart, p.WindowEnd)
 	}
 	// Recommendation slice must remain populated AND unchanged

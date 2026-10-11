@@ -39,12 +39,23 @@ func TestLayerCloneOwnershipGate(t *testing.T) {
 }
 
 func TestLayerCloneFlatDirs(t *testing.T) {
-	if got := layerCloneFlatDirs("/srv/fc/base/vmlinux-6.1"); len(got) != 1 || got[0] != "/srv/fc/base" {
+	if got := layerCloneFlatDirs("/srv/fc/base/vmlinux-6.1", ""); len(got) != 1 || got[0] != "/srv/fc/base" {
 		t.Fatalf("flat dirs = %q, want [/srv/fc/base]", got)
 	}
 	for _, kernel := range []string{"", "vmlinux", "/vmlinux"} {
-		if got := layerCloneFlatDirs(kernel); len(got) != 0 {
+		if got := layerCloneFlatDirs(kernel, ""); len(got) != 0 {
 			t.Errorf("layerCloneFlatDirs(%q) = %q, want none", kernel, got)
 		}
+	}
+	// Production sets no host kernel path; TMPDIR still holds snapshot temp
+	// files and layer clones, and is scanned once when it repeats the kernel dir.
+	if got := layerCloneFlatDirs("kernel/1.7.0", "/srv/fc/base"); len(got) != 1 || got[0] != "/srv/fc/base" {
+		t.Fatalf("flat dirs with TMPDIR = %q, want [/srv/fc/base]", got)
+	}
+	if got := layerCloneFlatDirs("/srv/fc/base/vmlinux-6.1", "/srv/fc/base/"); len(got) != 1 {
+		t.Fatalf("duplicate TMPDIR scanned twice: %q", got)
+	}
+	if got := layerCloneFlatDirs("", "relative/tmp"); len(got) != 0 {
+		t.Fatalf("relative TMPDIR accepted: %q", got)
 	}
 }

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 const trace = Symbol('requestTrace')
 const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
   'token_required', 'token_invalid', 'serving_contract_unavailable', 'data_api_unavailable',
-  'request_too_large', 'query_timeout', 'schema_document_too_large', 'upstream_error'])
+  'request_too_large', 'query_timeout', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error'])
 
 function route(url) {
   if (url === '/healthz') return 'health'
