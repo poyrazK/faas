@@ -696,3 +696,31 @@ selected-path decision snapshots. The dashboard displays them alongside decision
 facts and explanations. Existing reports without conditions remain compatible;
 no migration is needed for this extension. Gregale never evaluates these predicates
 or infers actions or causation from their reported results.
+
+### Compare reported condition results
+
+Workflow history's `comparison.condition_comparison` shows condition changes
+between consecutive, uniquely retained revisions on the same pinned contract.
+Decision contributor `decision_evidence.condition_comparison` describes changes
+in the entire qualifying report from the same bounded cohort history.
+
+- `changed`: the application reported a different result or public description.
+- `newly_reported`: the current decision reports an ID absent from the preceding
+  decision in that context; an earlier result is unreported.
+- `unreported`: an explicit current decision omits a previously reported ID.
+  This does not prove that the business condition changed or was resolved.
+
+Explicit `unknown` is distinct from an unreported condition. Conditions match by
+ID within the application reason or selected path group. Missing decisions on
+metadata updates do not clear earlier conditions. Missing baselines, gaps,
+ambiguous revisions, or changed contracts produce an empty comparison with the
+corresponding status, rather than inferred changes. The comparison retains at
+most 64 entries in reason/group/condition order and sets `truncated` when more
+changes exist. Unchanged conditions are omitted.
+
+The dashboard links each available side to its decision fact's reporting
+Operation and shows both report IDs, revisions, rule identities, and public
+condition descriptions. Links show the current retained Operation view. CLI
+history adds `workflow-condition-comparison`, `workflow-condition-change`, and
+`workflow-condition-evidence` rows, including side-specific fact references.
+No predicate evaluation, execution authority, or causal claim is added.

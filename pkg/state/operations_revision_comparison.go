@@ -13,6 +13,11 @@ import (
 
 func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, current api.OperationWorkflowStateHistoryEntry) *api.OperationWorkflowRevisionComparison {
 	out := &api.OperationWorkflowRevisionComparison{ChangeReason: api.CloneOperationWorkflowChangeReason(current.ChangeReason), Status: "baseline_unavailable", Summary: "The preceding revision is unavailable on this page; changes cannot be determined.", Changes: make([]api.OperationWorkflowRevisionChange, 0), Evidence: make([]api.OperationWorkflowRevisionEvidence, 0)}
+	defer func() {
+		if out.ConditionComparison == nil {
+			out.ConditionComparison = &api.OperationWorkflowConditionComparison{Status: out.Status, Changes: []api.OperationWorkflowConditionChange{}}
+		}
+	}()
 	if previous == nil || previous.Workflow != current.Workflow || previous.InstanceID != current.InstanceID || previous.PlatformTenantID != current.PlatformTenantID {
 		return out
 	}
@@ -37,6 +42,7 @@ func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, 
 		return out
 	}
 	out.Status = "compared"
+	out.ConditionComparison = compareWorkflowDecisionConditions(previous, current)
 	if previous.State != current.State {
 		add("state_changed", "state", previous.State, current.State, "Application changed the reported workflow state.")
 	}
@@ -83,7 +89,7 @@ func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, 
 		} else if before.PathID != after.PathID {
 			add("path_changed", after.GroupID, before.PathID, after.PathID, "Application reported a different business path for group "+after.GroupID+".")
 		}
-		if (!exists && after.DecisionMilestoneID != "") || exists && (before.DecisionCode != after.DecisionCode || before.DecisionRuleID != after.DecisionRuleID || before.DecisionRuleVersion != after.DecisionRuleVersion || before.DecisionDescription != after.DecisionDescription || revisionDecisionSnapshot(before) != revisionDecisionSnapshot(after)) {
+		if (!exists && after.DecisionMilestoneID != "") || exists && (before.DecisionCode != after.DecisionCode || before.DecisionRuleID != after.DecisionRuleID || before.DecisionRuleVersion != after.DecisionRuleVersion || before.DecisionDescription != after.DecisionDescription) {
 			beforeDecision := ""
 			if exists && before.DecisionMilestoneID != "" {
 				beforeDecision = revisionDecisionSnapshot(before)
@@ -135,9 +141,12 @@ func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, 
 		}
 		return a.MilestoneID < b.MilestoneID
 	})
-	out.Summary = fmt.Sprintf("Compared revisions %d and %d: %d reported state, blocker, path, or decision changes.", previous.Revision, current.Revision, len(out.Changes))
-	if len(out.Changes) == 0 {
-		out.Summary = "No reported state, blocker, path, or decision changes between these revisions."
+	out.Summary = fmt.Sprintf("Compared revisions %d and %d: %d reported state, blocker, path, or decision changes; %d reported condition changes.", previous.Revision, current.Revision, len(out.Changes), len(out.ConditionComparison.Changes))
+	if out.ConditionComparison.Truncated {
+		out.Summary += " Additional condition changes were omitted."
+	}
+	if len(out.Changes) == 0 && len(out.ConditionComparison.Changes) == 0 {
+		out.Summary = "No reported state, blocker, path, decision, or condition changes between these revisions."
 	}
 	return out
 }
@@ -151,10 +160,9 @@ func revisionSnapshot(value any) string {
 }
 func revisionDecisionSnapshot(p api.OperationWorkflowPathSelection) string {
 	return revisionSnapshot(struct {
-		Conditions  []api.OperationBusinessConditionResult `json:"conditions,omitempty"`
-		Code        string                                 `json:"code"`
-		Description string                                 `json:"description"`
-		RuleID      string                                 `json:"rule_id"`
-		RuleVersion string                                 `json:"rule_version"`
-	}{p.DecisionConditions, p.DecisionCode, p.DecisionDescription, p.DecisionRuleID, p.DecisionRuleVersion})
+		Code        string `json:"code"`
+		Description string `json:"description"`
+		RuleID      string `json:"rule_id"`
+		RuleVersion string `json:"rule_version"`
+	}{p.DecisionCode, p.DecisionDescription, p.DecisionRuleID, p.DecisionRuleVersion})
 }

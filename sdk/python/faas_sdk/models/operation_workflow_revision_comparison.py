@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
+    from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
     from ..models.operation_workflow_revision_change import OperationWorkflowRevisionChange
     from ..models.operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
 
@@ -32,6 +33,10 @@ class OperationWorkflowRevisionComparison:
     summary: str
     changes: list[OperationWorkflowRevisionChange]
     evidence: list[OperationWorkflowRevisionEvidence]
+    condition_comparison: OperationWorkflowConditionComparison | Unset = UNSET
+    """Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
+    and workflow run and pinned contract. Shares history comparison statuses; missing decisions on metadata reports
+    do not clear conditions. No causal inference."""
     change_reason: OperationWorkflowChangeReason | Unset = UNSET
     """Optional application-reported explanation tied to a business decision fact in the same transaction and
     Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
@@ -54,6 +59,10 @@ class OperationWorkflowRevisionComparison:
         for evidence_item_data in self.evidence:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
+
+        condition_comparison: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.condition_comparison, Unset):
+            condition_comparison = self.condition_comparison.to_dict()
 
         change_reason: dict[str, Any] | Unset = UNSET
         if not isinstance(self.change_reason, Unset):
@@ -79,6 +88,8 @@ class OperationWorkflowRevisionComparison:
                 "evidence": evidence,
             }
         )
+        if condition_comparison is not UNSET:
+            field_dict["condition_comparison"] = condition_comparison
         if change_reason is not UNSET:
             field_dict["change_reason"] = change_reason
         if previous_report_id is not UNSET:
@@ -93,6 +104,7 @@ class OperationWorkflowRevisionComparison:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
+        from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
         from ..models.operation_workflow_revision_change import OperationWorkflowRevisionChange
         from ..models.operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
 
@@ -114,6 +126,13 @@ class OperationWorkflowRevisionComparison:
             evidence_item = OperationWorkflowRevisionEvidence.from_dict(evidence_item_data)
 
             evidence.append(evidence_item)
+
+        _condition_comparison = d.pop("condition_comparison", UNSET)
+        condition_comparison: OperationWorkflowConditionComparison | Unset
+        if isinstance(_condition_comparison, Unset):
+            condition_comparison = UNSET
+        else:
+            condition_comparison = OperationWorkflowConditionComparison.from_dict(_condition_comparison)
 
         _change_reason = d.pop("change_reason", UNSET)
         change_reason: OperationWorkflowChangeReason | Unset
@@ -143,6 +162,7 @@ class OperationWorkflowRevisionComparison:
             summary=summary,
             changes=changes,
             evidence=evidence,
+            condition_comparison=condition_comparison,
             change_reason=change_reason,
             previous_report_id=previous_report_id,
             previous_operation_id=previous_operation_id,

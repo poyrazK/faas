@@ -59,12 +59,13 @@ type OperationWorkflowPerformanceInstancesResponse struct {
 
 // OperationWorkflowDecisionOutcomeEvidence identifies the earliest qualifying report and optional decision fact.
 type OperationWorkflowDecisionOutcomeEvidence struct {
-	ReportID    string                     `json:"report_id"`
-	OperationID string                     `json:"operation_id"`
-	Revision    int64                      `json:"revision"`
-	FromState   string                     `json:"from_state,omitempty"`
-	State       string                     `json:"state"`
-	OccurredAt  time.Time                  `json:"occurred_at"`
-	MilestoneID string                     `json:"milestone_id,omitempty"`
-	Decision    *OperationBusinessDecision `json:"decision,omitempty"`
+	ConditionComparison *OperationWorkflowConditionComparison `json:"condition_comparison,omitempty"`
+	ReportID            string                                `json:"report_id"`
+	OperationID         string                                `json:"operation_id"`
+	Revision            int64                                 `json:"revision"`
+	FromState           string                                `json:"from_state,omitempty"`
+	State               string                                `json:"state"`
+	OccurredAt          time.Time                             `json:"occurred_at"`
+	MilestoneID         string                                `json:"milestone_id,omitempty"`
+	Decision            *OperationBusinessDecision            `json:"decision,omitempty"`
 }

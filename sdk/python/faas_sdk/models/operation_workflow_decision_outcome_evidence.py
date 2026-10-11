@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_business_decision import OperationBusinessDecision
+    from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
 
 
 T = TypeVar("T", bound="OperationWorkflowDecisionOutcomeEvidence")
@@ -29,6 +30,10 @@ class OperationWorkflowDecisionOutcomeEvidence:
     revision: int
     state: str
     occurred_at: datetime.datetime
+    condition_comparison: OperationWorkflowConditionComparison | Unset = UNSET
+    """Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
+    and workflow run and pinned contract. Shares history comparison statuses; missing decisions on metadata reports
+    do not clear conditions. No causal inference."""
     from_state: str | Unset = UNSET
     milestone_id: UUID | Unset = UNSET
     decision: OperationBusinessDecision | Unset = UNSET
@@ -44,6 +49,10 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = self.state
 
         occurred_at = self.occurred_at.isoformat()
+
+        condition_comparison: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.condition_comparison, Unset):
+            condition_comparison = self.condition_comparison.to_dict()
 
         from_state = self.from_state
 
@@ -66,6 +75,8 @@ class OperationWorkflowDecisionOutcomeEvidence:
                 "occurred_at": occurred_at,
             }
         )
+        if condition_comparison is not UNSET:
+            field_dict["condition_comparison"] = condition_comparison
         if from_state is not UNSET:
             field_dict["from_state"] = from_state
         if milestone_id is not UNSET:
@@ -78,6 +89,7 @@ class OperationWorkflowDecisionOutcomeEvidence:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_business_decision import OperationBusinessDecision
+        from ..models.operation_workflow_condition_comparison import OperationWorkflowConditionComparison
 
         d = dict(src_dict)
         report_id = UUID(d.pop("report_id"))
@@ -89,6 +101,13 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = d.pop("state")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
+
+        _condition_comparison = d.pop("condition_comparison", UNSET)
+        condition_comparison: OperationWorkflowConditionComparison | Unset
+        if isinstance(_condition_comparison, Unset):
+            condition_comparison = UNSET
+        else:
+            condition_comparison = OperationWorkflowConditionComparison.from_dict(_condition_comparison)
 
         from_state = d.pop("from_state", UNSET)
 
@@ -112,6 +131,7 @@ class OperationWorkflowDecisionOutcomeEvidence:
             revision=revision,
             state=state,
             occurred_at=occurred_at,
+            condition_comparison=condition_comparison,
             from_state=from_state,
             milestone_id=milestone_id,
             decision=decision,

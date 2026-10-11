@@ -620,6 +620,7 @@ func operationWorkflowStateHistoryPage(rows []api.OperationWorkflowStateHistoryE
 			comparison.Summary = "Multiple reports share a revision on this page; changes cannot be determined."
 			comparison.Changes = []api.OperationWorkflowRevisionChange{}
 			comparison.Evidence = []api.OperationWorkflowRevisionEvidence{}
+			comparison.ConditionComparison = &api.OperationWorkflowConditionComparison{Status: "ambiguous_revision", Changes: []api.OperationWorkflowConditionChange{}}
 		}
 		previousByRun[run] = i
 	}

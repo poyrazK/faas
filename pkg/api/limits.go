@@ -474,6 +474,7 @@ const (
 	OperationWorkflowTransitionsMax                         = 128
 	OperationWorkflowContractVersionMax                     = 1_000_000
 	OperationWorkflowRetainedPathsMax                       = 8
+	OperationWorkflowConditionChangesMax                    = 64
 	OperationWorkflowRevisionChangesMax                     = 64
 	OperationWorkflowRevisionEvidenceMax                    = 64
 	OperationWorkflowRetainedGroupsMax                      = 8

@@ -39073,6 +39073,7 @@ components:
       description: "Earliest retained report classifying this contributor for the selected decision outcome group. The optional business decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report itself. These are application-reported facts and do not establish causation."
       required: [report_id, operation_id, revision, state, occurred_at]
       properties:
+        condition_comparison: {$ref: '#/components/schemas/OperationWorkflowConditionComparison'}
         report_id: {type: string, format: uuid}
         operation_id: {type: string, format: uuid}
         revision: {type: integer, format: int64, minimum: 1}
@@ -39913,12 +39914,55 @@ components:
         outcome_code: {type: string, maxLength: 64}
         elapsed_seconds: {type: integer, format: int64, minimum: 0, description: "Observed duration from this report to the linked outcome. Meaningful only when status is linked."}
         blocked_seconds: {type: integer, format: int64, minimum: 0, description: "Observed intervals with at least one reported blocker. Overlapping blockers count once. Meaningful only when status is linked."}
+    OperationWorkflowConditionComparison:
+      type: object
+      additionalProperties: false
+      description: Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant and workflow run and pinned contract. Shares history comparison statuses; missing decisions on metadata reports do not clear conditions. No causal inference.
+      required: [status, changes, truncated]
+      properties:
+        status: {type: string, enum: [compared, baseline_unavailable, revision_gap, contract_changed, ambiguous_revision]}
+        changes:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/OperationWorkflowConditionChange'}
+          description: Reason conditions first then path groups then condition IDs in lexical order. Unchanged conditions are omitted. Contributor evidence carries changes for the entire qualifying report.
+        truncated: {type: boolean, description: More condition changes exist than the 64 retained entries.}
+    OperationWorkflowConditionChange:
+      type: object
+      additionalProperties: false
+      description: Application condition snapshots matched by ID within the reason or selected path group on one pinned contract. Changed includes a changed result or description. Unreported means absent from an explicit current decision and does not prove resolution.
+      required: [source, condition_id, status, current_evidence, explanation]
+      properties:
+        source: {type: string, enum: [reason, path]}
+        group_id: {type: string, maxLength: 64, description: Selected path group for path comparisons; omitted for reasons.}
+        condition_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        status: {type: string, enum: [changed, newly_reported, unreported]}
+        before: {$ref: '#/components/schemas/OperationBusinessConditionResult'}
+        after: {$ref: '#/components/schemas/OperationBusinessConditionResult'}
+        previous_evidence: {$ref: '#/components/schemas/OperationWorkflowConditionEvidence'}
+        current_evidence: {$ref: '#/components/schemas/OperationWorkflowConditionEvidence'}
+        explanation: {type: string, maxLength: 512}
+    OperationWorkflowConditionEvidence:
+      type: object
+      additionalProperties: false
+      description: Exact retained report and decision fact reference with reported rule identity. Previous evidence is absent when the baseline did not report a decision in this context. Links refer to the current retained Operation view.
+      required: [report_id, operation_id, revision, milestone_id, decision_code, rule_id, rule_version]
+      properties:
+        report_id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        milestone_id: {type: string, format: uuid}
+        decision_code: {type: string, maxLength: 64}
+        rule_id: {type: string, maxLength: 64}
+        rule_version: {type: string, maxLength: 128}
+        path_id: {type: string, maxLength: 64, description: Selected path when the decision was reported for a path group.}
     OperationWorkflowRevisionComparison:
       type: object
       additionalProperties: false
       description: Derived comparison with the preceding retained report on this history page in the same workflow run and tenant. Gaps and unavailable baselines prevent inferred changes or causal claims.
       required: [status, summary, changes, evidence]
       properties:
+        condition_comparison: {$ref: '#/components/schemas/OperationWorkflowConditionComparison'}
         change_reason: {$ref: '#/components/schemas/OperationWorkflowChangeReason'}
         status: {type: string, enum: [compared, baseline_unavailable, revision_gap, contract_changed, ambiguous_revision]}
         summary: {type: string, maxLength: 512}

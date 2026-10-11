@@ -234,6 +234,9 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		if preview == nil {
 			preview = []api.OperationWorkflowResolutionVerification{}
 		}
+		if decisionEvidence != nil {
+			decisionEvidence.ConditionComparison = workflowContributorConditionComparison(i, *decisionEvidence)
+		}
 		entry := api.OperationWorkflowPerformanceInstance{DecisionEvidence: decisionEvidence, PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
 		if !operator {
 			entry.PlatformTenantID = ""

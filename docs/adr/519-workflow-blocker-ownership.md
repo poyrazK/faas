@@ -675,3 +675,40 @@ the application-reported results. Rule cohort identity and outcome grouping rema
 contract/version/decision/rule/path based, so conditions do not split a cohort or
 imply causation. Applications own predicate evaluation, authorization, and actions.
 Public explanations must not contain private input values or secrets.
+
+### Compare reported conditions between retained revisions
+
+Revision comparisons expose `condition_comparison`, and decision contributor
+`decision_evidence` carries the same comparison for its qualifying report. The
+baseline must be retained, uniquely numbered, consecutive, in the same tenant
+and workflow run, and on the same effective pinned contract version. Missing
+baselines, revision gaps, ambiguous revisions, and changed contracts retain the
+existing comparison status and produce no inferred condition changes. Contributor
+comparisons use the same latest bounded history slice as decision membership,
+excluding the database lookahead; they do not fetch a wider history or alter
+cohort fingerprints, eligibility, ranking, or grouping.
+
+Conditions are matched by ID within the application reason or a selected path
+group. Only explicit current decisions participate. A metadata report without a
+reason or path decision does not clear an earlier decision. Within two explicit
+decisions, an added ID is `newly_reported`, an absent current ID is `unreported`,
+and a changed result or description is `changed`. Explicit `unknown` remains a
+reported result, distinct from absence. Matching IDs across different reported
+rule versions does not infer predicate equivalence or rule execution; both rule
+identities and public descriptions remain visible. Unchanged conditions are omitted.
+
+The projection preserves before/after condition snapshots and the exact report,
+revision, Operation, decision fact, code, rule identity, and selected path on each
+available side. When the preceding report lacks a decision in that context, no
+previous fact reference is invented. Contributor comparisons describe the entire
+qualifying report, including other reason/path contexts, rather than claiming the
+changes explain the selected outcome group.
+
+At most 64 changes are retained, ordered by reason first, then lexical path group,
+then lexical condition ID. A separate truncation flag discloses omitted changes.
+Structured condition changes replace embedding condition arrays in the generic
+string decision snapshot, keeping those snapshot strings within their existing
+bounds. Existing report payloads and persistence are unchanged; optional derived
+fields need no migration or new endpoint. Dashboard history, contributor views,
+SDK DTOs, and CLI output expose the comparison and references. Facts remain
+application-reported evidence and do not establish why a decision or outcome occurred.

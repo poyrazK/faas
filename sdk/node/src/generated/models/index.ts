@@ -1084,6 +1084,9 @@ export type { OperationWorkflowBlockerPerformance } from './OperationWorkflowBlo
 export type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
 export type { OperationWorkflowBottlenecks } from './OperationWorkflowBottlenecks.js';
 export type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
+export type { OperationWorkflowConditionChange } from './OperationWorkflowConditionChange.js';
+export type { OperationWorkflowConditionComparison } from './OperationWorkflowConditionComparison.js';
+export type { OperationWorkflowConditionEvidence } from './OperationWorkflowConditionEvidence.js';
 export type { OperationWorkflowControlResponse } from './OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
 export type { OperationWorkflowDecisionOutcomeEvidence } from './OperationWorkflowDecisionOutcomeEvidence.js';

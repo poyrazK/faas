@@ -2055,6 +2055,12 @@ from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResol
 from .operation_workflow_bottlenecks import OperationWorkflowBottlenecks
 from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWorkflowBottlenecksIncompleteReasonsItem
 from .operation_workflow_change_reason import OperationWorkflowChangeReason
+from .operation_workflow_condition_change import OperationWorkflowConditionChange
+from .operation_workflow_condition_change_source import OperationWorkflowConditionChangeSource
+from .operation_workflow_condition_change_status import OperationWorkflowConditionChangeStatus
+from .operation_workflow_condition_comparison import OperationWorkflowConditionComparison
+from .operation_workflow_condition_comparison_status import OperationWorkflowConditionComparisonStatus
+from .operation_workflow_condition_evidence import OperationWorkflowConditionEvidence
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
@@ -5512,6 +5518,12 @@ __all__ = (
     "OperationWorkflowBottlenecks",
     "OperationWorkflowBottlenecksIncompleteReasonsItem",
     "OperationWorkflowChangeReason",
+    "OperationWorkflowConditionChange",
+    "OperationWorkflowConditionChangeSource",
+    "OperationWorkflowConditionChangeStatus",
+    "OperationWorkflowConditionComparison",
+    "OperationWorkflowConditionComparisonStatus",
+    "OperationWorkflowConditionEvidence",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionOutcomeEvidence",

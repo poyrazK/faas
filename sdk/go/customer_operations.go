@@ -183,6 +183,9 @@ type OperationWorkflowPathSelection = api.OperationWorkflowPathSelection
 
 type OperationWorkflowPathDecisionResult = api.OperationWorkflowPathDecisionResult
 
+type OperationWorkflowConditionComparison = api.OperationWorkflowConditionComparison
+type OperationWorkflowConditionChange = api.OperationWorkflowConditionChange
+type OperationWorkflowConditionEvidence = api.OperationWorkflowConditionEvidence
 type OperationWorkflowRevisionComparison = api.OperationWorkflowRevisionComparison
 type OperationWorkflowRevisionChange = api.OperationWorkflowRevisionChange
 type OperationWorkflowRevisionEvidence = api.OperationWorkflowRevisionEvidence

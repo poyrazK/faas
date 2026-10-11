@@ -280,6 +280,9 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 					return err
 				}
 			}
+			if err := writeWorkflowConditionComparison(out, transition.Workflow, transition.Revision, comparison.ConditionComparison); err != nil {
+				return err
+			}
 			for _, fact := range comparison.Evidence {
 				if _, err := fmt.Fprintf(out, "workflow-revision-evidence\t%s\trevision=%d\tkind=%s\toperation=%s\tmilestone=%s\tfact=%s\n", transition.Workflow, transition.Revision, fact.Kind, fact.OperationID, fact.Milestone, fact.MilestoneID); err != nil {
 					return err
@@ -393,6 +396,43 @@ func printWorkflowBottlenecks(out io.Writer, b *api.OperationWorkflowBottlenecks
 	for _, g := range b.VerificationOwners {
 		if _, err := fmt.Fprintf(out, "workflow-verification-duration\towner=%s\tseconds=%d\tresolutions=%d\tpending=%d\tunknown-starts=%d\n", g.Owner, g.ObservedSeconds, g.ResolutionCount, g.PendingCount, g.UnknownStartCount); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func writeWorkflowConditionComparison(out io.Writer, workflow string, revision int64, comparison *api.OperationWorkflowConditionComparison) error {
+	if comparison == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "workflow-condition-comparison\t%s\trevision=%d\tstatus=%s\ttruncated=%t\n", workflow, revision, comparison.Status, comparison.Truncated); err != nil {
+		return err
+	}
+	for _, change := range comparison.Changes {
+		before, after := "unreported", "unreported"
+		if change.Before != nil {
+			data, _ := json.Marshal(change.Before)
+			before = string(data)
+		}
+		if change.After != nil {
+			data, _ := json.Marshal(change.After)
+			after = string(data)
+		}
+		if _, err := fmt.Fprintf(out, "workflow-condition-change\t%s\trevision=%d\tsource=%s\tgroup=%s\tcondition=%s\tstatus=%s\tbefore=%s\tafter=%s\t%s\n", workflow, revision, change.Source, change.GroupID, change.ConditionID, change.Status, before, after, change.Explanation); err != nil {
+			return err
+		}
+		refs := []struct {
+			side string
+			fact *api.OperationWorkflowConditionEvidence
+		}{{"previous", change.PreviousEvidence}, {"current", &change.CurrentEvidence}}
+		for _, ref := range refs {
+			if ref.fact == nil {
+				continue
+			}
+			f := ref.fact
+			if _, err := fmt.Fprintf(out, "workflow-condition-evidence\t%s\tcondition=%s\tside=%s\trevision=%d\treport=%s\toperation=%s\tfact=%s\tdecision=%s\trule=%s\trule-version=%s\tpath=%s\n", workflow, change.ConditionID, ref.side, f.Revision, f.ReportID, f.OperationID, f.MilestoneID, f.DecisionCode, f.RuleID, f.RuleVersion, f.PathID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

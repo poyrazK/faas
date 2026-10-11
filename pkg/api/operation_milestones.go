@@ -366,14 +366,15 @@ type OperationWorkflowDependencyFinding struct {
 
 // OperationWorkflowRevisionComparison explains adjacent retained reports without inferring causality.
 type OperationWorkflowRevisionComparison struct {
-	ChangeReason        *OperationWorkflowChangeReason      `json:"change_reason,omitempty"`
-	Status              string                              `json:"status"`
-	Summary             string                              `json:"summary"`
-	PreviousReportID    string                              `json:"previous_report_id,omitempty"`
-	PreviousOperationID string                              `json:"previous_operation_id,omitempty"`
-	PreviousRevision    int64                               `json:"previous_revision,omitempty"`
-	Changes             []OperationWorkflowRevisionChange   `json:"changes"`
-	Evidence            []OperationWorkflowRevisionEvidence `json:"evidence"`
+	ConditionComparison *OperationWorkflowConditionComparison `json:"condition_comparison,omitempty"`
+	ChangeReason        *OperationWorkflowChangeReason        `json:"change_reason,omitempty"`
+	Status              string                                `json:"status"`
+	Summary             string                                `json:"summary"`
+	PreviousReportID    string                                `json:"previous_report_id,omitempty"`
+	PreviousOperationID string                                `json:"previous_operation_id,omitempty"`
+	PreviousRevision    int64                                 `json:"previous_revision,omitempty"`
+	Changes             []OperationWorkflowRevisionChange     `json:"changes"`
+	Evidence            []OperationWorkflowRevisionEvidence   `json:"evidence"`
 }
 type OperationWorkflowRevisionChange struct {
 	Kind        string `json:"kind"`
@@ -399,4 +400,36 @@ type OperationWorkflowOutcomeLink struct {
 	OutcomeCode        string `json:"outcome_code,omitempty"`
 	ElapsedSeconds     int64  `json:"elapsed_seconds"`
 	BlockedSeconds     int64  `json:"blocked_seconds"`
+}
+
+// OperationWorkflowConditionComparison uses the same retained baseline as revision history.
+type OperationWorkflowConditionComparison struct {
+	Status    string                             `json:"status"`
+	Changes   []OperationWorkflowConditionChange `json:"changes"`
+	Truncated bool                               `json:"truncated"`
+}
+
+// OperationWorkflowConditionChange describes application-reported evidence, not predicate evaluation.
+type OperationWorkflowConditionChange struct {
+	Source           string                              `json:"source"`
+	GroupID          string                              `json:"group_id,omitempty"`
+	ConditionID      string                              `json:"condition_id"`
+	Status           string                              `json:"status"`
+	Before           *OperationBusinessConditionResult   `json:"before,omitempty"`
+	After            *OperationBusinessConditionResult   `json:"after,omitempty"`
+	PreviousEvidence *OperationWorkflowConditionEvidence `json:"previous_evidence,omitempty"`
+	CurrentEvidence  OperationWorkflowConditionEvidence  `json:"current_evidence"`
+	Explanation      string                              `json:"explanation"`
+}
+
+// OperationWorkflowConditionEvidence identifies a decision snapshot without duplicating its conditions.
+type OperationWorkflowConditionEvidence struct {
+	ReportID     string `json:"report_id"`
+	OperationID  string `json:"operation_id"`
+	Revision     int64  `json:"revision"`
+	MilestoneID  string `json:"milestone_id"`
+	DecisionCode string `json:"decision_code"`
+	RuleID       string `json:"rule_id"`
+	RuleVersion  string `json:"rule_version"`
+	PathID       string `json:"path_id,omitempty"`
 }

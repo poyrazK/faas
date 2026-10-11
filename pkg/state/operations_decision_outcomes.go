@@ -112,12 +112,7 @@ func visitWorkflowDecisionOutcomes(instance workflowPerformanceInstance, visit f
 
 // Coverage can identify observed versions in incomplete histories without treating them as eligible.
 func visitWorkflowDecisionOutcomeReports(instance workflowPerformanceInstance, visit func(workflowDecisionOutcomeKey, api.OperationWorkflowDecisionOutcomeEvidence) bool) {
-	observations := append([]workflowBottleneckObservation(nil), instance.Observations...)
-	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[j], observations[i]) })
-	if len(observations) > api.OperationWorkflowBottleneckHistoryMax {
-		observations = observations[:api.OperationWorkflowBottleneckHistoryMax]
-	}
-	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[i], observations[j]) })
+	observations := workflowDecisionOutcomeReports(instance)
 	for _, observation := range observations {
 		h := observation.History
 		key := workflowDecisionOutcomeKey{Version: effectiveWorkflowContractVersion(h.ContractVersion), Outcome: instance.Current.OutcomeCode}
@@ -192,4 +187,14 @@ func workflowDecisionOutcomeContribution(instance workflowPerformanceInstance, g
 		return instance.Bottlenecks.BlockedSeconds, evidence
 	}
 	return instance.Bottlenecks.StateSeconds, evidence
+}
+
+func workflowDecisionOutcomeReports(instance workflowPerformanceInstance) []workflowBottleneckObservation {
+	observations := append([]workflowBottleneckObservation(nil), instance.Observations...)
+	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[j], observations[i]) })
+	if len(observations) > api.OperationWorkflowBottleneckHistoryMax {
+		observations = observations[:api.OperationWorkflowBottleneckHistoryMax]
+	}
+	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[i], observations[j]) })
+	return observations
 }
