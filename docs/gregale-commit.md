@@ -1615,3 +1615,32 @@ permanent failures stop with `read_failure`, and exhausted transient retries wit
 `retry_exhausted`. Individual diagnostic item failures keep rotating until the
 overall timeout. Timeout or interruption preserves current partial coverage for
 resume. No monitoring mode submits recovery actions.
+
+### Estimate diagnostic coverage time
+
+Diagnostic watch summaries include `monitoring.diagnostic_estimate` with remaining
+recipients, successful samples per second/pass, and estimated remaining passes
+and milliseconds for **initial sampling**. Both settlement watch with diagnostics
+and `--watch-diagnostics` expose the estimate. It is advisory and does not change
+completion, timeout, retry or delivery behavior.
+
+States are `insufficient_data`, `awaiting_receipts`, `estimated` and `covered`.
+`covered` means initial sampling is complete; it does not mean all samples are
+fresh. Unread recipients needing receipt evidence are reported as deferred and
+prevent time forecasts. Forecasts also remain absent until there is successful
+sampling and elapsed timing. Valid unavailable/replaced answers count as samples,
+while retained snapshots do not count as new responses.
+
+The estimator uses actual diagnostic reads, monotonic watch elapsed time,
+average samples per pass and the next polling/retry delay. `estimated_refresh_ms`
+models the span needed to refresh all targets. If this exceeds an enabled age
+limit, `refresh_exceeds_max_age` becomes true and CLI emits an advisory warning.
+This does not prove that fresh coverage is impossible. Persistent recipient
+failures or changing performance can invalidate a forecast.
+
+Checkpoints retain estimates for inspection, but resumed watches start new timing
+measurements. Coverage, sample timestamps and cursors still resume normally.
+The estimate's deferred count includes only unread targets; diagnostic progress's
+deferred count can also include valid retained samples. CLI avoids printing
+changing rate/ETA values on every tick, while progress callbacks and JSON expose
+updated estimates.

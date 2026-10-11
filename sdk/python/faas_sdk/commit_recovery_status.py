@@ -529,6 +529,24 @@ async def awatch_commit_recovery_status(
     deadline = loop.time() + timeout
     used_retries, passes = 0, 0
     reason, phase = "read_failure", "read"
+    estimator = _DiagnosticEstimator()
+    estimate_delay_ms = interval * 1000
+
+    async def read_diagnostics(status: dict[str, Any]) -> dict[str, Any]:
+        diagnostic_started = loop.time()
+        try:
+            sampled = await adiagnose_commit_recovery_status(
+                client,
+                status,
+                previous=diagnostic_previous,
+                max_diagnostic_age=max_diagnostic_age,
+                strict_reads=watch_diagnostics,
+            )
+        except CommitRecoveryStatusError as error:
+            estimator.observe(error.result, (loop.time() - diagnostic_started) * 1000)
+            raise
+        estimator.observe(sampled, (loop.time() - diagnostic_started) * 1000)
+        return sampled
 
     def summarize(stop_reason: str) -> dict[str, Any]:
         freshness = _freshness_counts(out, max_observation_age) if max_observation_age > 0 else None
@@ -541,6 +559,15 @@ async def awatch_commit_recovery_status(
                 )
                 if stop_reason == "diagnostic_coverage_complete"
                 else _diagnostic_coverage_complete(out, max_diagnostic_age)
+            ),
+            **(
+                {
+                    "diagnostic_estimate": estimator.estimate(
+                        out, (loop.time() - (deadline - timeout)) * 1000, estimate_delay_ms
+                    )
+                }
+                if "diagnostics_progress" in out
+                else {}
             ),
             "stop_reason": stop_reason,
             "passes": passes,
@@ -578,13 +605,7 @@ async def awatch_commit_recovery_status(
                         refresh=previous if refreshing else None,
                     )
                     if diagnostics:
-                        out = await adiagnose_commit_recovery_status(
-                            client,
-                            out,
-                            previous=diagnostic_previous,
-                            max_diagnostic_age=max_diagnostic_age,
-                            strict_reads=watch_diagnostics,
-                        )
+                        out = await read_diagnostics(out)
                 except CommitRecoveryStatusError as error:
                     out = error.result
                     if diagnostics and "diagnostics_progress" not in out:
@@ -598,6 +619,7 @@ async def awatch_commit_recovery_status(
                     used_retries += 1
                     failed = True
                     delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
+                estimate_delay_ms = delay * 1000
                 out["monitoring"] = summarize("running")
                 phase = "callback"
                 if on_progress is not None:
@@ -1232,3 +1254,59 @@ def _diagnostic_coverage_complete(out: dict[str, Any], age: float) -> bool:
     progress["max_diagnostic_age_ms"] = age * 1000
     _recount_diagnostics(out)
     return progress["complete"] and progress["fresh_complete"]
+
+
+class _DiagnosticEstimator:
+    def __init__(self) -> None:
+        self.passes = 0
+        self.samples = 0
+        self.read_ms = 0.0
+
+    def observe(self, out: dict[str, Any], read_ms: float) -> None:
+        if not out.get("diagnostics_progress", {}).get("reads"):
+            return
+        self.passes += 1
+        self.read_ms += read_ms
+        self.samples += sum(
+            _diagnostic_target(row)
+            and not row.get("diagnostics", {}).get("retained")
+            and _valid_diagnostic(row.get("diagnostics"), row)
+            for row in out["items"]
+        )
+
+    def estimate(self, out: dict[str, Any], elapsed_ms: float, delay_ms: float) -> dict[str, Any]:
+        progress = out["diagnostics_progress"]
+        targets = [row for row in out["items"] if _diagnostic_target(row)]
+        unread = [row for row in targets if not _valid_diagnostic(row.get("diagnostics"), row)]
+        result = {
+            "state": "insufficient_data",
+            "target_count": len(targets),
+            "remaining": len(unread),
+            "deferred": sum(not _diagnostic_queryable(row) for row in unread),
+            "diagnostic_passes": self.passes,
+            "successful_samples": self.samples,
+            "samples_per_second": self.samples * 1000 / elapsed_ms if elapsed_ms > 0 else 0,
+            "samples_per_pass": self.samples / self.passes if self.passes > 0 else 0,
+            "refresh_exceeds_max_age": False,
+        }
+        if not result["remaining"]:
+            result.update(state="covered", estimated_remaining_passes=0, estimated_remaining_ms=0)
+        elif result["deferred"]:
+            result["state"] = "awaiting_receipts"
+        if result["deferred"] or not self.passes or not self.samples or elapsed_ms <= 0:
+            return result
+        cycle_ms = (elapsed_ms + delay_ms) / self.passes
+        refresh_passes = math.ceil(result["target_count"] / result["samples_per_pass"])
+        result["estimated_refresh_ms"] = (
+            math.ceil((refresh_passes - 1) * cycle_ms + self.read_ms / self.passes) if refresh_passes > 0 else 0
+        )
+        result["refresh_exceeds_max_age"] = (
+            progress["max_diagnostic_age_ms"] > 0 and result["estimated_refresh_ms"] > progress["max_diagnostic_age_ms"]
+        )
+        if result["remaining"] and not result["deferred"]:
+            result.update(
+                state="estimated",
+                estimated_remaining_passes=math.ceil(result["remaining"] / result["samples_per_pass"]),
+            )
+            result["estimated_remaining_ms"] = math.ceil(result["estimated_remaining_passes"] * cycle_ms)
+        return result

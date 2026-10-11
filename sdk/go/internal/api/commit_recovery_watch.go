@@ -40,6 +40,8 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	started := time.Now()
 	passes, usedRetries := 0, 0
 	reason := "read_failure"
+	estimator := &commitRecoveryDiagnosticEstimator{}
+	estimateDelay := interval
 	summary := func(stopReason string) *CommitRecoveryMonitoring {
 		freshness, fresh := commitRecoveryFreshnessCounts(out, maxAge)
 		mode := "recovery_settlement"
@@ -52,7 +54,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 		} else {
 			coverage = commitRecoveryDiagnosticCoverageComplete(out, options.MaxDiagnosticAge)
 		}
-		return &CommitRecoveryMonitoring{WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
+		return &CommitRecoveryMonitoring{DiagnosticEstimate: estimator.estimate(out, time.Since(started).Seconds()*1000, estimateDelay.Seconds()*1000), WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
 	}
 	defer func() {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -105,10 +107,12 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 				stop()
 				diagnosticCtx = paused
 			}
+			diagnosticStarted := time.Now()
 			diagnosed, diagnosticErr := c.diagnoseCommitRecoveryStatus(diagnosticCtx, out, diagnosticPrevious, options.MaxDiagnosticAge, options.WatchDiagnostics)
 			if diagnosticErr == nil || diagnosed.DiagnosticsProgress != nil {
 				out = diagnosed
 			}
+			estimator.observe(out, time.Since(diagnosticStarted).Seconds()*1000)
 			if err == nil {
 				err = diagnosticErr
 			}
@@ -134,6 +138,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 				delay = retryAfter
 			}
 		}
+		estimateDelay = delay
 		out.Monitoring = summary("running")
 		if progress != nil {
 			snapshot, copyErr := cloneCommitRecoveryWatchInputs(plan, applied, &out)

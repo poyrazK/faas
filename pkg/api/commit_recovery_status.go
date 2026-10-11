@@ -40,15 +40,16 @@ type CommitRecoveryStatusChange struct {
 
 // CommitRecoveryMonitoring describes this watch invocation, not delivery success.
 type CommitRecoveryMonitoring struct {
-	WatchMode                      string         `json:"watch_mode"`
-	DiagnosticCoverageComplete     bool           `json:"diagnostic_coverage_complete"`
-	MaxObservationAgeMS            int64          `json:"max_observation_age_ms,omitempty"`
-	Freshness                      map[string]int `json:"freshness,omitempty"`
-	StopReason                     string         `json:"stop_reason"`
-	Passes                         int            `json:"passes"`
-	RetriesConsumed                int            `json:"retries_consumed"`
-	ElapsedMS                      int64          `json:"elapsed_ms"`
-	AcknowledgedExecutionsTerminal bool           `json:"acknowledged_executions_terminal"`
+	DiagnosticEstimate             *CommitRecoveryDiagnosticEstimate `json:"diagnostic_estimate,omitempty"`
+	WatchMode                      string                            `json:"watch_mode"`
+	DiagnosticCoverageComplete     bool                              `json:"diagnostic_coverage_complete"`
+	MaxObservationAgeMS            int64                             `json:"max_observation_age_ms,omitempty"`
+	Freshness                      map[string]int                    `json:"freshness,omitempty"`
+	StopReason                     string                            `json:"stop_reason"`
+	Passes                         int                               `json:"passes"`
+	RetriesConsumed                int                               `json:"retries_consumed"`
+	ElapsedMS                      int64                             `json:"elapsed_ms"`
+	AcknowledgedExecutionsTerminal bool                              `json:"acknowledged_executions_terminal"`
 }
 
 // CommitRecoveryStatusResult samples delivery evidence without submitting recovery.

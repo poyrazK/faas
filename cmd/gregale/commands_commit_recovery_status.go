@@ -101,6 +101,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 		last := ""
 		lastRows := map[string]string{}
 		lastDiagnostics := map[string]string{}
+		lastEstimateWarning := false
 		progress := func(status api.CommitRecoveryStatusResult) {
 			progressCalled = true
 			if checkpoint != nil {
@@ -127,7 +128,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 				terminal = status.Monitoring.AcknowledgedExecutionsTerminal
 				freshness = status.Monitoring.Freshness
 			}
-			raw, _ := json.Marshal([]any{rows, freshness, commitRecoveryDiagnosticSummary(status.DiagnosticsProgress)})
+			raw, _ := json.Marshal([]any{rows, freshness, commitRecoveryDiagnosticSummary(status.DiagnosticsProgress), commitRecoveryEstimateSummary(status.Monitoring)})
 			if string(raw) != last {
 				last = string(raw)
 				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, terminal)
@@ -135,10 +136,19 @@ func cmdCommitRecoveryStatus(args []string) int {
 					d := status.DiagnosticsProgress
 					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d; freshness=%v; compared=%d; changed=%d\n", d.Remaining, d.Counts, d.Retained, d.Deferred, d.Freshness, d.Compared, d.Changed)
 				}
+				if status.Monitoring != nil && status.Monitoring.DiagnosticEstimate != nil {
+					rawEstimate, _ := json.Marshal(status.Monitoring.DiagnosticEstimate)
+					_, _ = fmt.Fprintf(os.Stderr, "Diagnostic coverage estimate: %s\n", rawEstimate)
+				}
 				if freshness != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "Recovery freshness: %v\n", freshness)
 				}
 			}
+			warning := status.Monitoring != nil && status.Monitoring.DiagnosticEstimate != nil && status.Monitoring.DiagnosticEstimate.RefreshExceedsMaxAge
+			if warning && !lastEstimateWarning {
+				_, _ = fmt.Fprintln(os.Stderr, "Diagnostic refresh estimate exceeds the configured age limit; this is advisory and does not predict fresh coverage completion.")
+			}
+			lastEstimateWarning = warning
 		}
 		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
 	}
@@ -230,4 +240,11 @@ func printCommitRecoveryDiagnosticChanges(status api.CommitRecoveryStatusResult,
 		seen[string(identity)] = string(pair)
 		_, _ = fmt.Fprintf(os.Stderr, "Recovery routing changes %s: [previous observation, current observation, changes]=%s\n", identity, pair)
 	}
+}
+
+func commitRecoveryEstimateSummary(monitoring *api.CommitRecoveryMonitoring) any {
+	if monitoring == nil || monitoring.DiagnosticEstimate == nil {
+		return nil
+	}
+	return []any{monitoring.DiagnosticEstimate.State, monitoring.DiagnosticEstimate.RefreshExceedsMaxAge}
 }

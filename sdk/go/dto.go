@@ -443,3 +443,5 @@ type CommitRecoveryDiagnosticObservation = api.CommitRecoveryDiagnosticObservati
 type CommitRecoveryDiagnosticRouting = api.CommitRecoveryDiagnosticRouting
 type CommitRecoveryDiagnosticOrdering = api.CommitRecoveryDiagnosticOrdering
 type CommitRecoveryDiagnosticChange = api.CommitRecoveryDiagnosticChange
+
+type CommitRecoveryDiagnosticEstimate = api.CommitRecoveryDiagnosticEstimate

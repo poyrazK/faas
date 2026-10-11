@@ -39,6 +39,7 @@ export interface CommitRecoveryStatusItem {
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryMonitoring {
+  diagnostic_estimate?: CommitRecoveryDiagnosticEstimate;
   watch_mode?: string; diagnostic_coverage_complete?: boolean;
   max_observation_age_ms?: number; freshness?: Record<string, number>;
   stop_reason: string; passes: number; retries_consumed: number; elapsed_ms: number; acknowledged_executions_terminal: boolean;
@@ -264,10 +265,24 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   let out: CommitRecoveryStatusResult = { source_id: source, items: [], counts: {}, remaining: 0, complete: false };
   let usedRetries = 0, passes = 0;
   let reason = 'read_failure', phase = 'read';
+  const estimator = new DiagnosticEstimator();
+  let estimateDelayMs = intervalMs;
+  const readDiagnostics = async (readSignal: AbortSignal, strictReads = false): Promise<CommitRecoveryStatusResult> => {
+    const diagnosticStarted = performance.now();
+    try {
+      const sampled = await diagnoseCommitRecoveryStatus(out, readSignal, diagnosticPrevious, options.maxDiagnosticAgeMs, strictReads);
+      estimator.observe(sampled, performance.now() - diagnosticStarted);
+      return sampled;
+    } catch (error) {
+      if (error instanceof CommitRecoveryStatusError) estimator.observe(error.result, performance.now() - diagnosticStarted);
+      throw error;
+    }
+  };
   const summarize = (stop_reason: string): CommitRecoveryMonitoring => {
     const freshness = maxObservationAgeMs > 0 ? freshnessCounts(out, maxObservationAgeMs) : undefined;
     return {
       watch_mode: options.watchDiagnostics ? "diagnostic_coverage" : "recovery_settlement", diagnostic_coverage_complete: stop_reason === "diagnostic_coverage_complete" ? Boolean(out.diagnostics_progress?.complete && out.diagnostics_progress?.fresh_complete) : diagnosticCoverageComplete(out, options.maxDiagnosticAgeMs ?? 0),
+      diagnostic_estimate: estimator.estimate(out, performance.now() - started, estimateDelayMs),
       stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
       acknowledged_executions_terminal: commitRecoveryStatusSettled(out) && (!freshness || freshness.fresh === out.items.length),
       ...(freshness ? { max_observation_age_ms: maxObservationAgeMs, freshness } : {}),
@@ -284,11 +299,11 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
           timeoutMs: Math.max(1, timeoutMs - (performance.now() - started)), signal: controller.signal,
           ...(previous ? refresh ? { refresh: previous } : { resume: previous } : {}),
         });
-        if (diagnostics) out = await diagnoseCommitRecoveryStatus(out, controller.signal, diagnosticPrevious, options.maxDiagnosticAgeMs, Boolean(options.watchDiagnostics));
+        if (diagnostics) out = await readDiagnostics(controller.signal, Boolean(options.watchDiagnostics));
       } catch (error) {
         if (!(error instanceof CommitRecoveryStatusError)) throw error;
         out = error.result;
-        if (diagnostics && !out.diagnostics_progress) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious, options.maxDiagnosticAgeMs));
+        if (diagnostics && !out.diagnostics_progress) Object.assign(out, await readDiagnostics(AbortSignal.abort()));
         const retryAfter = recoveryReadRetry(error.cause);
         if (retryAfter === undefined || usedRetries >= readRetries || controller.signal.aborted) {
           if (retryAfter !== undefined && readRetries > 0 && usedRetries >= readRetries) reason = 'retry_exhausted';
@@ -297,6 +312,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
         usedRetries++; failed = true;
         delay = Math.max(Math.min(60000, intervalMs * 2 ** (usedRetries - 1)), retryAfter);
       }
+      estimateDelayMs = delay;
       out.monitoring = summarize('running');
       phase = 'callback';
       onProgress?.(structuredClone(out));
@@ -582,4 +598,37 @@ function diagnosticCoverageComplete(out: CommitRecoveryStatusResult, age: number
  progress.complete = progress.remaining === 0;
  progress.fresh_complete = progress.freshness.fresh === progress.target_count;
  return progress.complete && progress.fresh_complete;
+}
+
+export interface CommitRecoveryDiagnosticEstimate {
+  state: string; target_count: number; remaining: number; deferred: number; diagnostic_passes: number; successful_samples: number;
+  samples_per_second: number; samples_per_pass: number; estimated_remaining_passes?: number; estimated_remaining_ms?: number;
+  estimated_refresh_ms?: number; refresh_exceeds_max_age: boolean;
+}
+class DiagnosticEstimator {
+  private passes = 0;
+  private samples = 0;
+  private readMs = 0;
+  observe(out: CommitRecoveryStatusResult, readMs: number): void {
+    if (!out.diagnostics_progress?.reads) return;
+    this.passes++; this.readMs += readMs;
+    this.samples += out.items.filter(row => diagnosticTarget(row) && !row.diagnostics?.retained && validDiagnostic(row.diagnostics, row)).length;
+  }
+  estimate(out: CommitRecoveryStatusResult, elapsedMs: number, delayMs: number): CommitRecoveryDiagnosticEstimate | undefined {
+    const progress = out.diagnostics_progress;
+    if (!progress) return undefined;
+    const targets = out.items.filter(diagnosticTarget), unread = targets.filter(row => !validDiagnostic(row.diagnostics, row));
+    const result: CommitRecoveryDiagnosticEstimate = {state: 'insufficient_data', target_count: targets.length, remaining: unread.length, deferred: unread.filter(row => !diagnosticQueryable(row)).length, diagnostic_passes: this.passes, successful_samples: this.samples, samples_per_second: elapsedMs > 0 ? this.samples * 1000 / elapsedMs : 0, samples_per_pass: this.passes > 0 ? this.samples / this.passes : 0, refresh_exceeds_max_age: false};
+    if (!result.remaining) { result.state = 'covered'; result.estimated_remaining_passes = 0; result.estimated_remaining_ms = 0; }
+    else if (result.deferred) result.state = 'awaiting_receipts';
+    if (result.deferred || !this.passes || !this.samples || elapsedMs <= 0) return result;
+    const cycleMs = (elapsedMs + delayMs) / this.passes, refreshPasses = Math.ceil(result.target_count / result.samples_per_pass);
+    result.estimated_refresh_ms = refreshPasses > 0 ? Math.ceil((refreshPasses - 1) * cycleMs + this.readMs / this.passes) : 0;
+    result.refresh_exceeds_max_age = progress.max_diagnostic_age_ms > 0 && result.estimated_refresh_ms > progress.max_diagnostic_age_ms;
+    if (result.remaining && !result.deferred) {
+      result.state = 'estimated'; result.estimated_remaining_passes = Math.ceil(result.remaining / result.samples_per_pass);
+      result.estimated_remaining_ms = Math.ceil(result.estimated_remaining_passes * cycleMs);
+    }
+    return result;
+  }
 }
