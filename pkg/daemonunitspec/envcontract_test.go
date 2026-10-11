@@ -80,7 +80,18 @@ func scanLiterals(t *testing.T, root string, dirs []string) map[string]map[strin
 	return found
 }
 
+// apidOwnedPkgs are apid domains lifted out of cmd/apid by ADR-977. Only apid
+// imports them, so their env reads belong to apid, not "shared". List a
+// package here only if no other daemon imports it (pkg/apid/apidsource is
+// also used by githubd and stays shared).
+var apidOwnedPkgs = []string{"pkg/apid/durable/"}
+
 func ownerOf(rel string) string {
+	for _, prefix := range apidOwnedPkgs {
+		if strings.HasPrefix(rel, prefix) {
+			return "apid"
+		}
+	}
 	switch {
 	case strings.HasPrefix(rel, "cmd/"):
 		return strings.SplitN(strings.TrimPrefix(rel, "cmd/"), "/", 2)[0]
