@@ -4167,7 +4167,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "restart", Short: "restart the app so running instances drop the removed secret now"},
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"},
-				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements", Value: "DURATION"},
+				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
 			}},
 			{Name: "list-all", Short: "List every secret across apps", Examples: []string{"gregale secrets list-all --class ephemeral", "gregale secrets list-all --older-than 90d"}, Flags: []cliFlag{
 				{Name: "before", Short: "pagination cursor from a previous call's next_before", Value: "slug|key"},
@@ -4185,7 +4185,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "restart", Short: "restart the app and apply the rotated secret now"},
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart"},
-				{Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"},
+				{Name: "timeout", Short: "maximum time to wait for application acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
 			}},
 		},
 	},

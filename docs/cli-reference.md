@@ -10852,7 +10852,7 @@ Remove a sealed secret (alias: rm)
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
 | `--restart` | restart the app so running instances drop the removed secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
-| `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements |  |
+| `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements (requires --wait-for-ack) |  |
 
 Examples:
 
@@ -10915,7 +10915,7 @@ Rotate a secret and optionally wait for runtime application
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart |  |
-| `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
+| `--timeout <DURATION>` | maximum time to wait for application acknowledgements (requires --wait-for-ack) |  |
 
 Examples:
 
