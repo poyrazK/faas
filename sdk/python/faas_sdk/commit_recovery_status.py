@@ -14,11 +14,12 @@ from uuid import UUID
 
 import httpx
 
-from .api.events import get_event_recipient_blocker
+from .api.events import get_event_recipient_blockers
 from .client import AuthenticatedClient
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
 from .commit_recovery_plan import _same_acceptance
-from .models.event_recipient_blocker_response import EventRecipientBlockerResponse
+from .models.event_recipient_blocker_batch_request import EventRecipientBlockerBatchRequest
+from .models.event_recipient_blocker_batch_response import EventRecipientBlockerBatchResponse
 
 
 class _CommitRecoveryReadErrors(Exception):
@@ -854,59 +855,100 @@ async def adiagnose_commit_recovery_status(
     failed = failures[: remaining - reserve]
     remaining -= len(failed)
     covered = successes[:remaining]
-    for cursor_name, indices in zip(
-        ("next_index", "retry_next_index", "refresh_next_index"), (unread, failed, covered), strict=True
-    ):
-        for index in indices:
-            row = out["items"][index]
-            publication, subscription = row["selection"]["publication"], row["attempt"]["subscription_id"].lower()
-            diagnostic: dict[str, Any] = {"status": "read_error"}
-            row["diagnostics"] = diagnostic
+    selected = [
+        (cursor_name, index)
+        for cursor_name, indices in zip(
+            ("next_index", "retry_next_index", "refresh_next_index"), (unread, failed, covered), strict=True
+        )
+        for index in indices
+    ]
+    queries = []
+    for _, index in selected:
+        row = out["items"][index]
+        publication = row["selection"]["publication"]
+        queries.append(
+            {
+                "source": publication["source"],
+                "id": publication["id"],
+                "subscription_id": row["attempt"]["subscription_id"].lower(),
+                "expected_accepted_at": publication["accepted_at"],
+            }
+        )
+    batch = None
+    interrupted = None
+    if selected:
+        for cursor_name, index in selected:
+            out["items"][index]["diagnostics"] = {"status": "read_error"}
             progress["reads"] += 1
             progress[cursor_name] = (index + 1) % len(out["items"])
-            try:
-                response = await get_event_recipient_blocker.asyncio_detailed(
-                    client=client,
-                    source=publication["source"],
-                    id=publication["id"],
-                    subscription_id=subscription,
-                    expected_accepted_at=publication["accepted_at"],
-                )
-                # Keep wire precision rather than datetime's microsecond conversion.
-                result = (
-                    json.loads(response.content) if isinstance(response.parsed, EventRecipientBlockerResponse) else None
-                )
-            except (asyncio.CancelledError, TimeoutError) as error:
-                _recount_diagnostics(out)
-                raise CommitRecoveryStatusError(out) from error
-            except Exception:
-                result = None
-            if result is None:
-                continue
-            query = result.get("query")
-            if not isinstance(query, dict):
-                diagnostic["reason"] = "invalid_evidence"
-                continue
-            expected = query.get("expected_accepted_at")
-            if (
-                query.get("source") != publication["source"]
-                or query.get("id") != publication["id"]
-                or query.get("subscription_id") != subscription
-                or not isinstance(expected, str)
-                or not _same_acceptance(expected, publication["accepted_at"])
-            ):
-                diagnostic["reason"] = "invalid_evidence"
-                continue
-            sample = {
-                "status": result["status"],
-                "observed_at": result.get("observed_at"),
-                "coverage": "exact_recipient",
-            }
-            for name in ("reason", "routing_state", "recipient"):
-                if result.get(name) is not None:
-                    sample[name] = result[name]
-            row["diagnostics"] = (
-                sample if _valid_diagnostic(sample, row) else {"status": "read_error", "reason": "invalid_evidence"}
+        try:
+            response = await get_event_recipient_blockers.asyncio_detailed(
+                client=client, body=EventRecipientBlockerBatchRequest.from_dict({"queries": queries})
             )
+            # Read original JSON to preserve nanosecond acceptance guards.
+            batch = (
+                json.loads(response.content)
+                if isinstance(response.parsed, EventRecipientBlockerBatchResponse)
+                else None
+            )
+        except (asyncio.CancelledError, TimeoutError) as error:
+            interrupted = error
+        except Exception:
+            pass
+    for n, (_, index) in enumerate(selected):
+        row = out["items"][index]
+        publication, subscription = row["selection"]["publication"], row["attempt"]["subscription_id"].lower()
+        diagnostic = row["diagnostics"]
+        if batch is None:
+            continue
+        items = batch.get("items")
+        if not isinstance(items, list) or len(items) != len(selected) or not isinstance(items[n], dict):
+            diagnostic["reason"] = "invalid_evidence"
+            continue
+        item = items[n]
+        echoed = item.get("query")
+        query_expected = queries[n]
+        if (
+            not isinstance(echoed, dict)
+            or any(echoed.get(key) != query_expected[key] for key in ("source", "id", "subscription_id"))
+            or not isinstance(echoed.get("expected_accepted_at"), str)
+            or not _same_acceptance(echoed["expected_accepted_at"], query_expected["expected_accepted_at"])
+        ):
+            diagnostic["reason"] = "invalid_evidence"
+            continue
+        if item.get("error"):
+            continue
+        result = item.get("result")
+        if not isinstance(result, dict):
+            diagnostic["reason"] = "invalid_evidence"
+            continue
+        query = result.get("query")
+        if not isinstance(query, dict):
+            diagnostic["reason"] = "invalid_evidence"
+            continue
+        expected = query.get("expected_accepted_at")
+        if (
+            query.get("source") != publication["source"]
+            or query.get("id") != publication["id"]
+            or query.get("subscription_id") != subscription
+            or not isinstance(expected, str)
+            or not _same_acceptance(expected, publication["accepted_at"])
+        ):
+            diagnostic["reason"] = "invalid_evidence"
+            continue
+        sample = {
+            "status": result.get("status"),
+            "observed_at": result.get("observed_at"),
+            "coverage": "exact_recipient",
+        }
+        for name in ("reason", "routing_state", "recipient"):
+            if result.get(name) is not None:
+                sample[name] = result[name]
+        row["diagnostics"] = (
+            sample if _valid_diagnostic(sample, row) else {"status": "read_error", "reason": "invalid_evidence"}
+        )
+    if interrupted is not None:
+        _recount_diagnostics(out)
+        raise CommitRecoveryStatusError(out) from interrupted
     _recount_diagnostics(out)
     return out

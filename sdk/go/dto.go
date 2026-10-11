@@ -432,3 +432,7 @@ type EventRecipientBlockerQuery = api.EventRecipientBlockerQuery
 type EventRecipientBlockerResponse = api.EventRecipientBlockerResponse
 
 type CommitRecoveryDiagnosticProgress = api.CommitRecoveryDiagnosticProgress
+
+type EventRecipientBlockerBatchRequest = api.EventRecipientBlockerBatchRequest
+type EventRecipientBlockerBatchItem = api.EventRecipientBlockerBatchItem
+type EventRecipientBlockerBatchResponse = api.EventRecipientBlockerBatchResponse

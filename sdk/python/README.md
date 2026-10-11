@@ -845,3 +845,5 @@ Optional `diagnostics=True` includes bounded exact-recipient delivery blocker di
 Exact routing lookup: `faas_sdk.api.events.get_event_recipient_blocker.asyncio_detailed(client=client, source=source, id=event_id, subscription_id=subscription_id, expected_accepted_at=accepted_at)`. Pass the original timestamp string to preserve fractional precision. `not_waiting` describes routing only.
 
 Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).
+
+Recipient diagnostic monitoring batches up to 50 exact acceptance-guarded lookups per request. The read-only `/v1/events/recipient-blockers` endpoint returns ordered independent results and errors under a shared five-second deadline. Diagnostic read counts remain recipient counts; coverage does not imply handler completion.

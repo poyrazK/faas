@@ -52,3 +52,51 @@ func parseEventRecipientBlocker(r *http.Request) (api.EventRecipientBlockerQuery
 	}
 	return query, query.Validate()
 }
+
+// A batch is read-only, with independent snapshots and an ordered result per query.
+func (s *server) getEventRecipientBlockers(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var request api.EventRecipientBlockerBatchRequest
+	if err := decodeJSONSized(r, &request, api.EventRecipientBlockerBatchBodyMaxBytes); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if err := request.Validate(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	store, ok := s.store.(state.EventRecipientBlockerStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event recipient blocker store"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventRecipientBlockerReadTimeout)
+	defer cancel()
+	out := api.EventRecipientBlockerBatchResponse{Items: make([]api.EventRecipientBlockerBatchItem, len(request.Queries))}
+	for i, query := range request.Queries {
+		out.Items[i] = s.readEventRecipientBlockerBatchItem(ctx, store, acct.ID, query)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
+}
+func (s *server) readEventRecipientBlockerBatchItem(ctx context.Context, store state.EventRecipientBlockerStore, accountID string, query api.EventRecipientBlockerQuery) api.EventRecipientBlockerBatchItem {
+	item := api.EventRecipientBlockerBatchItem{Query: query}
+	if ctx.Err() != nil {
+		item.Error = "read_timeout"
+		return item
+	}
+	result, err := store.EventRecipientBlocker(ctx, accountID, query)
+	if err != nil {
+		item.Error = "read_error"
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			item.Error = "read_timeout"
+		}
+		s.log.ErrorContext(ctx, "read event recipient blocker batch item", "err", err)
+		return item
+	}
+	if result.Recipient != nil {
+		page := eventBacklogResponse(state.EventBacklog{Recipients: []state.EventBacklogEntry{{EventBacklogRecipient: *result.Recipient}}}, state.EventBacklogQuery{}, accountID)
+		result.Recipient = &page.Recipients[0]
+	}
+	item.Result = &result
+	return item
+}

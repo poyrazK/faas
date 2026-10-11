@@ -1531,3 +1531,10 @@ validating the current recovery selection. Node callers pass previous status as
 the third argument to `diagnoseCommitRecoveryStatus(status, signal, previous)`;
 Python callers use `adiagnose_commit_recovery_status(client, status, previous=previous)`.
 Status/watch helpers wire this automatically when diagnostics and resume are enabled.
+
+Diagnostic passes now submit up to 50 exact recipients through the read-only
+`POST /v1/events/recipient-blockers` endpoint. Each ordered item keeps its own
+acceptance guard, snapshot and result or error. The batch shares a five-second
+read deadline; later items may report `read_timeout` and rotate into retries.
+Coverage reads count recipient attempts, rather than HTTP requests. Batch
+coverage does not prove delivery success or handler completion.

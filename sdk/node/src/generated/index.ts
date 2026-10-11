@@ -534,6 +534,9 @@ export type { EventReceiptRecoveryResponse } from './models/EventReceiptRecovery
 export type { EventReceiptReplayHistoryResponse } from './models/EventReceiptReplayHistoryResponse.js';
 export type { EventReceiptResponse } from './models/EventReceiptResponse.js';
 export type { EventReceiptRoutingResponse } from './models/EventReceiptRoutingResponse.js';
+export type { EventRecipientBlockerBatchItem } from './models/EventRecipientBlockerBatchItem.js';
+export type { EventRecipientBlockerBatchRequest } from './models/EventRecipientBlockerBatchRequest.js';
+export type { EventRecipientBlockerBatchResponse } from './models/EventRecipientBlockerBatchResponse.js';
 export type { EventRecipientBlockerQuery } from './models/EventRecipientBlockerQuery.js';
 export type { EventRecipientBlockerResponse } from './models/EventRecipientBlockerResponse.js';
 export type { EventRecoveryCapacityWait } from './models/EventRecoveryCapacityWait.js';

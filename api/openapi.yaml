@@ -3945,6 +3945,28 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events/recipient-blockers:
+    post:
+      tags: [events]
+      operationId: getEventRecipientBlockers
+      summary: Read an ordered batch of exact recipient routing diagnostics.
+      description: Read-only. One independent snapshot per item, up to 50 items and 65536 body bytes. Duplicate queries are processed independently. All guards validate before reads. Results preserve request order and echo each query. Per-item read failures contain no evidence. A shared five second deadline bounds work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecipientBlockerBatchRequest' }
+      responses:
+        '200':
+          description: Independent ordered results and errors, with Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecipientBlockerBatchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/events/recipient-blocker:
     get:
       tags: [events]
@@ -53477,6 +53499,35 @@ components:
         accepted_at: { type: string, format: date-time }
         receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
 
+    EventRecipientBlockerBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [queries]
+      properties:
+        queries:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventRecipientBlockerQuery' }
+    EventRecipientBlockerBatchItem:
+      type: object
+      additionalProperties: false
+      required: [query]
+      description: Exactly one of result or error is returned.
+      properties:
+        query: { $ref: '#/components/schemas/EventRecipientBlockerQuery' }
+        result: { $ref: '#/components/schemas/EventRecipientBlockerResponse' }
+        error: { type: string, enum: [read_error, read_timeout] }
+    EventRecipientBlockerBatchResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventRecipientBlockerBatchItem' }
     EventRecipientBlockerQuery:
       type: object
       additionalProperties: false

@@ -1,5 +1,4 @@
 import { EventsService } from './generated/services/EventsService.js';
-import type { EventRecipientBlockerResponse } from './generated/models/EventRecipientBlockerResponse.js';
 import type { EventBacklogRecipient } from './generated/models/EventBacklogRecipient.js';
 import { getCommitDeliveryReport, CommitDeliveryReportError } from './commit-delivery-report.js';
 import type { CommitDeliveryReportItem } from './commit-delivery-report.js';
@@ -396,25 +395,33 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
   const reserve = successes.length > 0 && failures.length > 0 && remaining > diagnosticRefreshReserve ? diagnosticRefreshReserve : 0;
   const failed = failures.slice(0, remaining - reserve); remaining -= failed.length;
   const covered = successes.slice(0, remaining);
-  for (const [group, indices] of [unread, failed, covered].entries()) {
-    for (const index of indices) {
-      if (signal?.aborted) break;
-      const row = out.items[index]!, publication = row.selection!.publication;
-      const subscription = row.attempt.subscription_id.toLowerCase();
-      const request = EventsService.getEventRecipientBlocker({ source: publication.source, id: publication.id, subscriptionId: subscription, expectedAcceptedAt: publication.accepted_at });
-      const abort = () => request.cancel();
-      signal?.addEventListener('abort', abort, { once: true });
+  const selected = [unread, failed, covered].flatMap((indices, group) => indices.map(index => ({index, group})));
+  const queries = selected.map(({index}) => {
+    const row = out.items[index]!, publication = row.selection!.publication;
+    return {source: publication.source, id: publication.id, subscription_id: row.attempt.subscription_id.toLowerCase(), expected_accepted_at: publication.accepted_at};
+  });
+  if (selected.length && !signal?.aborted) {
+    const request = EventsService.getEventRecipientBlockers({requestBody: {queries}});
+    const abort = () => request.cancel();
+    signal?.addEventListener('abort', abort, {once: true});
+    let batch: Awaited<typeof request> | undefined;
+    try { batch = await request; } catch { /* Independent diagnostic errors. */ }
+    finally { signal?.removeEventListener('abort', abort); }
+    for (const [n, {index, group}] of selected.entries()) {
+      const row = out.items[index]!, publication = row.selection!.publication, subscription = row.attempt.subscription_id.toLowerCase();
       progress.reads++;
       const next = (index + 1) % out.items.length;
       if (group === 0) progress.next_index = next;
       else if (group === 1) progress.retry_next_index = next;
       else progress.refresh_next_index = next;
-      let result: EventRecipientBlockerResponse | undefined;
-      try { result = await request; }
-      catch { /* Diagnostic read failures stay separate from receipt retries. */ }
-      finally { signal?.removeEventListener('abort', abort); }
-      row.diagnostics = { status: 'read_error' };
-      if (!result) continue;
+      row.diagnostics = {status: 'read_error'};
+      if (!batch) continue;
+      const item = Array.isArray(batch.items) ? batch.items[n] : undefined;
+      const query = queries[n]!;
+      if (!Array.isArray(batch.items) || batch.items.length !== selected.length || !item || item.query?.source !== query.source || item.query.id !== query.id || item.query.subscription_id !== query.subscription_id || !sameAcceptance(item.query.expected_accepted_at, query.expected_accepted_at)) { row.diagnostics.reason = 'invalid_evidence'; continue; }
+      if (item.error) continue;
+      const result = item.result;
+      if (!result) { row.diagnostics.reason = 'invalid_evidence'; continue; }
       if (result.query?.source !== publication.source || result.query.id !== publication.id || result.query.subscription_id !== subscription || !sameAcceptance(result.query.expected_accepted_at, publication.accepted_at)) { row.diagnostics.reason = 'invalid_evidence'; continue; }
       const diagnostic: CommitRecoveryDiagnostics = { status: result.status, reason: result.reason, routing_state: result.routing_state, observed_at: result.observed_at, coverage: 'exact_recipient', recipient: result.recipient };
       row.diagnostics = validDiagnostic(diagnostic, row) ? diagnostic : { status: 'read_error', reason: 'invalid_evidence' };

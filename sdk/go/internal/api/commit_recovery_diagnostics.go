@@ -111,18 +111,24 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 	failed = failed[:min(len(failed), remaining-reserve)]
 	remaining -= len(failed)
 	covered = covered[:min(len(covered), remaining)]
-	for group, indices := range [][]int{unread, failed, covered} {
-		for _, index := range indices {
-			if ctx.Err() != nil {
-				break
-			}
+	queries := []EventRecipientBlockerQuery{}
+	indices := []int{}
+	groups := []int{}
+	for group, selected := range [][]int{unread, failed, covered} {
+		for _, index := range selected {
+			publication := out.Items[index].Selection.Publication
+			queries = append(queries, EventRecipientBlockerQuery{Source: publication.Source, ID: publication.ID, SubscriptionID: strings.ToLower(out.Items[index].Attempt.SubscriptionID), ExpectedAcceptedAt: publication.AcceptedAt.UTC()})
+			indices = append(indices, index)
+			groups = append(groups, group)
+		}
+	}
+	if len(queries) > 0 && ctx.Err() == nil {
+		batch, readErr := c.GetEventRecipientBlockers(ctx, EventRecipientBlockerBatchRequest{Queries: queries})
+		for n, index := range indices {
 			row := &out.Items[index]
-			publication := row.Selection.Publication
-			query := EventRecipientBlockerQuery{Source: publication.Source, ID: publication.ID, SubscriptionID: strings.ToLower(row.Attempt.SubscriptionID), ExpectedAcceptedAt: publication.AcceptedAt.UTC()}
-			result, readErr := c.GetEventRecipientBlocker(ctx, query)
 			progress.Reads++
 			next := (index + 1) % len(out.Items)
-			switch group {
+			switch groups[n] {
 			case 0:
 				progress.NextIndex = next
 			case 1:
@@ -130,8 +136,24 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 			case 2:
 				progress.RefreshNextIndex = next
 			}
-			row.Diagnostics = observeCommitRecoveryDiagnostic(result, query, readErr)
-			if readErr == nil && !validCommitRecoveryDiagnostic(row.Diagnostics, *row) {
+			row.Diagnostics = &CommitRecoveryDiagnostics{Status: "read_error"}
+			if readErr != nil {
+				continue
+			}
+			if len(batch.Items) != len(queries) || !sameRecipientBlockerQuery(batch.Items[n].Query, queries[n]) {
+				row.Diagnostics.Reason = "invalid_evidence"
+				continue
+			}
+			item := batch.Items[n]
+			if item.Error != "" {
+				continue
+			}
+			if item.Result == nil {
+				row.Diagnostics.Reason = "invalid_evidence"
+				continue
+			}
+			row.Diagnostics = observeCommitRecoveryDiagnostic(*item.Result, queries[n], nil)
+			if !validCommitRecoveryDiagnostic(row.Diagnostics, *row) {
 				row.Diagnostics = &CommitRecoveryDiagnostics{Status: "read_error", Reason: "invalid_evidence"}
 			}
 		}
@@ -237,6 +259,10 @@ func observeCommitRecoveryDiagnostic(result EventRecipientBlockerResponse, query
 	diagnostic.RoutingState = result.RoutingState
 	diagnostic.Recipient = result.Recipient
 	return diagnostic
+}
+
+func sameRecipientBlockerQuery(a, b EventRecipientBlockerQuery) bool {
+	return a.Source == b.Source && a.ID == b.ID && a.SubscriptionID == b.SubscriptionID && a.ExpectedAcceptedAt.Equal(b.ExpectedAcceptedAt)
 }
 
 const CommitRecoveryDiagnosticsReadMax = 50

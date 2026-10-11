@@ -824,3 +824,5 @@ Optional `CommitRecoveryWatchOptions.Diagnostics` includes bounded exact-recipie
 Exact routing lookup: `GetEventRecipientBlocker(ctx, EventRecipientBlockerQuery{Source: source, ID: eventID, SubscriptionID: subscriptionID, ExpectedAcceptedAt: acceptedAt})`. Inspect `Status`, `Reason`, `RoutingState` and optional `Recipient`; `not_waiting` describes routing only.
 
 Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).
+
+Recipient diagnostic monitoring batches up to 50 exact acceptance-guarded lookups per request. The read-only `/v1/events/recipient-blockers` endpoint preserves ordered independent results and errors, with a shared five-second deadline. Diagnostic read counts remain recipient counts. A batch is not an atomic snapshot or proof of handler completion.

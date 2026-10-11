@@ -47,3 +47,39 @@ func (c *Client) GetEventRecipientBlocker(ctx context.Context, query EventRecipi
 	err := c.do(ctx, http.MethodGet, "/v1/events/recipient-blocker?"+values.Encode(), nil, &out)
 	return out, err
 }
+
+// EventRecipientBlockerBatchRequest preserves ordered, independent acceptance guards.
+type EventRecipientBlockerBatchRequest struct {
+	Queries []EventRecipientBlockerQuery `json:"queries"`
+}
+
+func (r EventRecipientBlockerBatchRequest) Validate() error {
+	if len(r.Queries) == 0 || len(r.Queries) > EventRecipientBlockerBatchMax {
+		return fmt.Errorf("queries must contain 1..%d recipients", EventRecipientBlockerBatchMax)
+	}
+	for i, q := range r.Queries {
+		if err := q.Validate(); err != nil {
+			return fmt.Errorf("query %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// Each result echoes its query; errors never contain replacement evidence.
+type EventRecipientBlockerBatchItem struct {
+	Query  EventRecipientBlockerQuery     `json:"query"`
+	Result *EventRecipientBlockerResponse `json:"result,omitempty"`
+	Error  string                         `json:"error,omitempty"`
+}
+type EventRecipientBlockerBatchResponse struct {
+	Items []EventRecipientBlockerBatchItem `json:"items"`
+}
+
+func (c *Client) GetEventRecipientBlockers(ctx context.Context, request EventRecipientBlockerBatchRequest) (EventRecipientBlockerBatchResponse, error) {
+	var out EventRecipientBlockerBatchResponse
+	if err := request.Validate(); err != nil {
+		return out, err
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/events/recipient-blockers", request, &out)
+	return out, err
+}

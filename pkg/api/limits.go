@@ -9670,3 +9670,7 @@ const (
 	CommitRecoveryWatchObservationAgeMin = 100 * time.Millisecond
 	CommitRecoveryWatchObservationAgeMax = 24 * time.Hour
 )
+
+// Exact recipient batches bound storage work and request memory.
+const EventRecipientBlockerBatchMax = 50
+const EventRecipientBlockerBatchBodyMaxBytes = 65536

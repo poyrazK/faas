@@ -16,6 +16,8 @@ import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAtt
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
 import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
+import type { EventRecipientBlockerBatchRequest } from '../models/EventRecipientBlockerBatchRequest.js';
+import type { EventRecipientBlockerBatchResponse } from '../models/EventRecipientBlockerBatchResponse.js';
 import type { EventRecipientBlockerResponse } from '../models/EventRecipientBlockerResponse.js';
 import type { EventRecoveryControlRequest } from '../models/EventRecoveryControlRequest.js';
 import type { EventRecoveryHealth } from '../models/EventRecoveryHealth.js';
@@ -586,6 +588,34 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read an ordered batch of exact recipient routing diagnostics.
+   * Read-only. One independent snapshot per item, up to 50 items and 65536 body bytes. Duplicate queries are processed independently. All guards validate before reads. Results preserve request order and echo each query. Per-item read failures contain no evidence. A shared five second deadline bounds work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
+   * @returns EventRecipientBlockerBatchResponse Independent ordered results and errors, with Cache-Control no-store.
+   * @throws ApiError
+   */
+  public static getEventRecipientBlockers({
+    requestBody,
+  }: {
+    requestBody: EventRecipientBlockerBatchRequest,
+  }): CancelablePromise<EventRecipientBlockerBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/events/recipient-blockers',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }
