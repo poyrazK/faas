@@ -151,7 +151,7 @@ func (s *PgStore) claimReadinessSubscriptions(ctx context.Context) ([]readinessS
 	}
 	return out, nil
 }
-func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessVerificationUpdate) error {
+func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessWatchUpdate) error {
 	id, _ := operationUUID(r.Subscription.ID)
 	lease, _ := operationUUID(r.Lease)
 	tx, err := s.pool.Begin(ctx)
@@ -179,7 +179,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		if err = json.Unmarshal(payload, &n); err != nil {
 			return err
 		}
-		updated, published, ok := applyReadinessVerificationUpdate(&r, n, u)
+		updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
 		if !ok {
 			continue
 		}

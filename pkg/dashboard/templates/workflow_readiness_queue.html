@@ -249,6 +249,7 @@
   };
   const watch=notification.verification_watch;
   if(watch){text(parent,'Verification watch started '+new Date(watch.started_at).toLocaleString()+' · last checked '+new Date(watch.evaluated_at).toLocaleString());text(parent,'Watching '+watch.items.length+' saved resolutions from '+watch.pending_count_at_start+' pending at completion.'+(watch.coverage_incomplete ? ' Coverage is partial; other pending resolutions are not watched.' : ''));for(const proof of watch.items)item(proof);text(parent,'Watch ends when the source notification expires from this inbox. Refresh the inbox for its latest observations.');}
+  window.renderReadinessOutcomeWatch(parent,notification,scope);
   const event=notification.verification;
   if(event){text(parent,'Verification changed · checked '+new Date(event.checked_at).toLocaleString()+' · source notification '+event.source_sequence);text(parent,event.source.workflow+' / '+event.source.instance_id+' · '+event.source.subject.type+': '+event.source.subject.id);for(const change of event.changes){text(parent,'Previous verification status: '+change.before_status);item(change.after);}text(parent,'These are retained application reports. Verification does not establish workflow readiness or authorize execution.');}
  };
@@ -261,6 +262,12 @@
   if(outcome.occurred_at)text(parent,'Application occurrence time: '+new Date(outcome.occurred_at).toLocaleString());
   if(outcome.reporting_operation_id){const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(outcome.reporting_operation_id)+'?scope='+encodeURIComponent(scope);a.textContent='Business outcome reporting Operation';parent.append(a,document.createElement('br'));}
   if(outcome.report_id)text(parent,'Outcome report: '+outcome.report_id);
+ };
+ window.renderReadinessOutcomeWatch = (parent, notification, scope) => {
+  const watch=notification.business_outcome_watch;
+  if(watch){text(parent,'Business outcome watch started '+new Date(watch.started_at).toLocaleString());window.renderReadinessBusinessOutcome(parent,watch.current,scope,'Latest watched business result');if(watch.deadline_at)text(parent,'Outcome deadline: '+new Date(watch.deadline_at).toLocaleString()+(watch.deadline_notified ? ' · deadline notice delivered' : ''));text(parent,'Monitoring ends when the source notification expires or its subscription is deleted. Refresh the inbox for the latest observation.');}
+  const event=notification.business_outcome;
+  if(event){text(parent,'Business outcome notification · source '+event.source_sequence+' · '+event.source.workflow+' / '+event.source.instance_id+' · '+event.source.subject.type+': '+event.source.subject.id);text(parent,'Previous observed business result: '+event.previous_status);window.renderReadinessBusinessOutcome(parent,event.current,scope,'Observed application business result');if(notification.kind==='outcome_deadline_reached')text(parent,'Deadline passed without the expected result observed at this check; this does not establish business failure.');if(event.deadline_at)text(parent,'Outcome deadline: '+new Date(event.deadline_at).toLocaleString());text(parent,'Application-reported outcomes do not establish causation or authorize workflow execution.');}
  };
  window.renderReadinessCompletion = (parent, completion, scope) => {
   if(!completion)return;
@@ -290,6 +297,9 @@
    for(const [value,label] of [['resolved','Resolved'],['no_longer_applicable','No longer applicable'],['handed_off','Handed off']]){const o=document.createElement('option');o.value=value;o.textContent=label;outcome.append(o);}
    const note=field('Completion note ',document.createElement('textarea'));note.required=true;note.maxLength=1024;
    const expected=field('Expected business outcome code (optional, application-defined terminal outcome slug) ',document.createElement('input'));expected.maxLength=64;expected.pattern='[a-z][a-z0-9-]{0,63}';
+   const outcomeWatch=field('Watch for the expected business outcome after completion ',document.createElement('input'));outcomeWatch.type='checkbox';
+   const deadline=field('Optional business outcome deadline (your local timezone) ',document.createElement('input'));deadline.type='datetime-local';deadline.disabled=true;
+   outcomeWatch.addEventListener('change',()=>{expected.required=outcomeWatch.checked;deadline.disabled=!outcomeWatch.checked;});
    const watch=field('Watch pending verification after completion (up to 16 saved resolutions) ',document.createElement('input'));watch.type='checkbox';
    const ids=field('Evidence Operation UUIDs (up to 8, separated by spaces or commas; required for resolved) ',document.createElement('textarea'));ids.required=true;
    outcome.addEventListener('change',()=>{ids.required=outcome.value==='resolved';});
@@ -299,7 +309,7 @@
    const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
    preview.addEventListener('click',async()=>{preview.disabled=true;try{const check=await request(detail);if(container.isConnected)window.renderReadinessHandoff(handoff,check,scope);}catch(error){result.textContent=error.message;}finally{preview.disabled=false;}});
    form.addEventListener('submit',async event=>{event.preventDefault();const evidenceIDs=ids.value.trim() ? ids.value.trim().split(/[\s,]+/) : [];if(evidenceIDs.length>8){result.textContent='Use at most 8 evidence Operation UUIDs.';return;}save.disabled=true;preview.disabled=true;try{
-    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{watch_outcome:outcomeWatch.checked,outcome_deadline_at:outcomeWatch.checked && deadline.value ? new Date(deadline.value).toISOString() : undefined,expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
     Object.assign(c,updated.coordination);delete c.follow_up_at;watched=updated;render();await onSaved(updated);
    }catch(error){result.textContent=error.message+' Refresh before retrying a conflicting completion.';}finally{save.disabled=false;preview.disabled=false;}});
   };
@@ -354,7 +364,8 @@
   const li = document.createElement('li'); li.dataset.id = notification.id;
   text(li,notification.kind + ' · ' + notification.created_at); text(li,notification.explanation);
   window.renderReadinessVerification(li,notification,panel.dataset.scope);
-  if(notification.verification){const source=document.createElement('a');source.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+notification.verification.source_sequence;source.textContent='Open source follow-up completion';li.append(source);}
+  const sourceEvent=notification.verification || notification.business_outcome;
+  if(sourceEvent){const source=document.createElement('a');source.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+sourceEvent.source_sequence;source.textContent='Open source follow-up completion';li.append(source);}
   const change = notification.change;
   if (change) {
    text(li,change.baseline.workflow + ' / ' + change.baseline.instance_id + ' · ' + change.baseline.subject.type + ': ' + change.baseline.subject.id);

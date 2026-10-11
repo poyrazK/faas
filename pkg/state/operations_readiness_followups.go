@@ -62,6 +62,14 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		completion.CompletedAt, completion.CompletedBy = now, actor
 		c.Completion = &completion
 		c.FollowUpAt = nil
+		if req.PreparedOutcomeWatch != nil {
+			w := *req.PreparedOutcomeWatch
+			if w.DeadlineAt != nil && !w.DeadlineAt.After(now) {
+				return n, ErrConflict
+			}
+			w.StartedAt = now
+			n.BusinessOutcomeWatch = &w
+		}
 		if req.PreparedWatch != nil {
 			w := *req.PreparedWatch
 			w.StartedAt = now
@@ -147,6 +155,9 @@ func readinessNotificationBaseline(n api.OperationWorkflowReadinessNotification)
 	}
 	if n.Verification != nil {
 		return &n.Verification.Source
+	}
+	if n.BusinessOutcome != nil {
+		return &n.BusinessOutcome.Source
 	}
 	return nil
 }

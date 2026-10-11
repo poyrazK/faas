@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -11,8 +12,9 @@ import (
 
 type readinessCoordinationUpdate struct {
 	api.OperationWorkflowReadinessCoordinationRequest
-	PreparedCompletion *api.OperationWorkflowReadinessCompletion
-	PreparedWatch      *api.OperationWorkflowReadinessVerificationWatch
+	PreparedCompletion   *api.OperationWorkflowReadinessCompletion
+	PreparedWatch        *api.OperationWorkflowReadinessVerificationWatch
+	PreparedOutcomeWatch *api.OperationWorkflowReadinessBusinessOutcomeWatch
 }
 
 func prepareReadinessCompletion(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope, id string, sequence int64, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (readinessCoordinationUpdate, error) {
@@ -21,6 +23,16 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 		return out, nil
 	}
 	r := req.Completion
+	if (r.WatchOutcome && r.ExpectedOutcomeCode == "") || (r.OutcomeDeadlineAt != nil && !r.WatchOutcome) {
+		return out, ErrInvalidArgument
+	}
+	if r.OutcomeDeadlineAt != nil {
+		deadline := r.OutcomeDeadlineAt.UTC().Truncate(time.Microsecond)
+		if deadline.Year() < 1 || deadline.Year() > 9999 || !deadline.After(time.Now().UTC()) {
+			return out, ErrInvalidArgument
+		}
+		r.OutcomeDeadlineAt = &deadline
+	}
 	if r.ExpectedOutcomeCode != "" && api.ValidateOperationWorkflowStateName(r.ExpectedOutcomeCode) != nil {
 		return out, ErrInvalidArgument
 	}
@@ -74,11 +86,24 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	if check.Status != "ready" {
 		e.Warnings = append(e.Warnings, "Follow-up completion does not establish workflow readiness: "+check.Status+".")
 	}
-	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{ExpectedOutcomeCode: r.ExpectedOutcomeCode, WatchVerification: r.WatchVerification, Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
+	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{WatchOutcome: r.WatchOutcome, OutcomeDeadlineAt: r.OutcomeDeadlineAt, ExpectedOutcomeCode: r.ExpectedOutcomeCode, WatchVerification: r.WatchVerification, Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
 	if r.ExpectedOutcomeCode != "" {
 		out.PreparedCompletion.BusinessOutcome, err = readReadinessBusinessOutcome(ctx, store, account, tenant, app, scope, check.Notification, r.ExpectedOutcomeCode, operator)
 		if err != nil {
 			return out, err
+		}
+	}
+	if r.WatchOutcome {
+		if saved == nil {
+			return out, ErrConflict
+		}
+		observed := out.PreparedCompletion.BusinessOutcome
+		if observed == nil || observed.Status == "achieved" || observed.Status == "different_outcome" {
+			return out, ErrConflict
+		}
+		out.PreparedOutcomeWatch = &api.OperationWorkflowReadinessBusinessOutcomeWatch{ID: uuid.NewString(), Revision: 1, StateRevision: saved.StateRevision, DeadlineAt: r.OutcomeDeadlineAt, Current: *observed}
+		if observed.ContractVersion == effectiveWorkflowContractVersion(saved.ContractVersion) && observed.StateRevision > saved.StateRevision {
+			out.PreparedOutcomeWatch.StateRevision = observed.StateRevision
 		}
 	}
 	if r.WatchVerification {

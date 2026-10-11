@@ -9699,3 +9699,6 @@ const OperationWorkflowReadinessCompletionEvidenceMax = 8
 // Each subscription pass rotates through a bounded number of retained completion watches.
 const OperationWorkflowReadinessVerificationWatchesPerPassMax = 10
 const OperationWorkflowReadinessVerificationWatchItemsMax = OperationWorkflowResolutionVerificationPreviewMax
+
+// Outcome watch evaluations rotate independently through retained source inbox entries.
+const OperationWorkflowReadinessOutcomeWatchesPerPassMax = 10

@@ -1150,6 +1150,8 @@ export type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlann
 export type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 export type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowPrerequisiteRecovery.js';
 export type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
+export type { OperationWorkflowReadinessBusinessOutcomeEvent } from './OperationWorkflowReadinessBusinessOutcomeEvent.js';
+export type { OperationWorkflowReadinessBusinessOutcomeWatch } from './OperationWorkflowReadinessBusinessOutcomeWatch.js';
 export type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
 export type { OperationWorkflowReadinessComparisonRequest } from './OperationWorkflowReadinessComparisonRequest.js';
 export type { OperationWorkflowReadinessComparisonResponse } from './OperationWorkflowReadinessComparisonResponse.js';

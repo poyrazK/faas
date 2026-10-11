@@ -8,18 +8,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type readinessVerificationUpdate struct {
-	SourceID string
-	Sequence int64
-	WatchID  string
-	Revision int64
-	Watch    api.OperationWorkflowReadinessVerificationWatch
-	Events   []api.OperationWorkflowReadinessVerificationEvent
-	Kinds    []string
+type readinessWatchUpdate struct {
+	OutcomeWatch  *api.OperationWorkflowReadinessBusinessOutcomeWatch
+	OutcomeEvents []api.OperationWorkflowReadinessBusinessOutcomeEvent
+	SourceID      string
+	Sequence      int64
+	WatchID       string
+	Revision      int64
+	Watch         api.OperationWorkflowReadinessVerificationWatch
+	Events        []api.OperationWorkflowReadinessVerificationEvent
+	Kinds         []string
 }
 
 // Rotate through retained source notifications independently of readiness discovery filters.
-func evaluateReadinessVerificationWatches(ctx context.Context, store readinessSubscriptionBackend, r *readinessSubscriptionRecord) ([]readinessVerificationUpdate, error) {
+func evaluateReadinessVerificationWatches(ctx context.Context, store readinessSubscriptionBackend, r *readinessSubscriptionRecord) ([]readinessWatchUpdate, error) {
 	page, err := store.readReadinessInbox(ctx, r.Account, r.Tenant, r.Subscription.AppID, r.Subscription.Scope, r.Subscription.ID, 0, api.OperationWorkflowReadinessInboxMax, r.Operator)
 	if err != nil {
 		return nil, err
@@ -40,7 +42,7 @@ func evaluateReadinessVerificationWatches(ctx context.Context, store readinessSu
 	if len(candidates) > api.OperationWorkflowReadinessVerificationWatchesPerPassMax {
 		candidates = candidates[:api.OperationWorkflowReadinessVerificationWatchesPerPassMax]
 	}
-	updates := []readinessVerificationUpdate{}
+	updates := []readinessWatchUpdate{}
 	cursor := r.VerificationCursor
 	for _, n := range candidates {
 		before := *readinessNotificationBaseline(n)
@@ -62,10 +64,10 @@ func evaluateReadinessVerificationWatches(ctx context.Context, store readinessSu
 	return updates, nil
 }
 
-func readinessVerificationObservation(n api.OperationWorkflowReadinessNotification, instance *api.OperationWorkflowInstanceSnapshot, at time.Time) readinessVerificationUpdate {
+func readinessVerificationObservation(n api.OperationWorkflowReadinessNotification, instance *api.OperationWorkflowInstanceSnapshot, at time.Time) readinessWatchUpdate {
 	w := *n.VerificationWatch
 	w.Items = append([]api.OperationWorkflowReadinessVerificationWatchItem{}, w.Items...)
-	out := readinessVerificationUpdate{SourceID: n.ID, Sequence: n.Sequence, WatchID: w.ID, Revision: w.Revision}
+	out := readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, WatchID: w.ID, Revision: w.Revision}
 	changes := map[string][]api.OperationWorkflowReadinessVerificationChange{}
 	for i, prior := range w.Items {
 		current := readinessVerificationItem(prior, w, instance, at)
@@ -135,7 +137,10 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 }
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
-func applyReadinessVerificationUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessVerificationUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+	if u.OutcomeWatch != nil {
+		return applyReadinessOutcomeWatchUpdate(r, n, u)
+	}
 	if n.ID != u.SourceID || n.VerificationWatch == nil || n.VerificationWatch.ID != u.WatchID || n.VerificationWatch.Revision != u.Revision {
 		return n, nil, false
 	}

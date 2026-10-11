@@ -14,6 +14,12 @@ from ..models.operation_workflow_readiness_notification_kind import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_business_outcome_event import (
+        OperationWorkflowReadinessBusinessOutcomeEvent,
+    )
+    from ..models.operation_workflow_readiness_business_outcome_watch import (
+        OperationWorkflowReadinessBusinessOutcomeWatch,
+    )
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
@@ -39,6 +45,13 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    business_outcome_watch: OperationWorkflowReadinessBusinessOutcomeWatch | Unset = UNSET
+    """Retained opt-in watch for one source completion business criterion. Current observations remain advisory;
+    deadlines are notified once and unchanged status is suppressed. Source inbox retention and subscription deletion
+    end monitoring."""
+    business_outcome: OperationWorkflowReadinessBusinessOutcomeEvent | Unset = UNSET
+    """Self-contained observed business result or deadline notice for a source completion. Reports never establish
+    causation, business failure or execution authority. Source links may expire from inbox retention."""
     verification_watch: OperationWorkflowReadinessVerificationWatch | Unset = UNSET
     """Opt-in watch of captured resolution identities. Verified proofs remain observed for later loss or explicit
     blocker reopening; partial coverage and source inbox retention remain explicit."""
@@ -65,6 +78,14 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        business_outcome_watch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_outcome_watch, Unset):
+            business_outcome_watch = self.business_outcome_watch.to_dict()
+
+        business_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_outcome, Unset):
+            business_outcome = self.business_outcome.to_dict()
 
         verification_watch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.verification_watch, Unset):
@@ -97,6 +118,10 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if business_outcome_watch is not UNSET:
+            field_dict["business_outcome_watch"] = business_outcome_watch
+        if business_outcome is not UNSET:
+            field_dict["business_outcome"] = business_outcome
         if verification_watch is not UNSET:
             field_dict["verification_watch"] = verification_watch
         if verification is not UNSET:
@@ -112,6 +137,12 @@ class OperationWorkflowReadinessNotification:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_business_outcome_event import (
+            OperationWorkflowReadinessBusinessOutcomeEvent,
+        )
+        from ..models.operation_workflow_readiness_business_outcome_watch import (
+            OperationWorkflowReadinessBusinessOutcomeWatch,
+        )
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
@@ -128,6 +159,20 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _business_outcome_watch = d.pop("business_outcome_watch", UNSET)
+        business_outcome_watch: OperationWorkflowReadinessBusinessOutcomeWatch | Unset
+        if isinstance(_business_outcome_watch, Unset):
+            business_outcome_watch = UNSET
+        else:
+            business_outcome_watch = OperationWorkflowReadinessBusinessOutcomeWatch.from_dict(_business_outcome_watch)
+
+        _business_outcome = d.pop("business_outcome", UNSET)
+        business_outcome: OperationWorkflowReadinessBusinessOutcomeEvent | Unset
+        if isinstance(_business_outcome, Unset):
+            business_outcome = UNSET
+        else:
+            business_outcome = OperationWorkflowReadinessBusinessOutcomeEvent.from_dict(_business_outcome)
 
         _verification_watch = d.pop("verification_watch", UNSET)
         verification_watch: OperationWorkflowReadinessVerificationWatch | Unset
@@ -170,6 +215,8 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            business_outcome_watch=business_outcome_watch,
+            business_outcome=business_outcome,
             verification_watch=verification_watch,
             verification=verification,
             coordination=coordination,

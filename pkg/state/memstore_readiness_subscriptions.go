@@ -130,7 +130,7 @@ func (m *MemStore) claimReadinessSubscriptions(_ context.Context) ([]readinessSu
 	}
 	return out, nil
 }
-func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessVerificationUpdate) error {
+func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessWatchUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
@@ -143,7 +143,7 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 			if n.Sequence != u.Sequence {
 				continue
 			}
-			updated, published, ok := applyReadinessVerificationUpdate(&r, n, u)
+			updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
 			if ok {
 				data.readinessInbox[r.Subscription.ID][i] = updated
 				notifications = append(notifications, published...)

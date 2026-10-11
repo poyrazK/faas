@@ -74924,6 +74924,10 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        business_outcome_watch:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcomeWatch'
+        business_outcome:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcomeEvent'
         verification_watch:
           $ref: '#/components/schemas/OperationWorkflowReadinessVerificationWatch'
         verification:
@@ -74950,6 +74954,10 @@ components:
           - verification_verified
           - verification_invalidated
           - verification_unavailable
+          - outcome_achieved
+          - outcome_different_outcome
+          - outcome_unavailable
+          - outcome_deadline_reached
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -75120,6 +75128,13 @@ components:
         Closing does not prove business resolution.
       additionalProperties: false
       properties:
+        watch_outcome:
+          type: boolean
+          description: OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.
+        outcome_deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessCompletionRequest.outcome_deadline_at. Optional future UTC deadline requiring watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not business failure or a historical deadline verdict.
         expected_outcome_code:
           type: string
           description: OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome slug compared with application reports for the source workflow; never defines or modifies application success rules.
@@ -75162,6 +75177,13 @@ components:
         check. Retained with the original notification.
       additionalProperties: false
       properties:
+        watch_outcome:
+          type: boolean
+          description: OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.
+        outcome_deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessCompletion.outcome_deadline_at. Optional future UTC deadline requiring watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not business failure or a historical deadline verdict.
         expected_outcome_code:
           type: string
           description: OperationWorkflowReadinessCompletion.expected_outcome_code. Optional caller-selected terminal outcome slug compared with application reports for the source workflow; never defines or modifies application success rules.
@@ -75342,6 +75364,106 @@ components:
       - checked_at
       - status
       - explanation
+
+    OperationWorkflowReadinessBusinessOutcomeWatch:
+      type: object
+      description: Retained opt-in watch for one source completion business criterion. Current observations remain advisory; deadlines
+        are notified once and unchanged status is suppressed. Source inbox retention and subscription deletion end monitoring.
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.id. Retained advisory business outcome watch metadata; does
+            not modify application reports or coordination revisions.
+          format: uuid
+        revision:
+          type: integer
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.revision. Retained advisory business outcome watch metadata;
+            does not modify application reports or coordination revisions.
+          format: int64
+        state_revision:
+          type: integer
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.state_revision. Retained advisory business outcome watch
+            metadata; does not modify application reports or coordination revisions.
+          format: int64
+        started_at:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.started_at. Retained advisory business outcome watch metadata;
+            does not modify application reports or coordination revisions.
+          format: date-time
+        deadline_at:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.deadline_at. Retained advisory business outcome watch metadata;
+            does not modify application reports or coordination revisions.
+          format: date-time
+        deadline_notified:
+          type: boolean
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.deadline_notified. Retained advisory business outcome watch
+            metadata; does not modify application reports or coordination revisions.
+        last_notified_status:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeWatch.last_notified_status. Retained advisory business outcome
+            watch metadata; does not modify application reports or coordination revisions.
+          enum:
+          - achieved
+          - pending
+          - different_outcome
+          - unknown
+        current:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
+      required:
+      - id
+      - revision
+      - state_revision
+      - started_at
+      - deadline_notified
+      - current
+    OperationWorkflowReadinessBusinessOutcomeEvent:
+      type: object
+      description: Self-contained observed business result or deadline notice for a source completion. Reports never establish
+        causation, business failure or execution authority. Source links may expire from inbox retention.
+      additionalProperties: false
+      properties:
+        watch_id:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeEvent.watch_id. Retained advisory business outcome watch metadata;
+            does not modify application reports or coordination revisions.
+          format: uuid
+        source_notification_id:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeEvent.source_notification_id. Retained advisory business outcome
+            watch metadata; does not modify application reports or coordination revisions.
+          format: uuid
+        source_sequence:
+          type: integer
+          description: OperationWorkflowReadinessBusinessOutcomeEvent.source_sequence. Retained advisory business outcome watch
+            metadata; does not modify application reports or coordination revisions.
+          format: int64
+        source:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSnapshotEntry'
+        previous_status:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeEvent.previous_status. Retained advisory business outcome watch
+            metadata; does not modify application reports or coordination revisions.
+          enum:
+          - achieved
+          - pending
+          - different_outcome
+          - unknown
+        deadline_at:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcomeEvent.deadline_at. Retained advisory business outcome watch metadata;
+            does not modify application reports or coordination revisions.
+          format: date-time
+        current:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
+      required:
+      - watch_id
+      - source_notification_id
+      - source_sequence
+      - source
+      - previous_status
+      - current
 
     OperationWorkflowReadinessVerificationWatch:
       type: object

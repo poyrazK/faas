@@ -9,6 +9,14 @@ import type { OperationWorkflowReadinessCompletionEvidence } from './OperationWo
  */
 export type OperationWorkflowReadinessCompletion = {
   /**
+   * OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.
+   */
+  watch_outcome?: boolean;
+  /**
+   * OperationWorkflowReadinessCompletion.outcome_deadline_at. Optional future UTC deadline requiring watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not business failure or a historical deadline verdict.
+   */
+  outcome_deadline_at?: string;
+  /**
    * OperationWorkflowReadinessCompletion.expected_outcome_code. Optional caller-selected terminal outcome slug compared with application reports for the source workflow; never defines or modifies application success rules.
    */
   expected_outcome_code?: string;

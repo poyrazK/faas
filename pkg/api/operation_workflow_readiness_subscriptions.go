@@ -37,16 +37,18 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
-	VerificationWatch *OperationWorkflowReadinessVerificationWatch `json:"verification_watch,omitempty"`
-	Verification      *OperationWorkflowReadinessVerificationEvent `json:"verification,omitempty"`
-	Reminder          *OperationWorkflowReadinessDueReminder       `json:"reminder,omitempty"`
-	Coordination      *OperationWorkflowReadinessCoordination      `json:"coordination,omitempty"`
-	ID                string                                       `json:"id"`
-	Sequence          int64                                        `json:"sequence"`
-	Kind              string                                       `json:"kind"`
-	CreatedAt         time.Time                                    `json:"created_at"`
-	Explanation       string                                       `json:"explanation"`
-	Change            *OperationWorkflowReadinessChange            `json:"change,omitempty"`
+	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch `json:"business_outcome_watch,omitempty"`
+	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent `json:"business_outcome,omitempty"`
+	VerificationWatch    *OperationWorkflowReadinessVerificationWatch    `json:"verification_watch,omitempty"`
+	Verification         *OperationWorkflowReadinessVerificationEvent    `json:"verification,omitempty"`
+	Reminder             *OperationWorkflowReadinessDueReminder          `json:"reminder,omitempty"`
+	Coordination         *OperationWorkflowReadinessCoordination         `json:"coordination,omitempty"`
+	ID                   string                                          `json:"id"`
+	Sequence             int64                                           `json:"sequence"`
+	Kind                 string                                          `json:"kind"`
+	CreatedAt            time.Time                                       `json:"created_at"`
+	Explanation          string                                          `json:"explanation"`
+	Change               *OperationWorkflowReadinessChange               `json:"change,omitempty"`
 }
 type OperationWorkflowReadinessInboxResponse struct {
 	Subscription   OperationWorkflowReadinessSubscription   `json:"subscription"`
@@ -147,13 +149,17 @@ type OperationWorkflowReadinessDueReminder struct {
 
 // Completion closes coordination only; outcome is an operator/customer assertion.
 type OperationWorkflowReadinessCompletionRequest struct {
-	ExpectedOutcomeCode  string   `json:"expected_outcome_code,omitempty"`
-	WatchVerification    bool     `json:"watch_verification,omitempty"`
-	Outcome              string   `json:"outcome"`
-	Note                 string   `json:"note"`
-	EvidenceOperationIDs []string `json:"evidence_operation_ids"`
+	WatchOutcome         bool       `json:"watch_outcome,omitempty"`
+	OutcomeDeadlineAt    *time.Time `json:"outcome_deadline_at,omitempty"`
+	ExpectedOutcomeCode  string     `json:"expected_outcome_code,omitempty"`
+	WatchVerification    bool       `json:"watch_verification,omitempty"`
+	Outcome              string     `json:"outcome"`
+	Note                 string     `json:"note"`
+	EvidenceOperationIDs []string   `json:"evidence_operation_ids"`
 }
 type OperationWorkflowReadinessCompletion struct {
+	WatchOutcome         bool                                         `json:"watch_outcome,omitempty"`
+	OutcomeDeadlineAt    *time.Time                                   `json:"outcome_deadline_at,omitempty"`
 	ExpectedOutcomeCode  string                                       `json:"expected_outcome_code,omitempty"`
 	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcome   `json:"business_outcome,omitempty"`
 	WatchVerification    bool                                         `json:"watch_verification,omitempty"`
@@ -226,4 +232,25 @@ type OperationWorkflowReadinessBusinessOutcome struct {
 	ReportedOutcomeCode        string     `json:"reported_outcome_code,omitempty"`
 	ReportedOutcomeDescription string     `json:"reported_outcome_description,omitempty"`
 	OccurredAt                 *time.Time `json:"occurred_at,omitempty"`
+}
+
+// Outcome watches are bounded by the source inbox retention and never execute business operations.
+type OperationWorkflowReadinessBusinessOutcomeWatch struct {
+	StateRevision      int64                                     `json:"state_revision"`
+	ID                 string                                    `json:"id"`
+	Revision           int64                                     `json:"revision"`
+	StartedAt          time.Time                                 `json:"started_at"`
+	DeadlineAt         *time.Time                                `json:"deadline_at,omitempty"`
+	DeadlineNotified   bool                                      `json:"deadline_notified"`
+	LastNotifiedStatus string                                    `json:"last_notified_status,omitempty"`
+	Current            OperationWorkflowReadinessBusinessOutcome `json:"current"`
+}
+type OperationWorkflowReadinessBusinessOutcomeEvent struct {
+	WatchID              string                                    `json:"watch_id"`
+	SourceNotificationID string                                    `json:"source_notification_id"`
+	SourceSequence       int64                                     `json:"source_sequence"`
+	Source               OperationWorkflowReadinessSnapshotEntry   `json:"source"`
+	PreviousStatus       string                                    `json:"previous_status"`
+	DeadlineAt           *time.Time                                `json:"deadline_at,omitempty"`
+	Current              OperationWorkflowReadinessBusinessOutcome `json:"current"`
 }

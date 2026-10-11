@@ -22,6 +22,7 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
+	OutcomeCursor      int64                                      `json:"outcome_cursor,omitempty"`
 	VerificationCursor int64                                      `json:"verification_cursor,omitempty"`
 	Subscription       api.OperationWorkflowReadinessSubscription `json:"subscription"`
 	Baseline           api.OperationWorkflowReadinessSnapshot     `json:"baseline"`
@@ -44,7 +45,7 @@ type readinessSubscriptionBackend interface {
 	readReadinessInbox(context.Context, string, string, string, string, string, int64, int, bool) (api.OperationWorkflowReadinessInboxResponse, error)
 	deleteReadinessSubscription(context.Context, string, string, string, string, string, bool) error
 	claimReadinessSubscriptions(context.Context) ([]readinessSubscriptionRecord, error)
-	finishReadinessSubscription(context.Context, readinessSubscriptionRecord, []api.OperationWorkflowReadinessNotification, []readinessVerificationUpdate) error
+	finishReadinessSubscription(context.Context, readinessSubscriptionRecord, []api.OperationWorkflowReadinessNotification, []readinessWatchUpdate) error
 }
 
 func readinessSubscriptionOptions(s api.OperationWorkflowReadinessSubscription) api.OperationWorkflowReadinessQueueOptions {
@@ -318,6 +319,12 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		}
 		check, cancel := context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
 		watchUpdates, watchErr := evaluateReadinessVerificationWatches(check, store, &record)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		outcomeUpdates, outcomeErr := evaluateReadinessOutcomeWatches(check, store, &record)
+		watchUpdates = append(watchUpdates, outcomeUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
 		notifications, evaluationErr := evaluateReadinessSubscription(check, store, &record)
 		cancel()
 		if evaluationErr != nil {
@@ -327,7 +334,7 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 			}
 			record.Seen["evaluation"] = "unavailable"
 		}
-		if watchErr != nil {
+		if watchErr != nil || outcomeErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)

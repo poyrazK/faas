@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
 from uuid import UUID
@@ -31,6 +32,14 @@ class OperationWorkflowReadinessCompletionRequest:
     evidence_operation_ids: list[UUID]
     """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
     never changes application evidence."""
+    watch_outcome: bool | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or
+    unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source
+    inbox retention."""
+    outcome_deadline_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.outcome_deadline_at. Optional future UTC deadline requiring
+    watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not
+    business failure or a historical deadline verdict."""
     expected_outcome_code: str | Unset = UNSET
     """OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome
     slug compared with application reports for the source workflow; never defines or modifies application success
@@ -49,6 +58,12 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = str(evidence_operation_ids_item_data)
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        watch_outcome = self.watch_outcome
+
+        outcome_deadline_at: str | Unset = UNSET
+        if not isinstance(self.outcome_deadline_at, Unset):
+            outcome_deadline_at = self.outcome_deadline_at.isoformat()
+
         expected_outcome_code = self.expected_outcome_code
 
         watch_verification = self.watch_verification
@@ -62,6 +77,10 @@ class OperationWorkflowReadinessCompletionRequest:
                 "evidence_operation_ids": evidence_operation_ids,
             }
         )
+        if watch_outcome is not UNSET:
+            field_dict["watch_outcome"] = watch_outcome
+        if outcome_deadline_at is not UNSET:
+            field_dict["outcome_deadline_at"] = outcome_deadline_at
         if expected_outcome_code is not UNSET:
             field_dict["expected_outcome_code"] = expected_outcome_code
         if watch_verification is not UNSET:
@@ -83,6 +102,15 @@ class OperationWorkflowReadinessCompletionRequest:
 
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        watch_outcome = d.pop("watch_outcome", UNSET)
+
+        _outcome_deadline_at = d.pop("outcome_deadline_at", UNSET)
+        outcome_deadline_at: datetime.datetime | Unset
+        if isinstance(_outcome_deadline_at, Unset):
+            outcome_deadline_at = UNSET
+        else:
+            outcome_deadline_at = datetime.datetime.fromisoformat(_outcome_deadline_at)
+
         expected_outcome_code = d.pop("expected_outcome_code", UNSET)
 
         watch_verification = d.pop("watch_verification", UNSET)
@@ -91,6 +119,8 @@ class OperationWorkflowReadinessCompletionRequest:
             outcome=outcome,
             note=note,
             evidence_operation_ids=evidence_operation_ids,
+            watch_outcome=watch_outcome,
+            outcome_deadline_at=outcome_deadline_at,
             expected_outcome_code=expected_outcome_code,
             watch_verification=watch_verification,
         )

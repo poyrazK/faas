@@ -46,6 +46,14 @@ class OperationWorkflowReadinessCompletion:
     evidence: OperationWorkflowReadinessCompletionEvidence
     """Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
     after this observation. Explicit boundaries never imply readiness."""
+    watch_outcome: bool | Unset = UNSET
+    """OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown
+    business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox
+    retention."""
+    outcome_deadline_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReadinessCompletion.outcome_deadline_at. Optional future UTC deadline requiring
+    watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not
+    business failure or a historical deadline verdict."""
     expected_outcome_code: str | Unset = UNSET
     """OperationWorkflowReadinessCompletion.expected_outcome_code. Optional caller-selected terminal outcome slug
     compared with application reports for the source workflow; never defines or modifies application success rules.
@@ -75,6 +83,12 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = self.evidence.to_dict()
 
+        watch_outcome = self.watch_outcome
+
+        outcome_deadline_at: str | Unset = UNSET
+        if not isinstance(self.outcome_deadline_at, Unset):
+            outcome_deadline_at = self.outcome_deadline_at.isoformat()
+
         expected_outcome_code = self.expected_outcome_code
 
         business_outcome: dict[str, Any] | Unset = UNSET
@@ -95,6 +109,10 @@ class OperationWorkflowReadinessCompletion:
                 "evidence": evidence,
             }
         )
+        if watch_outcome is not UNSET:
+            field_dict["watch_outcome"] = watch_outcome
+        if outcome_deadline_at is not UNSET:
+            field_dict["outcome_deadline_at"] = outcome_deadline_at
         if expected_outcome_code is not UNSET:
             field_dict["expected_outcome_code"] = expected_outcome_code
         if business_outcome is not UNSET:
@@ -129,6 +147,15 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = OperationWorkflowReadinessCompletionEvidence.from_dict(d.pop("evidence"))
 
+        watch_outcome = d.pop("watch_outcome", UNSET)
+
+        _outcome_deadline_at = d.pop("outcome_deadline_at", UNSET)
+        outcome_deadline_at: datetime.datetime | Unset
+        if isinstance(_outcome_deadline_at, Unset):
+            outcome_deadline_at = UNSET
+        else:
+            outcome_deadline_at = datetime.datetime.fromisoformat(_outcome_deadline_at)
+
         expected_outcome_code = d.pop("expected_outcome_code", UNSET)
 
         _business_outcome = d.pop("business_outcome", UNSET)
@@ -147,6 +174,8 @@ class OperationWorkflowReadinessCompletion:
             completed_at=completed_at,
             completed_by=completed_by,
             evidence=evidence,
+            watch_outcome=watch_outcome,
+            outcome_deadline_at=outcome_deadline_at,
             expected_outcome_code=expected_outcome_code,
             business_outcome=business_outcome,
             watch_verification=watch_verification,

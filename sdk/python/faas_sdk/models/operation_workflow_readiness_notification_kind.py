@@ -3,6 +3,10 @@ from typing import Literal
 OperationWorkflowReadinessNotificationKind = Literal[
     "newly_blocked",
     "newly_ready",
+    "outcome_achieved",
+    "outcome_deadline_reached",
+    "outcome_different_outcome",
+    "outcome_unavailable",
     "reassigned",
     "unavailable",
     "verification_invalidated",
@@ -13,6 +17,10 @@ OperationWorkflowReadinessNotificationKind = Literal[
 OPERATION_WORKFLOW_READINESS_NOTIFICATION_KIND_VALUES: set[OperationWorkflowReadinessNotificationKind] = {
     "newly_blocked",
     "newly_ready",
+    "outcome_achieved",
+    "outcome_deadline_reached",
+    "outcome_different_outcome",
+    "outcome_unavailable",
     "reassigned",
     "unavailable",
     "verification_invalidated",
