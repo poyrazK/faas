@@ -67,6 +67,11 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   const request = (url, path='/rest/v1/notes?select=id', refresh, identity='alice', method='GET') => fetch(url + path, { method, headers: { Authorization: `Bearer ${identity}`, ...(refresh ? { 'X-Gregale-Refresh-Token': refresh } : {}) } })
   assert.deepEqual(await (await request(old)).json(), [{ id: 1 }])
   held = new pg.Client({ connectionString: config.connection }); await held.connect()
+  for (const isolation of ['REPEATABLE READ','SERIALIZABLE']) {
+    await held.query(`BEGIN ISOLATION LEVEL ${isolation} READ ONLY`)
+    await assert.rejects(held.query('SELECT gregale_data_api.check_request()'), error => error.code === 'PT503' && error.message === 'data_api_refresh_isolation_unsupported')
+    await held.query('ROLLBACK')
+  }
   await held.query('BEGIN READ ONLY')
   await held.query("SELECT set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub:'alice',gregale_serving_fingerprint:config.fingerprint })])
   await held.query('SELECT gregale_data_api.check_request()')

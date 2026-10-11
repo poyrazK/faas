@@ -5,7 +5,7 @@
 
 A fresh restart alone makes the new engine available before compatibility, client and authorization verification finish. The startup fingerprint can also become stale after uncoordinated DDL.
 
-Every admitted SQL request takes a shared advisory transaction lock. Owner pause takes the corresponding exclusive lock, waits for admitted transactions, then commits a paused row with a SHA-256 token hash. Requests queued behind pause observe that row before application SQL. The barrier therefore survives process, engine and VM replacement. A competing pause cannot overwrite an existing session.
+Every admitted SQL request takes a shared advisory transaction lock. Owner pause takes the corresponding exclusive lock, waits for admitted transactions, then commits a paused row with a SHA-256 token hash. Requests queued behind pause observe that row before application SQL. The barrier therefore survives process, engine and VM replacement. Admission requires read committed isolation; repeatable-read and serializable transactions are rejected before application SQL because their snapshots can predate the lock wait. A competing pause cannot overwrite an existing session.
 
 While paused, a request needs an application JWT and the private refresh token header. The gateway strips caller-provided reserved coordination claims, hashes the header and signs its own internal claims. The hook compares the hash and keeps existing grants/RLS intact. Ordinary requests receive 503. Neither the token nor its hash appears in public status or request logs.
 

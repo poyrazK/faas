@@ -1743,7 +1743,11 @@ application SQL. This fences structural contract drift; it does not identify
 every old runtime version when the structural fingerprint is unchanged.
 
 Pause waits for transactions admitted by the PostgREST pre-request hook,
-including read-only GET transactions. Ordinary requests receive 503 while
+including read-only GET transactions. Coordinated mode requires read committed
+transaction isolation. Repeatable-read and serializable requests receive 503
+`data_api_refresh_isolation_unsupported` before application SQL, because their
+snapshots can predate a waited-for pause. This includes RPCs that configure a
+stronger isolation level. Ordinary requests receive 503 while
 paused; a queued request cannot slip through when the barrier commits.
 Competing coordinators cannot replace an existing pause. The barrier is stored
 in PostgreSQL and survives fresh restarts. `/healthz` remains a transport/engine

@@ -36,6 +36,10 @@ export async function installRefreshBarrier(client, role, schemas = ['api']) {
       LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
       DECLARE binding text := current_setting('role', true); gate record; claims jsonb;
       BEGIN
+        -- Stronger isolation can retain a snapshot from before a waited-for pause.
+        IF current_setting('transaction_isolation') <> 'read committed' THEN
+          RAISE SQLSTATE 'PT503' USING MESSAGE = 'data_api_refresh_isolation_unsupported';
+        END IF;
         IF binding IS NULL OR binding = 'none' THEN binding := session_user; END IF;
         -- Advisory transaction locks also work in PostgREST's read-only GET transactions.
         PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale-data-api:' || binding, 0));
