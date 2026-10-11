@@ -6128,6 +6128,19 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_deployment_cleanups",
+    "columns": [
+      "cleaned_at",
+      "environment_id",
+      "native_observation_sha256",
+      "native_plan_sha256",
+      "operation_id",
+      "removed_deployments",
+      "workload_cleanup_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_environment_cleanups",
     "columns": [
       "cleaned_at",

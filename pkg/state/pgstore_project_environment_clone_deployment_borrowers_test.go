@@ -6,6 +6,7 @@ package state_test
 import (
 	"errors"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -72,6 +73,38 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			}
 			if len(counts) != n {
 				t.Fatal("stale borrower inventory", counts, n)
+			}
+			softRows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name
+ FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name)
+ WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name ~ 'deployment.*_id$'
+ AND NOT EXISTS(SELECT 1 FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid JOIN pg_namespace ns ON ns.oid=child.relnamespace WHERE ns.nspname=c.table_schema AND child.relname=c.table_name)
+ AND NOT (c.table_name='github_deployments' AND c.column_name='github_deployment_id')
+ AND NOT EXISTS(SELECT 1 FROM pg_constraint f JOIN pg_class tab ON tab.oid=f.conrelid
+ JOIN pg_namespace ns ON ns.oid=tab.relnamespace JOIN pg_attribute a ON a.attrelid=tab.oid AND a.attnum=ANY(f.conkey)
+ WHERE f.contype='f' AND f.confrelid='deployments'::regclass AND ns.nspname=c.table_schema AND tab.relname=c.table_name AND a.attname=c.column_name)
+ ORDER BY 1`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actual []string
+			for softRows.Next() {
+				var name string
+				if err = softRows.Scan(&name); err != nil {
+					t.Fatal(err)
+				}
+				actual = append(actual, name)
+			}
+			softRows.Close()
+			if err = softRows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			var inventoried []string
+			for name := range report.SoftReferences[id] {
+				inventoried = append(inventoried, name)
+			}
+			sort.Strings(inventoried)
+			if !reflect.DeepEqual(actual, inventoried) {
+				t.Fatal("soft deployment reference inventory changed", actual, inventoried)
 			}
 			// Retained logs count even though deleting the deployment would cascade
 			// them away. A source deployment's log must not enter the target count.

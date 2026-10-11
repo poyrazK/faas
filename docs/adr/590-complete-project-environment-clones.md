@@ -9639,3 +9639,31 @@ This report does not authorize deployment deletion. Soft and scope-only referenc
 owner-specific retirement of operational records, and an authenticated artifact
 removal transition that preserves original native replay are still required.
 Full-stage admission and live provider qualification remain gated.
+
+### Atomic clone deployment artifact cleanup
+
+The private PostgreSQL cleanup can now remove originally copied deployment
+artifacts after authenticated native retirement and workload catalogue cleanup.
+It verifies the unchanged lossless artifact, original settings hashes, permanent
+native fencing and the exact runtime environment identity before removal. Only
+copied sidecar layers/signals and that identity may cascade; the other direct
+foreign-key references and all 20 typed soft references block removal, including
+retained inactive history. Other operations' frozen source/target references
+remain borrowers; this operation's original target roster remains evidence.
+
+Deletion and its receipt commit together. The receipt binds the original native
+plan and observation hashes, exact workload cleanup receipt, original environment
+UUID, deployment count and cleanup time. Retirement replay accepts absent target
+artifacts only with this authenticated transition, rechecks their absence and
+borrowers, and preserves the original native plan without dispatching native work.
+Publication continues to require live artifacts. Parent receipts and cleanup
+migration rollback cannot discard retained evidence.
+
+The private transition holds the deployment table in SHARE ROW EXCLUSIVE mode
+and typed soft-reference tables in SHARE mode through deletion and validation;
+PostgreSQL foreign-key locking and these writer fences prevent cascade races and
+replacement artifacts during commit. These brief global writer pauses are lease
+bounded. This is not a native disk/image garbage collector or owner authority for
+unrelated operational records. Whole-stage final compensation, published release
+withdrawal, remaining operational retirement and provider qualification are still
+required before full-stage admission can be enabled.

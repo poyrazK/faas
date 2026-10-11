@@ -5321,6 +5321,33 @@ func (q *Queries) CloneConfigurationOwnershipScopeIsForeign(ctx context.Context,
 	return foreign_scope, err
 }
 
+const cloneDeploymentCleanupHasLiveTarget = `-- name: CloneDeploymentCleanupHasLiveTarget :one
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN project_environment_clone_workloads w ON w.target_deployment_id=d.id WHERE w.operation_id=$1)::boolean
+`
+
+func (q *Queries) CloneDeploymentCleanupHasLiveTarget(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneDeploymentCleanupHasLiveTarget, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneDeploymentCleanupHasRuntimeOwner = `-- name: CloneDeploymentCleanupHasRuntimeOwner :one
+SELECT EXISTS(SELECT 1 FROM deployment_runtime_environment_owners WHERE deployment_id=$1::uuid AND environment_id=$2::uuid)::boolean
+`
+
+type CloneDeploymentCleanupHasRuntimeOwnerParams struct {
+	DeploymentID  pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) CloneDeploymentCleanupHasRuntimeOwner(ctx context.Context, db DBTX, arg CloneDeploymentCleanupHasRuntimeOwnerParams) (bool, error) {
+	row := db.QueryRow(ctx, cloneDeploymentCleanupHasRuntimeOwner, arg.DeploymentID, arg.EnvironmentID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const cloneEnvironmentCleanupHasReplacement = `-- name: CloneEnvironmentCleanupHasReplacement :one
 SELECT EXISTS(SELECT 1 FROM project_environments WHERE id=$1::uuid OR (project_id=$2::uuid AND slug=$3::text))::boolean
 `
@@ -9601,6 +9628,25 @@ type DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams struct {
 func (q *Queries) DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error {
 	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentRoutePolicies, arg.ProjectID, arg.Environment)
 	return err
+}
+
+const deleteCloneOwnedDeployments = `-- name: DeleteCloneOwnedDeployments :execrows
+DELETE FROM deployments d USING project_environment_clone_workloads w
+WHERE w.operation_id=$1::uuid AND w.target_deployment_id=d.id AND w.app_id=d.app_id
+ AND d.scope=$2::text AND d.reason='environment-clone:'||$1::uuid::text
+`
+
+type DeleteCloneOwnedDeploymentsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneOwnedDeployments(ctx context.Context, db DBTX, arg DeleteCloneOwnedDeploymentsParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneOwnedDeployments, arg.OperationID, arg.Environment)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteCloneOwnedEnvironment = `-- name: DeleteCloneOwnedEnvironment :execrows
@@ -19145,6 +19191,32 @@ func (q *Queries) InsertCloneConfigurationOwnership(ctx context.Context, db DBTX
 		arg.EnvironmentID,
 		arg.Manifest,
 		arg.ManifestSha256,
+	)
+	return err
+}
+
+const insertCloneDeploymentCleanup = `-- name: InsertCloneDeploymentCleanup :exec
+INSERT INTO project_environment_clone_deployment_cleanups(operation_id,environment_id,workload_cleanup_sha256,native_plan_sha256,native_observation_sha256,removed_deployments)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type InsertCloneDeploymentCleanupParams struct {
+	OperationID             pgtype.UUID
+	EnvironmentID           pgtype.UUID
+	WorkloadCleanupSha256   string
+	NativePlanSha256        string
+	NativeObservationSha256 string
+	RemovedDeployments      int64
+}
+
+func (q *Queries) InsertCloneDeploymentCleanup(ctx context.Context, db DBTX, arg InsertCloneDeploymentCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneDeploymentCleanup,
+		arg.OperationID,
+		arg.EnvironmentID,
+		arg.WorkloadCleanupSha256,
+		arg.NativePlanSha256,
+		arg.NativeObservationSha256,
+		arg.RemovedDeployments,
 	)
 	return err
 }
@@ -32558,6 +32630,15 @@ func (q *Queries) LockCloneCheckpointUnusedReservationClock(ctx context.Context,
 	var generation int64
 	err := row.Scan(&generation)
 	return generation, err
+}
+
+const lockCloneDeploymentCleanupBorrowerWriters = `-- name: LockCloneDeploymentCleanupBorrowerWriters :exec
+SELECT lock_clone_deployment_cleanup_borrower_writers()
+`
+
+func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneDeploymentCleanupBorrowerWriters)
+	return err
 }
 
 const lockCloneEnvironmentCleanupScopeBorrowers = `-- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
@@ -49922,6 +50003,62 @@ SELECT jsonb_build_object(
 
 func (q *Queries) ReadCloneDeploymentBorrowers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error) {
 	row := db.QueryRow(ctx, readCloneDeploymentBorrowers, deploymentID)
+	var borrowers []byte
+	err := row.Scan(&borrowers)
+	return borrowers, err
+}
+
+const readCloneDeploymentCleanup = `-- name: ReadCloneDeploymentCleanup :one
+SELECT operation_id, environment_id, workload_cleanup_sha256, native_plan_sha256, native_observation_sha256, removed_deployments, cleaned_at FROM project_environment_clone_deployment_cleanups WHERE operation_id=$1
+`
+
+func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneDeploymentCleanup, error) {
+	row := db.QueryRow(ctx, readCloneDeploymentCleanup, operationID)
+	var i ProjectEnvironmentCloneDeploymentCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadCleanupSha256,
+		&i.NativePlanSha256,
+		&i.NativeObservationSha256,
+		&i.RemovedDeployments,
+		&i.CleanedAt,
+	)
+	return i, err
+}
+
+const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
+SELECT jsonb_build_object(
+ 'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
+ 'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=$1::uuid),
+ 'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=$1::uuid),
+ 'issue_events.deployment_id', (SELECT count(*) FROM issue_events WHERE deployment_id=$1::uuid),
+ 'issue_releases.deployment_id', (SELECT count(*) FROM issue_releases WHERE deployment_id=$1::uuid),
+ 'issue_resolutions.fixed_deployment_id', (SELECT count(*) FROM issue_resolutions WHERE fixed_deployment_id=$1::uuid),
+ 'log_events.deployment_id', (SELECT count(*) FROM log_events WHERE deployment_id=$1::uuid),
+ 'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=$1::uuid),
+ 'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=$1::uuid),
+ 'org_activity.deployment_id', (SELECT count(*) FROM org_activity WHERE deployment_id=$1::uuid),
+ 'project_environment_clone_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE source_deployment_id=$1::uuid),
+ 'project_environment_clone_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE target_deployment_id=$1::uuid AND (operation_id<>$2::uuid)),
+ 'project_environment_promotion_workloads.previous_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE previous_target_deployment_id=$1::uuid::text),
+ 'project_environment_promotion_workloads.restored_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE restored_target_deployment_id=$1::uuid::text),
+ 'project_environment_promotion_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE source_deployment_id=$1::uuid::text),
+ 'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
+ 'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
+ 'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=$1::uuid),
+ 'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
+ 'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=$1::uuid::text)
+)::jsonb AS borrowers
+`
+
+type ReadCloneDeploymentSoftBorrowersParams struct {
+	DeploymentID pgtype.UUID
+	OperationID  pgtype.UUID
+}
+
+func (q *Queries) ReadCloneDeploymentSoftBorrowers(ctx context.Context, db DBTX, arg ReadCloneDeploymentSoftBorrowersParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCloneDeploymentSoftBorrowers, arg.DeploymentID, arg.OperationID)
 	var borrowers []byte
 	err := row.Scan(&borrowers)
 	return borrowers, err

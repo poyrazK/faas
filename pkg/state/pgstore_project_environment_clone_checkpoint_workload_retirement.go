@@ -58,7 +58,7 @@ func checkpointWorkloadRetirementPlanTx(ctx context.Context, tx pgx.Tx, op Proje
 	if err = validateCheckpointWorkloadRetirementPlan(p); err != nil {
 		return p, err
 	}
-	return p, checkpointWorkloadRetirementDeploymentsTx(ctx, tx, op, targets)
+	return p, checkpointWorkloadRetirementDeploymentsTx(ctx, tx, op, p, targets)
 }
 
 func checkpointWorkloadRetirementMaterializationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, p *ProjectEnvironmentCloneCheckpointWorkloadRetirementPlan) (map[string]projectCloneMaterializedWorkload, error) {
@@ -91,13 +91,17 @@ func checkpointWorkloadRetirementMaterializationTx(ctx context.Context, tx pgx.T
 	return heads, nil
 }
 
-func checkpointWorkloadRetirementDeploymentsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord) error {
+func checkpointWorkloadRetirementDeploymentsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, p ProjectEnvironmentCloneCheckpointWorkloadRetirementPlan, records []projectCloneWorkloadRecord) error {
 	orphan, err := sqlc.New().CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx, tx, mustPgUUID(op.ID))
 	if err != nil {
 		return mapErr(err)
 	}
 	if orphan {
 		return ErrConflict
+	}
+	removed, err := verifyCloneDeploymentCleanupTx(ctx, tx, op, p)
+	if err != nil || removed {
+		return err
 	}
 	_, cleanupErr := sqlc.New().ReadCloneWorkloadCleanup(ctx, tx, mustPgUUID(op.ID))
 	if cleanupErr != nil && !errors.Is(mapErr(cleanupErr), ErrNotFound) {

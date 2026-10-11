@@ -294,6 +294,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_approvals.environment_slug",
 		"project_environment_cleanup_jobs.environment_slug",
 		"project_environment_clone_configuration_ownership.environment_id",
+		"project_environment_clone_deployment_cleanups.environment_id",
 		"project_environment_clone_environment_cleanups.environment_id",
 		"project_environment_clone_materializations.environment_id",
 		"project_environment_clone_postgres_archives.scope",
