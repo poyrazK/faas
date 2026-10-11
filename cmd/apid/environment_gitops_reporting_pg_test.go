@@ -5,13 +5,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -72,13 +73,15 @@ func TestPGEnvironmentGitDriftReportingWholeGraphOutageAndRestart(t *testing.T) 
 	if err := store.AdoptEnvironmentGitOps(t.Context(), env.acct.ID, source.ID, preview.Hash); err != nil {
 		t.Fatal(err)
 	}
-	pollNow := time.Now().Add(time.Second)
-	poll, err := store.ClaimEnvironmentGitSourcePoll(t.Context(), uuid.NewString(), pollNow, time.Minute)
-	if err != nil {
-		t.Fatal(err)
+	env.s.githubd = &environmentGitSourcePollingClient{
+		repositories: []Repo{{ID: 123, FullName: "example/shop"}},
+		err:          errors.New("Git transport unavailable"),
 	}
-	if err := store.FinishEnvironmentGitSourcePoll(t.Context(), poll, state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_source_unavailable"}, pollNow, pollNow.Add(time.Minute)); err != nil {
-		t.Fatal(err)
+	poller := &environmentgitops.SourcePoller{Store: store, Reader: &environmentGitSourceReader{server: env.s},
+		LeaseDuration: time.Minute, ReadTimeout: 10 * time.Second, CheckInterval: time.Minute, RetryInterval: time.Second,
+		Now: func() time.Time { return time.Now().Add(time.Second) }}
+	if worked, err := poller.RunOnce(t.Context()); err != nil || !worked {
+		t.Fatalf("source-outage poll: worked=%t err=%v", worked, err)
 	}
 	stop := env.s.startEnvironmentGitDriftReporting(t.Context(), func(string) string { return "true" })
 	t.Cleanup(stop)
