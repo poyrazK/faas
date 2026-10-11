@@ -882,3 +882,16 @@ blocker sample in one request. Component timestamps describe independent reads.
 Pending sample reason counts are sampled when truncated; execution history is
 always incomplete. Latest successful completion is a retained observation, not
 an all-time delivery watermark.
+
+For local health threshold monitoring, call
+`client.WatchEventConsumerDeliveryHealth(ctx, app, subscriptionID, options)` with
+`EventDeliveryHealthWatchOptions`. Set `Interval`, `Timeout`, and `MaxAge`, and at
+least one of `OldestPending`, `Retrying`, `DeadLetters`, `Paused`, `CircuitBlocked`,
+or `CapacityBlocked`. Duration fields use `time.Duration`; count fields use int64;
+zero disables a threshold. `OnProgress` receives detached health/condition snapshots
+and latest-pass `Alerts` (`opened`, `resolved`, or `confirmation_lost`). Return an
+error to stop. Deduplicate by incident ID and sequence, and persist externally if
+needed: this watch is invocation-local and does not use a durable alert outbox.
+Circuit/capacity durations require consecutive fresh samples; truncated capacity
+samples and incomplete execution evidence cannot resolve alerts. Deadline/read/
+callback failures return a partial result and error.

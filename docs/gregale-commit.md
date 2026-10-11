@@ -1730,3 +1730,44 @@ Each component is an independent read with its own `observed_at`; top-level
 counts differ. The response is not cached, uses the existing bounded subscription
 read deadline, and fails if any component read fails. Supported windows are
 `5m`, `15m`, `1h`, `6h`, and `24h` (default `5m`).
+
+### Watch subscription delivery health thresholds
+
+```sh
+gregale events subscription-delivery-health my-app <subscription-id> --watch \
+  --oldest-pending-threshold 5m --retrying-threshold 10 \
+  --dead-letters-threshold 1 --pause-threshold 10m \
+  --circuit-threshold 1m --capacity-threshold 1m \
+  --interval 5s --max-age 30s --timeout 15m --alerts-json
+```
+
+Enable at least one threshold. Zero disables it; count thresholds must be positive
+when enabled, and duration thresholds range from 100ms to 24h. Watches emit one
+`opened` per newly confirmed breach, `resolved` only on fresh usable evidence below
+the threshold, and `confirmation_lost` when confirmation becomes unavailable.
+Inclusive comparisons mean a count equal to its threshold breaches. Deduplicate
+by `incident_id` and `sequence`; a closing transition preserves its opening ID.
+Each alert includes the bound application and subscription IDs. JSON alerts go
+to stderr. Global `--json` writes the final watch result to stdout.
+The watch exits nonzero on timeout, cancellation, read failure, or callback failure,
+preserving its last observed health and condition state in the final result.
+
+Pending acceptance age and pause duration use server observations. Circuit and
+capacity durations measure elapsed time between consecutive fresh samples in this
+invocation and need at least two advancing samples. Circuit restriction includes
+open, half-open, and draining controls. Capacity monitoring requires the entire
+pending sample to fit within 50 recipients; truncation cannot clear an alert.
+These are sampled subscription conditions, not continuous measurements or the
+original age of a specific blocker.
+
+Execution thresholds skip truncated coverage, missing roots, unknown executions,
+and absent retained roots. Unknown/stale/future/non-advancing evidence resets local
+confirmation rather than reporting healthy. Usable execution counts still cover
+retained executions, not all-time event totals. Per-component `--max-age` (default
+30s) also limits sample gaps; choose it larger than your polling interval (default
+5s). Interval bounds are 100ms–1m; timeout defaults to 2m and is bounded at 24h.
+
+Alerts are local to this watch, reset on restart, and are not checkpointed. Use
+existing server alert rules for durable webhooks on supported pending-age,
+pause-duration, and dead-letter metrics. Watch-specific options require `--watch`;
+monitoring does not replay deliveries or change subscription controls.

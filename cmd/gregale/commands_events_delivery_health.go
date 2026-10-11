@@ -2,17 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdEventsSubscriptionDeliveryHealth(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "watch", "alerts-json")
 	fs := newFlagSet("events subscription-delivery-health", flag.ContinueOnError)
 	window := fs.String("window", "5m", "observation window: 5m|15m|1h|6h|24h")
+	watchFlags := newDeliveryHealthWatchFlags(fs)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -23,9 +26,15 @@ func cmdEventsSubscriptionDeliveryHealth(args []string) int {
 	if _, err := api.EventConsumerHealthWindow(*window); err != nil {
 		return printErr("Invalid window", err)
 	}
+	if err := watchFlags.validate(fs); err != nil {
+		return printErr("Invalid watch flags", err)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *watchFlags.watch {
+		return runDeliveryHealthWatch(client, positional[0], positional[1], *window, watchFlags)
 	}
 	out, err := client.GetEventConsumerDeliveryHealth(context.Background(), positional[0], positional[1], *window)
 	if err != nil {
@@ -57,4 +66,71 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 		_, _ = fmt.Fprintf(osStdout, "Oldest sampled event: source %s | ID %s | accepted %s | blocker %s\n", oneLine(first.EventSource), oneLine(first.EventID), first.AcceptedAt.Format("2006-01-02T15:04:05.999999999Z07:00"), oneLine(first.WaitingReason))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Independent reads: routing %s | execution %s | pending %s | routing history compacted %t\n", r.ObservedAt.Format("2006-01-02T15:04:05Z07:00"), e.ObservedAt.Format("2006-01-02T15:04:05Z07:00"), sample.ObservedAt.Format("2006-01-02T15:04:05Z07:00"), r.HistoryCompacted)
+}
+
+type deliveryHealthWatchFlags struct {
+	watch, alertsJSON *bool
+	options           api.EventDeliveryHealthWatchOptions
+}
+
+func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
+	f := &deliveryHealthWatchFlags{}
+	f.watch = fs.Bool("watch", false, "watch configured delivery health thresholds")
+	f.alertsJSON = fs.Bool("alerts-json", false, "emit local lifecycle alert JSON lines on stderr")
+	fs.DurationVar(&f.options.Interval, "interval", api.EventDeliveryHealthWatchIntervalDefault, "watch polling interval (100ms-1m)")
+	fs.DurationVar(&f.options.Timeout, "timeout", api.EventDeliveryHealthWatchTimeoutDefault, "watch deadline (up to 24h)")
+	fs.DurationVar(&f.options.MaxAge, "max-age", api.EventDeliveryHealthWatchAgeDefault, "maximum component sample age (100ms-24h)")
+	fs.DurationVar(&f.options.OldestPending, "oldest-pending-threshold", 0, "pending acceptance age threshold; zero disables")
+	fs.Int64Var(&f.options.Retrying, "retrying-threshold", 0, "retained retrying execution count threshold; zero disables")
+	fs.Int64Var(&f.options.DeadLetters, "dead-letters-threshold", 0, "retained dead-letter execution count threshold; zero disables")
+	fs.DurationVar(&f.options.Paused, "pause-threshold", 0, "subscription pause duration threshold; zero disables")
+	fs.DurationVar(&f.options.CircuitBlocked, "circuit-threshold", 0, "locally sampled circuit restriction duration; zero disables")
+	fs.DurationVar(&f.options.CapacityBlocked, "capacity-threshold", 0, "locally sampled capacity wait duration; zero disables")
+	return f
+}
+
+func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
+	var err error
+	fs.Visit(func(option *flag.Flag) {
+		if !*f.watch && option.Name != "window" && option.Name != "watch" {
+			err = fmt.Errorf("--%s requires --watch", option.Name)
+		}
+	})
+	return err
+}
+
+func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deliveryHealthWatchFlags) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	options := f.options
+	options.Window = window
+	options.OnProgress = func(progress api.EventDeliveryHealthWatchResult) error {
+		for _, alert := range progress.Alerts {
+			if *f.alertsJSON {
+				if err := json.NewEncoder(os.Stderr).Encode(alert); err != nil {
+					return err
+				}
+			} else {
+				if _, err := fmt.Fprintf(os.Stderr, "%s %s | app %s | subscription %s | incident %s | sequence %d | value %.3f | threshold %.3f | %s\n", alert.Metric, alert.Transition, alert.AppID, alert.SubscriptionID, alert.IncidentID, alert.Sequence, alert.Value, alert.Threshold, alert.Reason); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, sub, options)
+	if jsonOutput {
+		if code := jsonOut(writeJSON(result)); code != 0 {
+			return code
+		}
+	} else {
+		if result.Health != nil {
+			printEventConsumerDeliveryHealth(*result.Health)
+		}
+		_, _ = fmt.Fprintf(osStdout, "Watch stopped: %s | observations %d | alert sequence %d\n", result.StopReason, result.Observations, result.Sequence)
+	}
+	if err != nil {
+		return printErr("Delivery health watch stopped", err)
+	}
+	return 0
 }

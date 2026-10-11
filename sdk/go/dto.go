@@ -472,3 +472,9 @@ type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
 type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
 type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
 type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
+
+// EventDeliveryHealthWatchOptions configures invocation-local health alerts.
+type EventDeliveryHealthWatchOptions = api.EventDeliveryHealthWatchOptions
+type EventDeliveryHealthWatchResult = api.EventDeliveryHealthWatchResult
+type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
+type EventDeliveryHealthAlert = api.EventDeliveryHealthAlert
