@@ -2274,7 +2274,7 @@ jobs:
       - name: migrations replay-safety (new migrations only)
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: bash scripts/ci/migrations-replay-safety.sh
 
       - name: migration full-suite impact checker tests
         run: scripts/ci/migration-full-suite-needed_test.sh

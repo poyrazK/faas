@@ -93,11 +93,12 @@ type LayerBuilder interface {
 // advances a deployment row through the build pipeline until a snapshot row
 // exists, at which point schedd picks it up on the next reaper tick.
 type Handler struct {
-	store   state.Store
-	notif   Notifier
-	oci     oci.Puller
-	builder LayerBuilder
-	log     *slog.Logger
+	validatorArtifactCheck func(context.Context, string, string) error
+	store                  state.Store
+	notif                  Notifier
+	oci                    oci.Puller
+	builder                LayerBuilder
+	log                    *slog.Logger
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -673,6 +674,13 @@ func (h *Handler) WithRuntimeBaseStaging() *Handler {
 // check. A nil validator preserves the lightweight unit-test path.
 func (h *Handler) WithBaseArtifactValidator(fn func(context.Context, string, []string) error) *Handler {
 	h.baseArtifactValidator = fn
+	return h
+}
+
+// WithValidatorArtifactCheck installs immutable validator-artifact readiness
+// before a deployment is published live.
+func (h *Handler) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Handler {
+	h.validatorArtifactCheck = check
 	return h
 }
 
@@ -3587,6 +3595,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return fmt.Errorf("imaged: read checked rollback: %w", err)
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
+	}
+	if h.validatorArtifactCheck != nil {
+		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
+			return fmt.Errorf("imaged: validator artifact preflight: %w", err)
+		}
 	}
 
 	var promoteErr error
