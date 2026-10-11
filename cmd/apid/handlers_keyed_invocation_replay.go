@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -97,7 +98,7 @@ func keyedReplayProblem(err error, id string) *api.Problem {
 	case err == nil:
 		return nil
 	case errors.Is(err, state.ErrEventDeliveryCapacity):
-		return eventDeliveryReplayProblem(err, "")
+		return appevents.EventDeliveryReplayProblem(err, "")
 	case errors.Is(err, state.ErrNotFound):
 		return api.ErrInvocationNotFound(id)
 	case errors.Is(err, state.ErrKeyedReplayNotAllowed):

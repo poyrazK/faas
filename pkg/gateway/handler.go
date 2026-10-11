@@ -4416,7 +4416,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if !allowed {
-		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
@@ -4430,6 +4429,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			// The central counter decided; the local bucket has no view.
 			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
 		}
+		w.Header().Set("Retry-After", strconv.Itoa(routeThrottleRetryAfter(rule.RequestsPerSecond)))
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))

@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/sched" //nolint:depguard // ADR-607 acceptance drives the scheduler; production apid only records intent.
@@ -340,7 +342,7 @@ func waitEventRecoveryCondition(t *testing.T, condition func() bool) {
 
 func readEventDeliveryRecoveryReceipt(t *testing.T, e pgHandlerEnv) api.EventReceiptResponse {
 	t.Helper()
-	rec := e.do(t, http.MethodGet, eventReceiptURL("orders", "delivery-recovery"), nil, nil)
+	rec := e.do(t, http.MethodGet, appevents.EventReceiptURL("orders", "delivery-recovery"), nil, nil)
 	var receipt api.EventReceiptResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &receipt) != nil || len(receipt.Recipients) != 3 {
 		t.Fatalf("receipt: %d %s", rec.Code, rec.Body)
@@ -350,7 +352,7 @@ func readEventDeliveryRecoveryReceipt(t *testing.T, e pgHandlerEnv) api.EventRec
 
 func readEventDeliveryRecoveryAttempts(t *testing.T, e pgHandlerEnv, subscription string) []api.InvocationAttemptResponse {
 	t.Helper()
-	rec := e.do(t, http.MethodGet, eventReceiptAttemptURL("orders", "delivery-recovery", subscription), nil, nil)
+	rec := e.do(t, http.MethodGet, appevents.EventReceiptAttemptURL("orders", "delivery-recovery", subscription), nil, nil)
 	var history api.EventReceiptAttemptHistoryResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &history) != nil || history.Coverage != "recorded_attempts_only" {
 		t.Fatalf("attempt history: %d %s", rec.Code, rec.Body)
@@ -422,7 +424,7 @@ func assertEventRecoveryReplayEvidence(t *testing.T, e pgHandlerEnv, store *stat
 		}
 		return
 	}
-	rec := e.do(t, http.MethodGet, eventReceiptReplayURL("orders", "delivery-recovery", subscription), nil, nil)
+	rec := e.do(t, http.MethodGet, appevents.EventReceiptReplayURL("orders", "delivery-recovery", subscription), nil, nil)
 	var history api.EventReceiptReplayHistoryResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &history) != nil || len(history.Replays) != 1 || history.Replays[0].ReplayedFromInvocationID != originalID || history.Replays[0].State != "completed" {
 		t.Fatalf("plain replay lineage: %d %s", rec.Code, rec.Body)

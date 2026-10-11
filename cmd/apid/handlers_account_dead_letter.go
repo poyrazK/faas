@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -106,7 +107,7 @@ func (s *server) replayAccountDeadLetterEvent(w http.ResponseWriter, r *http.Req
 			return
 		}
 		s.ops.ObserveDLQReplay("account", "error")
-		api.WriteProblem(w, eventDeliveryReplayProblem(err, "account dead-letter replay"))
+		api.WriteProblem(w, appevents.EventDeliveryReplayProblem(err, "account dead-letter replay"))
 		return
 	}
 	s.ops.ObserveDLQReplay("account", "success")
@@ -126,7 +127,7 @@ func (s *server) replayAllAccountDeadLetterEvents(w http.ResponseWriter, r *http
 	replayed, err := s.store.ReplayDeadLetterEventsForAccount(r.Context(), acct.ID, limit)
 	if err != nil {
 		s.ops.ObserveDLQReplay("account", "error")
-		api.WriteProblem(w, eventDeliveryReplayProblem(err, "account dead-letter replay"))
+		api.WriteProblem(w, appevents.EventDeliveryReplayProblem(err, "account dead-letter replay"))
 		return
 	}
 	for i := 0; i < replayed; i++ {
