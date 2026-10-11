@@ -9549,3 +9549,36 @@ Operational borrower retirement, environment/deployment metadata retirement,
 published release withdrawal and whole-stage terminal compensation remain separate
 work. Public full-stage admission remains gated; live provider qualification stays
 deferred at the user's request.
+
+### Authenticated environment metadata borrower inventory
+
+The private leased environment borrower report requires original configuration
+ownership and completed native workload retirement. It links its counts to the
+original ownership and native plan/observation digests, plus the exact settings
+and workload cleanup receipts when present. It can run before or after those
+catalogue cleanups; legacy materializations without original ownership, stale
+leases, protected/changed environments and altered cleanup/native evidence return
+no partial inventory. Original ownership and materialization records are retained.
+
+The fixed report covers all 21 direct foreign-key borrowers of
+`project_environments`, including composite project/slug references. It counts
+retained invocations, admissions, invocation domains, queue projections, custom
+domains, dev-bridge sessions, GitOps sources/graphs/field ownership, workload
+intents/specs, copied reference/configuration rows, release sets, qualifications
+and scaling state. Expired, revoked, detached and inactive records still count.
+Invocation/scaling rows also count through target App scope when the environment
+UUID is missing or inconsistent. Matching both predicates counts the row once;
+unrelated source-environment rows are excluded. A database catalogue test requires
+explicit review when another foreign key begins borrowing environment metadata.
+
+Scoped deployments are counted separately as original clone targets or foreign
+rows. Ownership comes from the authenticated original workload/deployment pairs,
+never from reason labels or environment scope alone. The query returns counts
+only; it exposes no invocation content, Git definitions or credential values.
+
+This report observes references, not operational closure or deletion authority.
+Zero counts do not authorize a cascade, delete environment/deployment metadata,
+withdraw published releases or clear whole-stage compensation blockers. Remaining
+retirement protocols must also cover indirect and non-foreign-key references.
+Public full-stage admission remains gated; live provider qualification remains
+deferred.
