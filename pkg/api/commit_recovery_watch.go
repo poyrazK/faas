@@ -61,6 +61,10 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 		return out, err
 	}
 	plan, applied, previous = saved.Plan, saved.Applied, saved.Previous
+	diagnosticPrevious := previous
+	if refresh {
+		diagnosticPrevious = nil
+	}
 	if previous != nil && !refresh {
 		refresh = true
 		for _, row := range previous.Items {
@@ -73,8 +77,20 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	for {
 		passes++
 		out, err = c.getCommitRecoveryStatusWithAge(ctx, plan, applied, previous, refresh, limit, pages, maxAge)
-		if options.Diagnostics && err == nil && len(out.Items) > 0 {
-			out = c.DiagnoseCommitRecoveryStatus(ctx, out)
+		if options.Diagnostics && (err == nil || len(out.Items) > 0) {
+			diagnosticCtx := ctx
+			if err != nil {
+				paused, stop := context.WithCancel(ctx)
+				stop()
+				diagnosticCtx = paused
+			}
+			diagnosed, diagnosticErr := c.diagnoseCommitRecoveryStatus(diagnosticCtx, out, diagnosticPrevious)
+			if diagnosticErr == nil {
+				out = diagnosed
+			}
+			if err == nil {
+				err = diagnosticErr
+			}
 		}
 		delay := interval
 		if err != nil {
@@ -113,6 +129,8 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 			reason = "settled"
 			return out, nil
 		}
+		diagnosticSnapshot := out
+		diagnosticPrevious = &diagnosticSnapshot
 		previous = &out
 		// Complete observation passes refresh; partial passes resume without
 		// restarting at the first subscriber.

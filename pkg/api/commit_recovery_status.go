@@ -51,14 +51,15 @@ type CommitRecoveryMonitoring struct {
 
 // CommitRecoveryStatusResult samples delivery evidence without submitting recovery.
 type CommitRecoveryStatusResult struct {
-	Monitoring     *CommitRecoveryMonitoring  `json:"monitoring,omitempty"`
-	Refreshing     bool                       `json:"refreshing,omitempty"`
-	SubscriptionID string                     `json:"subscription_id,omitempty"`
-	Remaining      int                        `json:"remaining"`
-	SourceID       string                     `json:"source_id"`
-	Items          []CommitRecoveryStatusItem `json:"items"`
-	Counts         map[string]int             `json:"counts"`
-	Complete       bool                       `json:"complete"`
+	DiagnosticsProgress *CommitRecoveryDiagnosticProgress `json:"diagnostics_progress,omitempty"`
+	Monitoring          *CommitRecoveryMonitoring         `json:"monitoring,omitempty"`
+	Refreshing          bool                              `json:"refreshing,omitempty"`
+	SubscriptionID      string                            `json:"subscription_id,omitempty"`
+	Remaining           int                               `json:"remaining"`
+	SourceID            string                            `json:"source_id"`
+	Items               []CommitRecoveryStatusItem        `json:"items"`
+	Counts              map[string]int                    `json:"counts"`
+	Complete            bool                              `json:"complete"`
 }
 type CommitRecoveryStatusItem struct {
 	Diagnostics         *CommitRecoveryDiagnostics       `json:"diagnostics,omitempty"`

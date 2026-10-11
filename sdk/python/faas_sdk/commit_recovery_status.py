@@ -116,6 +116,7 @@ async def aget_commit_recovery_status(
     source = str(UUID(str(source)))
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
     previous = copy.deepcopy(resume if resume is not None else refresh)
+    diagnostic_previous = copy.deepcopy(previous) if resume is not None else None
     out: dict[str, Any] = {
         "source_id": source,
         "subscription_id": plan["report"].get("subscription_id", ""),
@@ -310,8 +311,14 @@ async def aget_commit_recovery_status(
                     cause = _CommitRecoveryReadErrors([cause, error]) if isinstance(cause, Exception) else error
                 reading_index = None
             if diagnostics:
-                out = await adiagnose_commit_recovery_status(client, out)
+                out = (
+                    await adiagnose_commit_recovery_status(client, out, previous=diagnostic_previous)
+                    if cause is None
+                    else _prepare_diagnostics(out, diagnostic_previous)
+                )
     except (Exception, asyncio.CancelledError) as error:
+        if isinstance(error, CommitRecoveryStatusError):
+            out = error.result
         out["complete"] = False
         cause = error
         for row in out["items"]:
@@ -323,6 +330,8 @@ async def aget_commit_recovery_status(
                 )
         if reading_index is not None:
             out["items"][reading_index].update(status="read_error", reason="evidence_read_failed")
+    if cause is not None and diagnostics and "diagnostics_progress" not in out:
+        out = _prepare_diagnostics(out, diagnostic_previous)
     _recount(out)
     if cause is not None:
         out["complete"] = False
@@ -497,6 +506,7 @@ async def awatch_commit_recovery_status(
         raise ValueError("choose resume or refresh")
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
     previous = copy.deepcopy(resume if resume is not None else refresh)
+    diagnostic_previous = copy.deepcopy(previous) if resume is not None else None
     refreshing = refresh is not None or (
         previous is not None and all(row["status"] not in {"not_observed", "read_error"} for row in previous["items"])
     )
@@ -546,6 +556,9 @@ async def awatch_commit_recovery_status(
                     )
                 except CommitRecoveryStatusError as error:
                     out = error.result
+                    if diagnostics:
+                        out = _prepare_diagnostics(out, diagnostic_previous)
+                        error.result = out
                     retry_after = _read_retry(error.__cause__)
                     if retry_after is None or used_retries >= read_retries:
                         if retry_after is not None and read_retries > 0 and used_retries >= read_retries:
@@ -554,8 +567,8 @@ async def awatch_commit_recovery_status(
                     used_retries += 1
                     failed = True
                     delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
-                if diagnostics:
-                    out = await adiagnose_commit_recovery_status(client, out)
+                if diagnostics and not failed:
+                    out = await adiagnose_commit_recovery_status(client, out, previous=diagnostic_previous)
                 out["monitoring"] = summarize("running")
                 phase = "callback"
                 if on_progress is not None:
@@ -566,6 +579,7 @@ async def awatch_commit_recovery_status(
                 if not failed and commit_recovery_status_settled(out) and _observations_fresh(out, max_observation_age):
                     out["monitoring"] = summarize("settled")
                     return out
+                diagnostic_previous = out
                 previous, refreshing = (
                     out,
                     not failed and out["remaining"] == 0 and _observations_fresh(out, max_observation_age),
@@ -672,22 +686,184 @@ def _observations_fresh(out: dict[str, Any], age: float) -> bool:
     return age == 0 or _freshness_counts(out, age)["fresh"] == len(out["items"])
 
 
-async def adiagnose_commit_recovery_status(client: AuthenticatedClient, status: dict[str, Any]) -> dict[str, Any]:
-    """Enrich validated status with exact routing evidence; caller owns timeout."""
-    out = copy.deepcopy(status)
-    cache: dict[tuple[str, str, str, str], dict[str, Any] | None] = {}
-    for row in out["items"]:
-        diagnostic: dict[str, Any] = {"status": "unavailable"}
-        row["diagnostics"] = diagnostic
-        if not row.get("selection") or row["status"] in {"not_observed", "read_error", "unsupported_recipient"}:
+_DIAGNOSTIC_READ_MAX = 50
+_DIAGNOSTIC_REFRESH_RESERVE = 1
+
+
+def _diagnostic_target(row: dict[str, Any]) -> bool:
+    return bool(
+        row.get("selection")
+        and row["status"] != "unsupported_recipient"
+        and row["selection"]["reviewed"].get("reason") != "unsupported_recipient"
+    )
+
+
+def _diagnostic_queryable(row: dict[str, Any]) -> bool:
+    return _diagnostic_target(row) and row["status"] not in {"not_observed", "read_error"}
+
+
+def _valid_diagnostic(diagnostic: Any, row: dict[str, Any]) -> bool:
+    if not isinstance(diagnostic, dict) or not row.get("selection") or diagnostic.get("coverage") != "exact_recipient":
+        return False
+    observed = diagnostic.get("observed_at")
+    if not isinstance(observed, str) or not _same_acceptance(observed, observed):
+        return False
+    status = diagnostic.get("status")
+    if status == "unavailable":
+        return not diagnostic.get("recipient") and diagnostic.get("reason") in {
+            "receipt_unavailable",
+            "snapshot_unavailable",
+            "recipient_unavailable",
+            "routing_evidence_unavailable",
+        }
+    if status == "acceptance_replaced":
+        return not diagnostic.get("recipient") and diagnostic.get("reason") == "acceptance_replaced"
+    if status == "not_waiting":
+        return not diagnostic.get("recipient") and diagnostic.get("routing_state") in {"enqueued", "filtered", "failed"}
+    if status != "available":
+        return False
+    recipient = diagnostic.get("recipient")
+    if not isinstance(recipient, dict):
+        return False
+    publication = row["selection"]["publication"]
+    accepted, subscription = recipient.get("accepted_at"), recipient.get("subscription_id")
+    return (
+        recipient.get("event_source") == publication["source"]
+        and recipient.get("event_id") == publication["id"]
+        and isinstance(accepted, str)
+        and _same_acceptance(accepted, publication["accepted_at"])
+        and isinstance(subscription, str)
+        and subscription.lower() == row["attempt"]["subscription_id"].lower()
+        and recipient.get("consumer_kind") == "application"
+        and recipient.get("state") == diagnostic.get("routing_state")
+        and recipient.get("state") in {"pending", "processing"}
+    )
+
+
+def _prepare_diagnostics(status: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+    out, prior = copy.deepcopy(status), copy.deepcopy(previous if previous is not None else status)
+    if (
+        out["source_id"].lower() != prior["source_id"].lower()
+        or out.get("subscription_id", "").lower() != prior.get("subscription_id", "").lower()
+        or len(out["items"]) != len(prior["items"])
+        or any(
+            not row.get("selection")
+            or not old.get("selection")
+            or not _same_selection(row["selection"], old["selection"])
+            or not _same_json(row["attempt"], old["attempt"])
+            for row, old in zip(out["items"], prior["items"], strict=True)
+        )
+    ):
+        raise ValueError("saved diagnostic selection mismatch")
+    saved_progress = prior.get("diagnostics_progress")
+    if not isinstance(saved_progress, dict):
+        saved_progress = {}
+
+    def cursor(name: str) -> int:
+        value = saved_progress.get(name)
+        return value if type(value) is int and 0 <= value < len(out["items"]) else 0
+
+    out["diagnostics_progress"] = {
+        "next_index": cursor("next_index"),
+        "retry_next_index": cursor("retry_next_index"),
+        "refresh_next_index": cursor("refresh_next_index"),
+        "reads": 0,
+    }
+    for row, old in zip(out["items"], prior["items"], strict=True):
+        diagnostic = old.get("diagnostics")
+        row["diagnostics"] = {"status": "budget_exhausted"}
+        if not _diagnostic_target(row):
+            row["diagnostics"]["status"] = "unsupported_recipient"
             continue
-        publication = row["selection"]["publication"]
-        subscription = row["attempt"]["subscription_id"].lower()
-        key = (publication["source"], publication["id"], publication["accepted_at"], subscription)
-        if key not in cache:
-            if len(cache) >= 50:
-                diagnostic["status"] = "budget_exhausted"
-                continue
+        if _valid_diagnostic(diagnostic, row):
+            row["diagnostics"] = {**diagnostic, "retained": True}
+            row["diagnostics"].pop("truncated", None)
+        elif isinstance(diagnostic, dict) and diagnostic.get("status") == "read_error":
+            row["diagnostics"] = {"status": "read_error"}
+            if isinstance(diagnostic.get("reason"), str):
+                row["diagnostics"]["reason"] = diagnostic["reason"]
+        if not _diagnostic_queryable(row) and row["diagnostics"]["status"] == "budget_exhausted":
+            row["diagnostics"] = {"status": "deferred", "reason": "receipt_evidence_unavailable"}
+    _recount_diagnostics(out)
+    return out
+
+
+def _recount_diagnostics(out: dict[str, Any]) -> None:
+    progress = out["diagnostics_progress"]
+    progress.update(
+        target_count=0,
+        remaining=0,
+        deferred=0,
+        retained=0,
+        counts=dict.fromkeys(
+            (
+                "available",
+                "not_waiting",
+                "unavailable",
+                "acceptance_replaced",
+                "read_error",
+                "budget_exhausted",
+                "deferred",
+                "unsupported_recipient",
+            ),
+            0,
+        ),
+    )
+    for row in out["items"]:
+        diagnostic = row["diagnostics"]
+        progress["counts"][diagnostic["status"]] += 1
+        if not _diagnostic_target(row):
+            continue
+        progress["target_count"] += 1
+        if not _diagnostic_queryable(row):
+            progress["deferred"] += 1
+        if not _valid_diagnostic(diagnostic, row):
+            progress["remaining"] += 1
+        elif diagnostic.get("retained"):
+            progress["retained"] += 1
+    progress["complete"] = progress["remaining"] == 0
+
+
+async def adiagnose_commit_recovery_status(
+    client: AuthenticatedClient, status: dict[str, Any], *, previous: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Rotate bounded exact lookups; previous must bind to the validated selection."""
+    out = _prepare_diagnostics(status, previous)
+    progress = out["diagnostics_progress"]
+
+    def candidates(start: int, group: int) -> list[int]:
+        indices = []
+        for n in range(len(out["items"])):
+            index = (start + n) % len(out["items"])
+            row = out["items"][index]
+            kind = (
+                2
+                if _valid_diagnostic(row["diagnostics"], row)
+                else 1
+                if row["diagnostics"]["status"] == "read_error"
+                else 0
+            )
+            if _diagnostic_queryable(row) and kind == group:
+                indices.append(index)
+        return indices
+
+    unread = candidates(progress["next_index"], 0)[:_DIAGNOSTIC_READ_MAX]
+    remaining = _DIAGNOSTIC_READ_MAX - len(unread)
+    failures, successes = candidates(progress["retry_next_index"], 1), candidates(progress["refresh_next_index"], 2)
+    reserve = _DIAGNOSTIC_REFRESH_RESERVE if successes and failures and remaining > _DIAGNOSTIC_REFRESH_RESERVE else 0
+    failed = failures[: remaining - reserve]
+    remaining -= len(failed)
+    covered = successes[:remaining]
+    for cursor_name, indices in zip(
+        ("next_index", "retry_next_index", "refresh_next_index"), (unread, failed, covered), strict=True
+    ):
+        for index in indices:
+            row = out["items"][index]
+            publication, subscription = row["selection"]["publication"], row["attempt"]["subscription_id"].lower()
+            diagnostic: dict[str, Any] = {"status": "read_error"}
+            row["diagnostics"] = diagnostic
+            progress["reads"] += 1
+            progress[cursor_name] = (index + 1) % len(out["items"])
             try:
                 response = await get_event_recipient_blocker.asyncio_detailed(
                     client=client,
@@ -696,56 +872,41 @@ async def adiagnose_commit_recovery_status(client: AuthenticatedClient, status: 
                     subscription_id=subscription,
                     expected_accepted_at=publication["accepted_at"],
                 )
-                # Keep fractional timestamps from the wire rather than datetime's microsecond conversion.
-                cache[key] = (
+                # Keep wire precision rather than datetime's microsecond conversion.
+                result = (
                     json.loads(response.content) if isinstance(response.parsed, EventRecipientBlockerResponse) else None
                 )
+            except (asyncio.CancelledError, TimeoutError) as error:
+                _recount_diagnostics(out)
+                raise CommitRecoveryStatusError(out) from error
             except Exception:
-                cache[key] = None
-        result = cache[key]
-        if result is None:
-            diagnostic["status"] = "read_error"
-            continue
-        query = result.get("query")
-        if not isinstance(query, dict):
-            continue
-        expected, observed = query.get("expected_accepted_at"), result.get("observed_at")
-        if (
-            query.get("source") != publication["source"]
-            or query.get("id") != publication["id"]
-            or query.get("subscription_id") != subscription
-            or not isinstance(expected, str)
-            or not _same_acceptance(expected, publication["accepted_at"])
-            or not isinstance(observed, str)
-            or not _same_acceptance(observed, observed)
-        ):
-            continue
-        diagnostic.update(observed_at=observed, coverage="exact_recipient")
-        if result["status"] in {"unavailable", "acceptance_replaced"}:
-            diagnostic["status"] = result["status"]
-            if result.get("reason"):
-                diagnostic["reason"] = result["reason"]
-        elif (
-            result["status"] == "not_waiting"
-            and not result.get("recipient")
-            and result.get("routing_state") in {"enqueued", "filtered", "failed"}
-        ):
-            diagnostic.update(status="not_waiting", routing_state=result["routing_state"])
-        elif result["status"] == "available":
-            recipient = result.get("recipient")
-            if not isinstance(recipient, dict):
+                result = None
+            if result is None:
                 continue
-            accepted, recipient_id = recipient.get("accepted_at"), recipient.get("subscription_id")
+            query = result.get("query")
+            if not isinstance(query, dict):
+                diagnostic["reason"] = "invalid_evidence"
+                continue
+            expected = query.get("expected_accepted_at")
             if (
-                recipient.get("event_source") == publication["source"]
-                and recipient.get("event_id") == publication["id"]
-                and isinstance(accepted, str)
-                and _same_acceptance(accepted, publication["accepted_at"])
-                and isinstance(recipient_id, str)
-                and recipient_id.lower() == subscription
-                and recipient.get("consumer_kind") == "application"
-                and recipient.get("state") == result.get("routing_state")
-                and recipient.get("state") in {"pending", "processing"}
+                query.get("source") != publication["source"]
+                or query.get("id") != publication["id"]
+                or query.get("subscription_id") != subscription
+                or not isinstance(expected, str)
+                or not _same_acceptance(expected, publication["accepted_at"])
             ):
-                diagnostic.update(status="available", routing_state=result["routing_state"], recipient=recipient)
+                diagnostic["reason"] = "invalid_evidence"
+                continue
+            sample = {
+                "status": result["status"],
+                "observed_at": result.get("observed_at"),
+                "coverage": "exact_recipient",
+            }
+            for name in ("reason", "routing_state", "recipient"):
+                if result.get(name) is not None:
+                    sample[name] = result[name]
+            row["diagnostics"] = (
+                sample if _valid_diagnostic(sample, row) else {"status": "read_error", "reason": "invalid_evidence"}
+            )
+    _recount_diagnostics(out)
     return out

@@ -1484,11 +1484,50 @@ or the receipt retry budget. Older servers without the endpoint produce
 `read_error`; diagnostics do not silently fall back to pagination.
 A recorded `next_attempt_at` is a scheduled retry time, not a guarantee of
 eligibility while ordering, subscription or capacity controls still block work.
-The overall timeout still applies. Saved diagnostics are discarded on resume
-and resampled only when explicitly enabled.
+The overall timeout still applies. With diagnostics enabled, resume carries
+validated samples and scheduling progress; retained samples keep their original
+timestamps and are marked `retained: true`. Without diagnostics, saved diagnostic
+fields are discarded. Explicit refresh starts a new diagnostic coverage cycle.
 
 Go watches use `CommitRecoveryWatchOptions{Diagnostics: true}`; ordinary callers
 can enrich a freshly validated result with `DiagnoseCommitRecoveryStatus`.
 Node/Python status and watch helpers accept `diagnostics: true` / `diagnostics=True`.
 Standalone SDK helpers are `diagnoseCommitRecoveryStatus(status, signal)` and
 `adiagnose_commit_recovery_status(client, status)`; supply cancellation/timeouts.
+
+
+### Resume diagnostic coverage across large selections
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --resume recovery-checkpoint.json \
+  --watch --diagnostics --checkpoint recovery-checkpoint.json --timeout 10m
+~~~
+
+Diagnostics still make at most 50 exact lookups per pass. Unread queryable rows
+come first, then failed diagnostic reads, then cyclic refresh of earlier samples.
+Separate cursors rotate each group. When failures and successful samples compete,
+one refresh slot is reserved so persistent failures cannot starve healthy samples.
+Receipt rows without usable observations are deferred; unsupported recipients
+are excluded. Selection order in JSON stays fixed.
+
+The separate `diagnostics_progress` object reports `target_count`, `remaining`,
+`deferred`, `retained`, per-status `counts`, `complete`, and this pass's `reads`.
+It also carries resume cursors. Counts are rebuilt from validated row samples;
+saved aggregate values are ignored. `complete` means sampled coverage, including
+explicit unavailable/replaced evidence, rather than successful delivery or the
+absence of blockers. Retained samples describe earlier observations; consult
+their original `observed_at` before treating them as current. Deferred rows may
+still have historical samples.
+
+Progress appears in callbacks and watch checkpoints. Diagnostic completeness
+does not delay settlement or affect delivery counts, freshness, replay attribution
+or exit status. To continue coverage after a settled watch, run ordinary
+`recovery-status --resume ... --diagnostics` repeatedly, saving its JSON for the
+next resume. Use a separate output path and replace the input only after success.
+
+Go callers can use `ResumeCommitRecoveryDiagnostics(ctx, status, previous)` after
+validating the current recovery selection. Node callers pass previous status as
+the third argument to `diagnoseCommitRecoveryStatus(status, signal, previous)`;
+Python callers use `adiagnose_commit_recovery_status(client, status, previous=previous)`.
+Status/watch helpers wire this automatically when diagnostics and resume are enabled.

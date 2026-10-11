@@ -218,6 +218,9 @@ const (
 // Commit recovery diagnostics sample a bounded number of subscriptions per pass (ADR-947).
 const CommitRecoveryDiagnosticsReadMax = 50
 
+// Reserve successful-sample refresh capacity when diagnostic retries compete (ADR-949).
+const CommitRecoveryDiagnosticsRefreshReserve = 1
+
 // Exact recipient blocker identity and timeout bounds (ADR-948).
 const (
 	EventRecipientBlockerIdentityMaxBytes = 256

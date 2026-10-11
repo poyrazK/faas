@@ -843,3 +843,5 @@ Optionally require recent recovery evidence with `max_observation_age` (default 
 Optional `diagnostics=True` includes bounded exact-recipient delivery blocker diagnostics, separate from replay attribution. Missing evidence and settled routing never prove handler completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).
 
 Exact routing lookup: `faas_sdk.api.events.get_event_recipient_blocker.asyncio_detailed(client=client, source=source, id=event_id, subscription_id=subscription_id, expected_accepted_at=accepted_at)`. Pass the original timestamp string to preserve fractional precision. `not_waiting` describes routing only.
+
+Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).

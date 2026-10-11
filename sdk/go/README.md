@@ -822,3 +822,5 @@ Optionally require recent recovery evidence with `CommitRecoveryWatchOptions.Max
 Optional `CommitRecoveryWatchOptions.Diagnostics` includes bounded exact-recipient delivery blocker diagnostics, separate from replay attribution. Missing evidence and settled routing never prove handler completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).
 
 Exact routing lookup: `GetEventRecipientBlocker(ctx, EventRecipientBlockerQuery{Source: source, ID: eventID, SubscriptionID: subscriptionID, ExpectedAcceptedAt: acceptedAt})`. Inspect `Status`, `Reason`, `RoutingState` and optional `Recipient`; `not_waiting` describes routing only.
+
+Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).

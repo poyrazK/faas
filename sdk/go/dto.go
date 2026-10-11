@@ -430,3 +430,5 @@ type EventBacklogFilters = api.EventBacklogFilters
 
 type EventRecipientBlockerQuery = api.EventRecipientBlockerQuery
 type EventRecipientBlockerResponse = api.EventRecipientBlockerResponse
+
+type CommitRecoveryDiagnosticProgress = api.CommitRecoveryDiagnosticProgress

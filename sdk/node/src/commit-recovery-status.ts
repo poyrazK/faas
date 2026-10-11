@@ -19,7 +19,11 @@ export interface CommitRecoveryStatusObservation {
 export interface CommitRecoveryStatusChange {
   field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
 }
+export interface CommitRecoveryDiagnosticProgress {
+  next_index: number; retry_next_index: number; refresh_next_index: number; target_count: number; remaining: number; deferred: number; retained: number; reads: number; counts: Record<string, number>; complete: boolean;
+}
 export interface CommitRecoveryDiagnostics {
+  retained?: boolean;
   status: string; reason?: string; routing_state?: string; observed_at?: string; coverage?: string; truncated?: boolean; recipient?: EventBacklogRecipient;
 }
 export interface CommitRecoveryStatusItem {
@@ -36,6 +40,7 @@ export interface CommitRecoveryMonitoring {
   stop_reason: string; passes: number; retries_consumed: number; elapsed_ms: number; acknowledged_executions_terminal: boolean;
 }
 export interface CommitRecoveryStatusResult {
+  diagnostics_progress?: CommitRecoveryDiagnosticProgress;
   monitoring?: CommitRecoveryMonitoring;
   source_id: string; refreshing?: boolean; subscription_id?: string; remaining: number; items: CommitRecoveryStatusItem[]; counts: Record<string, number>; complete: boolean;
 }
@@ -73,6 +78,7 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
   validateObservationAge(maxObservationAgeMs);
   if (options.resume && options.refresh) throw new TypeError('choose resume or refresh');
   const plan = structuredClone(reviewed), result = structuredClone(applied), previous = options.resume || options.refresh ? structuredClone(options.resume ?? options.refresh!) : undefined;
+  const diagnosticPrevious = options.resume ? structuredClone(previous) : undefined;
   const out: CommitRecoveryStatusResult = { source_id: source, subscription_id: plan.report.subscription_id, remaining: 0, items: [], counts: Object.create(null), complete: false };
   if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(recipientPages) || recipientPages < 1 || recipientPages > 20 || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 86400000 || plan.report.source_id !== source || result.source_id.toLowerCase() !== source.toLowerCase() || plan.report.items.length > 200 || plan.items.length > 200*200*20 || result.items.length > 200*200*20) throw new TypeError('invalid recovery status budgets or source');
   const publications = new Map(plan.report.items.map(item => [item.acceptance.event_id.toLowerCase(), item]));
@@ -146,12 +152,13 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
         row.status = 'read_error'; row.reason = 'evidence_read_failed'; out.complete = false; cause = cause ? new AggregateError([cause, error], 'recovery status reads failed') : error;
       }
     }
-    if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, controller.signal));
+    if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, cause ? AbortSignal.abort() : controller.signal, diagnosticPrevious));
   } catch (error) { cause = error; }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   if (controller.signal.aborted) { cause ??= new Error('status interrupted'); for (const row of out.items) if (row.status === 'not_observed') row.reason = 'interrupted'; }
   recount(out);
   if (cause) out.complete = false;
+  if (cause && options.diagnostics && !out.diagnostics_progress) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious));
   if (cause) throw new CommitRecoveryStatusError(out, cause);
   return out;
 }
@@ -239,6 +246,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   if (!Number.isFinite(intervalMs) || intervalMs < 100 || intervalMs > 60000 || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 86400000 || (options.resume && options.refresh)) throw new TypeError('invalid recovery watch options');
   const fixedPlan = structuredClone(plan), fixedApplied = structuredClone(applied);
   let previous = options.resume || options.refresh ? structuredClone(options.resume ?? options.refresh) : undefined;
+  let diagnosticPrevious = options.refresh ? undefined : previous;
   let refresh = Boolean(options.refresh) || Boolean(previous && previous.items.every(row => !['not_observed', 'read_error'].includes(row.status)));
   const controller = new AbortController(), abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
@@ -269,6 +277,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
       } catch (error) {
         if (!(error instanceof CommitRecoveryStatusError)) throw error;
         out = error.result;
+        if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, AbortSignal.abort(), diagnosticPrevious));
         const retryAfter = recoveryReadRetry(error.cause);
         if (retryAfter === undefined || usedRetries >= readRetries || controller.signal.aborted) {
           if (retryAfter !== undefined && readRetries > 0 && usedRetries >= readRetries) reason = 'retry_exhausted';
@@ -277,13 +286,14 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
         usedRetries++; failed = true;
         delay = Math.max(Math.min(60000, intervalMs * 2 ** (usedRetries - 1)), retryAfter);
       }
-      if (options.diagnostics) out = await diagnoseCommitRecoveryStatus(out, controller.signal);
+      if (options.diagnostics && !failed) out = await diagnoseCommitRecoveryStatus(out, controller.signal, diagnosticPrevious);
       out.monitoring = summarize('running');
       phase = 'callback';
       onProgress?.(structuredClone(out));
       phase = 'read';
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
       if (!failed && commitRecoveryStatusSettled(out) && observationsFresh(out, maxObservationAgeMs)) { out.monitoring = summarize('settled'); return out; }
+      diagnosticPrevious = out;
       previous = out; refresh = !failed && out.remaining === 0 && observationsFresh(out, maxObservationAgeMs);
       await new Promise<void>(resolve => {
         const done = () => { clearTimeout(poll); controller.signal.removeEventListener('abort', done); resolve(); };
@@ -358,37 +368,79 @@ function observationsFresh(out: CommitRecoveryStatusResult, age: number): boolea
   return age === 0 || freshnessCounts(out, age).fresh === out.items.length;
 }
 
-/** Bounded exact-recipient lookups; only enrich freshly validated status. */
-export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusResult, signal?: AbortSignal): Promise<CommitRecoveryStatusResult> {
-  const out = structuredClone(status);
-  const cache = new Map<string, EventRecipientBlockerResponse | undefined>();
-  for (const row of out.items) {
-    const diagnostic: CommitRecoveryDiagnostics = { status: 'unavailable' };
-    row.diagnostics = diagnostic;
-    if (!row.selection || ['not_observed', 'read_error', 'unsupported_recipient'].includes(row.status)) continue;
-    const publication = row.selection.publication;
-    const subscription = row.attempt.subscription_id.toLowerCase();
-    const key = JSON.stringify([publication.source, publication.id, publication.accepted_at, subscription]);
-    if (!cache.has(key)) {
-      if (cache.size >= 50) { diagnostic.status = 'budget_exhausted'; continue; }
-      if (signal?.aborted) { diagnostic.status = 'read_error'; continue; }
+const diagnosticReadMax = 50;
+const diagnosticRefreshReserve = 1;
+
+/** Rotate exact lookups on validated status; previous must have the same selection and attempts. */
+export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusResult, signal?: AbortSignal, previous?: CommitRecoveryStatusResult): Promise<CommitRecoveryStatusResult> {
+  const out = structuredClone(status), prior = structuredClone(previous ?? status);
+  if (out.source_id.toLowerCase() !== prior.source_id.toLowerCase() || (out.subscription_id ?? '').toLowerCase() !== (prior.subscription_id ?? '').toLowerCase() || out.items.length !== prior.items.length || out.items.some((row, i) => !row.selection || !prior.items[i]?.selection || !sameSelection(row.selection, prior.items[i]!.selection!) || canonical(row.attempt) !== canonical(prior.items[i]!.attempt))) throw new TypeError('saved diagnostic selection mismatch');
+  const cursor = (value: number | undefined) => Number.isSafeInteger(value) && value! >= 0 && value! < out.items.length ? value! : 0;
+  const progress: CommitRecoveryDiagnosticProgress = { next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
+  for (let i = 0; i < out.items.length; i++) {
+    const row = out.items[i]!, old = prior.items[i]!.diagnostics;
+    row.diagnostics = { status: 'budget_exhausted' };
+    if (!diagnosticTarget(row)) { row.diagnostics.status = 'unsupported_recipient'; continue; }
+    if (old && validDiagnostic(old, row)) row.diagnostics = { ...old, retained: true, truncated: undefined };
+    else if (old?.status === 'read_error') row.diagnostics = { status: 'read_error', reason: old.reason };
+    if (!diagnosticQueryable(row) && row.diagnostics.status === 'budget_exhausted') row.diagnostics = { status: 'deferred', reason: 'receipt_evidence_unavailable' };
+  }
+  const candidates = (start: number, group: number) => Array.from({length: out.items.length}, (_, n) => (start + n) % out.items.length).filter(index => {
+    const row = out.items[index]!;
+    const kind = validDiagnostic(row.diagnostics, row) ? 2 : row.diagnostics?.status === 'read_error' ? 1 : 0;
+    return diagnosticQueryable(row) && kind === group;
+  });
+  const unread = candidates(progress.next_index, 0).slice(0, diagnosticReadMax);
+  let remaining = diagnosticReadMax - unread.length;
+  const failures = candidates(progress.retry_next_index, 1), successes = candidates(progress.refresh_next_index, 2);
+  const reserve = successes.length > 0 && failures.length > 0 && remaining > diagnosticRefreshReserve ? diagnosticRefreshReserve : 0;
+  const failed = failures.slice(0, remaining - reserve); remaining -= failed.length;
+  const covered = successes.slice(0, remaining);
+  for (const [group, indices] of [unread, failed, covered].entries()) {
+    for (const index of indices) {
+      if (signal?.aborted) break;
+      const row = out.items[index]!, publication = row.selection!.publication;
+      const subscription = row.attempt.subscription_id.toLowerCase();
       const request = EventsService.getEventRecipientBlocker({ source: publication.source, id: publication.id, subscriptionId: subscription, expectedAcceptedAt: publication.accepted_at });
       const abort = () => request.cancel();
       signal?.addEventListener('abort', abort, { once: true });
-      try { cache.set(key, await request); }
-      catch { cache.set(key, undefined); }
+      progress.reads++;
+      const next = (index + 1) % out.items.length;
+      if (group === 0) progress.next_index = next;
+      else if (group === 1) progress.retry_next_index = next;
+      else progress.refresh_next_index = next;
+      let result: EventRecipientBlockerResponse | undefined;
+      try { result = await request; }
+      catch { /* Diagnostic read failures stay separate from receipt retries. */ }
       finally { signal?.removeEventListener('abort', abort); }
-    }
-    const result = cache.get(key);
-    if (!result) { diagnostic.status = 'read_error'; continue; }
-    if (result.query?.source !== publication.source || result.query.id !== publication.id || result.query.subscription_id !== subscription || !sameAcceptance(result.query.expected_accepted_at, publication.accepted_at) || !Number.isFinite(Date.parse(result.observed_at))) continue;
-    diagnostic.observed_at = result.observed_at; diagnostic.coverage = 'exact_recipient';
-    if (['unavailable', 'acceptance_replaced'].includes(result.status)) { diagnostic.status = result.status; diagnostic.reason = result.reason; }
-    else if (result.status === 'not_waiting' && !result.recipient && ['enqueued', 'filtered', 'failed'].includes(result.routing_state ?? '')) { diagnostic.status = result.status; diagnostic.routing_state = result.routing_state; }
-    else if (result.status === 'available') {
-      const recipient = result.recipient;
-      if (recipient && recipient.event_source === publication.source && recipient.event_id === publication.id && sameAcceptance(recipient.accepted_at, publication.accepted_at) && recipient.subscription_id.toLowerCase() === subscription && recipient.consumer_kind === 'application' && recipient.state === result.routing_state && ['pending', 'processing'].includes(recipient.state)) { diagnostic.status = 'available'; diagnostic.routing_state = result.routing_state; diagnostic.recipient = recipient; }
+      row.diagnostics = { status: 'read_error' };
+      if (!result) continue;
+      if (result.query?.source !== publication.source || result.query.id !== publication.id || result.query.subscription_id !== subscription || !sameAcceptance(result.query.expected_accepted_at, publication.accepted_at)) { row.diagnostics.reason = 'invalid_evidence'; continue; }
+      const diagnostic: CommitRecoveryDiagnostics = { status: result.status, reason: result.reason, routing_state: result.routing_state, observed_at: result.observed_at, coverage: 'exact_recipient', recipient: result.recipient };
+      row.diagnostics = validDiagnostic(diagnostic, row) ? diagnostic : { status: 'read_error', reason: 'invalid_evidence' };
     }
   }
+  for (const row of out.items) {
+    const diagnostic = row.diagnostics!;
+    progress.counts[diagnostic.status] = (progress.counts[diagnostic.status] ?? 0) + 1;
+    if (!diagnosticTarget(row)) continue;
+    progress.target_count++;
+    if (!diagnosticQueryable(row)) progress.deferred++;
+    if (!validDiagnostic(diagnostic, row)) progress.remaining++;
+    else if (diagnostic.retained) progress.retained++;
+  }
+  progress.complete = progress.remaining === 0;
+  out.diagnostics_progress = progress;
   return out;
+}
+function diagnosticTarget(row: CommitRecoveryStatusItem): boolean { return Boolean(row.selection && row.status !== 'unsupported_recipient' && row.selection.reviewed.reason !== 'unsupported_recipient'); }
+function diagnosticQueryable(row: CommitRecoveryStatusItem): boolean { return diagnosticTarget(row) && !['not_observed', 'read_error'].includes(row.status); }
+function validDiagnostic(diagnostic: CommitRecoveryDiagnostics | undefined, row: CommitRecoveryStatusItem): boolean {
+  if (!diagnostic || !row.selection || diagnostic.coverage !== 'exact_recipient' || typeof diagnostic.observed_at !== 'string' || !sameAcceptance(diagnostic.observed_at, diagnostic.observed_at)) return false;
+  if (diagnostic.status === 'unavailable') return !diagnostic.recipient && ['receipt_unavailable', 'snapshot_unavailable', 'recipient_unavailable', 'routing_evidence_unavailable'].includes(diagnostic.reason ?? '');
+  if (diagnostic.status === 'acceptance_replaced') return !diagnostic.recipient && diagnostic.reason === 'acceptance_replaced';
+  if (diagnostic.status === 'not_waiting') return !diagnostic.recipient && ['enqueued', 'filtered', 'failed'].includes(diagnostic.routing_state ?? '');
+  if (diagnostic.status !== 'available') return false;
+  const recipient = diagnostic.recipient, publication = row.selection.publication;
+  return Boolean(recipient && recipient.event_source === publication.source && recipient.event_id === publication.id && typeof recipient.accepted_at === 'string' && sameAcceptance(recipient.accepted_at, publication.accepted_at) && typeof recipient.subscription_id === 'string' && recipient.subscription_id.toLowerCase() === row.attempt.subscription_id.toLowerCase() && recipient.consumer_kind === 'application' && recipient.state === diagnostic.routing_state && ['pending', 'processing'].includes(recipient.state));
 }

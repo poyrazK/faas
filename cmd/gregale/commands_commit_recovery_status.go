@@ -116,10 +116,14 @@ func cmdCommitRecoveryStatus(args []string) int {
 				terminal = status.Monitoring.AcknowledgedExecutionsTerminal
 				freshness = status.Monitoring.Freshness
 			}
-			raw, _ := json.Marshal([]any{rows, freshness})
+			raw, _ := json.Marshal([]any{rows, freshness, commitRecoveryDiagnosticSummary(status.DiagnosticsProgress)})
 			if string(raw) != last {
 				last = string(raw)
 				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, terminal)
+				if status.DiagnosticsProgress != nil {
+					d := status.DiagnosticsProgress
+					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d\n", d.Remaining, d.Counts, d.Retained, d.Deferred)
+				}
 				if freshness != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "Recovery freshness: %v\n", freshness)
 				}
@@ -128,7 +132,11 @@ func cmdCommitRecoveryStatus(args []string) int {
 		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics})
 	}
 	if !*watch && err == nil && *diagnostics {
-		out = client.DiagnoseCommitRecoveryStatus(ctx, out)
+		if saved != nil && *resumePath != "" {
+			out, err = client.ResumeCommitRecoveryDiagnostics(ctx, out, *saved)
+		} else {
+			out = client.DiagnoseCommitRecoveryStatus(ctx, out)
+		}
 	}
 	var validation *api.Problem
 	invalidSelection := errors.As(err, &validation) && validation.Code == api.CodeValidation
@@ -182,4 +190,11 @@ func readCommitRecoveryStatusFile(path string, target any) error {
 		return fmt.Errorf("recovery status input exceeds size limit")
 	}
 	return json.Unmarshal(raw, target)
+}
+
+func commitRecoveryDiagnosticSummary(progress *api.CommitRecoveryDiagnosticProgress) any {
+	if progress == nil {
+		return nil
+	}
+	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained}
 }
