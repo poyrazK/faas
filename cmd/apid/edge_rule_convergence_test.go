@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -66,14 +67,14 @@ func TestEdgeRuleApplyWaitsForEveryServingGateway(t *testing.T) {
 	notifier := &edgeRuleBarrierNotifier{
 		events: make(chan db.Notification, 4), published: make(chan string, 1),
 	}
-	conv := &edgeRuleConvergence{
-		notif: notifier, events: notifier.events, cancel: func() {}, unlock: func(context.Context) {},
-		generation: 42, appID: "app-1", operation: "updated",
-		hosts:    []string{"api.example.com"},
-		expected: map[string]struct{}{"node-a": {}, "node-b": {}},
+	conv := &edgerules.EdgeRuleConvergence{
+		Notif: notifier, Events: notifier.events, Cancel: func() {}, Unlock: func(context.Context) {},
+		Generation: 42, AppID: "app-1", Operation: "updated",
+		Hosts:    []string{"api.example.com"},
+		Expected: map[string]struct{}{"node-a": {}, "node-b": {}},
 	}
 	result := make(chan error, 1)
-	go func() { result <- conv.apply(context.Background(), "rule-1") }()
+	go func() { result <- conv.Apply(context.Background(), "rule-1") }()
 
 	if phase := <-notifier.published; phase != "apply" {
 		t.Fatalf("published phase = %q, want apply", phase)
@@ -101,16 +102,16 @@ func (*edgeRuleBarrierNotifier) WaitFor(context.Context, string, func(string) bo
 func TestEdgeRuleApplySurvivesCanceledRequestContext(t *testing.T) {
 	notifier := &edgeRuleBarrierNotifier{events: make(chan db.Notification, 1)}
 	unlocked := false
-	conv := &edgeRuleConvergence{
-		notif: notifier, events: notifier.events, cancel: func() {},
-		unlock: func(context.Context) { unlocked = true }, generation: 41,
-		appID: "app-1", operation: "updated", hosts: []string{"api.example.com"},
-		expected: map[string]struct{}{"node-a": {}},
+	conv := &edgerules.EdgeRuleConvergence{
+		Notif: notifier, Events: notifier.events, Cancel: func() {},
+		Unlock: func(context.Context) { unlocked = true }, Generation: 41,
+		AppID: "app-1", Operation: "updated", Hosts: []string{"api.example.com"},
+		Expected: map[string]struct{}{"node-a": {}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := conv.apply(ctx, "rule-1"); err != nil {
+	if err := conv.Apply(ctx, "rule-1"); err != nil {
 		t.Fatalf("apply with canceled request context: %v", err)
 	}
 	if !unlocked {
@@ -127,16 +128,16 @@ func TestEdgeRuleFleetRequirementDistinguishesSplitAndSingleBox(t *testing.T) {
 	notifier := &edgeRuleBarrierNotifier{events: make(chan db.Notification, 2)}
 	srv := newServer(state.NewMemStore(), slog.Default(), "example.com", notifier)
 	srv.WithEdgeRuleFleetRequired(true)
-	if _, err := srv.prepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com"); err == nil {
+	if _, err := srv.edgeRules.PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com"); err == nil {
 		t.Fatal("named fleet accepted a policy mutation with no serving gateways")
 	}
 
 	srv.WithEdgeRuleFleetRequired(false)
-	conv, err := srv.prepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
+	conv, err := srv.edgeRules.PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
 	if err != nil {
 		t.Fatalf("single-box mutation without compute registry: %v", err)
 	}
-	conv.abort(t.Context())
+	conv.Abort(t.Context())
 }
 
 func TestPrepareEdgeRuleMutationHoldsDistributedLockUntilClose(t *testing.T) {
@@ -145,7 +146,7 @@ func TestPrepareEdgeRuleMutationHoldsDistributedLockUntilClose(t *testing.T) {
 	srv := newServer(store, slog.Default(), "example.com", notifier)
 	srv.WithEdgeRuleFleetRequired(false)
 
-	conv, err := srv.prepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
+	conv, err := srv.edgeRules.PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
 	if err != nil {
 		t.Fatalf("prepare edge-rule mutation: %v", err)
 	}
@@ -158,7 +159,7 @@ func TestPrepareEdgeRuleMutationHoldsDistributedLockUntilClose(t *testing.T) {
 	}
 	store.mu.Unlock()
 
-	conv.abort(t.Context())
+	conv.Abort(t.Context())
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if got := store.released; len(got) != 1 || got[0] != "app-1" {

@@ -1,4 +1,4 @@
-package main
+package edgerules
 
 import (
 	"context"
@@ -10,35 +10,36 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// edgeProtectionDefaultRange is long enough to show a burst after the fact
+// EdgeProtectionDefaultRange is long enough to show a burst after the fact
 // while staying inside short Prometheus retention.
-const edgeProtectionDefaultRange = "1h"
+const EdgeProtectionDefaultRange = "1h"
 
 // getAppEdgeProtection serves GET /v1/apps/{slug}/edge-protection.
-func (s *server) getAppEdgeProtection(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) GetAppEdgeProtection(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
 	rng := r.URL.Query().Get("range")
 	if rng == "" {
-		rng = edgeProtectionDefaultRange
+		rng = EdgeProtectionDefaultRange
 	}
 	if !appmetrics.IsValidRange(rng) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"invalid range", "range must be one of: "+strings.Join(appmetrics.Ranges(), ", ")))
 		return
 	}
-	writeJSON(w, http.StatusOK, s.appEdgeProtection(r.Context(), app, rng))
+	httpkit.WriteJSON(w, http.StatusOK, s.AppEdgeProtection(r.Context(), app, rng))
 }
 
 // appEdgeProtection is shared by the JSON endpoint and the dashboard panel.
 // It reads the same per-app counters the edge security alert presets use.
-func (s *server) appEdgeProtection(ctx context.Context, app state.App, rng string) api.EdgeProtectionResponse {
+func (s *Service) AppEdgeProtection(ctx context.Context, app state.App, rng string) api.EdgeProtectionResponse {
 	resp := api.EdgeProtectionResponse{
 		AppID: app.ID, Range: rng, Source: appmetrics.SourcePrometheus,
 		AsOf:               time.Now().UTC().Format(time.RFC3339Nano),
@@ -46,7 +47,7 @@ func (s *server) appEdgeProtection(ctx context.Context, app state.App, rng strin
 		Rejections:         []api.EdgeProtectionRejection{},
 		WAF:                api.NewEdgeProtectionWAF(),
 	}
-	if s.promqlClient == nil {
+	if s.Host.PromQL() == nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus not configured"
 		return resp
 	}
@@ -55,7 +56,7 @@ func (s *server) appEdgeProtection(ctx context.Context, app state.App, rng strin
 		return resp
 	}
 	for _, q := range edgeProtectionQueries(&resp, app.ID, rng) {
-		samples, err := s.promqlClient.QueryVector(ctx, q.query)
+		samples, err := s.Host.PromQL().QueryVector(ctx, q.query)
 		if err != nil {
 			degraded := api.EdgeProtectionResponse{AppID: resp.AppID, Range: rng, AsOf: resp.AsOf,
 				Source:             appmetrics.SourceDegradedPrefix + "prometheus unavailable",

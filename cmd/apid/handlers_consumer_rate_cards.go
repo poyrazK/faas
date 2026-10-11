@@ -234,10 +234,16 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Earlier usage in since's month consumes the monthly allowance (ADR-950).
-	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
-		return
+	// A same-day window on the 1st snaps to an empty one, which the ledger
+	// rejects; it has no usage to price (hunt #9 H9-57).
+	var usage []state.APIConsumerUsageBucket
+	if until.After(billing.MonthStart(since)) {
+		usage, err = usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until)
+		if err != nil {
+			s.log.ErrorContext(r.Context(), "list api consumer usage for quote", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
+			api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
+			return
+		}
 	}
 	if usage, err = s.weightConsumerUsage(r, cards, usage, acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until); err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer route usage"))
@@ -286,7 +292,7 @@ func (s *server) weightConsumerUsage(r *http.Request, cards []state.APIConsumerR
 		weighted = weighted || len(card.RouteWeights) > 0
 	}
 	routeStore, ok := s.store.(state.ConsumerRouteUsageStore)
-	if !weighted || !ok {
+	if !weighted || !ok || !until.After(since) {
 		return usage, nil
 	}
 	routes, err := routeStore.ListAPIConsumerRouteUsage(r.Context(), accountID, appID, consumerID, since, until)

@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,6 +23,25 @@ func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 	config.Flags[0].Enabled = true
 	if !featureFlagConfigRequiresSubjectTargeting(config) {
 		t.Fatal("enabled subject flag did not require the SDK capability")
+	}
+}
+
+// Hunt #9 H9-43: with flags not qualified on the installation, the 403 had
+// no hint, so the CLI fell back to "check the selected profile, account
+// membership, and credential permissions" and sent users after the wrong
+// cause.
+func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	res := e.do(t, http.MethodGet, "/v1/projects/flags/environments/production/flags", nil, nil)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", res.Code, res.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(res.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(problem.Hint, "not enabled on this Gregale installation") {
+		t.Fatalf("hint = %q, want the operator gate named", problem.Hint)
 	}
 }
 

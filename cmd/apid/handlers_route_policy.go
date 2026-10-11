@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -133,7 +134,7 @@ func (s *server) applyRoutePolicy(w http.ResponseWriter, r *http.Request, acct s
 		s.routePolicyError(w, lookupErr)
 		return
 	}
-	conv, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "updated", appHostForDomain(app.Slug, s.domain))
+	conv, err := s.edgeRules.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "updated", appHostForDomain(app.Slug, s.domain))
 	if err != nil {
 		if lookupErr == nil {
 			writeJSON(w, http.StatusOK, api.RoutePolicyApplyResponse{Receipt: previous, Replayed: true, GatewayState: "unknown"})
@@ -144,7 +145,7 @@ func (s *server) applyRoutePolicy(w http.ResponseWriter, r *http.Request, acct s
 	}
 	receipt, replayed, err := store.ApplyRoutePolicy(r.Context(), acct.ID, app.ID, key, request, s.routePolicyPlanner(request.RoutePolicyPlanRequest))
 	if err != nil {
-		conv.abort(r.Context())
+		conv.Abort(r.Context())
 		s.routePolicyError(w, err)
 		return
 	}
@@ -153,14 +154,14 @@ func (s *server) applyRoutePolicy(w http.ResponseWriter, r *http.Request, acct s
 			"app_id": app.ID, "receipt_id": receipt.ID, "plan_sha256": receipt.PlanSHA256, "changes": receipt.Changes})
 	}
 	gatewayState := "active"
-	if err := conv.apply(r.Context(), ""); err != nil {
+	if err := conv.Apply(r.Context(), ""); err != nil {
 		gatewayState = "converging"
-		s.log.Warn("route policy committed; gateway confirmation incomplete", "app_id", app.ID, "receipt_id", receipt.ID, "generation", conv.generation)
-	} else if len(conv.expected) == 0 {
+		s.log.Warn("route policy committed; gateway confirmation incomplete", "app_id", app.ID, "receipt_id", receipt.ID, "generation", conv.Generation)
+	} else if len(conv.Expected) == 0 {
 		gatewayState = "unobserved"
 	}
-	conv.setResponseState(w, gatewayState)
-	writeJSON(w, http.StatusOK, api.RoutePolicyApplyResponse{Receipt: receipt, Replayed: replayed, GatewayState: gatewayState, GatewayGeneration: conv.generation})
+	conv.SetResponseState(w, gatewayState)
+	writeJSON(w, http.StatusOK, api.RoutePolicyApplyResponse{Receipt: receipt, Replayed: replayed, GatewayState: gatewayState, GatewayGeneration: conv.Generation})
 }
 
 func (s *server) getRoutePolicyReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {

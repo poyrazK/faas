@@ -49,6 +49,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -247,7 +248,7 @@ func (s *server) buildDiffBaseline(ctx context.Context, app state.App, acct stat
 	}
 	out.EdgeRules = make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, r := range rules {
-		out.EdgeRules = append(out.EdgeRules, edgeRuleResponse(r))
+		out.EdgeRules = append(out.EdgeRules, edgerules.EdgeRuleResponse(r))
 	}
 	return out, nil
 }

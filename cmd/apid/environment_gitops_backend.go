@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -41,7 +42,7 @@ func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(co
 	apps = slices.Clone(apps)
 	slices.Sort(apps)
 	apps = slices.Compact(apps)
-	edgeRuleMutationMu.Lock()
+	edgerules.EdgeRuleMutationMu.Lock()
 	releases := []func(context.Context){}
 	var once sync.Once
 	unlock := func(ctx context.Context) {
@@ -49,7 +50,7 @@ func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(co
 			for i := len(releases) - 1; i >= 0; i-- {
 				releases[i](ctx)
 			}
-			edgeRuleMutationMu.Unlock()
+			edgerules.EdgeRuleMutationMu.Unlock()
 		})
 	}
 	if locker, ok := s.store.(edgeRuleBatchMutationLocker); ok {
@@ -59,7 +60,7 @@ func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(co
 			return nil, err
 		}
 		releases = append(releases, release)
-	} else if locker, ok := s.store.(edgeRuleMutationLocker); ok {
+	} else if locker, ok := s.store.(edgerules.EdgeRuleMutationLocker); ok {
 		for _, app := range apps {
 			release, err := locker.AcquireEdgeRuleMutationLock(ctx, app)
 			if err != nil {
@@ -102,7 +103,7 @@ func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.Enviro
 	// The first prepared host must still be fenced when the complete intent
 	// transaction commits. A per-workload timeout alone could add up to more
 	// than the gateway's fence TTL for a large environment.
-	writeCtx, stopWrite := context.WithTimeout(ctx, edgeRuleConvergenceTimeout)
+	writeCtx, stopWrite := context.WithTimeout(ctx, edgerules.EdgeRuleConvergenceTimeout)
 	defer stopWrite()
 	convergences, specs, err := b.preparePolicies(writeCtx, lease, apps)
 	if err != nil {
@@ -112,20 +113,20 @@ func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.Enviro
 	if err != nil {
 		for _, convergence := range convergences {
 			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrEnvironmentGitManaged) {
-				convergence.abort(ctx)
+				convergence.Abort(ctx)
 			} else {
 				// A lost COMMIT reply does not prove rollback. Keep the
 				// temporary fence; recovery checks durable effects before
 				// publishing apply. Abort could release an old cached policy
 				// even though its replacement committed successfully.
-				convergence.close(ctx)
+				convergence.Close(ctx)
 			}
 		}
 		return nil, err
 	}
 	defer func() {
 		for _, convergence := range convergences {
-			convergence.close(ctx)
+			convergence.Close(ctx)
 		}
 	}()
 	pending, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
@@ -142,7 +143,7 @@ func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.Enviro
 	results := make(chan error, len(convergences))
 	var applied sync.WaitGroup
 	for _, convergence := range convergences {
-		effect, exists := byGeneration[convergence.generation]
+		effect, exists := byGeneration[convergence.Generation]
 		if !exists {
 			results <- state.ErrConflict
 			continue
@@ -173,40 +174,40 @@ func gitOpsChangedPolicyApps(plan environmentsync.Plan, ids map[string]string) [
 	return slices.Compact(apps)
 }
 
-func (b *environmentGitOpsBackend) preparePolicies(ctx context.Context, lease state.EnvironmentGitOpsLease, apps []string) ([]*edgeRuleConvergence, []state.EnvironmentGitOpsEffectSpec, error) {
-	convergences := []*edgeRuleConvergence{}
+func (b *environmentGitOpsBackend) preparePolicies(ctx context.Context, lease state.EnvironmentGitOpsLease, apps []string) ([]*edgerules.EdgeRuleConvergence, []state.EnvironmentGitOpsEffectSpec, error) {
+	convergences := []*edgerules.EdgeRuleConvergence{}
 	specs := []state.EnvironmentGitOpsEffectSpec{}
 	for _, app := range apps {
 		host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, lease.Source.EnvironmentID, app)
 		if host == "" {
 			for _, convergence := range convergences {
-				convergence.abort(ctx)
+				convergence.Abort(ctx)
 			}
 			return nil, nil, state.ErrInvalidArgument
 		}
-		convergence, err := b.server.prepareEdgeRuleMutationLocked(ctx, app, "", "environment_gitops", func(context.Context) {}, host)
+		convergence, err := b.server.edgeRules.PrepareEdgeRuleMutationLocked(ctx, app, "", "environment_gitops", func(context.Context) {}, host)
 		if err != nil {
 			for _, prepared := range convergences {
-				prepared.abort(ctx)
+				prepared.Abort(ctx)
 			}
 			return nil, nil, err
 		}
 		convergences = append(convergences, convergence)
-		nodes := make([]string, 0, len(convergence.expected))
-		for node := range convergence.expected {
+		nodes := make([]string, 0, len(convergence.Expected))
+		for node := range convergence.Expected {
 			nodes = append(nodes, node)
 		}
 		specs = append(specs, state.EnvironmentGitOpsEffectSpec{AppID: app, Kind: "edge_policy",
-			GatewayGeneration: convergence.generation, MatchHosts: convergence.hosts, ExpectedNodes: nodes})
+			GatewayGeneration: convergence.Generation, MatchHosts: convergence.Hosts, ExpectedNodes: nodes})
 	}
 	return convergences, specs, nil
 }
 
-func (b *environmentGitOpsBackend) applyEffect(ctx context.Context, lease state.EnvironmentGitOpsLease, effect state.EnvironmentGitOpsEffect, convergence *edgeRuleConvergence) error {
-	convergence.onAcknowledgement = func(ctx context.Context, node string) error {
+func (b *environmentGitOpsBackend) applyEffect(ctx context.Context, lease state.EnvironmentGitOpsLease, effect state.EnvironmentGitOpsEffect, convergence *edgerules.EdgeRuleConvergence) error {
+	convergence.OnAcknowledgement = func(ctx context.Context, node string) error {
 		return b.effects.AcknowledgeEnvironmentGitOpsEffect(ctx, lease, effect.ID, effect.GatewayGeneration, node)
 	}
-	if err := convergence.apply(ctx, ""); err != nil {
+	if err := convergence.Apply(ctx, ""); err != nil {
 		return err
 	}
 	return b.effects.CompleteEnvironmentGitOpsEffect(ctx, lease, effect.ID)
@@ -232,17 +233,17 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 		return err
 	}
 	defer unlock(ctx)
-	nodes, err := b.server.servingEdgeRuleNodes(ctx)
+	nodes, err := b.server.edgeRules.ServingEdgeRuleNodes(ctx)
 	if err != nil {
 		return err
 	}
-	if b.server.edgeRuleFleetRequired && len(nodes) == 0 {
+	if b.server.edgeRules.FleetRequired && len(nodes) == 0 {
 		return errors.New("serving gateway authority is unavailable")
 	}
 	// Recovery uses one bounded notification window for the complete pending
 	// set as well. Older effects can be numerous after repeated interrupted
 	// generations; returning partial keeps them durable for another attempt.
-	recoverCtx, cancel := context.WithTimeout(ctx, edgeRuleConvergenceTimeout+time.Second)
+	recoverCtx, cancel := context.WithTimeout(ctx, edgerules.EdgeRuleConvergenceTimeout+time.Second)
 	defer cancel()
 	for _, effect := range pending {
 		effect, err = b.effects.ExtendEnvironmentGitOpsEffectTargets(recoverCtx, lease, effect.ID, nodes)
@@ -260,16 +261,16 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 	return nil
 }
 
-func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, effect state.EnvironmentGitOpsEffect) (*edgeRuleConvergence, error) {
-	convergence := &edgeRuleConvergence{notif: b.server.notif, generation: effect.GatewayGeneration,
-		appID: effect.AppID, operation: "environment_gitops", hosts: effect.MatchHosts, expected: map[string]struct{}{},
-		cancel: func() {}, unlock: func(context.Context) {}}
+func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, effect state.EnvironmentGitOpsEffect) (*edgerules.EdgeRuleConvergence, error) {
+	convergence := &edgerules.EdgeRuleConvergence{Notif: b.server.notif, Generation: effect.GatewayGeneration,
+		AppID: effect.AppID, Operation: "environment_gitops", Hosts: effect.MatchHosts, Expected: map[string]struct{}{},
+		Cancel: func() {}, Unlock: func(context.Context) {}}
 	for _, node := range effect.ExpectedNodes {
-		convergence.expected[node] = struct{}{}
+		convergence.Expected[node] = struct{}{}
 	}
-	if len(convergence.expected) > 0 {
+	if len(convergence.Expected) > 0 {
 		var err error
-		convergence.events, convergence.cancel, err = b.server.notif.Subscribe(ctx, []string{db.NotifyEdgeRuleAck})
+		convergence.Events, convergence.Cancel, err = b.server.notif.Subscribe(ctx, []string{db.NotifyEdgeRuleAck})
 		if err != nil {
 			return nil, err
 		}

@@ -174,6 +174,37 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	}
 }
 
+// Hunt #9 H9-57: since and until both snap to UTC midnight, so a same-day
+// window is empty; the store rejects an empty window and the handler
+// answered 500 "could not load platform tenant usage" (production-us,
+// `platform-tenants usage --since <today> --until <today, later>`).
+func TestPlatformTenantUsageSameDayWindowIsEmpty(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	create := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+		ExternalRef: "customer-same-day", Name: "Same Day",
+	}, nil)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create tenant: %d %s", create.Code, create.Body.String())
+	}
+	var tenant api.PlatformTenantResponse
+	if err := json.Unmarshal(create.Body.Bytes(), &tenant); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	q := url.Values{"since": {day.Add(time.Hour).Format(time.RFC3339)}, "until": {day.Add(2 * time.Hour).Format(time.RFC3339)}}
+	res := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/usage?"+q.Encode(), nil, nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("same-day usage window: %d %s, want 200 with an empty period", res.Code, res.Body.String())
+	}
+	var usage api.PlatformTenantUsageResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.RequestCount != 0 || len(usage.Buckets) != 0 {
+		t.Fatalf("same-day usage = %+v, want an empty period", usage)
+	}
+}
+
 func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	originalIDs := make(map[string]struct{}, 3)
