@@ -36,6 +36,7 @@ func TestManagedRealtimeDrainClaimFailureIsObservable(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ops: ops,
 	}
+	srv.realtime.Host = realtimeHost{srv}
 	srv.realtime.RunManagedRealtimeDrainPass(context.Background(), failingRealtimeDrainWorker{err: errors.New("claim failed")})
 
 	if body := scrapeOpsMetrics(t, ops); !strings.Contains(body, `apid_test_ops_total{code="err",op="managed_realtime_drain_claim"} 1`) {
