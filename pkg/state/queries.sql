@@ -16004,3 +16004,9 @@ SELECT jsonb_build_object(
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=sqlc.arg(deployment_id)::uuid::text)
 )::jsonb AS borrowers;
+
+-- name: CloneCheckpointCompensationHasWorkloadCleanup :one
+SELECT (EXISTS(SELECT 1 FROM project_environment_clone_configuration_cleanups c WHERE c.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_workload_cleanups w WHERE w.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups d WHERE d.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_environment_cleanups e WHERE e.operation_id=sqlc.arg(operation_id)::uuid))::boolean;

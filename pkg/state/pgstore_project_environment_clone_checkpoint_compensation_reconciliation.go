@@ -27,6 +27,10 @@ func (s *PgStore) ReconcileProjectEnvironmentCloneCheckpointCompensation(ctx con
 			return err
 		}
 		out = checkpointCompensationReconciliation(op, in, records)
+		if err = reconcileCheckpointWorkloadCleanupTx(ctx, tx, op, records, &out); err != nil {
+			return err
+		}
+		sortCheckpointCompensationBlockers(&out)
 		return nil
 	})
 	if err != nil {
@@ -61,10 +65,7 @@ func checkpointCompensationReconciliation(op ProjectEnvironmentCloneOperation, i
 			Kind: "release_set", Name: op.TargetEnvironment, TargetID: op.TargetReleaseSetID, Reason: "release_withdrawal_unverified",
 		})
 	}
-	sort.Slice(out.Blockers, func(i, j int) bool {
-		a, b := out.Blockers[i], out.Blockers[j]
-		return a.Kind+"\x00"+a.Name+"\x00"+a.TargetID+"\x00"+a.Reason < b.Kind+"\x00"+b.Name+"\x00"+b.TargetID+"\x00"+b.Reason
-	})
+	sortCheckpointCompensationBlockers(&out)
 	return out
 }
 
@@ -80,4 +81,11 @@ func checkpointCompensationDataResource(op ProjectEnvironmentCloneOperation, cap
 		}
 	}
 	return false
+}
+
+func sortCheckpointCompensationBlockers(out *ProjectEnvironmentCloneCheckpointCompensationReconciliation) {
+	sort.Slice(out.Blockers, func(i, j int) bool {
+		a, b := out.Blockers[i], out.Blockers[j]
+		return a.Kind+"\x00"+a.Name+"\x00"+a.TargetID+"\x00"+a.Reason < b.Kind+"\x00"+b.Name+"\x00"+b.TargetID+"\x00"+b.Reason
+	})
 }

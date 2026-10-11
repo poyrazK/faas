@@ -217,6 +217,7 @@ type Querier interface {
 	// All borrower intents require original catalogue owners and authenticated
 	// terminal proof in Go; missing copy catalogue proof links remain blockers.
 	CloneCheckpointCaptureRetirementHasBorrowers(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
+	CloneCheckpointCompensationHasWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
 	CloneCheckpointObjectCredentialIdentityExists(ctx context.Context, db DBTX, credentialID pgtype.UUID) (bool, error)
 	CloneCheckpointObjectTargetHasGrants(ctx context.Context, db DBTX, targetBucketID pgtype.UUID) (bool, error)
 	CloneCheckpointPgCopyRetirementHasBorrowers(ctx context.Context, db DBTX, arg CloneCheckpointPgCopyRetirementHasBorrowersParams) (pgtype.Bool, error)

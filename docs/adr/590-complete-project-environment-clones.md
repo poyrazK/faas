@@ -9667,3 +9667,26 @@ bounded. This is not a native disk/image garbage collector or owner authority fo
 unrelated operational records. Whole-stage final compensation, published release
 withdrawal, remaining operational retirement and provider qualification are still
 required before full-stage admission can be enabled.
+
+### Workload cleanup evidence in compensation reconciliation
+
+The private compensation report now authenticates a present workload retirement
+journal and its original configuration ownership, then reports the exact hashes
+of each present settings, workload, deployment and environment cleanup receipt.
+Missing cleanup steps remain explicit blockers. A missing native predecessor for
+retained cleanup evidence, changed receipt or changed post-state rejects the
+entire report rather than returning partial authenticated evidence.
+
+Once all four cleanup receipts authenticate, the report includes a stable workload
+closure digest binding original ownership, native plan/observation, source
+compensation, capture retirement and the four cleanup receipts. It recognizes
+only frozen configuration/resource identities and versions, independently of
+claimed resource status. Foreign versions, duplicate labels hiding different
+identities, unknown resource kinds and release withdrawal remain blockers. The
+report retains the current operation revision and resource inventory hash; worker
+handoff preserves the cleanup digest while requiring the current lease.
+
+This read does not mutate the operation, dispatch native work or enable the
+generic terminal transition. A dedicated terminal writer must still consume the
+complete authenticated report and close remaining ownership protocols. Public
+full-stage admission and native/provider qualification remain gated.

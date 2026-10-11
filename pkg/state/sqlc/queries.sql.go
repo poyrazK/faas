@@ -5173,6 +5173,20 @@ func (q *Queries) CloneCheckpointCaptureRetirementHasBorrowers(ctx context.Conte
 	return column_1, err
 }
 
+const cloneCheckpointCompensationHasWorkloadCleanup = `-- name: CloneCheckpointCompensationHasWorkloadCleanup :one
+SELECT (EXISTS(SELECT 1 FROM project_environment_clone_configuration_cleanups c WHERE c.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_workload_cleanups w WHERE w.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups d WHERE d.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_environment_cleanups e WHERE e.operation_id=$1::uuid))::boolean
+`
+
+func (q *Queries) CloneCheckpointCompensationHasWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointCompensationHasWorkloadCleanup, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const cloneCheckpointObjectCredentialIdentityExists = `-- name: CloneCheckpointObjectCredentialIdentityExists :one
 SELECT EXISTS(SELECT 1 FROM object_storage_s3_credentials WHERE id=$1::uuid)::boolean
 `
