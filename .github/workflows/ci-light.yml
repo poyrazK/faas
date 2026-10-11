@@ -126,7 +126,7 @@ jobs:
         if: steps.select.outputs.vet != ''
         env:
           PKGS: ${{ steps.select.outputs.vet }}
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 10GiB
           GOMAXPROCS: 4
         run: |
@@ -151,7 +151,7 @@ jobs:
         if: steps.select.outputs.changed != ''
         env:
           PKGS: ${{ steps.select.outputs.changed }}
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 10GiB
           GOGC: 100
           GOMAXPROCS: 4
@@ -464,7 +464,7 @@ jobs:
       # The run phase reuses the compiled binaries from the build cache.
       - name: race tests (changed packages and invariants)
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail

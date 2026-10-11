@@ -1,0 +1,322 @@
+package apidserver
+
+import (
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+func TestBuildDebugDependencyLatencyHistoryDetectsRecentRegression(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, 20)
+	for i := 0; i < 10; i++ {
+		rows = append(rows, dependencyHistoryTestRow(start.Add(time.Duration(i)*time.Minute), 100, "ok"))
+	}
+	for i := 0; i < 10; i++ {
+		rows = append(rows, dependencyHistoryTestRow(start.Add(time.Hour+time.Duration(i)*time.Minute), 300, "error"))
+	}
+
+	got, edges, truncated, represented, samples := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if truncated {
+		t.Fatal("unexpected truncation")
+	}
+	if represented != 20 || samples != 20 {
+		t.Fatalf("coverage = (represented=%d samples=%d), want (20, 20)", represented, samples)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d dependency groups, want one: %+v", len(got), got)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("got %d dependency edges, want one root edge: %+v", len(edges), edges)
+	}
+	item := got[0]
+	if item.Type != "managed_binding" || item.Kind != "managed_postgres" {
+		t.Fatalf("dependency identity = %+v", item)
+	}
+	if item.P50MS != 100 || item.P95MS != 300 || item.P99MS != 300 {
+		t.Fatalf("full-window percentiles = %+v", item)
+	}
+	if item.ExclusiveP95MS != 300 || item.CurrentExclusiveP95MS != 300 || item.ExclusiveP95DeltaMS != 200 {
+		t.Fatalf("exclusive percentiles = %+v", item)
+	}
+	if item.BaselineP95MS != 100 || item.CurrentP95MS != 300 || item.P95DeltaMS != 200 {
+		t.Fatalf("split-window percentiles = %+v", item)
+	}
+	if item.RegressionFactor != 3 || !item.Regression {
+		t.Fatalf("regression = %+v", item)
+	}
+	if item.ErrorRatePct != 50 || item.BaselineErrorRatePct != 0 || item.CurrentErrorRatePct != 100 || item.ErrorRateDeltaPct != 100 {
+		t.Fatalf("error rates = %+v", item)
+	}
+}
+
+func TestBuildDebugDependencyLatencyHistoryBuildsNormalizedEdgesAndExclusiveTime(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	startNanos := uint64(start.UnixNano())
+	raw, err := json.Marshal([]debugEvidenceSpan{
+		{
+			SpanID:            "root",
+			Name:              "handler",
+			StartTimeUnixNano: startNanos,
+			EndTimeUnixNano:   uint64(start.Add(time.Second).UnixNano()),
+			DurationNanos:     uint64(time.Second),
+		},
+		{
+			SpanID:            "child-a",
+			ParentSpanID:      "root",
+			Name:              "service.binding",
+			StartTimeUnixNano: startNanos,
+			EndTimeUnixNano:   uint64(start.Add(600 * time.Millisecond).UnixNano()),
+			DurationNanos:     uint64(600 * time.Millisecond),
+			Attributes: map[string]string{
+				"gregale.dependency.type": "managed_binding",
+				"gregale.dependency.kind": "managed_postgres",
+			},
+		},
+		{
+			SpanID:            "child-b",
+			ParentSpanID:      "root",
+			Name:              "cache.get",
+			StartTimeUnixNano: uint64(start.Add(500 * time.Millisecond).UnixNano()),
+			EndTimeUnixNano:   uint64(start.Add(800 * time.Millisecond).UnixNano()),
+			DurationNanos:     uint64(300 * time.Millisecond),
+			Attributes: map[string]string{
+				"gregale.dependency.type": "platform_internal",
+				"gregale.dependency.kind": "kv",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := []sqlc.ListRequestTelemetryDependencySpansRow{{
+		Count:        1,
+		ReceivedAt:   pgtype.Timestamptz{Time: start.Add(time.Hour), Valid: true},
+		SpansSummary: raw,
+	}}
+
+	dependencies, edges, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if truncated || len(dependencies) != 3 || len(edges) != 3 {
+		t.Fatalf("rollup = (dependencies=%d edges=%d truncated=%v), want (3, 3, false)", len(dependencies), len(edges), truncated)
+	}
+	var handler api.DebugDependencyLatencyItem
+	for _, dependency := range dependencies {
+		if dependency.Name == "handler" {
+			handler = dependency
+		}
+	}
+	if handler.ExclusiveP95MS != 200 {
+		t.Fatalf("handler exclusive p95 = %d, want 200ms", handler.ExclusiveP95MS)
+	}
+	for _, edge := range edges {
+		if edge.From.Name == "handler" && edge.To.Name == "service.binding" {
+			if edge.ExclusiveP95MS != 600 || edge.From.Type != "application" || edge.To.Type != "managed_binding" {
+				t.Fatalf("binding edge = %+v", edge)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing normalized handler -> service.binding edge: %+v", edges)
+}
+
+func TestBuildDebugDependencyLatencyHistoryIncludesEdgeExemplars(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := []sqlc.ListRequestTelemetryDependencySpansRow{
+		criticalPathHistoryTestRowWithIdentity(start.Add(10*time.Minute), 100, 200, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(70*time.Minute), 300, 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(80*time.Minute), 250, 500, "cccccccccccccccccccccccccccccccc"),
+	}
+
+	_, edges, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if truncated {
+		t.Fatal("unexpected truncation")
+	}
+	var edge *api.DebugDependencyImpactEdge
+	for i := range edges {
+		if edges[i].From.Name == "handler" && edges[i].To.Name == "db.query" {
+			edge = &edges[i]
+			break
+		}
+	}
+	if edge == nil {
+		t.Fatalf("missing handler -> db.query edge: %+v", edges)
+	}
+	if len(edge.Exemplars) != 3 {
+		t.Fatalf("exemplars = %+v, want three bounded representatives", edge.Exemplars)
+	}
+	if edge.Exemplars[0].RequestID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || edge.Exemplars[0].Window != "current" || edge.Exemplars[0].DurationMS != 300 {
+		t.Fatalf("current exemplar = %+v", edge.Exemplars[0])
+	}
+	if edge.Exemplars[1].RequestID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || edge.Exemplars[1].Window != "baseline" {
+		t.Fatalf("baseline exemplar = %+v", edge.Exemplars[1])
+	}
+	if edge.Exemplars[2].RequestID != "cccccccccccccccccccccccccccccccc" || !edge.Exemplars[2].Error || edge.Exemplars[2].HTTPStatus != 500 {
+		t.Fatalf("error exemplar = %+v", edge.Exemplars[2])
+	}
+}
+
+func TestBuildDebugDependencyLatencyHistoryCapsGroupsAndUsesApplicationFallback(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, debugDependencyHistoryMaxGroups+1)
+	for i := 0; i < debugDependencyHistoryMaxGroups+1; i++ {
+		rows = append(rows, dependencyHistoryTestRowWithName(start.Add(time.Minute), uint64(i+1), "ok", fmt.Sprintf("unique-%d", i)))
+	}
+	got, _, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if !truncated || len(got) != debugDependencyHistoryMaxOutput {
+		t.Fatalf("cap = (groups=%d truncated=%v), want (%d, true)", len(got), truncated, debugDependencyHistoryMaxOutput)
+	}
+	for _, item := range got {
+		if item.Type != "application" {
+			t.Fatalf("unclassified dependency type = %q, want application", item.Type)
+		}
+	}
+}
+
+func TestBuildDebugCriticalPathHistoryDetectsRecentRegression(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, 20)
+	for i := 0; i < 10; i++ {
+		rows = append(rows, criticalPathHistoryTestRow(start.Add(time.Duration(i)*time.Minute), 100, false))
+	}
+	for i := 0; i < 10; i++ {
+		rows = append(rows, criticalPathHistoryTestRow(start.Add(time.Hour+time.Duration(i)*time.Minute), 400, true))
+	}
+
+	got, truncated, complete, represented, samples := buildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
+	if truncated || !complete {
+		t.Fatalf("history state = (truncated=%v complete=%v), want (false, true)", truncated, complete)
+	}
+	if represented != 20 || samples != 20 {
+		t.Fatalf("coverage = (represented=%d samples=%d), want (20, 20)", represented, samples)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d critical paths, want one: %+v", len(got), got)
+	}
+	path := got[0]
+	if len(path.Segments) != 2 || path.Segments[0].Name != "handler" || path.Segments[1].Name != "db.query" {
+		t.Fatalf("path segments = %+v", path.Segments)
+	}
+	if path.P50MS != 100 || path.P95MS != 400 || path.P99MS != 400 {
+		t.Fatalf("full-window percentiles = %+v", path)
+	}
+	if path.BaselineCalls != 10 || path.CurrentCalls != 10 || path.BaselineP95MS != 100 || path.CurrentP95MS != 400 || path.P95DeltaMS != 300 {
+		t.Fatalf("split-window path percentiles = %+v", path)
+	}
+	if path.RegressionFactor != 4 || !path.Regression {
+		t.Fatalf("regression = %+v", path)
+	}
+	if path.ErrorRatePct != 50 || path.BaselineErrorRatePct != 0 || path.CurrentErrorRatePct != 100 || path.ErrorRateDeltaPct != 100 {
+		t.Fatalf("error rates = %+v", path)
+	}
+}
+
+func TestBuildDebugCriticalPathHistoryIncludesExemplarsAndDominantSegment(t *testing.T) {
+	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
+	rows := []sqlc.ListRequestTelemetryDependencySpansRow{
+		criticalPathHistoryTestRowWithIdentity(start.Add(10*time.Minute), 100, 200, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(70*time.Minute), 300, 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		criticalPathHistoryTestRowWithIdentity(start.Add(80*time.Minute), 250, 500, "cccccccccccccccccccccccccccccccc"),
+	}
+
+	got, truncated, complete, _, _ := buildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
+	if truncated || !complete || len(got) != 1 {
+		t.Fatalf("history = (paths=%d truncated=%v complete=%v), want one complete path", len(got), truncated, complete)
+	}
+	path := got[0]
+	if path.DominantSegment == nil || path.DominantSegment.Name != "db.query" || path.DominantSegmentExclusiveMS != 300 {
+		t.Fatalf("dominant segment = %+v/%dms, want db.query/300ms", path.DominantSegment, path.DominantSegmentExclusiveMS)
+	}
+	if len(path.Exemplars) != 3 {
+		t.Fatalf("exemplars = %+v, want three bounded representatives", path.Exemplars)
+	}
+	if path.Exemplars[0].RequestID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || path.Exemplars[0].Window != "current" || path.Exemplars[0].DurationMS != 300 {
+		t.Fatalf("current exemplar = %+v", path.Exemplars[0])
+	}
+	if path.Exemplars[1].RequestID != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || path.Exemplars[1].Window != "baseline" {
+		t.Fatalf("baseline exemplar = %+v", path.Exemplars[1])
+	}
+	if path.Exemplars[2].RequestID != "cccccccccccccccccccccccccccccccc" || !path.Exemplars[2].Error || path.Exemplars[2].HTTPStatus != 500 {
+		t.Fatalf("error exemplar = %+v", path.Exemplars[2])
+	}
+	for _, exemplar := range path.Exemplars {
+		if exemplar.DominantSegment == nil || exemplar.DominantSegment.Name != "db.query" {
+			t.Fatalf("exemplar attribution = %+v", exemplar)
+		}
+	}
+}
+
+func criticalPathHistoryTestRowWithIdentity(at time.Time, durationMS uint64, status int32, traceID string) sqlc.ListRequestTelemetryDependencySpansRow {
+	row := criticalPathHistoryTestRow(at, durationMS, status >= 400)
+	row.Status = status
+	row.TraceID = pgtype.Text{String: traceID, Valid: true}
+	return row
+}
+
+func criticalPathHistoryTestRow(at time.Time, durationMS uint64, errorStatus bool) sqlc.ListRequestTelemetryDependencySpansRow {
+	start := at.UnixNano()
+	end := at.Add(time.Duration(durationMS) * time.Millisecond).UnixNano()
+	status := "ok"
+	if errorStatus {
+		status = "error"
+	}
+	raw, _ := json.Marshal([]debugEvidenceSpan{
+		{
+			SpanID:            "child",
+			ParentSpanID:      "root",
+			Name:              "db.query",
+			StartTimeUnixNano: uint64(start),
+			EndTimeUnixNano:   uint64(end),
+			DurationNanos:     durationMS * uint64(time.Millisecond),
+			Status:            status,
+			Attributes: map[string]string{
+				"gregale.dependency.type": "managed_binding",
+				"gregale.dependency.kind": "managed_postgres",
+			},
+		},
+		{
+			SpanID:            "root",
+			Name:              "handler",
+			StartTimeUnixNano: uint64(start),
+			EndTimeUnixNano:   uint64(end),
+			DurationNanos:     durationMS * uint64(time.Millisecond),
+		},
+	})
+	return sqlc.ListRequestTelemetryDependencySpansRow{
+		Count:        1,
+		ReceivedAt:   pgtype.Timestamptz{Time: at, Valid: true},
+		SpansSummary: raw,
+	}
+}
+
+func dependencyHistoryTestRow(at time.Time, durationMS uint64, status string) sqlc.ListRequestTelemetryDependencySpansRow {
+	return dependencyHistoryTestRowWithName(at, durationMS, status, "db.query")
+}
+
+func dependencyHistoryTestRowWithName(at time.Time, durationMS uint64, status, name string) sqlc.ListRequestTelemetryDependencySpansRow {
+	raw, _ := json.Marshal([]debugEvidenceSpan{{
+		Name:          name,
+		DurationNanos: durationMS * uint64(time.Millisecond),
+		Status:        status,
+		Attributes: map[string]string{
+			"gregale.dependency.type": "managed_binding",
+			"gregale.dependency.kind": "managed_postgres",
+		},
+	}})
+	if name != "db.query" {
+		// Deliberately leave the classification absent for the cardinality test.
+		var spans []debugEvidenceSpan
+		_ = json.Unmarshal(raw, &spans)
+		spans[0].Attributes = nil
+		raw, _ = json.Marshal(spans)
+	}
+	return sqlc.ListRequestTelemetryDependencySpansRow{
+		Count:        1,
+		ReceivedAt:   pgtype.Timestamptz{Time: at, Valid: true},
+		SpansSummary: raw,
+	}
+}

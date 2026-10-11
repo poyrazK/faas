@@ -1,3 +1,3 @@
-# Non-test Go lines in cmd/apid (scripts/ci/check_apid_size.sh, ADR-977).
-# Raise only with a reason in the PR; lower whenever code moves to pkg/apid.
-153757
+# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
+# Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
+153780
