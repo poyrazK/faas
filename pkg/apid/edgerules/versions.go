@@ -1,4 +1,4 @@
-package main
+package edgerules
 
 // ADR-961 §2: versioned edge-rule sets. The store records a version of an
 // app's whole rule set on every committed change; these handlers list and
@@ -14,20 +14,21 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const edgeRuleVersionListLimit = 50
 
-func (s *server) edgeRuleVersions() (state.EdgeRuleSetVersionStore, bool) {
-	store, ok := s.store.(state.EdgeRuleSetVersionStore)
+func (s *Service) edgeRuleVersions() (state.EdgeRuleSetVersionStore, bool) {
+	store, ok := s.Host.Store().(state.EdgeRuleSetVersionStore)
 	return store, ok
 }
 
 // setEdgeRuleSetETag stamps the app's current rule-set version as the ETag.
 // Best effort: a store without versioning, or a read error, omits it.
-func (s *server) setEdgeRuleSetETag(ctx context.Context, w http.ResponseWriter, appID string) {
+func (s *Service) setEdgeRuleSetETag(ctx context.Context, w http.ResponseWriter, appID string) {
 	store, ok := s.edgeRuleVersions()
 	if !ok {
 		return
@@ -42,7 +43,7 @@ func (s *server) setEdgeRuleSetETag(ctx context.Context, w http.ResponseWriter, 
 // mutation lock, so the check and the write cannot interleave with another
 // apid's mutation of the same app. It writes the 412 and returns true when
 // the precondition fails.
-func (s *server) edgeRuleIfMatchFailed(ctx context.Context, w http.ResponseWriter, r *http.Request, appID string) bool {
+func (s *Service) edgeRuleIfMatchFailed(ctx context.Context, w http.ResponseWriter, r *http.Request, appID string) bool {
 	header := strings.TrimSpace(r.Header.Get("If-Match"))
 	if header == "" || header == "*" {
 		return false
@@ -73,14 +74,14 @@ func edgeRuleSetVersionResponse(v state.EdgeRuleSetVersion, latest int) api.Edge
 		CreatedAt: v.CreatedAt, Current: v.Version == latest,
 	}
 	for _, rule := range v.Rules {
-		out.Rules = append(out.Rules, edgeRuleResponse(rule))
+		out.Rules = append(out.Rules, EdgeRuleResponse(rule))
 	}
 	return out
 }
 
 // GET /v1/apps/{slug}/edge-rules/versions — newest first, without rules.
-func (s *server) listEdgeRuleSetVersions(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) ListEdgeRuleSetVersions(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -103,12 +104,12 @@ func (s *server) listEdgeRuleSetVersions(w http.ResponseWriter, r *http.Request,
 		out = append(out, edgeRuleSetVersionResponse(v, latest))
 	}
 	w.Header().Set("ETag", api.EdgeRuleSetETag(latest))
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 // GET /v1/apps/{slug}/edge-rules/versions/{version} — one version with rules.
-func (s *server) getEdgeRuleSetVersion(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) GetEdgeRuleSetVersion(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -124,7 +125,7 @@ func (s *server) getEdgeRuleSetVersion(w http.ResponseWriter, r *http.Request, a
 	}
 	v, err := store.GetEdgeRuleSetVersion(r.Context(), app.ID, version)
 	if errors.Is(err, state.ErrNotFound) {
-		s.notFound(w, "no such edge-rule version")
+		httpkit.NotFound(w, "no such edge-rule version")
 		return
 	}
 	if err != nil {
@@ -132,12 +133,12 @@ func (s *server) getEdgeRuleSetVersion(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	latest, _ := store.LatestEdgeRuleSetVersion(r.Context(), app.ID)
-	writeJSON(w, http.StatusOK, edgeRuleSetVersionResponse(v, latest))
+	httpkit.WriteJSON(w, http.StatusOK, edgeRuleSetVersionResponse(v, latest))
 }
 
 // POST /v1/apps/{slug}/edge-rules/rollback — restore a recorded version.
-func (s *server) rollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) RollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -158,7 +159,7 @@ func (s *server) rollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct 
 	}
 	target, err := store.GetEdgeRuleSetVersion(r.Context(), app.ID, req.Version)
 	if errors.Is(err, state.ErrNotFound) {
-		s.notFound(w, "no such edge-rule version")
+		httpkit.NotFound(w, "no such edge-rule version")
 		return
 	}
 	if err != nil {
@@ -170,50 +171,50 @@ func (s *server) rollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not read current edge rules"))
 		return
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "rolled_back", hosts...)
+	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "rolled_back", hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; nothing was rolled back"))
 		return
 	}
 	if s.edgeRuleIfMatchFailed(r.Context(), w, r, app.ID) {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		return
 	}
 	restored, err := store.RestoreEdgeRuleSetVersion(r.Context(), app.ID, req.Version, limits)
 	if err != nil {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		s.writeEdgeRuleRestoreError(w, err)
 		return
 	}
-	s.log.Info("edge rules rolled back",
+	s.Host.Logger().Info("edge rules rolled back",
 		"app", logsanitize.Field(app.ID),
 		"account", logsanitize.Field(acct.ID),
 		"version", logsanitize.Field(strconv.Itoa(req.Version)),
 		"rules", len(restored.Rules))
-	s.audit.Emit(r.Context(), "edge_rule.rolled_back", &acct.ID, map[string]any{
-		auditKeyAppID: app.ID,
-		"version":     req.Version,
-		"rule_count":  len(restored.Rules),
+	s.Host.EmitAudit(r.Context(), "edge_rule.rolled_back", &acct.ID, map[string]any{
+		httpkit.AuditKeyAppID: app.ID,
+		"version":             req.Version,
+		"rule_count":          len(restored.Rules),
 	})
-	if err := convergence.apply(r.Context(), ""); err != nil {
-		convergence.setResponseState(w, "converging")
-		s.log.Error("edge rules rolled back but fleet convergence is incomplete", "app", app.ID, "generation", convergence.generation, "err", err)
+	if err := convergence.Apply(r.Context(), ""); err != nil {
+		convergence.SetResponseState(w, "converging")
+		s.Host.Logger().Error("edge rules rolled back but fleet convergence is incomplete", "app", app.ID, "generation", convergence.Generation, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("edge rules were rolled back but the serving fleet has not acknowledged it; read the current rules before retrying"))
 		return
 	}
-	convergence.setResponseState(w, "active")
+	convergence.SetResponseState(w, "active")
 	s.setEdgeRuleSetETag(r.Context(), w, app.ID)
 	out := make([]api.EdgeRuleResponse, 0, len(restored.Rules))
 	for _, rule := range restored.Rules {
-		out = append(out, edgeRuleResponse(rule))
+		out = append(out, EdgeRuleResponse(rule))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 // edgeRuleRollbackHosts is the fence scope of a rollback: every host a
 // current rule or a restored rule matches, since both sets change policy.
-func (s *server) edgeRuleRollbackHosts(ctx context.Context, appID string, restored []state.EdgeRule) ([]string, error) {
-	current, err := s.store.ListEdgeRulesForApp(ctx, appID)
+func (s *Service) edgeRuleRollbackHosts(ctx context.Context, appID string, restored []state.EdgeRule) ([]string, error) {
+	current, err := s.Host.Store().ListEdgeRulesForApp(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +231,7 @@ func (s *server) edgeRuleRollbackHosts(ctx context.Context, appID string, restor
 	return hosts, nil
 }
 
-func (s *server) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
+func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
 	var qe *state.EdgeRuleQuotaError
 	switch {
 	case errors.As(err, &qe):
@@ -239,7 +240,7 @@ func (s *server) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Version cannot be restored",
 			"the version references a CORS preset that no longer exists"))
 	case errors.Is(err, state.ErrNotFound):
-		s.notFound(w, "no such edge-rule version")
+		httpkit.NotFound(w, "no such edge-rule version")
 	default:
 		api.WriteProblem(w, api.ErrCapacity("could not roll back edge rules"))
 	}

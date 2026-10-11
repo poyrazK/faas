@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -76,7 +77,7 @@ func TestActionFromBody_ThrottlePreservesDimensionalFields(t *testing.T) {
 		"max_keys_per_rule":250,
 		"missing_key_policy":"reject"
 	}`)
-	action := actionFromBody(string(state.EdgeRuleKindThrottle), raw)
+	action := edgerules.ActionFromBody(string(state.EdgeRuleKindThrottle), raw)
 	if action.Throttle == nil {
 		t.Fatal("actionFromBody(throttle) returned nil throttle action")
 	}

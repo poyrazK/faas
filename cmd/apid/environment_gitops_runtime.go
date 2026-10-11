@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -163,7 +164,7 @@ func (b *environmentGitOpsBackend) convergeEnvironmentGitOpsWorkloadServing(ctx 
 	if !ok {
 		return false, nil
 	}
-	gateways, err := b.server.servingEdgeRuleNodes(ctx)
+	gateways, err := b.server.edgeRules.ServingEdgeRuleNodes(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -182,9 +183,9 @@ func (b *environmentGitOpsBackend) convergeEnvironmentGitOpsWorkloadServing(ctx 
 		return false, err
 	}
 	defer cancel()
-	waitCtx, stop := context.WithTimeout(ctx, edgeRuleConvergenceTimeout)
+	waitCtx, stop := context.WithTimeout(ctx, edgerules.EdgeRuleConvergenceTimeout)
 	defer stop()
-	retry := time.NewTicker(edgeRuleNotificationRetry)
+	retry := time.NewTicker(edgerules.EdgeRuleNotificationRetry)
 	defer retry.Stop()
 	routesByGeneration := make(map[int64]state.EnvironmentWorkloadServingRoute, len(receipt.Routes))
 	for _, route := range receipt.Routes {

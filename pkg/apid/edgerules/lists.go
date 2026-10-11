@@ -1,4 +1,4 @@
-package main
+package edgerules
 
 // ADR-963: reusable edge-rule lists. Account-scoped named sets referenced
 // from match conditions with the in_list op.
@@ -10,11 +10,12 @@ import (
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) edgeRuleListStore(w http.ResponseWriter) (state.EdgeRuleListStore, bool) {
-	store, ok := s.store.(state.EdgeRuleListStore)
+func (s *Service) edgeRuleListStore(w http.ResponseWriter) (state.EdgeRuleListStore, bool) {
+	store, ok := s.Host.Store().(state.EdgeRuleListStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("edge rule lists are unavailable"))
 	}
@@ -24,12 +25,12 @@ func (s *server) edgeRuleListStore(w http.ResponseWriter) (state.EdgeRuleListSto
 // validateEdgeRuleMatchLists resolves a condition's list references against
 // the account: an unknown list, or one whose kind does not fit its field, is
 // a validation error. Conditions without references need no lookup.
-func (s *server) validateEdgeRuleMatchLists(ctx context.Context, accountID string, expr *api.EdgeRuleMatchExpr) *api.Problem {
+func (s *Service) validateEdgeRuleMatchLists(ctx context.Context, accountID string, expr *api.EdgeRuleMatchExpr) *api.Problem {
 	names := api.EdgeRuleMatchListRefs(expr)
 	if len(names) == 0 {
 		return nil
 	}
-	store, ok := s.store.(state.EdgeRuleListStore)
+	store, ok := s.Host.Store().(state.EdgeRuleListStore)
 	if !ok {
 		return api.ErrValidation("edge rule lists are unavailable")
 	}
@@ -49,7 +50,7 @@ func (s *server) validateEdgeRuleMatchLists(ctx context.Context, accountID strin
 	return api.ValidateEdgeRuleMatchWithLists(expr, lists)
 }
 
-func edgeRuleListResponse(l state.EdgeRuleList, refs []state.EdgeRuleListRef, withItems bool) api.EdgeRuleListResponse {
+func EdgeRuleListResponse(l state.EdgeRuleList, refs []state.EdgeRuleListRef, withItems bool) api.EdgeRuleListResponse {
 	out := api.EdgeRuleListResponse{
 		ID: l.ID, Name: l.Name, Kind: l.Kind, Description: l.Description,
 		ItemCount: len(l.Items), ReferencedBy: make([]string, 0, len(refs)),
@@ -65,7 +66,7 @@ func edgeRuleListResponse(l state.EdgeRuleList, refs []state.EdgeRuleListRef, wi
 }
 
 // GET /v1/edge-rule-lists
-func (s *server) listEdgeRuleLists(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) ListEdgeRuleLists(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.edgeRuleListStore(w)
 	if !ok {
 		return
@@ -82,13 +83,13 @@ func (s *server) listEdgeRuleLists(w http.ResponseWriter, r *http.Request, acct 
 	}
 	out := api.ListEdgeRuleListsResponse{Lists: make([]api.EdgeRuleListResponse, 0, len(lists))}
 	for _, l := range lists {
-		out.Lists = append(out.Lists, edgeRuleListResponse(l, refs[l.Name], false))
+		out.Lists = append(out.Lists, EdgeRuleListResponse(l, refs[l.Name], false))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 // GET /v1/edge-rule-lists/{name}
-func (s *server) getEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) GetEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.edgeRuleListStore(w)
 	if !ok {
 		return
@@ -108,7 +109,7 @@ func (s *server) getEdgeRuleList(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("could not read edge rule list references"))
 		return
 	}
-	writeJSON(w, http.StatusOK, edgeRuleListResponse(lists[0], refs[name], true))
+	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleListResponse(lists[0], refs[name], true))
 }
 
 // validateEdgeRuleListItems normalizes items and enforces the plan's
@@ -133,9 +134,9 @@ func validateEdgeRuleListDescription(description string) *api.Problem {
 }
 
 // POST /v1/edge-rule-lists
-func (s *server) createEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) CreateEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateEdgeRuleListRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
@@ -172,10 +173,10 @@ func (s *server) createEdgeRuleList(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("could not create edge rule list"))
 		return
 	}
-	s.audit.Emit(r.Context(), "edge_rule_list.created", &acct.ID, map[string]any{
+	s.Host.EmitAudit(r.Context(), "edge_rule_list.created", &acct.ID, map[string]any{
 		"list_id": l.ID, "name": l.Name, "kind": l.Kind, "item_count": len(l.Items),
 	})
-	writeJSON(w, http.StatusCreated, edgeRuleListResponse(l, nil, true))
+	httpkit.WriteJSON(w, http.StatusCreated, EdgeRuleListResponse(l, nil, true))
 }
 
 // editEdgeRuleListItems applies an update's items / add / remove to the
@@ -210,9 +211,9 @@ func editEdgeRuleListItems(current []string, req api.UpdateEdgeRuleListRequest, 
 }
 
 // PATCH /v1/edge-rule-lists/{name}
-func (s *server) updateEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.UpdateEdgeRuleListRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
@@ -235,16 +236,16 @@ func (s *server) updateEdgeRuleList(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("could not update edge rule list"))
 		return
 	}
-	s.audit.Emit(r.Context(), "edge_rule_list.updated", &acct.ID, map[string]any{
+	s.Host.EmitAudit(r.Context(), "edge_rule_list.updated", &acct.ID, map[string]any{
 		"list_id": l.ID, "name": l.Name, "item_count": len(l.Items), "rules_touched": len(refs),
 	})
-	writeJSON(w, http.StatusOK, edgeRuleListResponse(l, refs, true))
+	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleListResponse(l, refs, true))
 }
 
 // edgeRuleListUpdateParams validates a PATCH body against the stored list.
 // Add / remove read the current items first; a concurrent edit between the
 // read and the write is last-writer-wins, as for every list field.
-func (s *server) edgeRuleListUpdateParams(ctx context.Context, store state.EdgeRuleListStore, acct state.Account, name string, req api.UpdateEdgeRuleListRequest) (state.UpdateEdgeRuleListParams, *api.Problem) {
+func (s *Service) edgeRuleListUpdateParams(ctx context.Context, store state.EdgeRuleListStore, acct state.Account, name string, req api.UpdateEdgeRuleListRequest) (state.UpdateEdgeRuleListParams, *api.Problem) {
 	var params state.UpdateEdgeRuleListParams
 	if req.Description != nil {
 		if prob := validateEdgeRuleListDescription(*req.Description); prob != nil {
@@ -275,7 +276,7 @@ func (s *server) edgeRuleListUpdateParams(ctx context.Context, store state.EdgeR
 }
 
 // DELETE /v1/edge-rule-lists/{name}
-func (s *server) deleteEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) DeleteEdgeRuleList(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.edgeRuleListStore(w)
 	if !ok {
 		return
@@ -298,6 +299,6 @@ func (s *server) deleteEdgeRuleList(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("could not delete edge rule list"))
 		return
 	}
-	s.audit.Emit(r.Context(), "edge_rule_list.deleted", &acct.ID, map[string]any{"name": name})
+	s.Host.EmitAudit(r.Context(), "edge_rule_list.deleted", &acct.ID, map[string]any{"name": name})
 	w.WriteHeader(http.StatusNoContent)
 }

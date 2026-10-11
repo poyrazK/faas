@@ -1,4 +1,4 @@
-package main
+package edgerules
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	edgeRuleConvergenceTimeout = 3 * time.Second
-	edgeRuleNotificationRetry  = 250 * time.Millisecond
+	EdgeRuleConvergenceTimeout = 3 * time.Second
+	EdgeRuleNotificationRetry  = 250 * time.Millisecond
 	edgeRulesStateHeader       = "X-Faas-Edge-Rules-State"
 	edgeRulesGenerationHeader  = "X-Faas-Edge-Rules-Generation"
 )
@@ -25,55 +25,55 @@ type edgeRuleGenerationStore interface {
 	NextEdgeRuleGeneration(context.Context) (int64, error)
 }
 
-// edgeRuleMutationLocker is optional so MemStore-backed unit tests and
+// EdgeRuleMutationLocker is optional so MemStore-backed unit tests and
 // legacy single-box adapters retain the process-local fallback. Production
 // PgStore implements it with a session-scoped PostgreSQL advisory lock,
 // closing the cross-apid race where two mutations for one app could publish
 // generations out of order.
-type edgeRuleMutationLocker interface {
+type EdgeRuleMutationLocker interface {
 	AcquireEdgeRuleMutationLock(context.Context, string) (func(context.Context), error)
 }
 
-type edgeRuleConvergence struct {
-	notif             Notifier
-	events            <-chan db.Notification
-	cancel            func()
-	unlock            func(context.Context)
+type EdgeRuleConvergence struct {
+	Notif             Notifier
+	Events            <-chan db.Notification
+	Cancel            func()
+	Unlock            func(context.Context)
 	done              sync.Once
-	generation        int64
-	appID             string
-	accountID         string
-	ruleID            string
-	operation         string
-	hosts             []string
-	expected          map[string]struct{}
-	onAcknowledgement func(context.Context, string) error
+	Generation        int64
+	AppID             string
+	AccountID         string
+	RuleID            string
+	Operation         string
+	Hosts             []string
+	Expected          map[string]struct{}
+	OnAcknowledgement func(context.Context, string) error
 }
 
-var edgeRuleMutationMu sync.Mutex
+var EdgeRuleMutationMu sync.Mutex
 
-func (s *server) prepareEdgeRuleMutation(ctx context.Context, appID, ruleID, operation string, hosts ...string) (*edgeRuleConvergence, error) {
-	edgeRuleMutationMu.Lock()
-	unlock := func(context.Context) { edgeRuleMutationMu.Unlock() }
-	if locker, ok := s.store.(edgeRuleMutationLocker); ok {
+func (s *Service) PrepareEdgeRuleMutation(ctx context.Context, appID, ruleID, operation string, hosts ...string) (*EdgeRuleConvergence, error) {
+	EdgeRuleMutationMu.Lock()
+	unlock := func(context.Context) { EdgeRuleMutationMu.Unlock() }
+	if locker, ok := s.Host.Store().(EdgeRuleMutationLocker); ok {
 		release, err := locker.AcquireEdgeRuleMutationLock(ctx, appID)
 		if err != nil {
-			edgeRuleMutationMu.Unlock()
+			EdgeRuleMutationMu.Unlock()
 			return nil, err
 		}
 		unlock = func(ctx context.Context) {
 			release(ctx)
-			edgeRuleMutationMu.Unlock()
+			EdgeRuleMutationMu.Unlock()
 		}
 	}
-	return s.prepareEdgeRuleMutationLocked(ctx, appID, ruleID, operation, unlock, hosts...)
+	return s.PrepareEdgeRuleMutationLocked(ctx, appID, ruleID, operation, unlock, hosts...)
 }
 
 // Batch callers acquire the process and per-app locks once, in app ID order.
 // Each convergence owns only its subscription; the batch retains those locks
 // until every prepare, intent transaction, and apply attempt has finished.
-func (s *server) prepareEdgeRuleMutationLocked(ctx context.Context, appID, ruleID, operation string, unlock func(context.Context), hosts ...string) (*edgeRuleConvergence, error) {
-	allocator, ok := s.store.(edgeRuleGenerationStore)
+func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, ruleID, operation string, unlock func(context.Context), hosts ...string) (*EdgeRuleConvergence, error) {
+	allocator, ok := s.Host.Store().(edgeRuleGenerationStore)
 	if !ok {
 		unlock(ctx)
 		return nil, errors.New("edge-rule generation store is unavailable")
@@ -87,56 +87,56 @@ func (s *server) prepareEdgeRuleMutationLocked(ctx context.Context, appID, ruleI
 	// lookup leaves it empty, which fences every app on the hosts: the
 	// conservative pre-scoping behaviour, never a skipped fence.
 	var accountID string
-	if app, lookupErr := s.store.AppByID(ctx, appID); lookupErr == nil {
+	if app, lookupErr := s.Host.Store().AppByID(ctx, appID); lookupErr == nil {
 		accountID = app.AccountID
 	}
-	conv := &edgeRuleConvergence{
-		notif: s.notif, generation: generation, appID: appID, accountID: accountID, ruleID: ruleID,
-		operation: operation, hosts: canonicalEdgeRuleHosts(hosts), expected: map[string]struct{}{},
-		cancel: func() {}, unlock: unlock,
+	conv := &EdgeRuleConvergence{
+		Notif: s.Host.Notifier(), Generation: generation, AppID: appID, AccountID: accountID, RuleID: ruleID,
+		Operation: operation, Hosts: canonicalEdgeRuleHosts(hosts), Expected: map[string]struct{}{},
+		Cancel: func() {}, Unlock: unlock,
 	}
-	nodes, err := s.servingEdgeRuleNodes(ctx)
+	nodes, err := s.ServingEdgeRuleNodes(ctx)
 	if err != nil {
-		conv.close(ctx)
+		conv.Close(ctx)
 		return nil, fmt.Errorf("list serving gateways: %w", err)
 	}
 	for _, node := range nodes {
-		conv.expected[node] = struct{}{}
+		conv.Expected[node] = struct{}{}
 	}
 	// A fleet mutation with no serving gateway authority is unsafe: it
 	// could report success while an unregistered edge continues serving stale
 	// policy. Unnamed legacy single-box installs and local development
 	// intentionally have no compute registry.
-	if s.edgeRuleFleetRequired && len(conv.expected) == 0 {
-		conv.close(ctx)
+	if s.FleetRequired && len(conv.Expected) == 0 {
+		conv.Close(ctx)
 		return nil, errors.New("no active serving gateways are registered")
 	}
-	if len(conv.expected) > 0 {
+	if len(conv.Expected) > 0 {
 		// Keep the acknowledgement listener alive long enough to publish the
 		// post-commit apply even if the HTTP client disconnects immediately
 		// after persistence. close still tears it down on every normal path.
 		listenCtx, listenCancel := context.WithCancel(context.WithoutCancel(ctx))
 		var subscriptionCancel func()
-		conv.events, subscriptionCancel, err = s.notif.Subscribe(listenCtx, []string{db.NotifyEdgeRuleAck})
+		conv.Events, subscriptionCancel, err = s.Host.Notifier().Subscribe(listenCtx, []string{db.NotifyEdgeRuleAck})
 		if err != nil {
 			listenCancel()
-			conv.close(ctx)
+			conv.Close(ctx)
 			return nil, fmt.Errorf("subscribe edge-rule acknowledgements: %w", err)
 		}
-		conv.cancel = func() {
+		conv.Cancel = func() {
 			subscriptionCancel()
 			listenCancel()
 		}
 	}
 	if err := conv.notifyAndWait(ctx, "prepare"); err != nil {
-		conv.abort(ctx)
+		conv.Abort(ctx)
 		return nil, err
 	}
 	return conv, nil
 }
 
-func (s *server) servingEdgeRuleNodes(ctx context.Context) ([]string, error) {
-	nodes, err := s.store.ListComputeNodes(ctx, false)
+func (s *Service) ServingEdgeRuleNodes(ctx context.Context) ([]string, error) {
+	nodes, err := s.Host.Store().ListComputeNodes(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -174,55 +174,55 @@ func canonicalEdgeRuleHosts(hosts []string) []string {
 	return out
 }
 
-func (c *edgeRuleConvergence) payload(phase string) (string, error) {
+func (c *EdgeRuleConvergence) payload(phase string) (string, error) {
 	body, err := json.Marshal(db.EdgeRuleChangedPayload{
-		AppID: c.appID, AccountID: c.accountID, RuleID: c.ruleID, Operation: c.operation, Phase: phase,
-		Generation: c.generation, MatchHosts: c.hosts,
+		AppID: c.AppID, AccountID: c.AccountID, RuleID: c.RuleID, Operation: c.Operation, Phase: phase,
+		Generation: c.Generation, MatchHosts: c.Hosts,
 	})
 	return string(body), err
 }
 
-func (c *edgeRuleConvergence) notifyAndWait(ctx context.Context, phase string) error {
+func (c *EdgeRuleConvergence) notifyAndWait(ctx context.Context, phase string) error {
 	payload, err := c.payload(phase)
 	if err != nil {
 		return err
 	}
-	if err := c.notif.Notify(ctx, db.NotifyEdgeRuleChanged, payload); err != nil {
-		return fmt.Errorf("publish edge-rule %s generation %d: %w", phase, c.generation, err)
+	if err := c.Notif.Notify(ctx, db.NotifyEdgeRuleChanged, payload); err != nil {
+		return fmt.Errorf("publish edge-rule %s generation %d: %w", phase, c.Generation, err)
 	}
-	if len(c.expected) == 0 {
+	if len(c.Expected) == 0 {
 		return nil
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, edgeRuleConvergenceTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, EdgeRuleConvergenceTimeout)
 	defer cancel()
-	retry := time.NewTicker(edgeRuleNotificationRetry)
+	retry := time.NewTicker(EdgeRuleNotificationRetry)
 	defer retry.Stop()
-	seen := make(map[string]struct{}, len(c.expected))
-	for len(seen) < len(c.expected) {
+	seen := make(map[string]struct{}, len(c.Expected))
+	for len(seen) < len(c.Expected) {
 		select {
 		case <-waitCtx.Done():
-			missing := make([]string, 0, len(c.expected)-len(seen))
-			for node := range c.expected {
+			missing := make([]string, 0, len(c.Expected)-len(seen))
+			for node := range c.Expected {
 				if _, ok := seen[node]; !ok {
 					missing = append(missing, node)
 				}
 			}
 			sort.Strings(missing)
-			return fmt.Errorf("edge-rule generation %d phase %s missing gateway acknowledgements: %s", c.generation, phase, strings.Join(missing, ", "))
-		case event, ok := <-c.events:
+			return fmt.Errorf("edge-rule generation %d phase %s missing gateway acknowledgements: %s", c.Generation, phase, strings.Join(missing, ", "))
+		case event, ok := <-c.Events:
 			if !ok {
 				return errors.New("edge-rule acknowledgement subscription closed")
 			}
 			ack, parseErr := db.ParseEdgeRuleAckPayload(event.Payload)
-			if parseErr != nil || ack.Generation != c.generation || ack.Phase != phase {
+			if parseErr != nil || ack.Generation != c.Generation || ack.Phase != phase {
 				continue
 			}
-			if _, expected := c.expected[ack.Node]; expected {
+			if _, expected := c.Expected[ack.Node]; expected {
 				if _, duplicate := seen[ack.Node]; duplicate {
 					continue
 				}
-				if c.onAcknowledgement != nil {
-					if err := c.onAcknowledgement(waitCtx, ack.Node); err != nil {
+				if c.OnAcknowledgement != nil {
+					if err := c.OnAcknowledgement(waitCtx, ack.Node); err != nil {
 						return fmt.Errorf("persist edge-rule acknowledgement: %w", err)
 					}
 				}
@@ -232,50 +232,50 @@ func (c *edgeRuleConvergence) notifyAndWait(ctx context.Context, phase string) e
 			// PG_NOTIFY is intentionally ephemeral. Re-publishing the same
 			// idempotent phase lets a listener that briefly reconnects join the
 			// barrier instead of leaving one replica stale until cache expiry.
-			_ = c.notif.Notify(waitCtx, db.NotifyEdgeRuleChanged, payload)
+			_ = c.Notif.Notify(waitCtx, db.NotifyEdgeRuleChanged, payload)
 		}
 	}
 	return nil
 }
 
-func (c *edgeRuleConvergence) apply(ctx context.Context, ruleID string) error {
+func (c *EdgeRuleConvergence) Apply(ctx context.Context, ruleID string) error {
 	if c == nil {
 		return errors.New("nil edge-rule convergence")
 	}
-	defer c.close(ctx)
-	c.ruleID = ruleID
-	applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), edgeRuleConvergenceTimeout+time.Second)
+	defer c.Close(ctx)
+	c.RuleID = ruleID
+	applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EdgeRuleConvergenceTimeout+time.Second)
 	defer cancel()
 	return c.notifyAndWait(applyCtx, "apply")
 }
 
-func (c *edgeRuleConvergence) abort(ctx context.Context) {
+func (c *EdgeRuleConvergence) Abort(ctx context.Context) {
 	if c == nil {
 		return
 	}
-	defer c.close(ctx)
+	defer c.Close(ctx)
 	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	payload, err := c.payload("abort")
 	if err == nil {
-		_ = c.notif.Notify(abortCtx, db.NotifyEdgeRuleChanged, payload)
+		_ = c.Notif.Notify(abortCtx, db.NotifyEdgeRuleChanged, payload)
 	}
 }
 
-func (c *edgeRuleConvergence) close(ctx context.Context) {
+func (c *EdgeRuleConvergence) Close(ctx context.Context) {
 	if c == nil {
 		return
 	}
 	c.done.Do(func() {
-		c.cancel()
-		c.unlock(ctx)
+		c.Cancel()
+		c.Unlock(ctx)
 	})
 }
 
-func (c *edgeRuleConvergence) setResponseState(w http.ResponseWriter, state string) {
+func (c *EdgeRuleConvergence) SetResponseState(w http.ResponseWriter, state string) {
 	if c == nil {
 		return
 	}
 	w.Header().Set(edgeRulesStateHeader, state)
-	w.Header().Set(edgeRulesGenerationHeader, fmt.Sprintf("%d", c.generation))
+	w.Header().Set(edgeRulesGenerationHeader, fmt.Sprintf("%d", c.Generation))
 }

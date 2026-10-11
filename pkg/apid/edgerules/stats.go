@@ -1,4 +1,4 @@
-package main
+package edgerules
 
 // ADR-960: per-rule hit counts. Gateways flush counts into hourly buckets;
 // this handler totals them over a window for one app.
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -18,8 +19,8 @@ var edgeRuleStatsWindows = map[string]time.Duration{
 }
 
 // GET /v1/apps/{slug}/edge-rules/stats?window=1h|24h|7d (default 24h).
-func (s *server) getEdgeRuleStats(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) GetEdgeRuleStats(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -32,7 +33,7 @@ func (s *server) getEdgeRuleStats(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrValidation("window must be 1h, 24h or 7d"))
 		return
 	}
-	store, ok := s.store.(state.EdgeRuleHitStore)
+	store, ok := s.Host.Store().(state.EdgeRuleHitStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule hit counts are unavailable"))
 		return
@@ -47,5 +48,5 @@ func (s *server) getEdgeRuleStats(w http.ResponseWriter, r *http.Request, acct s
 	for _, st := range stats {
 		out.Rules = append(out.Rules, api.EdgeRuleHitStatsResponse{RuleID: st.RuleID, Matched: st.Matched, Logged: st.Logged})
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }

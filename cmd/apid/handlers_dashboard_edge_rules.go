@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -57,7 +58,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		App:    dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain), IsPreview: app.PreviewOfSlug != ""},
 		Action: dashboardEdgeRulesActionFlash(r),
 	}
-	data.Protection = s.appEdgeProtection(ctx, app, edgeProtectionDefaultRange)
+	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
@@ -138,7 +139,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			}
 			apiRules := make([]api.EdgeRuleResponse, 0, len(rules))
 			for _, rule := range rules {
-				apiRules = append(apiRules, edgeRuleResponse(rule))
+				apiRules = append(apiRules, edgerules.EdgeRuleResponse(rule))
 			}
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
@@ -147,7 +148,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 						log.Warn("dashboard edge rules: load edge rule lists", "account_id", acct.ID, "err", listErr)
 					}
 					for _, l := range lists {
-						traceContext.EdgeRuleLists = append(traceContext.EdgeRuleLists, edgeRuleListResponse(l, nil, true))
+						traceContext.EdgeRuleLists = append(traceContext.EdgeRuleLists, edgerules.EdgeRuleListResponse(l, nil, true))
 					}
 				}
 			}
@@ -381,7 +382,7 @@ func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request)
 		req.Priority = &priority
 	}
 	slug := r.PathValue("slug")
-	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.createEdgeRule)
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.edgeRules.CreateEdgeRule)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
@@ -410,7 +411,7 @@ func (s *server) dashboardToggleEdgeRule(w http.ResponseWriter, r *http.Request)
 	}
 	enabled := !rule.Enabled
 	req := api.UpdateEdgeRuleRequest{Enabled: &enabled}
-	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPatch, "/v1/edge-rules/"+url.PathEscape(id), id, req, s.updateEdgeRule)
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPatch, "/v1/edge-rules/"+url.PathEscape(id), id, req, s.edgeRules.UpdateEdgeRule)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
@@ -427,7 +428,7 @@ func (s *server) dashboardDeleteEdgeRule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")
-	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodDelete, "/v1/edge-rules/"+url.PathEscape(id), id, nil, s.deleteEdgeRule)
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodDelete, "/v1/edge-rules/"+url.PathEscape(id), id, nil, s.edgeRules.DeleteEdgeRule)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
@@ -458,7 +459,7 @@ func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request
 		if isSecurityHeadersRule(rule) {
 			if !rule.Enabled {
 				enabled := true
-				resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPatch, "/v1/edge-rules/"+url.PathEscape(rule.ID), rule.ID, api.UpdateEdgeRuleRequest{Enabled: &enabled}, s.updateEdgeRule)
+				resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPatch, "/v1/edge-rules/"+url.PathEscape(rule.ID), rule.ID, api.UpdateEdgeRuleRequest{Enabled: &enabled}, s.edgeRules.UpdateEdgeRule)
 				if !dashboardMutationSucceeded(w, resp) {
 					return
 				}
@@ -477,7 +478,7 @@ func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request
 		MatchHost: host, MatchPath: "/*", Priority: &priority, Enabled: &enabled,
 		Kind: string(state.EdgeRuleKindHeaders), Action: securityHeadersActionJSON(),
 	}
-	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.createEdgeRule)
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.edgeRules.CreateEdgeRule)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}

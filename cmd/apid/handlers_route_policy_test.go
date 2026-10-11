@@ -125,7 +125,7 @@ func TestRoutePolicyServerConvergenceFailureKeepsReceipt(t *testing.T) {
 		t.Fatalf("committed result lost: %d %+v", rec.Code, response)
 	}
 	// Preparation can become unavailable on retry; the durable outcome remains recoverable.
-	e.s.edgeRuleFleetRequired = true
+	e.s.edgeRules.FleetRequired = true
 	rec = e.do(t, "POST", "/v1/apps/"+slug+"/route-policy/apply", apply, map[string]string{"Idempotency-Key": "converging"})
 	var replay api.RoutePolicyApplyResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &replay); err != nil {

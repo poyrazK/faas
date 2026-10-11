@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -53,7 +54,7 @@ func (s *server) loadDashboardEdgeRuleEvents(r *http.Request, log *slog.Logger, 
 		data.ErrorMessage = "Security events are not available on this deployment."
 		return data
 	}
-	query, prob := edgeRuleEventsQuery(r, acct.Plan, app.ID, time.Now().UTC())
+	query, prob := edgerules.EdgeRuleEventsQuery(r, acct.Plan, app.ID, time.Now().UTC())
 	if prob != nil {
 		data.ErrorMessage = prob.Detail
 		return data
@@ -65,7 +66,7 @@ func (s *server) loadDashboardEdgeRuleEvents(r *http.Request, log *slog.Logger, 
 		data.ErrorMessage = "Security events are temporarily unavailable."
 		return data
 	}
-	page := edgeRuleEventsResponse(query.Since, events, rules, dashboardEdgeRuleEventsLimit)
+	page := edgerules.EdgeRuleEventsResponse(query.Since, events, rules, dashboardEdgeRuleEventsLimit)
 	data.SinceLabel = page.Since.Format("2006-01-02 15:04 MST")
 	for _, e := range page.Events {
 		label := e.RuleName
@@ -118,7 +119,7 @@ func (s *server) dashboardSetEdgeRuleMode(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPatch, "/v1/edge-rules/"+url.PathEscape(id), id, api.UpdateEdgeRuleRequest{Mode: &mode}, s.updateEdgeRule)
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPatch, "/v1/edge-rules/"+url.PathEscape(id), id, api.UpdateEdgeRuleRequest{Mode: &mode}, s.edgeRules.UpdateEdgeRule)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}

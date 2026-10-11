@@ -1,4 +1,4 @@
-package main
+package edgerules
 
 // ADR-964: sampled edge-rule security events, newest first, for one app.
 
@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -53,8 +54,8 @@ func parseEdgeRuleEventsCursor(raw string) (time.Time, int64, error) {
 	return time.Unix(0, n).UTC(), i, nil
 }
 
-// edgeRuleEventsQuery validates the query string against the plan window.
-func edgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.Time) (state.EdgeRuleEventQuery, *api.Problem) {
+// EdgeRuleEventsQuery validates the query string against the plan window.
+func EdgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.Time) (state.EdgeRuleEventQuery, *api.Problem) {
 	q := r.URL.Query()
 	out := state.EdgeRuleEventQuery{AppID: appID, RuleID: q.Get("rule"), Outcome: q.Get("outcome"), Limit: edgeRuleEventsDefaultLimit}
 	if out.RuleID != "" {
@@ -87,17 +88,17 @@ func edgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.
 }
 
 // GET /v1/apps/{slug}/edge-rules/events?rule=&outcome=&since=&limit=&cursor=
-func (s *server) listEdgeRuleEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) ListEdgeRuleEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	store, ok := s.store.(state.EdgeRuleEventStore)
+	store, ok := s.Host.Store().(state.EdgeRuleEventStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule events are unavailable"))
 		return
 	}
-	query, prob := edgeRuleEventsQuery(r, acct.Plan, app.ID, time.Now().UTC())
+	query, prob := EdgeRuleEventsQuery(r, acct.Plan, app.ID, time.Now().UTC())
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -109,15 +110,15 @@ func (s *server) listEdgeRuleEvents(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not read edge-rule events"))
 		return
 	}
-	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
+	rules, err := s.Host.Store().ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read edge rules"))
 		return
 	}
-	writeJSON(w, http.StatusOK, edgeRuleEventsResponse(query.Since, events, rules, limit))
+	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleEventsResponse(query.Since, events, rules, limit))
 }
 
-func edgeRuleEventsResponse(since time.Time, events []state.EdgeRuleEvent, rules []state.EdgeRule, limit int) api.EdgeRuleEventsResponse {
+func EdgeRuleEventsResponse(since time.Time, events []state.EdgeRuleEvent, rules []state.EdgeRule, limit int) api.EdgeRuleEventsResponse {
 	byID := make(map[string]state.EdgeRule, len(rules))
 	for _, rule := range rules {
 		byID[rule.ID] = rule

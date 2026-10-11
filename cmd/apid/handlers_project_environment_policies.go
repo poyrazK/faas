@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -54,7 +55,7 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		if candidate.MatchPath == "" {
 			candidate.MatchPath = "/"
 		}
-		if problem := templatedMatchPathProblem(candidate.MatchPath); problem != nil {
+		if problem := edgerules.TemplatedMatchPathProblem(candidate.MatchPath); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
@@ -64,7 +65,7 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 			MatchHeaders: candidate.MatchHeaders, Priority: &priority, Enabled: &enabled,
 			Kind: candidate.Kind, Action: candidate.Action,
 		}
-		if problem := validateEdgeRuleBody(&check, acct.Plan); problem != nil {
+		if problem := edgerules.ValidateEdgeRuleBody(&check, acct.Plan); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
@@ -79,10 +80,10 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		rules = append(rules, state.ProjectEnvironmentEdgeRule{
 			Kind: state.EdgeRuleKind(check.Kind), MatchPath: check.MatchPath,
 			MatchMethods: append([]string(nil), check.MatchMethods...), MatchHeaders: check.MatchHeaders,
-			Priority: priority, Enabled: enabled, Action: actionFromBody(check.Kind, check.Action),
+			Priority: priority, Enabled: enabled, Action: edgerules.ActionFromBody(check.Kind, check.Action),
 		})
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_policy_updated", host)
+	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_policy_updated", host)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-policy fleet convergence is unavailable; no policy was changed"))
 		return
@@ -92,7 +93,7 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		EnvironmentSlug: environment.Slug, Rules: rules,
 	})
 	if err != nil {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
 			return
 		}
@@ -106,12 +107,12 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 	s.audit.Emit(r.Context(), "project.environment.policies.updated", &acct.ID, map[string]any{
 		"project_id": project.ID, "environment": environment.Slug, "app_id": app.ID, "rule_count": len(rules),
 	})
-	if err := convergence.apply(r.Context(), ""); err != nil {
-		convergence.setResponseState(w, "converging")
+	if err := convergence.Apply(r.Context(), ""); err != nil {
+		convergence.SetResponseState(w, "converging")
 		api.WriteProblem(w, api.ErrCapacity("policy was saved but the serving fleet has not acknowledged it; read the current state before retrying"))
 		return
 	}
-	convergence.setResponseState(w, "active")
+	convergence.SetResponseState(w, "active")
 	writeJSON(w, http.StatusOK, projectEnvironmentEdgePolicyResponse(policy))
 }
 

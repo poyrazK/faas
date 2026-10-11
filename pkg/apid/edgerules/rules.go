@@ -10,7 +10,7 @@
 // stays open to future kinds without a Go SDK rename. The kind-
 // specific Validate() runs after the json.Unmarshal so a stray
 // field on the wire surfaces as 422 before the store is touched.
-package main
+package edgerules
 
 import (
 	"context"
@@ -24,32 +24,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Audit-map JSON keys (ADR-089). The literal `"app_id"` etc. also
-// appear in the pg_notify payload below; promoting to consts here
-// keeps goconst quiet without sacrificing readability of the
-// audit map literal.
-const (
-	auditKeyRuleID       = "rule_id"
-	auditKeyAppID        = "app_id"
-	auditKeyMatchHost    = "match_host"
-	auditKeyMatchPath    = "match_path"
-	auditKeyMatchMethods = "match_methods"
-	auditKeyPriority     = "priority"
-	auditKeyEnabled      = "enabled"
-	auditKeyKind         = "kind"
-	auditKeyDeploymentID = "deployment_id"
-	auditKeyBuildID      = "build_id"
-	auditKeyRepo         = "repo"
-	auditKeyRef          = "ref"
-	auditKeySourceBytes  = "source_bytes"
-	auditKeyTrustRoot    = "trust_root"
-)
-
-// edgeRuleResponse builds the wire shape. Action is re-marshalled
+// EdgeRuleResponse builds the wire shape. Action is re-marshalled
 // verbatim — the kind-specific struct has already been validated
 // and round-tripped through jsonb on the read path.
 //
@@ -62,7 +42,7 @@ const (
 // also re-emitted for the back-compat window (ADR-128 D2) so
 // older clients reading action.validate_mode still see the
 // same value.
-func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
+func EdgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 	actionBytes, _ := json.Marshal(r.Action)
 	matchHeaders := r.MatchHeaders
 	if matchHeaders == nil {
@@ -125,7 +105,7 @@ func utcTimePtr(t *time.Time) *time.Time {
 	return &utc
 }
 
-// validateEdgeRuleAction dispatches the kind-specific Validate()
+// ValidateEdgeRuleAction dispatches the kind-specific Validate()
 // based on the wire `kind` field. A wire body whose kind doesn't
 // match the action shape surfaces here as 422 before the store
 // sees it. Returns the *Problem so the handler can pass it
@@ -136,7 +116,7 @@ func utcTimePtr(t *time.Time) *time.Time {
 // the explicit ThrottleValidationContext keeps the boundary clear
 // without forcing a global lookup. matchPath is the rule's effective
 // match_path; kind=validate path parameters must align with it.
-func validateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, plan api.Plan) *api.Problem {
+func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, plan api.Plan) *api.Problem {
 	k := state.EdgeRuleKind(kind)
 	if !k.IsValid() {
 		return api.ErrValidation(fmt.Sprintf("edge rule kind %q is not in the closed vocabulary", kind))
@@ -312,7 +292,7 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 // same app and account as the edge rule. Invocation destinations use the same
 // ownership boundary, so a route cannot turn a webhook ID into a cross-tenant
 // delivery primitive.
-func (s *server) validateEdgeRuleAsyncDestinations(ctx context.Context, appID, accountID, kind string, raw json.RawMessage) *api.Problem {
+func (s *Service) ValidateEdgeRuleAsyncDestinations(ctx context.Context, appID, accountID, kind string, raw json.RawMessage) *api.Problem {
 	if kind != string(state.EdgeRuleKindAsync) {
 		return nil
 	}
@@ -330,7 +310,7 @@ func (s *server) validateEdgeRuleAsyncDestinations(ctx context.Context, appID, a
 		if destination.id == "" {
 			continue
 		}
-		hook, err := s.store.AppWebhookByID(ctx, destination.id)
+		hook, err := s.Host.Store().AppWebhookByID(ctx, destination.id)
 		if err != nil || hook.AppID != appID || hook.AccountID != accountID {
 			return api.ErrValidation(fmt.Sprintf("async action.%s must reference a webhook owned by this app", destination.field))
 		}
@@ -344,38 +324,38 @@ func (s *server) validateEdgeRuleAsyncDestinations(ctx context.Context, appID, a
 // ordered by priority ASC then created_at DESC (the same shape the
 // gateway matcher sees so the dashboard's "match order" preview
 // matches the wire behaviour).
-func (s *server) listEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) ListEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
+	rules, err := s.Host.Store().ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
 	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		out = append(out, edgeRuleResponse(rule))
+		out = append(out, EdgeRuleResponse(rule))
 	}
 	s.setEdgeRuleSetETag(r.Context(), w, app.ID)
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 // listEdgeRules returns every rule owned by the account across all
 // apps. The dashboard uses this for the "Edge Rules" overview pane;
 // the CLI uses it for `gregale edge-rules list`.
-func (s *server) listEdgeRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	rules, err := s.store.ListEdgeRulesForAccount(r.Context(), acct.ID)
+func (s *Service) ListEdgeRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	rules, err := s.Host.Store().ListEdgeRulesForAccount(r.Context(), acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
 	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		out = append(out, edgeRuleResponse(rule))
+		out = append(out, EdgeRuleResponse(rule))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 // --- create ----------------------------------------------------------------
@@ -396,9 +376,9 @@ func (s *server) listEdgeRules(w http.ResponseWriter, r *http.Request, acct stat
 //  9. log (sanitised)
 //
 // 10. respond 201
-func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateEdgeRuleRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
@@ -430,7 +410,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -442,11 +422,11 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
 		return
 	}
-	if prob := templatedMatchPathProblem(req.MatchPath); prob != nil {
+	if prob := TemplatedMatchPathProblem(req.MatchPath); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateEdgeRuleBody(&req, acct.Plan); prob != nil {
+	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -454,7 +434,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), app.ID, acct.ID, req.Kind, req.Action); prob != nil {
+	if prob := s.ValidateEdgeRuleAsyncDestinations(r.Context(), app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -476,16 +456,16 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("plan limits not loaded"))
 		return
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "created", req.MatchHost)
+	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "created", req.MatchHost)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; no rule was created"))
 		return
 	}
 	if s.edgeRuleIfMatchFailed(r.Context(), w, r, app.ID) {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		return
 	}
-	row, err := s.store.CreateEdgeRuleIfUnderQuota(r.Context(), state.CreateEdgeRuleParams{
+	row, err := s.Host.Store().CreateEdgeRuleIfUnderQuota(r.Context(), state.CreateEdgeRuleParams{
 		AccountID:    acct.ID,
 		AppID:        app.ID,
 		MatchHost:    strings.ToLower(req.MatchHost),
@@ -495,7 +475,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
-		Action:       actionFromBody(req.Kind, req.Action),
+		Action:       ActionFromBody(req.Kind, req.Action),
 		// ValidateMode (ADR-128 D1): the top-level wire
 		// field is the source of truth for kind=validate.
 		// If the wire field is empty (client didn't send
@@ -511,7 +491,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		Mode:         req.Mode,
 	}, limits)
 	if err != nil {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		var qe *state.EdgeRuleQuotaError
 		switch {
 		case errors.As(err, &qe):
@@ -521,7 +501,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 				api.WriteProblem(w, api.ErrPlanLimitEdgeRules(acct.Plan, qe.Limit, qe.Observed))
 			}
 		case errors.Is(err, state.ErrNotFound):
-			s.notFound(w, "no such app")
+			httpkit.NotFound(w, "no such app")
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.ErrEdgeRuleConflict(err.Error()))
 		default:
@@ -529,46 +509,46 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		}
 		return
 	}
-	s.log.Info("edge rule created",
+	s.Host.Logger().Info("edge rule created",
 		"rule", logsanitize.Field(row.ID),
 		"app", app.Slug,
 		"account", acct.ID,
 		"kind", logsanitize.Field(string(row.Kind)),
 		slog.Int64("priority", int64(row.Priority)),
 	)
-	s.audit.Emit(r.Context(), "edge_rule.created", &acct.ID, map[string]any{
-		auditKeyRuleID:       row.ID,
-		auditKeyAppID:        row.AppID,
-		auditKeyMatchHost:    row.MatchHost,
-		auditKeyMatchPath:    row.MatchPath,
-		auditKeyMatchMethods: row.MatchMethods,
-		auditKeyPriority:     row.Priority,
-		auditKeyEnabled:      row.Enabled,
-		auditKeyKind:         row.Kind,
+	s.Host.EmitAudit(r.Context(), "edge_rule.created", &acct.ID, map[string]any{
+		httpkit.AuditKeyRuleID:       row.ID,
+		httpkit.AuditKeyAppID:        row.AppID,
+		httpkit.AuditKeyMatchHost:    row.MatchHost,
+		httpkit.AuditKeyMatchPath:    row.MatchPath,
+		httpkit.AuditKeyMatchMethods: row.MatchMethods,
+		httpkit.AuditKeyPriority:     row.Priority,
+		httpkit.AuditKeyEnabled:      row.Enabled,
+		httpkit.AuditKeyKind:         row.Kind,
 	})
-	if err := convergence.apply(r.Context(), row.ID); err != nil {
-		convergence.setResponseState(w, "converging")
-		s.log.Error("edge rule persisted but fleet convergence is incomplete", "rule", row.ID, "generation", convergence.generation, "err", err)
+	if err := convergence.Apply(r.Context(), row.ID); err != nil {
+		convergence.SetResponseState(w, "converging")
+		s.Host.Logger().Error("edge rule persisted but fleet convergence is incomplete", "rule", row.ID, "generation", convergence.Generation, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation"))
 		return
 	}
-	convergence.setResponseState(w, "active")
+	convergence.SetResponseState(w, "active")
 	s.setEdgeRuleSetETag(r.Context(), w, row.AppID)
-	writeJSON(w, http.StatusCreated, edgeRuleResponse(row))
+	httpkit.WriteJSON(w, http.StatusCreated, EdgeRuleResponse(row))
 }
 
-// validateEdgeRuleBody checks the non-action fields (match_host /
+// ValidateEdgeRuleBody checks the non-action fields (match_host /
 // match_path / match_methods / priority) and dispatches the
 // per-kind action Validate(). plan is the account's billing plan;
 // kind=throttle needs it to enforce the sub-plan ceiling
 // (rps ≤ plan.RateLimitRPS, burst ≤ plan.RateLimitBurst). Returns
 // the first *Problem it finds.
-// templatedMatchPathProblem rejects an OpenAPI-style {param} placeholder in a
+// TemplatedMatchPathProblem rejects an OpenAPI-style {param} placeholder in a
 // match_path sent to the edge-rule create or update endpoint. Edge-rule paths
 // are globs, so the placeholder would only match the literal braces and the
 // rule would never run. Manifest- and environment-owned rules are not checked
 // here so existing deployments keep applying.
-func templatedMatchPathProblem(matchPath string) *api.Problem {
+func TemplatedMatchPathProblem(matchPath string) *api.Problem {
 	glob, templated := api.EdgeRuleTemplatedPath(matchPath)
 	if !templated {
 		return nil
@@ -577,7 +557,7 @@ func templatedMatchPathProblem(matchPath string) *api.Problem {
 		"match_path %q uses an OpenAPI {param} placeholder, but edge-rule paths are globs and would only match the literal braces; use %q", matchPath, glob))
 }
 
-func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Problem {
+func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Problem {
 	matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(req.MatchHeaders)
 	if headerErr != nil {
 		return api.ErrValidation(headerErr.Error())
@@ -612,7 +592,7 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	// ValidateMode (ADR-128 D1): the top-level wire field
 	// must be one of the closed enum if set. Empty == 'block'
 	// (the SQL-side default). The action-level field is also
-	// validated by validateEdgeRuleAction via the
+	// validated by ValidateEdgeRuleAction via the
 	// EdgeRuleValidateAction.Validate() path.
 	if req.ValidateMode != "" &&
 		req.ValidateMode != api.ValidateModeBlock &&
@@ -625,17 +605,17 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	if len(req.Action) == 0 {
 		return api.ErrValidation("action is required")
 	}
-	if prob := validateEdgeRuleAction(req.Kind, req.Action, req.MatchPath, plan); prob != nil {
+	if prob := ValidateEdgeRuleAction(req.Kind, req.Action, req.MatchPath, plan); prob != nil {
 		return prob
 	}
-	return validateMCPRuleSelectors(req.Kind, req.MatchHost, req.MatchPath, req.MatchMethods, req.MatchHeaders, req.Action)
+	return ValidateMCPRuleSelectors(req.Kind, req.MatchHost, req.MatchPath, req.MatchMethods, req.MatchHeaders, req.Action)
 }
 
-// actionFromBody re-marshals the wire json.RawMessage back into the
+// ActionFromBody re-marshals the wire json.RawMessage back into the
 // typed state.EdgeRuleAction so the pgstore boundary can marshal it
 // to jsonb once. The wire action has already been validated above;
 // this pass is just the structural decode.
-func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
+func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 	out := state.EdgeRuleAction{Kind: state.EdgeRuleKind(kind)}
 	switch state.EdgeRuleKind(kind) {
 	case state.EdgeRuleKindRoute:
@@ -733,7 +713,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 		var a api.EdgeRuleMaintenanceAction
 		if err := json.Unmarshal(raw, &a); err == nil {
 			// Same mirror pattern as kind=limit: structural decode,
-			// no payload validation here (validateEdgeRuleAction
+			// no payload validation here (ValidateEdgeRuleAction
 			// already ran). The gateway re-compiles the action body
 			// (cmd-side compileMaintenanceRules, PR-B) and clamps
 			// out-of-range values as defence-in-depth against a
@@ -787,7 +767,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 		var a api.EdgeRuleCacheAction
 		if err := json.Unmarshal(raw, &a); err == nil {
 			// Mirror the budget / limit path's pattern: structural
-			// decode only. Validate (validateEdgeRuleAction above)
+			// decode only. Validate (ValidateEdgeRuleAction above)
 			// already applied apid-side defaults (60 s fresh /
 			// 300 s stale-on-error), so the values carried into
 			// the state mirror are the explicitly-stored ones
@@ -817,7 +797,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 		var a api.EdgeRuleRetryAction
 		if err := json.Unmarshal(raw, &a); err == nil {
 			// Re-run Validate so the mirror carries EFFECTIVE values,
-			// not the customer's zeros. validateEdgeRuleAction above
+			// not the customer's zeros. ValidateEdgeRuleAction above
 			// ran on its own decode of the same bytes, and its
 			// in-place defaulting does not reach this one. Storing
 			// zeros here would make the row unreadable without
@@ -877,18 +857,18 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 // load-bearing — a stolen API key must not be able to read a
 // foreign account's rule by id. Mirrors getAlertRule at
 // handlers_alerts.go:266.
-func (s *server) getEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) GetEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.GetEdgeRuleByID(r.Context(), id)
+	row, err := s.Host.Store().GetEdgeRuleByID(r.Context(), id)
 	if err != nil {
-		s.notFound(w, "no such edge rule")
+		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
 	if row.AccountID != acct.ID {
-		s.notFound(w, "no such edge rule")
+		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
-	writeJSON(w, http.StatusOK, edgeRuleResponse(row))
+	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleResponse(row))
 }
 
 // --- update ----------------------------------------------------------------
@@ -898,21 +878,21 @@ func (s *server) getEdgeRule(w http.ResponseWriter, r *http.Request, acct state.
 // (a 'cors' action has no fields a 'route' rule expects). The
 // customer deletes + recreates if they need a different kind.
 // Matches the UpdateAlertRule design.
-func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) UpdateEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.GetEdgeRuleByID(r.Context(), id)
+	row, err := s.Host.Store().GetEdgeRuleByID(r.Context(), id)
 	if err != nil {
-		s.notFound(w, "no such edge rule")
+		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
 	if row.AccountID != acct.ID {
-		s.notFound(w, "no such edge rule")
+		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
 	if row.Kind == state.EdgeRuleKindRespond {
-		app, appErr := s.store.AppByID(r.Context(), row.AppID)
+		app, appErr := s.Host.Store().AppByID(r.Context(), row.AppID)
 		if appErr != nil {
-			s.notFound(w, "no such app")
+			httpkit.NotFound(w, "no such app")
 			return
 		}
 		if app.PreviewOfSlug == "" {
@@ -921,7 +901,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		}
 	}
 	var req api.UpdateEdgeRuleRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
@@ -937,7 +917,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.ErrValidation("match_path must start with '/' and be ≤ 2048 chars"))
 			return
 		}
-		if prob := templatedMatchPathProblem(*req.MatchPath); prob != nil {
+		if prob := TemplatedMatchPathProblem(*req.MatchPath); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -987,12 +967,12 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		matchPath = *req.MatchPath
 	}
 	if req.Action != nil {
-		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, matchPath, acct.Plan)
+		prob := ValidateEdgeRuleAction(string(row.Kind), *req.Action, matchPath, acct.Plan)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
-		if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
+		if prob := s.ValidateEdgeRuleAsyncDestinations(r.Context(), row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -1021,7 +1001,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		if req.Action != nil {
 			raw = *req.Action
 		}
-		if prob := validateMCPRuleSelectors(string(row.Kind), host, path, methods, headers, raw); prob != nil {
+		if prob := ValidateMCPRuleSelectors(string(row.Kind), host, path, methods, headers, raw); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -1029,7 +1009,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	// ValidateMode (ADR-128 D1): top-level wire field on
 	// update must be the closed enum when set. nil == "leave
 	// alone" (no row update). The action-level field is
-	// validated inside validateEdgeRuleAction via the
+	// validated inside ValidateEdgeRuleAction via the
 	// EdgeRuleValidateAction.Validate() path.
 	if req.ValidateMode != nil &&
 		*req.ValidateMode != "" &&
@@ -1052,53 +1032,53 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	if req.MatchHost != nil {
 		hosts = append(hosts, *req.MatchHost)
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "updated", hosts...)
+	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "updated", hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated"))
 		return
 	}
 	if s.edgeRuleIfMatchFailed(r.Context(), w, r, row.AppID) {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		return
 	}
-	updated, err := s.store.UpdateEdgeRule(r.Context(), id, edgeRuleUpdateParamsFrom(req, row.Kind))
+	updated, err := s.Host.Store().UpdateEdgeRule(r.Context(), id, edgeRuleUpdateParamsFrom(req, row.Kind))
 	if err != nil {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		if errors.Is(err, state.ErrNotFound) {
-			s.notFound(w, "no such edge rule")
+			httpkit.NotFound(w, "no such edge rule")
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not update edge rule"))
 		return
 	}
-	s.log.Info("edge rule updated",
+	s.Host.Logger().Info("edge rule updated",
 		"rule", logsanitize.Field(updated.ID),
 		"app", updated.AppID,
 		"account", acct.ID,
 		"kind", logsanitize.Field(string(updated.Kind)),
 	)
-	s.audit.Emit(r.Context(), "edge_rule.updated", &acct.ID, map[string]any{
-		auditKeyRuleID:   updated.ID,
-		auditKeyAppID:    updated.AppID,
-		auditKeyKind:     updated.Kind,
-		auditKeyPriority: updated.Priority,
-		auditKeyEnabled:  updated.Enabled,
+	s.Host.EmitAudit(r.Context(), "edge_rule.updated", &acct.ID, map[string]any{
+		httpkit.AuditKeyRuleID:   updated.ID,
+		httpkit.AuditKeyAppID:    updated.AppID,
+		httpkit.AuditKeyKind:     updated.Kind,
+		httpkit.AuditKeyPriority: updated.Priority,
+		httpkit.AuditKeyEnabled:  updated.Enabled,
 	})
-	if err := convergence.apply(r.Context(), updated.ID); err != nil {
-		convergence.setResponseState(w, "converging")
-		s.log.Error("edge rule persisted but fleet convergence is incomplete", "rule", updated.ID, "generation", convergence.generation, "err", err)
+	if err := convergence.Apply(r.Context(), updated.ID); err != nil {
+		convergence.SetResponseState(w, "converging")
+		s.Host.Logger().Error("edge rule persisted but fleet convergence is incomplete", "rule", updated.ID, "generation", convergence.Generation, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation"))
 		return
 	}
-	convergence.setResponseState(w, "active")
+	convergence.SetResponseState(w, "active")
 	s.setEdgeRuleSetETag(r.Context(), w, updated.AppID)
-	writeJSON(w, http.StatusOK, edgeRuleResponse(updated))
+	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleResponse(updated))
 }
 
 // edgeRuleUpdateParamsFrom adapts the wire UpdateEdgeRuleRequest
 // into the store's UpdateEdgeRuleParams. Action needs special
 // handling because the store accepts *state.EdgeRuleAction (typed)
-// while the wire carries *json.RawMessage. validateEdgeRuleAction
+// while the wire carries *json.RawMessage. ValidateEdgeRuleAction
 // has already verified the body matches `kind`; we decode one more
 // time so the store boundary gets a fully-typed payload.
 func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRuleKind) state.UpdateEdgeRuleParams {
@@ -1125,7 +1105,7 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		out.ExpiresAt = &set
 	}
 	if req.Action != nil {
-		decoded := actionFromBody(string(kind), *req.Action)
+		decoded := ActionFromBody(string(kind), *req.Action)
 		out.Action = &decoded
 	}
 	// ValidateMode (ADR-128 D1): top-level wire field wins.
@@ -1173,12 +1153,12 @@ func validateModeFromAction(kind string, raw json.RawMessage) string {
 	}
 	var a api.EdgeRuleValidateAction
 	if err := json.Unmarshal(raw, &a); err != nil {
-		// actionFromBody would have already surfaced this
+		// ActionFromBody would have already surfaced this
 		// error path; reaching here means the body decoded
 		// at least syntactically. Treat malformed fragments
 		// as "use the default" rather than 500ing on the
 		// re-decode — the primary decode already cleared
-		// the validateEdgeRuleAction gate.
+		// the ValidateEdgeRuleAction gate.
 		return ""
 	}
 	return a.ValidateMode
@@ -1186,54 +1166,54 @@ func validateModeFromAction(kind string, raw json.RawMessage) string {
 
 // --- delete ----------------------------------------------------------------
 
-func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) DeleteEdgeRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.GetEdgeRuleByID(r.Context(), id)
+	row, err := s.Host.Store().GetEdgeRuleByID(r.Context(), id)
 	if err != nil {
-		s.notFound(w, "no such edge rule")
+		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
 	if row.AccountID != acct.ID {
-		s.notFound(w, "no such edge rule")
+		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "deleted", row.MatchHost)
+	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), row.AppID, row.ID, "deleted", row.MatchHost)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not deleted"))
 		return
 	}
 	if s.edgeRuleIfMatchFailed(r.Context(), w, r, row.AppID) {
-		convergence.abort(r.Context())
+		convergence.Abort(r.Context())
 		return
 	}
-	if err := s.store.DeleteEdgeRule(r.Context(), id); err != nil {
-		convergence.abort(r.Context())
+	if err := s.Host.Store().DeleteEdgeRule(r.Context(), id); err != nil {
+		convergence.Abort(r.Context())
 		api.WriteProblem(w, api.ErrCapacity("could not delete edge rule"))
 		return
 	}
-	s.log.Info("edge rule deleted",
+	s.Host.Logger().Info("edge rule deleted",
 		"rule", logsanitize.Field(id),
 		"app", row.AppID,
 		"account", acct.ID,
 		"kind", logsanitize.Field(string(row.Kind)),
 	)
-	s.audit.Emit(r.Context(), "edge_rule.deleted", &acct.ID, map[string]any{
-		auditKeyRuleID: id,
-		auditKeyAppID:  row.AppID,
-		auditKeyKind:   row.Kind,
+	s.Host.EmitAudit(r.Context(), "edge_rule.deleted", &acct.ID, map[string]any{
+		httpkit.AuditKeyRuleID: id,
+		httpkit.AuditKeyAppID:  row.AppID,
+		httpkit.AuditKeyKind:   row.Kind,
 	})
-	if err := convergence.apply(r.Context(), row.ID); err != nil {
-		convergence.setResponseState(w, "converging")
-		s.log.Error("edge rule deleted but fleet convergence is incomplete", "rule", row.ID, "generation", convergence.generation, "err", err)
+	if err := convergence.Apply(r.Context(), row.ID); err != nil {
+		convergence.SetResponseState(w, "converging")
+		s.Host.Logger().Error("edge rule deleted but fleet convergence is incomplete", "rule", row.ID, "generation", convergence.Generation, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("edge rule was deleted but the serving fleet has not acknowledged it; verify the rule is absent before retrying this mutation"))
 		return
 	}
-	convergence.setResponseState(w, "active")
+	convergence.SetResponseState(w, "active")
 	s.setEdgeRuleSetETag(r.Context(), w, row.AppID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func validateMCPRuleSelectors(kind, host, path string, methods []string, headers map[string]string, raw json.RawMessage) *api.Problem {
+func ValidateMCPRuleSelectors(kind, host, path string, methods []string, headers map[string]string, raw json.RawMessage) *api.Problem {
 	if kind != "jwt" {
 		return nil
 	}
