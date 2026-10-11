@@ -1012,24 +1012,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
-		// Issue #472 / ADR-058: maintain the on-disk mirror of
-		// app_trusted_signers at /etc/faas/secrets/trusted-publishers
-		// (the dir imaged reads at startup and on every
-		// trusted_signer_changed notify). Without this writer, the
-		// disk stays empty and every signed deploy fails with
-		// ErrSignatureInvalid even when the operator has correctly
-		// onboarded publishers via the API. The writer is the only
-		// producer of the per-app PEM files; the dir is created
-		// at daemon start so the first ever onboard succeeds even
-		// before the first notify.
-		trustedDir := os.Getenv("FAAS_TRUSTED_PUBLISHERS_DIR")
-		if trustedDir != "" && srv.store != nil {
-			go func() {
-				if err := runTrustedPublisherWriter(ctx, pool, srv.store, trustedDir, log); err != nil && ctx.Err() == nil {
-					log.Error("trusted-publisher-writer: exited", "err", err)
-				}
-			}()
-		}
 	}
 	return runWithDeps(ctx, log, deps)
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -99,8 +99,13 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 				p.resolveErr = &oci.PlatformSelectionError{Reason: "no compatible image"}
 			}
 			h := New(th.store, th.notif, p, th.bld, "./init", th.appsR, silentLogger())
-			h.trustedPublishersCacheOK = true
-			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "publisher", PublicKey: &key.PublicKey}}}
+			der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := th.store.UpsertAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "publisher", der, th.app.AccountID); err != nil {
+				t.Fatal(err)
+			}
 			auth := &oci.BasicAuth{Username: "user", Password: "secret"}
 			ref, digest, err := h.prepareContainerImage(context.Background(), th.app, th.dep, auth)
 			if p.input != th.dep.ImageDigest || p.auth != auth {
