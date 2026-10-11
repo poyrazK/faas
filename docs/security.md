@@ -40,9 +40,25 @@ Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 
 ## Optional pre-auth source limit
 
-Apps can opt into a gateway rate limit that runs after hostname routing and
-before consumer-key lookup, JWT verification, body admission, or VM wake. Set
-`pre_auth_rate_limit` when creating an app or through
+The gateway can rate-limit each client address after hostname routing and
+before consumer-key lookup, JWT verification, body admission, or VM wake.
+
+New apps start with this guard in `observe` mode at 10 requests/s and burst 20
+per source, clamped to the plan's request rate and burst
+([ADR-829](adr/829-default-pre-auth-observe.md)). Observe never rejects a
+request, so check the recorded would-block traffic before switching to
+`enforce`. `GET /v1/apps/{slug}/pre-auth-observations?range=24h` includes a
+`suggestion` (`ready`, `review`, or `insufficient_data`), also shown on the
+dashboard's pre-auth page. From the CLI:
+
+```sh
+gregale app my-api --pre-auth enforce                 # prints the 24h check first
+gregale app my-api --pre-auth-rps 20 --pre-auth-burst 40
+gregale app my-api --pre-auth off
+```
+
+To choose different values, or to opt out with `{"mode":"off"}`, set
+`pre_auth_rate_limit` when creating the app or through
 `PATCH /v1/apps/{slug}`:
 
 ```json
@@ -52,11 +68,16 @@ before consumer-key lookup, JWT verification, body admission, or VM wake. Set
 `observe` records requests that would exceed the source limit without
 rejecting them. Change `mode` to `enforce` to return `429` with
 `Retry-After: 1` and `x-faas-rate-limit-scope: pre-auth`. Set `mode` to `off`
-to disable the guard. The setting is absent and disabled on existing apps.
+to disable the guard. Apps created before ADR-829 keep their stored setting;
+on those apps the field is absent and the guard is disabled until set.
 The rate and burst must be positive and no greater than the app plan's
 request rate and burst.
 If the app moves to a lower plan, the gateway clamps an existing setting to
 the new plan ceiling.
+To be notified when the guard blocks or would block a burst of requests,
+enable the webhook-only [`pre_auth_pressure` alert preset](alerts.md).
+`gregale edge-rules summary --app my-api` shows pre-auth blocks alongside
+validation failures and rejections by the other edge gates.
 
 Up to 16 exact public method/path overrides can add stricter limits for
 sensitive endpoints. For example, a login endpoint can allow fewer requests
@@ -232,6 +253,74 @@ a suitable threshold.
 `failure_would_block`, `failure_blocked`, `central_fallback`,
 `failure_central_fallback`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
+
+## Security headers on your app
+
+Your app controls its own security headers. When a response sets one of
+the headers below, directly or through a `kind=headers` edge rule, Gregale
+sends your value unchanged. When it sets none, Gregale adds a default:
+
+| Header | Default on `*.gregale.dev` | Default on your custom domain |
+|---|---|---|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | `max-age=31536000` |
+| `X-Content-Type-Options` | `nosniff` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | `strict-origin-when-cross-origin` |
+| `X-Frame-Options` | none | none |
+| `Permissions-Policy` | none | none |
+
+On a custom domain, HSTS does not include subdomains by default because
+Gregale does not serve your other subdomains. Add `includeSubDomains` (and
+`preload`) yourself once every subdomain serves HTTPS. Set `X-Frame-Options`
+or a `Content-Security-Policy` `frame-ancestors` directive if your pages must
+not be framed, and `Permissions-Policy` to restrict browser features.
+
+```sh
+gregale edge-rules create --app my-api --kind headers --match-host my-api.example.com \
+  --headers-response-set 'X-Frame-Options:DENY'
+```
+
+Before 2026-10-09 these headers were fixed by the platform, including HSTS
+with `includeSubDomains` on custom domains. Browsers that cached that HSTS
+policy keep it until it expires (up to a year after their last visit).
+
+## Web application firewall (preview)
+
+A `kind=waf` edge rule (Pro and above) checks matched requests against the
+OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
+command injection, scanners, and header injection. It works the same on
+`*.gregale.dev` and on your custom domains. The rule's `mode` decides what
+happens to a detection:
+
+| Mode | Headers and URL | Request body |
+|---|---|---|
+| `observe` (default) | sampled and reported | sampled and reported |
+| `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported |
+| `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported |
+
+Request bodies are never blocked: checking them costs tens to hundreds of
+milliseconds, so they are inspected off the request path, and only a sample
+of them under load. To reject bad bodies, declare their shape with a
+`kind=validate` rule. Checks on headers and the URL add about 1 ms to each
+matched request. If your app sends more traffic than its check budget allows
+(roughly 500 requests per second), the rest pass unchecked and are counted
+as `inline_skipped`; the WAF never slows your app down to keep up.
+
+Start in `observe`, look for false positives, then switch to `block`:
+
+```sh
+gregale edge-rules create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
+gregale edge-rules summary --app my-api --range 24h   # detections, categories, top CRS rule IDs
+gregale edge-rules update <rule-id> --kind waf --waf-exclude-rules 942100   # silence a false positive
+gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
+```
+
+`edge-rules update --kind waf` replaces the whole WAF action, so repeat every
+setting you want to keep (mode, exclusions, thresholds) in each update.
+
+`warn` and `block` run at paranoia level 1. Level 2 detects more and
+produces more false positives; it is available in `observe` only. The
+`edge_waf_detections` alert preset notifies you of bursts, and blocked
+requests also count toward `edge_rejection_pressure`.
 
 ## Outbound connections and DNS
 

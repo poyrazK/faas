@@ -19,6 +19,7 @@ package reconcile
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -918,6 +919,15 @@ func TestReconcile_WorkloadClassUnknownFallsBackToHTTP(t *testing.T) {
 	got := workloadToDraftApp(proj, reposcan.Workload{Name: "app", Class: reposcan.ClassUnknown}, "", api.PlanFree)
 	if got.WorkloadClass != state.WorkloadClassHTTP {
 		t.Fatalf("unknown scan class persisted as %q, want http", got.WorkloadClass)
+	}
+}
+
+func TestReconcile_DraftAppObservesPreAuthByDefault(t *testing.T) {
+	_, proj := seedProject(t, newFakeStore(), state.ProjectScanSourceSingle, "main")
+	got := workloadToDraftApp(proj, reposcan.Workload{Name: "app"}, "", api.PlanFree)
+	want := api.DefaultPreAuthRateLimit(api.PlanFree)
+	if !reflect.DeepEqual(got.Manifest.PreAuthRateLimit, want) || want.Mode != api.PreAuthRateLimitObserve {
+		t.Fatalf("draft pre-auth = %+v, want %+v", got.Manifest.PreAuthRateLimit, want)
 	}
 }
 

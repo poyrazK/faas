@@ -226,7 +226,7 @@ func (s *server) dashboardDeleteStorageBucket(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.objectStorage == nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return
 	}
 	slug, bucketID := r.PathValue("slug"), r.PathValue("bucket")
@@ -247,7 +247,7 @@ func (s *server) dashboardDeleteStorageObject(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.objectStorage == nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return
 	}
 	if err := r.ParseForm(); err != nil {

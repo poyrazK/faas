@@ -58,7 +58,7 @@ func validObjectS3CredentialPermission(permission string) bool {
 func (s *server) createObjectS3Credential(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.objectStorageEnabled() {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return
 	}
 	bucket, store, ok := s.objectS3CredentialStore(w, r, acct, true)

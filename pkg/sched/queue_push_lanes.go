@@ -1,4 +1,4 @@
-// queue_push_lanes.go — parallel push-queue dispatch (ADR-933).
+// queue_push_lanes.go — parallel push-queue dispatch (ADR-972).
 //
 // An in-platform queue push trigger no longer dispatches inline on the
 // trigger tick. The tick submits up to N lanes to the bounded loop work pool;

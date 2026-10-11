@@ -3211,7 +3211,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	}
 
 	if !memPublishedLocally {
-		memTmp, tmpErr := os.CreateTemp("", "faas-snap-*.mem")
+		memTmp, tmpErr := os.CreateTemp("", snapshotTempPattern(l.Instance, ".mem"))
 		if tmpErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: alloc snapshot mem tmp: %w", tmpErr)
 		}
@@ -7301,7 +7301,7 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 			return path, nil
 		}
 	}
-	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-snap-*.bin", "materialised")
+	tmp, err := v.newMaterialisedFile(instanceID, "", snapshotTempPattern(instanceID, ".bin"), "materialised")
 	if err != nil {
 		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
 	}
@@ -7608,6 +7608,18 @@ func layerCloneTempPattern(instance string) string {
 	// across a daemon restart. ReapOrphanedLayerClones applies the same
 	// durable liveness gate as the jail sweep before removing one.
 	return ".faas-layer-" + instance + "-*"
+}
+
+// snapshotTempPattern names a snapshot memory or materialised-artifact temp
+// file in vmmd's TMPDIR. Like layerCloneTempPattern it carries the instance id,
+// so a file stranded by a vmmd crash is reclaimed by ReapOrphanedLayerClones
+// behind the same durable liveness gate instead of lingering for good
+// (production compute-1 held 12 unnamed ones, 2026-10-01..06).
+func snapshotTempPattern(instance, ext string) string {
+	if !looksLikeInstanceID(instance) {
+		return "faas-snap-*" + ext
+	}
+	return "faas-snap-" + instance + "-*" + ext
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

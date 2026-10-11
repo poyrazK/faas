@@ -50,7 +50,7 @@ func (s *server) writeObjectBucketNotifications(w http.ResponseWriter, r *http.R
 		}
 		rules = in.Rules
 		if len(rules) > 0 && !s.objectStorageEnabled() {
-			bucketProblem(w, objectstorage.ErrUnavailable)
+			bucketProblem(w, errObjectStorageDisabled)
 			return
 		}
 	}
