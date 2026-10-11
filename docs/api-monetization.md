@@ -271,11 +271,11 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
 - Gregale records the handoff to your billing system but never charges your
   customers.
 
-See [ADR-970](adr/970-app-consumer-statement-revisions-and-platform-failure-billing.md),
-[ADR-971](adr/971-api-consumer-monthly-allowances.md),
-[ADR-972](adr/972-api-consumer-graduated-tiers.md),
-[ADR-973](adr/973-api-consumer-route-weights.md),
-[ADR-974](adr/974-api-consumer-plans.md),
-[ADR-848](adr/848-api-consumer-usage-completeness.md),
+See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-billing.md),
+[ADR-950](adr/950-api-consumer-monthly-allowances.md),
+[ADR-951](adr/951-api-consumer-graduated-tiers.md),
+[ADR-952](adr/952-api-consumer-route-weights.md),
+[ADR-953](adr/953-api-consumer-plans.md),
+[ADR-954](adr/954-api-consumer-usage-completeness.md),
 [ADR-849](adr/849-api-consumer-usage-alerts.md), and
 [ADR-975](adr/975-platform-tenant-allowances-and-tiers.md) for the billing rules.
