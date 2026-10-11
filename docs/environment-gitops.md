@@ -6,7 +6,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
-| Git source | Immutable definition review, approval, polling and separate source freshness | Full outage and rollback journey with serving workloads |
+| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey | Dedicated native outage/rollback acceptance for live workloads; workload deletion remains unsupported |
 | Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance | Other providers and incomplete or conflicting GitHub provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies and unsupported source-provider provenance |
@@ -15,6 +15,8 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Enforcement | Transactional ownership, override and execution fences; lease-bound activation and serving of supported request/service graphs including pinned scoped service bindings, push and pull workers, queue-bound HTTP functions, and scheduled Jobs with a successful post-activation occurrence | Production qualification polling remains gated; dedicated Linux acceptance and unsupported production execution adapters |
 
 Approved Git content, observed intent, qualification, activation and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source, runtime, secret-reference, service-binding and queue-binding fields prevent the applied revision from advancing.
+
+The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker in a rollback is still blocked by the unavailable workload-pruning adapter.
 
 ## Try review and reporting
 

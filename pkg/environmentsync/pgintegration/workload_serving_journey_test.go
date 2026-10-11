@@ -188,6 +188,198 @@ func TestPgEnvironmentGitOpsMixedGraphServingWaitsForQueueDelivery(t *testing.T)
 	}
 }
 
+func TestPgEnvironmentGitOpsServingSurvivesSourceOutageAndReviewedRollback(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	lease, plan, requests := preparedQualificationFixture(t, store)
+	var worker state.EnvironmentWorkloadQualificationRequest
+	for _, request := range requests {
+		completeRequestQualificationReceipts(t, store, request)
+		if request.Resource == "workload/worker" {
+			worker = request
+		}
+	}
+	if worker.ID == "" {
+		t.Fatal("mixed graph has no worker")
+	}
+	var bindingID, triggerID string
+	if err := pool.QueryRow(t.Context(), `SELECT binding.id::text,queue_trigger.id::text
+		FROM queue_bindings binding JOIN triggers queue_trigger ON queue_trigger.queue_binding_id=binding.id
+		WHERE binding.app_id=$1::uuid AND binding.name='orders' AND queue_trigger.enabled`, worker.AppID).
+		Scan(&bindingID, &triggerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, activated, err := store.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan); err != nil || !activated {
+		t.Fatalf("mixed graph activation: %t %v", activated, err)
+	}
+	registerServingGateway(t, store, "edge-a")
+	receipt, serving, err := store.PrepareEnvironmentGitOpsWorkloadServing(t.Context(), lease, plan, []string{"edge-a"})
+	if err != nil || serving || len(receipt.Routes) != 1 {
+		t.Fatalf("mixed graph route preparation: %+v %t %v", receipt, serving, err)
+	}
+	if _, serving, err := store.AcknowledgeEnvironmentGitOpsWorkloadServing(t.Context(), lease, receipt.GraphID,
+		receipt.Routes[0].Generation, "edge-a"); err != nil || serving {
+		t.Fatalf("route alone served mixed graph: %t %v", serving, err)
+	}
+	completePushServingTestDelivery(t, store, lease.Source.AccountID, worker.AppID,
+		lease.Source.EnvironmentSlug, bindingID, triggerID, worker.DeploymentID, true)
+	if evidence, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan); err != nil || !evidence.Serving {
+		t.Fatalf("mixed graph never served: %+v %v", evidence, err)
+	}
+
+	polls := state.EnvironmentGitSourcePollStore(store)
+	now := time.Now().UTC()
+	poll, err := polls.ClaimEnvironmentGitSourcePoll(t.Context(), uuid.NewString(), now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := polls.FinishEnvironmentGitSourcePoll(t.Context(), poll, state.EnvironmentGitSourcePollResult{
+		ErrorCode: "environment_git_source_unavailable"}, now, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.EnvironmentGitSource(t.Context(), lease.Source.AccountID, lease.Source.ProjectID, lease.Source.EnvironmentSlug)
+	if err != nil || stale.ApprovedRevisionID != lease.Revision.ID || stale.Generation != lease.Source.Generation ||
+		stale.SourceErrorCode != "environment_git_source_unavailable" {
+		t.Fatalf("outage changed approved authority: %+v %v", stale, err)
+	}
+	if evidence, err := state.NewPgStore(pool).EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan); err != nil || !evidence.Serving {
+		t.Fatalf("source outage stopped the serving graph: %+v %v", evidence, err)
+	}
+
+	accepted, err := store.EnqueueInvocation(t.Context(), state.Invocation{AccountID: lease.Source.AccountID,
+		AppID: worker.AppID, Source: state.InvocationQueue, QueueName: "orders", QueueBindingID: bindingID,
+		DeploymentScope: lease.Source.EnvironmentSlug, DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changedDefinition, servingDefinition api.EnvironmentDefinition
+	if err := json.Unmarshal(lease.Revision.Definition, &changedDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(lease.Revision.Definition, &servingDefinition); err != nil {
+		t.Fatal(err)
+	}
+	servingDesired, err := environmentsync.Compile(servingDefinition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedWorker := changedDefinition.Workloads["worker"]
+	changedQueue := changedWorker.QueueBindings["orders"]
+	changedQueue.MaxConcurrency = 2
+	changedWorker.QueueBindings["orders"] = changedQueue
+	changedDefinition.Workloads["worker"] = changedWorker
+	changedDesired, err := environmentsync.Compile(changedDefinition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSource, changedRevision, err := store.ApproveEnvironmentDesiredRevision(t.Context(),
+		approval(stale, changedDesired, strings.Repeat("c", 40)))
+	if err != nil || changedSource.Generation <= stale.Generation || changedRevision.ID == lease.Revision.ID {
+		t.Fatalf("reviewed change did not supersede the serving revision: %+v %+v %v", changedSource, changedRevision, err)
+	}
+	if _, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("superseded serving lease remained authoritative: %v", err)
+	}
+	changedLease, err := state.NewPgStore(pool).ClaimEnvironmentGitOps(t.Context(), uuid.NewString(), time.Now(), 3*time.Minute)
+	if err != nil || changedLease.Revision.ID != changedRevision.ID {
+		t.Fatalf("reviewed change was not executable: %+v %v", changedLease, err)
+	}
+	changedPlan := claimedIntentPlan(t, store, changedLease, changedDesired)
+	if !changedPlan.CanApply() {
+		t.Fatalf("reviewed change is blocked: %+v", changedPlan)
+	}
+	if _, err := store.ApplyEnvironmentGitOps(t.Context(), changedLease, changedPlan); err != nil {
+		t.Fatal(err)
+	}
+	changedBinding, err := store.QueueBindingByID(t.Context(), lease.Source.AccountID, worker.AppID, bindingID)
+	if err != nil || changedBinding.MaxConcurrency != 2 {
+		t.Fatalf("reviewed queue change did not apply: %+v %v", changedBinding, err)
+	}
+	current, err := store.EnvironmentGitSource(t.Context(), lease.Source.AccountID, lease.Source.ProjectID, lease.Source.EnvironmentSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rolledBack, previousRevision, err := store.ApproveEnvironmentDesiredRevision(t.Context(),
+		approval(current, servingDesired, lease.Revision.CommitSHA))
+	if err != nil || rolledBack.Generation <= changedSource.Generation || previousRevision.ID != lease.Revision.ID {
+		t.Fatalf("reviewed rollback did not restore the prior revision: %+v %+v %v", rolledBack, previousRevision, err)
+	}
+	if _, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), changedLease, changedPlan); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("abandoned change lease remained authoritative after rollback: %v", err)
+	}
+
+	restarted := state.NewPgStore(pool)
+	rollbackLease, err := restarted.ClaimEnvironmentGitOps(t.Context(), uuid.NewString(), time.Now(), 3*time.Minute)
+	if err != nil || rollbackLease.Revision.ID != previousRevision.ID {
+		t.Fatalf("reviewed rollback was not executable: %+v %v", rollbackLease, err)
+	}
+	rollbackPlan := claimedIntentPlan(t, restarted, rollbackLease, servingDesired)
+	if !rollbackPlan.CanApply() {
+		t.Fatalf("reviewed rollback is blocked: %+v", rollbackPlan)
+	}
+	if _, err := restarted.ApplyEnvironmentGitOps(t.Context(), rollbackLease, rollbackPlan); err != nil {
+		t.Fatal(err)
+	}
+	restoredBinding, err := restarted.QueueBindingByID(t.Context(), lease.Source.AccountID, worker.AppID, bindingID)
+	if err != nil || restoredBinding.MaxConcurrency != 1 {
+		t.Fatalf("rollback did not restore the reviewed queue contract: %+v %v", restoredBinding, err)
+	}
+	if pending, err := restarted.InvocationByID(t.Context(), accepted.ID); err != nil || pending.State != state.InvocationPending ||
+		pending.QueueBindingID != bindingID {
+		t.Fatalf("rollback reconciliation discarded accepted queue work: %+v %v", pending, err)
+	}
+	rollbackPlan = claimedIntentPlan(t, restarted, rollbackLease, servingDesired)
+	candidates, err := restarted.PrepareEnvironmentGitOpsImageCandidates(t.Context(), rollbackLease, rollbackPlan)
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("rollback candidate cohort: %+v %v", candidates, err)
+	}
+	for _, candidate := range candidates {
+		if err := restarted.SetDeploymentRootfs(t.Context(), candidate.DeploymentID, "/reviewed.ext4", "rollback-"+candidate.Resource, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.UpdateDeploymentStatus(t.Context(), candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if graph, err := restarted.ReconcileEnvironmentGitOpsPreparation(t.Context(), rollbackLease, rollbackPlan); err != nil || graph.Phase != "prepared" {
+		t.Fatalf("rollback graph preparation: %+v %v", graph, err)
+	}
+	rollbackRequests, err := restarted.QueueEnvironmentGitOpsQualification(t.Context(), rollbackLease, rollbackPlan)
+	if err != nil || len(rollbackRequests) != 2 {
+		t.Fatalf("rollback qualification cohort: %+v %v", rollbackRequests, err)
+	}
+	var rollbackWorker state.EnvironmentWorkloadQualificationRequest
+	for _, request := range rollbackRequests {
+		completeRequestQualificationReceipts(t, restarted, request)
+		if request.Resource == "workload/worker" {
+			rollbackWorker = request
+		}
+	}
+	if rollbackWorker.ID == "" {
+		t.Fatal("rollback graph has no worker")
+	}
+	if _, activated, err := restarted.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), rollbackLease, rollbackPlan); err != nil || !activated {
+		t.Fatalf("rollback graph activation: %t %v", activated, err)
+	}
+	rollbackReceipt, serving, err := restarted.PrepareEnvironmentGitOpsWorkloadServing(t.Context(), rollbackLease, rollbackPlan, []string{"edge-a"})
+	if err != nil || serving || len(rollbackReceipt.Routes) != 1 {
+		t.Fatalf("rollback route preparation: %+v %t %v", rollbackReceipt, serving, err)
+	}
+	if _, serving, err := restarted.AcknowledgeEnvironmentGitOpsWorkloadServing(t.Context(), rollbackLease,
+		rollbackReceipt.GraphID, rollbackReceipt.Routes[0].Generation, "edge-a"); err != nil || serving {
+		t.Fatalf("rollback route alone served mixed graph: %t %v", serving, err)
+	}
+	completePushServingTestDelivery(t, restarted, rollbackLease.Source.AccountID, rollbackWorker.AppID,
+		rollbackLease.Source.EnvironmentSlug, bindingID, triggerID, rollbackWorker.DeploymentID, true)
+	if evidence, err := restarted.EnvironmentGitOpsActivationEvidence(t.Context(), rollbackLease, rollbackPlan); err != nil || !evidence.Serving {
+		t.Fatalf("rollback graph did not converge on new serving evidence: %+v %v", evidence, err)
+	}
+	if pending, err := restarted.InvocationByID(t.Context(), accepted.ID); err != nil || pending.State != state.InvocationPending ||
+		pending.QueueBindingID != bindingID {
+		t.Fatalf("rollback serving discarded accepted queue work: %+v %v", pending, err)
+	}
+}
+
 func completePushServingTestDelivery(t *testing.T, store *state.PgStore, accountID, appID, scope,
 	bindingID, triggerID, deploymentID string, acknowledge bool) string {
 	t.Helper()
