@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { EventBacklogRecipient } from './EventBacklogRecipient.js';
 import type { EventRecipientBlockerQuery } from './EventRecipientBlockerQuery.js';
+/**
+ * Current retained routing evidence for one acceptance-guarded consumer query.
+ */
 export type EventRecipientBlockerResponse = {
   query: EventRecipientBlockerQuery;
   observed_at: string;

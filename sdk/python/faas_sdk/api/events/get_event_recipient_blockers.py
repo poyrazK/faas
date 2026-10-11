@@ -88,7 +88,8 @@ def sync_detailed(
     work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
 
     Args:
-        body (EventRecipientBlockerBatchRequest):
+        body (EventRecipientBlockerBatchRequest): Bounded exact-recipient queries, each guarded by
+            the original acceptance instant.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,7 +123,8 @@ def sync(
     work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
 
     Args:
-        body (EventRecipientBlockerBatchRequest):
+        body (EventRecipientBlockerBatchRequest): Bounded exact-recipient queries, each guarded by
+            the original acceptance instant.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,7 +153,8 @@ async def asyncio_detailed(
     work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
 
     Args:
-        body (EventRecipientBlockerBatchRequest):
+        body (EventRecipientBlockerBatchRequest): Bounded exact-recipient queries, each guarded by
+            the original acceptance instant.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,7 +186,8 @@ async def asyncio(
     work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
 
     Args:
-        body (EventRecipientBlockerBatchRequest):
+        body (EventRecipientBlockerBatchRequest): Bounded exact-recipient queries, each guarded by
+            the original acceptance instant.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

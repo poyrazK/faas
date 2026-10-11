@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecipientBlockerBatchItem } from './EventRecipientBlockerBatchItem.js';
+/**
+ * Ordered independent observations for the requested recipient queries.
+ */
 export type EventRecipientBlockerBatchResponse = {
   items: Array<EventRecipientBlockerBatchItem>;
 };

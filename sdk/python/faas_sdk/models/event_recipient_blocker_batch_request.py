@@ -14,6 +14,8 @@ T = TypeVar("T", bound="EventRecipientBlockerBatchRequest")
 
 @_attrs_define
 class EventRecipientBlockerBatchRequest:
+    """Bounded exact-recipient queries, each guarded by the original acceptance instant."""
+
     queries: list[EventRecipientBlockerQuery]
 
     def to_dict(self) -> dict[str, Any]:

@@ -14,6 +14,8 @@ T = TypeVar("T", bound="EventRecipientBlockerBatchResponse")
 
 @_attrs_define
 class EventRecipientBlockerBatchResponse:
+    """Ordered independent observations for the requested recipient queries."""
+
     items: list[EventRecipientBlockerBatchItem]
 
     def to_dict(self) -> dict[str, Any]:

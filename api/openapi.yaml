@@ -3986,14 +3986,17 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters:
         - name: source
+          description: Original event source for the exact recipient lookup.
           in: query
           required: true
           schema: { type: string, minLength: 1, maxLength: 256 }
         - name: id
+          description: Original event identifier within the source.
           in: query
           required: true
           schema: { type: string, minLength: 1, maxLength: 256 }
         - name: subscription_id
+          description: Consumer subscription captured by the original event acceptance.
           in: query
           required: true
           schema: { type: string, minLength: 1, maxLength: 256 }
@@ -30587,21 +30590,21 @@ paths:
       tags: [events]
       operationId: getEventConsumerDeliveryHealth
       summary: Inspect subscription delivery health across routing and retained execution evidence.
-      description: Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Execution counts include retained handler replays and remain historically incomplete. Pending sample blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason counts cover all retained pending application recipients independently of that sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+      description: Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Current execution counts include bounded retained handler replays. Attempt rates and completion latency use durable per-subscription window evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason counts cover all retained pending application recipients independently of that sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
-          description: "Application slug for this operation: inspect consumer execution health over a retained history window."
+          description: "Application slug for this operation: inspect combined routing, execution and pending delivery health."
           in: path
           required: true
           schema: { type: string }
         - name: subscriptionID
-          description: "Application event subscription identifier for this operation: inspect consumer execution health over a retained history window."
+          description: "Application event subscription identifier for this operation: inspect combined routing, execution and pending delivery health."
           in: path
           required: true
           schema: { type: string, format: uuid }
         - name: window
-          description: "Retained observation window for this operation: inspect consumer execution health over a retained history window."
+          description: "Retained observation window for this operation: inspect combined routing, execution and pending delivery health."
           in: query
           schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h], default: 5m }
       responses:
@@ -30611,7 +30614,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EventConsumerDeliveryHealth' }
         '400':
-          description: Invalid subscription identifier or observation window.
+          description: Invalid subscription identifier or combined delivery observation window.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -30619,7 +30622,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '504':
-          description: Subscription control request timed out.
+          description: The combined delivery health request exceeded its bounded deadline.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -30629,7 +30632,7 @@ paths:
       tags: [events]
       operationId: getEventConsumerExecutionHealth
       summary: Inspect consumer execution health over a retained history window.
-      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound coverage; history_complete is always false. Counts are not unique event totals. Completion latency starts at original event acceptance.
+      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -55593,6 +55596,7 @@ components:
 
     EventRecipientBlockerBatchRequest:
       type: object
+      description: Bounded exact-recipient queries, each guarded by the original acceptance instant.
       additionalProperties: false
       required: [queries]
       properties:
@@ -55612,6 +55616,7 @@ components:
         error: { type: string, enum: [read_error, read_timeout] }
     EventRecipientBlockerBatchResponse:
       type: object
+      description: Ordered independent observations for the requested recipient queries.
       additionalProperties: false
       required: [items]
       properties:
@@ -55622,6 +55627,7 @@ components:
           items: { $ref: '#/components/schemas/EventRecipientBlockerBatchItem' }
     EventRecipientBlockerQuery:
       type: object
+      description: Event and consumer identity with the original acceptance instant for a read-only lookup.
       additionalProperties: false
       required: [source, id, subscription_id, expected_accepted_at]
       properties:
@@ -55631,6 +55637,7 @@ components:
         expected_accepted_at: { type: string, description: "Nonzero RFC3339 timestamp with its original fractional precision (up to nanoseconds)." }
     EventRecipientBlockerResponse:
       type: object
+      description: Current retained routing evidence for one acceptance-guarded consumer query.
       additionalProperties: false
       required: [query, observed_at, status]
       properties:

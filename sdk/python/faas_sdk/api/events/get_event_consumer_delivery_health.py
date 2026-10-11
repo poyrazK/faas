@@ -104,14 +104,15 @@ def sync_detailed(
     """Inspect subscription delivery health across routing and retained execution evidence.
 
      Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single
-    database snapshot. Routing counts cover the live backlog. Execution counts include retained handler
-    replays and remain historically incomplete. Pending sample blocker counts cover at most 50 oldest
-    pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason
-    counts cover all retained pending application recipients independently of that sample. Component
-    observed_at timestamps describe each read; top-level observed_at marks assembly completion.
-    Configured rate and pause/circuit state are controls, not proof that every recipient is blocked.
-    Latest successful completion is the latest in bounded retained execution coverage, not an all-time
-    watermark.
+    database snapshot. Routing counts cover the live backlog. Current execution counts include bounded
+    retained handler replays. Attempt rates and completion latency use durable per-subscription window
+    evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover
+    at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and
+    waiting-reason counts cover all retained pending application recipients independently of that
+    sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly
+    completion. Configured rate and pause/circuit state are controls, not proof that every recipient is
+    blocked. Latest successful completion is the latest in bounded retained execution coverage, not an
+    all-time watermark.
 
     Args:
         slug (str):
@@ -149,14 +150,15 @@ def sync(
     """Inspect subscription delivery health across routing and retained execution evidence.
 
      Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single
-    database snapshot. Routing counts cover the live backlog. Execution counts include retained handler
-    replays and remain historically incomplete. Pending sample blocker counts cover at most 50 oldest
-    pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason
-    counts cover all retained pending application recipients independently of that sample. Component
-    observed_at timestamps describe each read; top-level observed_at marks assembly completion.
-    Configured rate and pause/circuit state are controls, not proof that every recipient is blocked.
-    Latest successful completion is the latest in bounded retained execution coverage, not an all-time
-    watermark.
+    database snapshot. Routing counts cover the live backlog. Current execution counts include bounded
+    retained handler replays. Attempt rates and completion latency use durable per-subscription window
+    evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover
+    at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and
+    waiting-reason counts cover all retained pending application recipients independently of that
+    sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly
+    completion. Configured rate and pause/circuit state are controls, not proof that every recipient is
+    blocked. Latest successful completion is the latest in bounded retained execution coverage, not an
+    all-time watermark.
 
     Args:
         slug (str):
@@ -189,14 +191,15 @@ async def asyncio_detailed(
     """Inspect subscription delivery health across routing and retained execution evidence.
 
      Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single
-    database snapshot. Routing counts cover the live backlog. Execution counts include retained handler
-    replays and remain historically incomplete. Pending sample blocker counts cover at most 50 oldest
-    pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason
-    counts cover all retained pending application recipients independently of that sample. Component
-    observed_at timestamps describe each read; top-level observed_at marks assembly completion.
-    Configured rate and pause/circuit state are controls, not proof that every recipient is blocked.
-    Latest successful completion is the latest in bounded retained execution coverage, not an all-time
-    watermark.
+    database snapshot. Routing counts cover the live backlog. Current execution counts include bounded
+    retained handler replays. Attempt rates and completion latency use durable per-subscription window
+    evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover
+    at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and
+    waiting-reason counts cover all retained pending application recipients independently of that
+    sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly
+    completion. Configured rate and pause/circuit state are controls, not proof that every recipient is
+    blocked. Latest successful completion is the latest in bounded retained execution coverage, not an
+    all-time watermark.
 
     Args:
         slug (str):
@@ -232,14 +235,15 @@ async def asyncio(
     """Inspect subscription delivery health across routing and retained execution evidence.
 
      Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single
-    database snapshot. Routing counts cover the live backlog. Execution counts include retained handler
-    replays and remain historically incomplete. Pending sample blocker counts cover at most 50 oldest
-    pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason
-    counts cover all retained pending application recipients independently of that sample. Component
-    observed_at timestamps describe each read; top-level observed_at marks assembly completion.
-    Configured rate and pause/circuit state are controls, not proof that every recipient is blocked.
-    Latest successful completion is the latest in bounded retained execution coverage, not an all-time
-    watermark.
+    database snapshot. Routing counts cover the live backlog. Current execution counts include bounded
+    retained handler replays. Attempt rates and completion latency use durable per-subscription window
+    evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover
+    at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and
+    waiting-reason counts cover all retained pending application recipients independently of that
+    sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly
+    completion. Configured rate and pause/circuit state are controls, not proof that every recipient is
+    blocked. Latest successful completion is the latest in bounded retained execution coverage, not an
+    all-time watermark.
 
     Args:
         slug (str):

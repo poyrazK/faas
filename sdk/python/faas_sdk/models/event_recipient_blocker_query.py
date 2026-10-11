@@ -10,6 +10,8 @@ T = TypeVar("T", bound="EventRecipientBlockerQuery")
 
 @_attrs_define
 class EventRecipientBlockerQuery:
+    """Event and consumer identity with the original acceptance instant for a read-only lookup."""
+
     source: str
     id: str
     subscription_id: str

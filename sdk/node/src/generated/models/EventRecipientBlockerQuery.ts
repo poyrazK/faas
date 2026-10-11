@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Event and consumer identity with the original acceptance instant for a read-only lookup.
+ */
 export type EventRecipientBlockerQuery = {
   source: string;
   id: string;

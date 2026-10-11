@@ -26,7 +26,10 @@ T = TypeVar("T", bound="EventRecipientBlockerResponse")
 
 @_attrs_define
 class EventRecipientBlockerResponse:
+    """Current retained routing evidence for one acceptance-guarded consumer query."""
+
     query: EventRecipientBlockerQuery
+    """Event and consumer identity with the original acceptance instant for a read-only lookup."""
     observed_at: datetime.datetime
     status: EventRecipientBlockerResponseStatus
     reason: EventRecipientBlockerResponseReason | Unset = UNSET

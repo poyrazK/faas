@@ -24,7 +24,9 @@ class EventRecipientBlockerBatchItem:
     """Exactly one of result or error is returned."""
 
     query: EventRecipientBlockerQuery
+    """Event and consumer identity with the original acceptance instant for a read-only lookup."""
     result: EventRecipientBlockerResponse | Unset = UNSET
+    """Current retained routing evidence for one acceptance-guarded consumer query."""
     error: EventRecipientBlockerBatchItemError | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
