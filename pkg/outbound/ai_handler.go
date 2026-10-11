@@ -139,6 +139,18 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
 	}
+	if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
+		alerts, err := alerter.RecordAIUsageAlerts(recordCtx, record)
+		if err != nil {
+			h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
+			return
+		}
+		for _, alert := range alerts {
+			h.Metrics.ObserveAIBudgetAlert(alert.Budget, alert.ThresholdPercent)
+		}
+		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+		return
+	}
 	if err := recorder.RecordAIUsage(recordCtx, record); err != nil {
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
 		return

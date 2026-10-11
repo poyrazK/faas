@@ -17,7 +17,9 @@ import (
 
 type fakeKeyPool struct{ keys []ManagedKey }
 
-func (f fakeKeyPool) Authorization(context.Context, string) (string, error) { return f.keys[0].Value, nil }
+func (f fakeKeyPool) Authorization(context.Context, string) (string, error) {
+	return f.keys[0].Value, nil
+}
 
 func (f fakeKeyPool) Authorizations(context.Context, string) ([]ManagedKey, error) {
 	return append([]ManagedKey(nil), f.keys...), nil

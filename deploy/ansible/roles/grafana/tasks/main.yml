@@ -386,6 +386,21 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# ADR-984 — AI gateway: AI calls, tokens, customer-priced cost, time to
+# first byte, budget rejections and alerts, route fallbacks and
+# translations, and provider key pool events. Byte-identical copy of
+# deploy/grafana/ai-gateway.json (grafana-mirror-check enforces identity).
+- name: grafana — drop ai-gateway dashboard JSON (ADR-984)
+  ansible.builtin.copy:
+    src: ai-gateway.json
+    dest: "{{ gv_dashboards_dir }}/ai-gateway.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 - name: grafana — install systemd unit
   ansible.builtin.template:
     src: grafana-server.service.j2
