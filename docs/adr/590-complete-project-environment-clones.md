@@ -9732,3 +9732,22 @@ rollback refuses to discard any terminal receipt. Generic terminal transitions
 remain guarded. This closes the modeled private unpublished compensation path;
 worker integration, published-release withdrawal, other operational retirement
 and native/provider qualification remain before public full-stage admission.
+
+### Terminal compensation in the clone worker
+
+Compensating operations with a common-checkpoint inventory now enter the private
+metadata completion path before legacy fence abandonment. The admitted worker
+uses the current renewed lease to replay settings, workload, deployment and
+environment cleanup in dependency order, then invokes the dedicated terminal
+writer. Each step authenticates its original native retirement and ownership
+evidence; missing proofs still defer compensation. This path dispatches no native
+retirement and does not alter resource labels or original journals.
+
+Host admission is checked before each step. A lost terminal commit response is
+retried once with the original completing token and revision, without renewal or
+another cleanup pass. A verified terminal receipt advances the local operation
+view and clears its local lease; the queue loop then skips lease release, as it
+already does after publication. Failed predecessors stop subsequent steps and
+retain the ordinary lease-release/backoff behavior. Stores without this private
+protocol and workers without host admission cannot use it. Public full-stage
+admission and native/provider qualification remain gated.
