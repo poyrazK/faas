@@ -697,14 +697,16 @@ var cliCommands = []cliCommand{
 				Positionals: []string{"<app>", "[<service>]"},
 				Flags: []cliFlag{
 					{Name: "all", Short: "verify services, managed PostgreSQL, object storage and configured outbound bindings"},
+					{Name: "release-policy", Short: "run the stored policy's required storage canaries and finish with policy-aware preflight"},
+					{Name: "dry-run", Short: "preview --release-policy storage operations without creating tasks"},
 					{Name: "postgres", Short: "verify one managed PostgreSQL binding by environment key", Value: "ENVIRONMENT_KEY"},
 					{Name: "outbound", Short: "verify a configured outbound integration by UUID", Value: "INTEGRATION_ID"},
 					{Name: "object-storage", Short: "verify one object-storage binding by environment prefix (read access only)", Value: "PREFIX"},
 					{Name: "object-storage-write", Short: "opt into a tiny upload and cleanup; also verify download for read/write bindings"},
 					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment to verify, including zero-traffic candidates"},
 					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
-					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
-				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --deployment v12 --all", "gregale bindings verify my-api --postgres DATABASE_URL", "gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS"},
+					{Name: "wait-timeout", Short: "maximum time to wait for canaries; bounds the entire --release-policy workflow", Value: "D"},
+				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --deployment v12 --all", "gregale bindings verify my-api --postgres DATABASE_URL", "gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS", "gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json", "gregale bindings verify my-api --deployment v12 --release-policy --object-storage-write --json"},
 			},
 			{
 				Name:        "smoke",

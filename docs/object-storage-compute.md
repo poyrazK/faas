@@ -197,6 +197,49 @@ Waiting observes already scheduled probes and ACKs; it never schedules writes.
 
 Without `--release-policy`, `bindings check` retains its local flag behavior.
 Use `bindings release-policy get` to inspect the stored policy separately.
+
+To collect every storage canary required by an enforced policy, preview the plan
+and then explicitly consent to its writes:
+
+```sh
+gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
+gregale bindings verify my-api --deployment v12 --release-policy \
+  --object-storage-write --wait-timeout 5m --json
+```
+
+This mode requires a nonempty stored storage-requirements map, a complete
+inventory, a valid configuration timestamp and one active, settled binding for
+each prefix. It selects and reconfirms the exact deployment and scope even when
+`--deployment` is omitted. `--dry-run` performs only metadata reads: `status` is
+`planned`, `passed` is false, and `write_consent_required` identifies whether the
+whole plan needs opt-in. Preview success does not test connectivity or readiness.
+
+Without consent to every planned write, the entire batch stops before creating
+any task. `read` runs a bounded bucket listing. `write` runs upload and cleanup;
+if the binding grants `read_write`, the canary also downloads and compares bytes,
+and the preview shows that extra operation. Consent does not broaden a binding's
+permission. Existing retention/Object Lock admission and cleanup rules still
+apply. `verify --all` and single-prefix verification keep their existing behavior.
+
+The command checks the original policy and binding configuration before each
+admission and after each successful probe, and stops on the first failure or
+observed change. It finishes with a policy-aware preflight against that same
+snapshot. JSON contains `plan`, `probes`, `release_policy`, `snapshot_confirmed`
+and `preflight`, including remaining application ACK or other binding blockers.
+A successful canary batch can therefore still return exit status 1. Canaries
+never supply application ACKs or automatically verify unrelated binding families.
+
+`--wait-timeout` bounds the entire workflow; it does not reset for every prefix.
+An ordinary timeout keeps the existing task running and reports its ID; inspect
+it before retrying. An interrupt requests cancellation and returns exit status
+130. Completed probe results remain in the report when a later step fails.
+
+These confirmations observe configuration; they do not lock it. Changes can race
+task admission or execution. The existing server-side task revision metadata
+prevents stale evidence from qualifying, and promotion still makes its atomic
+policy/catalog decision at the traffic write. The command performs no traffic,
+policy or binding updates, and does not certify resident application adoption.
+
 Confirmation describes the last read and does not authorize a later traffic
 change. Server-side promotion,
 traffic redistribution, and existing checked rollout/recovery paths consume the

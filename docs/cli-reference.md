@@ -1321,18 +1321,20 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--object-storage-write] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
+`gregale bindings verify [--all] [--release-policy] [--dry-run] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--object-storage-write] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | verify services, managed PostgreSQL, object storage and configured outbound bindings |  |
+| `--release-policy` | run the stored policy&#39;s required storage canaries and finish with policy-aware preflight |  |
+| `--dry-run` | preview --release-policy storage operations without creating tasks |  |
 | `--postgres <ENVIRONMENT_KEY>` | verify one managed PostgreSQL binding by environment key |  |
 | `--outbound <INTEGRATION_ID>` | verify a configured outbound integration by UUID |  |
 | `--object-storage <PREFIX>` | verify one object-storage binding by environment prefix (read access only) |  |
 | `--object-storage-write` | opt into a tiny upload and cleanup; also verify download for read/write bindings |  |
 | `--deployment <ID|vN>` | exact live deployment to verify, including zero-traffic candidates |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
-| `--wait-timeout <D>` | maximum time to wait for the canary task |  |
+| `--wait-timeout <D>` | maximum time to wait for canaries; bounds the entire --release-policy workflow |  |
 
 Examples:
 
@@ -1342,6 +1344,8 @@ gregale bindings verify my-api --all
 gregale bindings verify my-api --deployment v12 --all
 gregale bindings verify my-api --postgres DATABASE_URL
 gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS
+gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
+gregale bindings verify my-api --deployment v12 --release-policy --object-storage-write --json
 ```
 
 ### bindings smoke

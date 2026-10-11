@@ -67,6 +67,8 @@ type serviceBindingProbeBatchReport struct {
 func cmdBindingsVerify(args []string) int {
 	fs := newFlagSet("bindings-verify", flag.ContinueOnError)
 	all := fs.Bool("all", false, "verify services, managed PostgreSQL, object storage and configured outbound bindings")
+	releasePolicy := fs.Bool("release-policy", false, "run the stored policy's required storage canaries and finish with policy-aware preflight")
+	dryRun := fs.Bool("dry-run", false, "preview --release-policy storage operations without creating tasks")
 	postgresKey := fs.String("postgres", "", "verify a managed PostgreSQL binding by environment key")
 	objectStoragePrefix := fs.String("object-storage", "", "verify an object-storage binding by environment prefix (read access only)")
 	objectStorageWrite := fs.Bool("object-storage-write", false, "opt into a tiny upload and cleanup; also verify download for read/write bindings")
@@ -74,7 +76,7 @@ func cmdBindingsVerify(args []string) int {
 	deployment := fs.String("deployment", "", "exact live deployment id or vN revision to verify, including zero-traffic candidates")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
-	flagArgs, positionals := splitArgsForFlags(args, "all", "object-storage-write")
+	flagArgs, positionals := splitArgsForFlags(args, "all", "object-storage-write", "release-policy", "dry-run")
 	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 {
 		printBindingsVerifyUsage()
 		return 1
@@ -83,7 +85,7 @@ func cmdBindingsVerify(args []string) int {
 	objectStoragePrefixValue := strings.TrimSpace(*objectStoragePrefix)
 	outboundValue := strings.TrimSpace(*outboundID)
 	selections := 0
-	for _, selected := range []bool{*all, postgresKeyValue != "", objectStoragePrefixValue != "", outboundValue != ""} {
+	for _, selected := range []bool{*all, *releasePolicy, postgresKeyValue != "", objectStoragePrefixValue != "", outboundValue != ""} {
 		if selected {
 			selections++
 		}
@@ -96,7 +98,7 @@ func cmdBindingsVerify(args []string) int {
 		}
 		outboundValue = id.String()
 	}
-	invalidSelection := selections > 1 || *objectStorageWrite && objectStoragePrefixValue == ""
+	invalidSelection := selections > 1 || *objectStorageWrite && objectStoragePrefixValue == "" && !*releasePolicy || *dryRun && !*releasePolicy
 	if selections > 0 {
 		invalidSelection = invalidSelection || len(positionals) != 1
 	} else {
@@ -126,6 +128,9 @@ func cmdBindingsVerify(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *releasePolicy {
+		return runStoragePolicyVerification(context.Background(), client, slug, *deployment, *dryRun, *objectStorageWrite, *pollInterval, *waitTimeout)
+	}
 	probeClient, err := selectBindingProbeClient(context.Background(), client, slug, *deployment)
 	if err != nil {
 		return printErr("Could not select binding verification deployment", err)
@@ -146,7 +151,7 @@ func cmdBindingsVerify(args []string) int {
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
 }
 
 func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
