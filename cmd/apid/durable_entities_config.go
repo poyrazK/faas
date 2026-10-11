@@ -125,6 +125,11 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	if err != nil {
 		return errors.New("durable entities require private conditional writes and strongly consistent reads")
 	}
+	if migration {
+		if err := engine.CheckHealthDiscovery(probeCtx); err != nil {
+			return errors.New("quota migration requires bounded private delimiter listing")
+		}
+	}
 	alarms := getenv("FAAS_DURABLE_ENTITY_ALARMS_ENABLED") == "1"
 	if alarms {
 		if err := engine.CheckAlarmDiscovery(probeCtx); err != nil {
