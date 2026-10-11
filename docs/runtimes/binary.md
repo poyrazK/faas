@@ -108,5 +108,7 @@ runtime release.
 - `docs/adr/987-binary-function-runtime.md` — decision record
 - `docs/runtimes/go124.md` — the shared runner and protocol
 - `cmd/gregale/templates/function-rust/` — Rust template
+- `cmd/e2e/binary_function_metal_test.go` — metal test: template build,
+  gateway request, and handler replacement across snapshot restores
 - `pkg/imaged/go_function_artifact.go` — executable selection
 - `guest/runners/go124/main.go` — runner shim (`--runtime binary`)

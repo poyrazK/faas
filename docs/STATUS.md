@@ -508,10 +508,14 @@ dominated by ext4 drive staging (p50 ~400 ms) and did not separate.
 `binary` (ADR-987) runs one static executable built from the
 customer's Dockerfile (Rust, Zig, C, C++, Go) on the `go124` base and
 runner; it adds no base image, and the `function-rust` template is the
-reference. Evidence, 2026-10-11 on `gregale-internal-test-1`: the Linux
-`go124` runner started with `--runtime binary` served a static Rust
-handler from one reused process, reported `X-Faas-Guest-Runtime: binary`,
-and replaced the process when the reseed barrier fired.
+reference. Evidence, 2026-10-11 on `gregale-internal-test-1`
+(`cmd/e2e` `TestBinaryFunctionMetal`, full daemon set, builder microVMs):
+the unchanged `function-rust` template built from its Dockerfile, went
+live with imaged staging the `go124` base, and served `GET /hello` through
+the gateway. A static C handler then answered two snapshot-restore wakes
+with `runtime=binary` and a different start-time random token each time,
+so each restore ran a fresh handler process. The migration's Up, Down and
+replay passed on Postgres 16.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
