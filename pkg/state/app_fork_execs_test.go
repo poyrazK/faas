@@ -26,7 +26,7 @@ func (f appForkFixture) runningFork(t *testing.T, owner string) state.AppFork {
 		t.Fatalf("claim fork = %+v, %v", claimed, err)
 	}
 	ins := f.runningInstance(t, state.InstanceModeFork)
-	running, err := f.store.MarkAppForkRunning(ctx, fork.ID, *claimed.LeaseToken, "snap-1", ins.ID, forkT0.Add(2*time.Second))
+	running, err := f.store.MarkAppForkRunning(ctx, fork.ID, *claimed.LeaseToken, "00000000-0000-0000-0000-0000000000a1", ins.ID, forkT0.Add(2*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
