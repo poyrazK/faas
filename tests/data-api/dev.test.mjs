@@ -3,7 +3,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, cp, writeFile, readFile, readdir, stat, rm, unlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, stat, rm, unlink, rename } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,13 +22,33 @@ async function fixture(t, overrides = {}) {
   t.after(() => rm(directory, { recursive: true, force: true }))
   const project = join(directory, 'project')
   await cp(starter, project, { recursive: true })
-  if (!overrides.starterReplay) await rm(join(project, 'data-api.requests.json'), { force: true })
-  const { starterReplay, ...runtimeOverrides } = overrides
+  if (!overrides.starterReplay) {
+    await rm(join(project, 'data-api.requests.json'), { force: true })
+    await rm(join(project, 'data-api.dev.json'), { force: true })
+  }
+  const { starterReplay, projectSetup, ...runtimeOverrides } = overrides
+  if (projectSetup) await projectSetup(project)
   const options = { directory: project, output: join(project, 'client/src/database.types.ts'), port: 0, once: true, check: true, cli: process.env.DATA_API_DEV_CLI, ...runtimeOverrides }
   const config = join(directory, 'options.json')
   await writeFile(config, JSON.stringify(options))
   return { config, options }
 }
+
+async function ordersSetup(project) {
+  await rm(join(project, 'migrations'), { recursive: true })
+  await cp(new URL('../../examples/data-api-orders/', import.meta.url), project, { recursive: true })
+}
+
+test('an orders project verifies custom identities and seeds without a notes table', { skip: !enabled, timeout: 180000 }, async t => {
+  const before = await containers(), beforeVolumes = await volumes()
+  const { options } = await fixture(t, { check: false, projectSetup: ordersSetup, json: true })
+  await rename(join(options.directory, 'data-api.dev.json'), join(options.directory, 'orders.dev.json'))
+  const result = await execute(options.cli, ['--json', 'data-api', 'dev', '--directory', options.directory, '--config', 'orders.dev.json', '--port', '0', '--once'], { timeout: 150000 })
+  assert.equal(JSON.parse(result.stdout.trim()).status, 'verified')
+  const types = await readFile(join(options.directory, 'database.types.ts'), 'utf8')
+  assert.match(types, /"orders"/); assert.doesNotMatch(types, /"notes"/)
+  assert.deepEqual(await containers(), before); assert.deepEqual(await volumes(), beforeVolumes)
+})
 
 async function runningFixture(t, overrides = {}) {
   const fixtureResult = await fixture(t, { once: false, check: false, json: true, ...overrides })
@@ -58,6 +78,33 @@ async function runningFixture(t, overrides = {}) {
   }
   return { ...fixtureResult, child, events, wait, close, ready: await wait('ready') }
 }
+
+test('configured authorization checks pause permissive reloads and preserve contracts', { skip: !enabled, timeout: 180000 }, async t => {
+  const session = await runningFixture(t, { projectSetup: ordersSetup })
+  const { options, ready, events, wait } = session
+  const typesPath = join(options.directory, 'database.types.ts')
+  const baseline = join(options.directory, '.gregale/data-api-contract.json')
+  const types = await readFile(typesPath, 'utf8'), contract = await readFile(baseline, 'utf8')
+  const identities = JSON.parse(await readFile(ready.identities_file, 'utf8')).identities
+  assert.deepEqual(Object.keys(identities), ['buyer', 'other'])
+  const claims = JSON.parse(Buffer.from(identities.buyer.token.split('.')[1], 'base64url'))
+  assert.equal(claims.tenant, 'shop-a')
+  assert.equal(claims.sub, 'customer-a')
+  let mark = events.length
+  await writeFile(join(options.directory, 'migrations/0002_permissive.sql'), 'ALTER POLICY own_orders ON api.orders USING (true) WITH CHECK (true);')
+  assert.match((await wait('reload_failed', mark)).detail, /required project authorization verification/)
+  assert.equal((await fetch(`${ready.url}/healthz`)).status, 503)
+  assert.equal(await readFile(typesPath, 'utf8'), types)
+  assert.equal(await readFile(baseline, 'utf8'), contract)
+  mark = events.length
+  await writeFile(join(options.directory, 'migrations/0003_repair.sql'), `DELETE FROM api.orders WHERE total <> 42;
+    ALTER POLICY own_orders ON api.orders
+      USING (owner=current_setting('request.jwt.claims',true)::jsonb->>'sub')
+      WITH CHECK (owner=current_setting('request.jwt.claims',true)::jsonb->>'sub');`)
+  await wait('reloaded', mark)
+  assert.equal((await fetch(`${ready.url}/healthz`)).status, 200)
+  await session.close()
+})
 
 test('local Docker contexts cannot redirect development services to remote hosts', { skip: !enabled }, () => {
   for (const host of ['unix:///var/run/docker.sock', 'npipe:////./pipe/docker_engine', 'tcp://127.0.0.1:2376', 'tcp://[::1]:2376']) assert.equal(dev.localDockerHost(host), true)
@@ -560,5 +607,27 @@ test('shipped starter collection passes all workflows repeatedly and cleans its 
   assert.deepEqual(events.find(event => event.event === 'replay_summary'), { event: 'replay_summary', total: count, passed: count, failed: 0 })
   assert.equal(events.filter(event => event.event === 'replay_scenario_summary').length, 3)
   assert.equal(events.at(-1).status, 'verified')
+  assert.deepEqual(await containers(), before); assert.deepEqual(await volumes(), beforeVolumes)
+})
+
+
+test('local CI checks committed types without rewriting stale or missing files', { skip: !enabled, timeout: 600000 }, async t => {
+  const before = await containers(), beforeVolumes = await volumes()
+  const { config, options } = await fixture(t, { check: false, json: true })
+  await execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 })
+  const original = await readFile(options.output, 'utf8')
+  await writeFile(config, JSON.stringify({ ...options, check_types: true }))
+  const matching = await execute(options.cli, ['--json', 'data-api', 'dev', '--directory', options.directory, '--port', '0', '--once', '--check-types'], { timeout: 150000 })
+  assert.equal(matching.stdout.trim().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(value => value.types_checked)?.types_checked, true)
+  assert.equal(await readFile(options.output, 'utf8'), original)
+  await writeFile(join(options.directory, 'migrations/sql/0011_ci_drift.sql'), 'ALTER TABLE api.notes ADD COLUMN ci_extra text;\n')
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 }), error => /types are stale.*regenerate/.test(error.stderr))
+  assert.equal(await readFile(options.output, 'utf8'), original)
+  await writeFile(options.output, 'stale committed types\n')
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 }), error => /types are stale.*regenerate/.test(error.stderr))
+  assert.equal(await readFile(options.output, 'utf8'), 'stale committed types\n')
+  await unlink(options.output)
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 }), error => /types are missing.*regenerate/.test(error.stderr))
+  await assert.rejects(readFile(options.output), { code: 'ENOENT' })
   assert.deepEqual(await containers(), before); assert.deepEqual(await volumes(), beforeVolumes)
 })

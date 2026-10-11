@@ -41,6 +41,7 @@ func CopySparse(ctx context.Context, dst *os.File, src io.Reader) (written, data
 	buf := make([]byte, quantum)
 	zero := make([]byte, page)
 	writer := boundedFileWrites(dst)
+	var holes []fileRange
 	for {
 		if err := ctx.Err(); err != nil {
 			return written, data, err
@@ -60,6 +61,7 @@ func CopySparse(ctx context.Context, dst *os.File, src io.Reader) (written, data
 				if _, err := dst.Seek(int64(end-start), io.SeekCurrent); err != nil {
 					return written, data, fmt.Errorf("seek artifact hole: %w", err)
 				}
+				holes = appendRange(holes, written, int64(end-start))
 				written += int64(end - start)
 			} else {
 				w, err := writer.Write(buf[start:end])
@@ -79,12 +81,30 @@ func CopySparse(ctx context.Context, dst *os.File, src io.Reader) (written, data
 			if err := dst.Truncate(written); err != nil {
 				return written, data, fmt.Errorf("size sparse artifact: %w", err)
 			}
+			// XFS speculatively preallocates past EOF while the file grows;
+			// once a later write lands beyond a skipped run, that reservation
+			// stays inside the file as allocated, unwritten blocks (21–100 MiB
+			// per production memory file). Release every skipped run.
+			punchHoles(dst, holes)
 			return written, data, nil
 		}
 		if readErr != nil {
 			return written, data, readErr
 		}
 	}
+}
+
+// fileRange is a byte range of a file.
+type fileRange struct{ off, length int64 }
+
+// appendRange adds [off, off+length), merging it into the last range when the
+// two touch. Skipped zero runs arrive in order.
+func appendRange(rs []fileRange, off, length int64) []fileRange {
+	if n := len(rs); n > 0 && rs[n-1].off+rs[n-1].length == off {
+		rs[n-1].length += length
+		return rs
+	}
+	return append(rs, fileRange{off: off, length: length})
 }
 
 func isSparseArtifactKey(key string) bool {

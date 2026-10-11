@@ -137,7 +137,7 @@ gregale data-api dev --port 0 --check --once
 ```
 
 `--check` runs client typecheck and tests; `--once` verifies and exits.
-`--port 0` selects an available gateway port. `--directory` selects the starter
+`--port 0` selects an available gateway port. `--directory` selects the
 project; `--output` changes the types path relative to that project.
 
 Long-running sessions watch `migrations/sql` by default. Add a new numbered SQL
@@ -205,6 +205,72 @@ prints exact container removal commands.
 A force-killed process cannot clean up; remove its containers marked
 `gregale.data-api.dev=true` manually with their volumes. Local checks do not
 qualify a managed provider or staging deployment.
+
+## Develop your own schema
+
+`data-api dev` reads `data-api.dev.json` at the project root, or an explicit
+`--config FILE`. The [orders example](../examples/data-api-orders/) is a runnable
+project with no notes table or starter client dependency:
+
+```sh
+cd examples/data-api-orders
+gregale data-api dev --port 0 --once
+```
+
+```json
+{
+  "version": 1,
+  "migrations": "migrations",
+  "seed": "seed.sql",
+  "output": "src/database.types.ts",
+  "identities": {
+    "buyer": { "subject": "customer-a", "claims": { "tenant": "shop-a" } },
+    "other": { "subject": "customer-b", "claims": { "tenant": "shop-b" } }
+  },
+  "verify": { "collection": "data-api.requests.json", "scenarios": ["orders-isolation"] },
+  "check": { "directory": "web", "commands": [["npm", "run", "typecheck"], ["npm", "test"]] }
+}
+```
+
+Paths are relative to the project. Migration, seed, verification and check paths
+must stay inside it. `--output` overrides the configured output. Identity names
+are available in saved requests and the inspector; subjects must include at
+least two distinct users. Custom claims cannot replace reserved JWT fields,
+including `sub` or `role`. Tokens remain private to the disposable local session.
+
+Required scenarios must exist and exercise two distinct subjects. Authentication
+rejection and every required assertion must pass before readiness and after
+migration reloads. Failed reloads keep the gateway paused and preserve the last
+accepted contract. Project authors should test cross-user reads, writes and RPCs;
+passing scenarios verify those assertions rather than every possible policy.
+Use captures and cleanup steps so checks can run repeatedly against the same
+local database. `--replay` runs additional selected scenarios after required
+verification.
+
+Seeds run once after initial migrations in an owner transaction, with a 15-second
+statement timeout. Only test data belongs in seeds and saved requests. Restart
+dev after changing configuration, identities or seeds. The watcher tracks the
+configured migration directory. `--check` runs the configured argument arrays
+without a shell; defaults remain the starter client's typecheck and tests.
+Projects without a config retain legacy notes verification. Newly initialized
+starters include their explicit project config, excluded from deployment uploads.
+
+## Hosted owner workspace
+
+Open **Data API** from an app's dashboard. The workspace shows managed Data API
+binding status and offers **Inspect schema**, **Generate TypeScript**, and
+**Refresh Data API**. Schema and type operations require a deployed `data-api`
+runtime and enabled app tasks; each action runs the existing catalog generator
+inside the deployed app. No database credentials or application tokens are
+needed in the browser.
+
+The schema view lists tables, views, columns and approved RPC signatures. A
+completed export provides a `database.types.ts` download and fingerprint.
+Pending tasks refresh the page; terminal results stop polling. Failed, truncated,
+malformed or previous-deployment output cannot become a downloadable contract.
+Results describe the schema at the time of the operation: regenerate after
+migrations. Refresh uses the existing fresh restart and progress page; processing
+completion still requires an application health check using its JWT.
 
 ## Create an API
 
@@ -277,11 +343,37 @@ gregale data-api types notes-data --output src/database.types.ts --check
 The owner-authenticated command runs a bounded task on the app's current live
 deployment. It reads a consistent database catalog snapshot using the
 restricted runtime binding. It exports tables, views, enums, domains, arrays,
-nullability, defaults, generated columns and foreign-key relationships.
+nullability, defaults, generated columns, foreign-key relationships and named
+composite types in exposed schemas.
 Generated `Insert` and `Update` types exclude generated-always fields.
 Unrecognized PostgreSQL relation types become `unknown`. Supported opted-in
-RPC signatures are generated; arbitrary composite types are not. Numeric types become JavaScript `number`, so values beyond
+RPC signatures are generated, including supported named composite arguments and
+results. Numeric types become JavaScript `number`, so values beyond
 JavaScript's exact numeric range need an application-specific representation.
+
+For example, a PostgreSQL `CREATE TYPE api.address AS (city text, postcode text)`
+generates `Database['api']['CompositeTypes']['address']`. Use the generated helper
+for application values:
+
+```ts
+import type { CompositeTypes } from './database.types.js'
+const address: CompositeTypes<'address'> = { city: 'Istanbul', postcode: null }
+```
+
+Nested composites and arrays reference their generated types. Composite fields
+are nullable, including domain attributes: an empty composite RPC result expands
+to an object of null fields. All object keys are required in the generated type.
+Types without schema/type usage are excluded; inaccessible or unsupported nested
+fields become `unknown` and exclude RPCs that depend on them. Standalone
+composites are types rather than REST resources. Table row types continue to use
+the relation contract filtered by column privileges.
+
+New schema exports use normalized snapshot version 3 inside the unchanged
+version 1 contract envelope. The current CLI can also compare version 1 and 2 baselines.
+Upgrade the CLI before consuming new exports, regenerate types after upgrading
+the runtime, and review the diff before approving a new baseline. A format-only
+upgrade without new composite or result-relation metadata produces no structural changes, though
+its fingerprint changes.
 
 `@gregale/data` is packaged in `sdk/data` and follows the existing
 [SDK publishing policy](../sdk/README-publishing.md). It has not been published
@@ -358,8 +450,45 @@ changes affect the schema fingerprint and are detected by `types --check`.
 
 Cross-schema foreign keys are omitted from generated relationship metadata:
 the client resolves embedded types within the selected schema, so exporting
-such a relationship could infer a same-named, unrelated local table. View-inferred
-and computed relationships are not emitted. The starter qualifies many-to-many
+such a relationship could infer a same-named, unrelated local table. Ordinary
+views inherit relationships when every foreign-key or referenced-key column is
+projected directly and remains readable. Renamed columns and view chains are
+supported within the same exposed schema. For example:
+
+```sql
+CREATE VIEW api.order_summaries WITH (security_invoker=true) AS
+SELECT id AS order_id, customer_id AS buyer_id, total FROM api.orders;
+```
+
+```ts
+const orders = await db.from('order_summaries')
+  .select('order_id,buyer:customers!orders_customer_id_fkey(name)')
+```
+
+The example assumes a declared `orders_customer_id_fkey` foreign key and grants
+for the serving binding. Joins can target tables or views. Foreign-key column
+order and aliases come from PostgreSQL's recorded origins, and one-to-one
+cardinality follows the underlying key constraint as PostgREST does. View columns
+retain their conservative nullable types; views remain read contracts in the
+generated helpers. Use security-invoker views and RLS on every underlying table.
+
+Computed key expressions, incomplete composite keys, unions, inaccessible
+origins, materialized views and unsupported definitions do not gain inferred
+relationships. Chains require readable objects in exposed schemas; cross-schema
+paths remain omitted. SQL-defined relationships use the explicit contract below.
+Multiple foreign keys require
+constraint hints. Repeated aliases of a composite key may still return
+`PGRST201` even with a constraint hint; avoid duplicating key projections when
+you need one unambiguous embed. Inference preserves the engine's alternatives
+and does not validate dispatch hints. View definitions are never exported;
+inspection fails if their combined input or expanded relationship metadata
+exceeds existing generation bounds.
+
+Changing a view's key origins can change its relationship metadata and schema
+fingerprint without changing the column types. Refresh the runtime, regenerate
+types and review the structural diff after changing a view.
+
+The starter qualifies many-to-many
 joins in both directions using `tags!note_tags(id,name)` and
 `notes!note_tags(id,body)`. The SDK infers these from the junction foreign keys;
 PostgREST requires their columns to be included in the junction primary key.
@@ -372,6 +501,141 @@ when its FK column is NOT NULL, so handle missing embeds at runtime or use
 `!inner` when a visible parent is required; static nullability follows the FK
 columns. The starter uses subject-bound composite FKs to prevent cross-user
 attachments as well as subject RLS on every table.
+
+## Typed computed relationships and RPC projections
+
+Use an opted-in SQL function to define a relationship without a foreign key:
+
+```sql
+CREATE FUNCTION api.latest_invoice(source_row api.orders)
+RETURNS SETOF api.invoices ROWS 1
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog
+AS $$
+  SELECT i.* FROM api.invoices i
+  WHERE i.subject=source_row.subject AND i.order_id=source_row.id
+  ORDER BY i.id DESC LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION api.latest_invoice(api.orders) FROM PUBLIC;
+COMMENT ON FUNCTION api.latest_invoice(api.orders) IS '@gregale:rpc';
+GRANT EXECUTE ON FUNCTION api.latest_invoice(api.orders) TO your_data_api_login;
+```
+
+The existing owner permission dry-run/apply workflow can grant the annotated
+function instead of the final manual `GRANT`. Keep RLS on source and target
+tables; use `security_invoker=true` for views. Function bodies remain
+owner-authored code and must enforce the intended relationship under the
+verified JWT subject. Passing a row to an RPC does not prove the caller owns it.
+
+```ts
+const orders = await db.from('orders')
+  .select('id,latest:latest_invoice(id,total)')
+// latest is the selected invoice object or null.
+
+const invoices = await db.rpc('search_invoices', { min_total: 100 })
+  .select('id,total,orders(id)').order('total').limit(10)
+// search_invoices must return SETOF api.invoices; its result is an array.
+```
+
+Generated source/target metadata lets the SDK infer aliases, nested joins,
+`!inner`, filters and projections. A computed relationship requires exactly one
+named, non-defaulted input of a fully readable exposed relation row type, with
+recognized field types, and a `SETOF` fully readable relation result. The source,
+target and function must share one exposed schema. Functions must be security
+invokers, `STABLE` or `IMMUTABLE`, uniquely named without overloads, executable by
+the binding and annotated exactly `@gregale:rpc`. Tables and ordinary readable
+views work as endpoints. Names cannot shadow an exposed relation, foreign-key
+constraint or source column. Overrides, cross-schema relationships, scalar
+computed fields, materialized/foreign-table endpoints and unsupported signatures
+are outside this contract.
+
+PostgREST uses `ROWS 1` for an object-or-null embed; other estimates produce
+arrays. Declare `ROWS 1` only when the body returns at most one row. A direct
+POST RPC call still returns an array, including for `ROWS 1`. The generated
+client accounts for both shapes; `.single()`/`.maybeSingle()` request object
+responses explicitly. Approved ordinary relation-set RPCs gain target metadata
+for nested projections too, without becoming computed relationships.
+
+Relationship functions can run inside `select`, outside the RPC route guard.
+Inspection and fresh startup therefore reject executable, engine-recognized
+relationship signatures that are not supported and opted in. Owner permission
+checks report `computed_relationship_not_approved` blockers and refuse apply
+until the serving role loses those grants, including inherited `PUBLIC`
+execution, or the function is made eligible. Private functions with execution
+revoked are omitted. Check permissions and fresh-restart after changing
+annotations, signatures, grants or security modes; this check assesses the
+current serving grants at inspection/startup and does not continuously monitor
+owner changes to them.
+
+Normalized snapshot version 3 carries optional function `setof` metadata with
+source, target and embed cardinality. Upgrade the CLI, runtime and owner
+dashboard together; the current parser accepts version 1 and 2 baselines.
+Regenerate types and review fingerprints after upgrading. Removing or changing
+existing result metadata is a breaking structural diff, even when `ROWS`
+changes leave the RPC's array return type unchanged. Adding result metadata is
+compatible. The local inspector, owner dashboard and OpenAPI extensions show
+the same relationship contract without function bodies or catalog identifiers.
+
+## JSON and JSONB projections
+
+PostgREST exposes PostgreSQL JSON paths directly, including aliases, nested
+keys and array indexes. Generated JSON/JSONB columns stay `Json`; a database
+column does not describe the arbitrary keys stored inside it. Even a NOT NULL
+JSON column can have missing keys. The native SDK's JSON-path inference can
+omit this SQL nullability, so use the explicit projection helpers:
+
+```ts
+import { selectJson, jsonText, jsonValue } from '@gregale/data'
+
+const orders = await selectJson(db.from('orders'), 'id', {
+  status: jsonText('metadata', 'status'),
+  city: jsonText('metadata', 'delivery', 'city'),
+  lastItem: jsonText('metadata', 'items', -1, 'name'),
+  details: jsonValue('metadata', 'details'),
+}).eq('metadata->>status', 'paid').order('id').limit(10)
+// id retains its generated type; text aliases are string | null.
+// details is arbitrary Json, including null.
+```
+
+`selectJson` accepts table/view builders, write builders and approved
+relation-set RPC builders. Its base selection is the normal literal PostgREST
+select string, so plain columns and FK/computed joins keep their SDK inference.
+Use `''` for JSON aliases only. Put JSON paths in the alias map rather than the
+base selection to receive the nullable helper types. A source column must
+exist in the generated row contract. Alias names must be known to TypeScript,
+and type checks reject aliases that replace base fields.
+The helper generates the select expression and returns the existing SDK builder;
+filters, `.single()`, `.maybeSingle()`, tokens, RLS and SQL column grants apply
+normally. Calling `.select()` again replaces the projection.
+
+`jsonText` ends its path with `->>` and always yields `string | null`. JSON
+numbers and booleans become text; objects and arrays become serialized JSON
+text. `jsonValue` uses `->` and yields `Json`. Keys may contain spaces, commas or
+dots; names are quoted. Numeric strings select object keys, while safe integer
+numbers select array indexes (negative indexes count from the end). Empty keys,
+quotes, backslashes and control characters are rejected before sending. No JSON
+shape, key presence or value enum is inferred. Validate results in application
+code before assigning a narrower shape; SDK overrides are type assertions.
+
+| Stored value or path | JSON extraction (`->`) | Text extraction (`->>`) |
+| --- | --- | --- |
+| Missing key, invalid traversal or SQL NULL | SQL NULL, encoded as `null` | SQL NULL, encoded as `null` |
+| JSON null | JSON null, encoded as `null` | SQL NULL, encoded as `null` |
+| JSON string `"null"` | String `"null"` | Text `"null"` |
+| JSON number `42` | Number `42` | Text `"42"` |
+
+HTTP JSON cannot distinguish an extracted JSON null from SQL NULL. For a JSONB
+column, `.is('metadata', null)` selects SQL NULL and
+`.eq('metadata', 'null')` selects stored JSON null. For a path,
+`.is('metadata->>status', null)` also matches missing keys and JSON null values;
+it does not match a JSON string containing `"null"`. Text path filters such as
+`.eq('metadata->>status', 'paid')` work for both JSON and JSONB. JSONB equality
+and containment operators do not apply directly to PostgreSQL `json` columns.
+
+The local inspector shows JSON path examples for readable JSON columns. Its
+requests use the selected test identity. JSON projections do not bypass source
+column grants or the relation's RLS, including through security-invoker views,
+approved RPCs and write representations. Upgrading the SDK provides these
+helpers without changing the normalized schema format or fingerprints.
 
 ## Automate migrations and client validation
 
@@ -762,9 +1026,13 @@ idempotency. Abort and token callbacks work as they do for CRUD.
 Type export and fresh startup include only annotated, executable security-
 invoker functions in exposed schemas. Supported signatures have unique names
 without overloads, named input arguments of recognized types, and scalar, void,
-scalar-set or exposed-relation-set results. Defaults make arguments optional;
-PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
-OUT/INOUT, arbitrary composite and non-set composite signatures are excluded.
+scalar-set, named-composite or exposed-relation-set results. Named composites
+return objects; `SETOF` composites return arrays. Composite arguments accept JSON
+objects, and nested fields use the generated contract. Defaults make arguments optional;
+PostgreSQL permits null arguments and scalar results. Eligible computed
+relationships may accept their source relation row. Variadic, unnamed,
+OUT/INOUT, unsupported or inaccessible composite dependencies, and non-set
+relation-row signatures are excluded.
 Unapproved functions are absent from generated `Functions` and public OpenAPI,
 and their RPC routes return 404. OpenAPI advertises approved calls as POST only.
 
@@ -1109,7 +1377,10 @@ invalid baselines and failed inspections also exit nonzero. JSON output includes
 baseline/current fingerprints, task/deployment identifiers, the breaking count
 and a deterministic array of changes. No changes produces an empty array.
 
-Removed schemas, relations, columns, RPCs and RPC arguments are breaking.
+Removed schemas, relations, columns, RPCs, RPC arguments, composite types and
+composite fields are breaking. Composite field type/nullability changes and new
+required object keys are also breaking, even when the containing table or RPC
+still references the same named type. New composite types are compatible.
 Type changes (including enum changes), nullability changes in either direction,
 removed write privileges, table/view changes, relationship changes, newly
 required insert fields, and required RPC arguments are conservatively breaking.
@@ -1121,3 +1392,92 @@ Update queries, writes and generated types for breaking changes, then approve a
 new baseline explicitly. This is a structural contract check: policies, function
 bodies, default values and data-dependent behavior need separate tests. It does
 not verify the serving fingerprint; use `data-api sync` for that release check.
+
+### Runtime JSON validation
+
+Use `validateJson` after checking the query error to validate selected fields.
+It accepts synchronous objects with a `parse(unknown)` method, including Zod
+schemas, and infers each field's result from the parser output. Validators are
+application-owned; PostgreSQL JSON columns do not describe their internal shape.
+
+```ts
+import { validateJson } from '@gregale/data'
+import { z } from 'zod' // install in your application
+
+const { data, error } = await query
+if (error) throw error
+const rows = validateJson(data, {
+  details: z.object({ count: z.number() }).nullable(),
+})
+```
+
+Arrays and single rows are supported. A null single-row result stays null; field
+nulls go through the parser, so accept them explicitly with a nullable schema.
+The helper copies rows and preserves unvalidated fields. Nested JSON validation
+belongs inside your parser. Async parsers are unsupported.
+
+Failures throw `JsonValidationError` with code `JSON_VALIDATION_FAILED`, the
+selected `field`, and a zero-based `rowIndex` (null for a single row). Original
+parser messages, causes and payloads are omitted. Validation runs locally after
+the request and does not change PostgREST errors or database authorization.
+
+### Check committed types in local CI
+
+Run `gregale data-api dev --port 0 --once --check-types --check` after installing
+client dependencies. The disposable database applies your project migrations,
+verifies authorization scenarios, and compares generated types byte-for-byte
+with the configured output file. Missing or stale types exit nonzero without
+creating or overwriting that file. `--check` then runs configured client checks;
+`--check-types` requires `--once`. Containers and volumes are removed on success
+and failure. No hosted account or staging credentials are required.
+
+To update types, run `gregale data-api dev --port 0 --once` with the same
+`--directory`, `--config` and `--output` options, then commit the generated file.
+This detects drift; use `--check-breaking` separately for compatibility checks.
+The workflow still creates local contract artifacts and runs configured setup
+and authorization steps; the types output alone is preserved by this flag.
+
+### Reusable cursor pagination
+
+```ts
+import { cursorPage, cursorFrom } from '@gregale/data'
+
+const order = [
+  { column: 'created_at', ascending: false, nullsFirst: false },
+  { column: 'id', ascending: false, unique: true },
+] as const
+const { data, error } = await cursorPage(
+  db.from('notes').select('id,created_at,body'),
+  { order, size: 20 },
+)
+if (error) throw error
+const after = data.length ? cursorFrom(data.at(-1)!, order) : undefined
+// Supply after with the same order and filters on a fresh query for the next page.
+```
+
+`cursorPage` preserves the selected result type and supports table/view reads,
+filters, cancellation and native errors. Use a fresh array-returning select
+builder without existing ordering, range or limits. Include every ordering
+column in the selected row to extract its cursor. Ordering columns must be
+simple names with scalar string, finite number, boolean or null values; JSON,
+embedded fields and expression ordering are unsupported. Dates use their wire
+strings. Defaults are ascending and nulls last, explicitly applied at every key.
+
+The final ordering column must be non-null and unique within the filtered
+result. Mark it `unique: true`; the application is responsible for this database
+invariant. The helper cannot infer constraints from client types. Cursor values
+are validated and quoted for PostgREST filter syntax, including commas, quotes
+and backslashes. Cursor tuples are neither signed nor authorization tokens.
+
+Keep filters, ordering and identity consistent across pages. RLS runs on every
+request. Deleting the cursor row does not invalidate continuation; newer rows
+before the cursor do not shift subsequent pages. This is not a snapshot across
+requests: inserts after the cursor can appear, deleted rows disappear, and
+changing ordering values can move rows. Stop when a page is empty. Large integer
+keys must be represented without JavaScript precision loss by your application.
+Existing server row caps can return fewer rows than the requested page size.
+
+The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
+`cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
+timestamp/id validation remain the same, including PostgreSQL microseconds.
+Upgrade the installed SDK bundle alongside the starter to use these helpers.

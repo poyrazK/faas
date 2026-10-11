@@ -277,3 +277,32 @@ func TestQueueBindingConsumerRejectsDirectTriggerMutation(t *testing.T) {
 		Kind: api.TriggerKindQueue, Slug: "forged", Config: json.RawMessage(`{"mode":"queue","queue_binding_id":null}`)}, nil)
 	assertProblem(t, rec, http.StatusUnprocessableEntity, "trigger_invalid_config")
 }
+
+// An app switched to worker mode keeps whatever class characterization
+// observed. Its explicit execution mode must still let it bind a worker queue,
+// as it already lets it declare a queue_depth scaling target.
+func TestWorkerExecutionModeBindsWorkerQueue(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	for _, slug := range []string{"mode-worker-binding", "mode-worker-setup"} {
+		if _, err := e.store.CreateApp(context.Background(), state.App{
+			AccountID: e.acct.ID, Slug: slug, Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassHTTP,
+			Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := e.do(t, http.MethodPost, "/v1/apps/mode-worker-binding/queue-bindings", api.CreateQueueBindingRequest{
+		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 1,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("worker-mode binding = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodPost, "/v1/apps/mode-worker-binding/queue-bindings", api.CreateQueueBindingRequest{
+		Name: "batch", QueueName: "batch", Mode: "pull", WorkloadClass: "job", MaxConcurrency: 1,
+	}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	rec = e.do(t, http.MethodPut, "/v1/apps/mode-worker-setup/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("worker-mode queue setup = %d: %s", rec.Code, rec.Body.String())
+	}
+}

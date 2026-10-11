@@ -108,7 +108,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
 			Project: *project, Environment: *environment, ASN: asn, VerifiedBot: *verifiedBot,
-			App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
+			App: *slug, Host: u.Hostname(), Path: requestPath, Query: u.RawQuery, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,
 		})

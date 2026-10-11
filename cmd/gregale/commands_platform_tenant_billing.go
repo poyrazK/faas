@@ -16,7 +16,7 @@ import (
 // `gregale platform-tenants`, mapped to the flags each accepts.
 var platformTenantBillingVerbs = map[string][]string{
 	"rate-cards":         {"id"},
-	"rate-card-create":   {"id", "currency", "price-millicents", "effective-from"},
+	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "effective-from"},
 	"statements":         {"id", "month", "period-start", "period-end"},
 	"statement-draft":    {"id", "month", "period-start", "period-end"},
 	"statement-show":     {"id", "statement-id"},
@@ -28,6 +28,8 @@ type platformTenantBillingFlags struct {
 	id, statementID, invoiceID    string
 	currency, effectiveFrom       string
 	priceMillicents               int64
+	includedUnits                 int64
+	tiers                         multiFlag
 	month, periodStart, periodEnd string
 }
 
@@ -45,6 +47,8 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00")
+	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per tenant per UTC calendar month across all apps")
+	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS counted per tenant per UTC month, repeatable; the last step's UP_TO is inf")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
@@ -91,7 +95,8 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	var err error
 	switch verb {
 	case "rate-card-create":
-		rateCard, err = buildRateCardRequest(f.currency, f.priceMillicents, f.effectiveFrom)
+		rateCard, err = buildPricingRequest(consumerFlags{currency: f.currency, priceMillicents: f.priceMillicents,
+			includedUnits: f.includedUnits, tiers: f.tiers, effectiveFrom: f.effectiveFrom})
 	case "statements", "statement-draft":
 		start, end, err = statementPeriod(f.periodStart, f.periodEnd, f.month)
 	case "statement-handoff":
@@ -114,6 +119,7 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "rate-card-create":
 		out, err = client.CreatePlatformTenantRateCard(ctx, f.id, api.CreatePlatformTenantRateCardRequest{
 			Currency: rateCard.Currency, PriceMillicentsPerUnit: rateCard.PriceMillicentsPerUnit, EffectiveFrom: rateCard.EffectiveFrom,
+			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers,
 		})
 	case "statements":
 		out, err = client.ListPlatformTenantStatements(ctx, f.id, start, end)
@@ -138,16 +144,22 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	return 0
 }
 
+// formatTenantRateCardPrice summarizes a tenant card's flat price or ladder.
+func formatTenantRateCardPrice(c api.PlatformTenantRateCardResponse) string {
+	return formatRateCardPrice(api.APIConsumerRateCardResponse{Currency: c.Currency, PriceMillicentsPerUnit: c.PriceMillicentsPerUnit, Tiers: c.Tiers})
+}
+
 func printPlatformTenantBilling(out any) error {
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
 	switch v := out.(type) {
 	case api.PlatformTenantRateCardListResponse:
-		_, _ = fmt.Fprintln(tw, "ID\tEFFECTIVE FROM\tPRICE PER REQUEST")
+		_, _ = fmt.Fprintln(tw, "ID\tEFFECTIVE FROM\tPRICE PER REQUEST\tINCLUDED PER MONTH")
 		for _, c := range v.RateCards {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", c.ID, c.EffectiveFrom.Format(time.RFC3339), formatMillicents(c.Currency, c.PriceMillicentsPerUnit))
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", c.ID, c.EffectiveFrom.Format(time.RFC3339), formatTenantRateCardPrice(c), c.IncludedUnitsPerMonth)
 		}
 	case api.PlatformTenantRateCardResponse:
-		_, _ = fmt.Fprintf(tw, "Rate card\t%s\nEffective from\t%s\nPrice per request\t%s\n", v.ID, v.EffectiveFrom.Format(time.RFC3339), formatMillicents(v.Currency, v.PriceMillicentsPerUnit))
+		_, _ = fmt.Fprintf(tw, "Rate card\t%s\nEffective from\t%s\nPrice per request\t%s\nIncluded per month\t%d requests across the tenant's apps\n",
+			v.ID, v.EffectiveFrom.Format(time.RFC3339), formatTenantRateCardPrice(v), v.IncludedUnitsPerMonth)
 	case api.PlatformTenantStatementListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tREVISION\tUNITS\tAMOUNT")
 		for _, s := range v.Statements {

@@ -6,6 +6,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.object_sign_request_if_none_match import (
+    ObjectSignRequestIfNoneMatch,
+    check_object_sign_request_if_none_match,
+)
 from ..models.object_sign_request_method import ObjectSignRequestMethod, check_object_sign_request_method
 from ..types import UNSET, Unset
 
@@ -31,6 +35,12 @@ class ObjectSignRequest:
     version_id: UUID | Unset = UNSET
     """GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are
     rejected. Omit for the current object."""
+    if_match: str | Unset = UNSET
+    """PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the
+    observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are
+    fixed in the signed capability."""
+    if_none_match: ObjectSignRequestIfNoneMatch | Unset = UNSET
+    """PUT only. Create only if no live object exists. Mutually exclusive with if_match."""
     expires_in: int | Unset = 300
     size_bytes: int | Unset = UNSET
     """Required for PUT; forbidden for GET."""
@@ -66,6 +76,12 @@ class ObjectSignRequest:
         version_id: str | Unset = UNSET
         if not isinstance(self.version_id, Unset):
             version_id = str(self.version_id)
+
+        if_match = self.if_match
+
+        if_none_match: str | Unset = UNSET
+        if not isinstance(self.if_none_match, Unset):
+            if_none_match = self.if_none_match
 
         expires_in = self.expires_in
 
@@ -107,6 +123,10 @@ class ObjectSignRequest:
         )
         if version_id is not UNSET:
             field_dict["version_id"] = version_id
+        if if_match is not UNSET:
+            field_dict["if_match"] = if_match
+        if if_none_match is not UNSET:
+            field_dict["if_none_match"] = if_none_match
         if expires_in is not UNSET:
             field_dict["expires_in"] = expires_in
         if size_bytes is not UNSET:
@@ -150,6 +170,15 @@ class ObjectSignRequest:
             version_id = UNSET
         else:
             version_id = UUID(_version_id)
+
+        if_match = d.pop("if_match", UNSET)
+
+        _if_none_match = d.pop("if_none_match", UNSET)
+        if_none_match: ObjectSignRequestIfNoneMatch | Unset
+        if isinstance(_if_none_match, Unset):
+            if_none_match = UNSET
+        else:
+            if_none_match = check_object_sign_request_if_none_match(_if_none_match)
 
         expires_in = d.pop("expires_in", UNSET)
 
@@ -197,6 +226,8 @@ class ObjectSignRequest:
             method=method,
             key=key,
             version_id=version_id,
+            if_match=if_match,
+            if_none_match=if_none_match,
             expires_in=expires_in,
             size_bytes=size_bytes,
             content_type=content_type,

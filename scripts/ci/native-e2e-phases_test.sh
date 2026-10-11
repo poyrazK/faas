@@ -34,6 +34,11 @@ for phase in "${NATIVE_E2E_PHASES[@]}"; do
   [[ "${n}" -gt 0 ]] || fail "phase ${phase} selects no tests"
 done
 
+# The platform benchmark shares the native wake lifecycle. Keep it in the
+# wake phase so a new benchmark scenario is derived from its file as well.
+native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal ||
+  fail "platform wake benchmark is no longer included in the wake phase"
+
 # 4. Every required test must live in some phase, or the gate would require a
 #    test it never runs.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
@@ -46,6 +51,16 @@ for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
   done
   [[ "${found}" -eq 1 ]] || fail "required test ${required} is in no phase"
 done
+
+# Keep the opt-in benchmark in the wake phase; all its test names are derived
+# from the file along with the ordinary wake scenarios.
+native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal ||
+  fail "platform wake benchmark is missing from the wake phase"
+
+# The developer live-patch scenario starts from the native deploy path.
+# Keep all test names from its file in the deploy phase.
+native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestDevLoopMetal ||
+  fail "developer loop is missing from the deploy phase"
 
 # 5. The partition assert must actually FAIL on an unassigned metal test.
 #    A guard that cannot fail is not a guard — this gate has shipped one before.
@@ -100,8 +115,8 @@ exclusive_tests="$(native_e2e_lane_tests exclusive-operations-only "${repo_root}
 [[ "$(native_e2e_lane_regex exclusive-operations-only "${repo_root}")" == \
   '^(TestExclusiveOperationFencesRestoredKVMOwnerMetal)$' ]] ||
   fail "exclusive-operations-only does not build an anchored test filter"
-printf '%s\n' "$(native_e2e_phase_tests wake "${repo_root}")" | grep -qx \
-  'TestExclusiveOperationFencesRestoredKVMOwnerMetal' ||
+wake_tests="$(native_e2e_phase_tests wake "${repo_root}")"
+grep -Fx 'TestExclusiveOperationFencesRestoredKVMOwnerMetal' <<<"${wake_tests}" >/dev/null ||
   fail "exclusive-owner KVM test is no longer included in the wake phase"
 native_e2e_is_lane exclusive-operations-only || fail "exclusive-operations-only is not recognised as a lane"
 # The managed workflow recovery lane stays isolated and blocking so the new

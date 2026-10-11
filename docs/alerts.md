@@ -44,6 +44,49 @@ attention. If every route has fewer than 20 failures, the rule is `unknown` and
 does not send a webhook. A Prometheus error sets it to `degraded`, also without
 firing. Neither state proves the integration is healthy.
 
+Three more opt-in, webhook-only security presets watch the edge for traffic that
+is being rejected or would be:
+
+- `pre_auth_pressure` fires when the [pre-auth source limit](security.md#optional-pre-auth-source-limit)
+  blocks, or in observe mode would block, more than 100 requests in 15 minutes.
+  The payload includes the same `observations_path` and `dashboard_path` as the
+  login-target presets. New apps observe the pre-auth limit by default, so this
+  alert can report pressure before you switch the guard to enforce.
+- `edge_validation_failures` fires when `kind=validate` edge rules record more
+  than 50 mismatched requests in 15 minutes, counting body, path, query, and
+  header mismatches in every validate mode. Use the
+  `gateway_validate_failures_total` metric or the `edge_rule.validate_failed`
+  audit events to find the failing rule and field.
+- `edge_rejection_pressure` fires when the other edge gates (JWT, IP, geo,
+  ingress allowlist and internal-only, body limits, and throttles) answer more
+  than 200 requests with 401, 403, 413, or 429 in 15 minutes. Gate outages
+  (503) are not counted. Break the total down by gate with
+  `gateway_edge_rejections_total{app="APP_ID"}`, whose `kind` and `status`
+  labels name the gate and response.
+- `edge_waf_detections` (Pro and above) fires when `kind=waf` edge rules detect
+  more than 25 likely attacks in 15 minutes, counting sampled detections and
+  the in-path verdicts of `warn` and `block` rules. Only `block` rules stop
+  requests, and only on headers and URL; those 403s also count toward
+  `edge_rejection_pressure`.
+  Body detections are a sample: each app's inspections are budgeted and
+  requests with bodies are expensive to inspect, so under load only part of
+  the matched traffic is inspected (the summary's `not_inspected` count).
+  `gregale edge-rules summary` lists detections by attack category and the
+  CRS rule IDs that scored most; add a rule ID to the rule's
+  `exclude_rule_ids` when it fires on legitimate traffic.
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable pre_auth_pressure \
+  --app APP_ID --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+To see the same counts on demand, run `gregale edge-rules summary --app APP
+--range 24h`, open the app's edge-rules dashboard page (Edge protection panel),
+or call `GET /v1/apps/{slug}/edge-protection?range=24h`.
+
+Because outside traffic drives these signals, these alerts can never run a
+deployment action such as rollback; the API and the database both reject one.
+
 Deliveries include an event id, timestamp, alert state, and signature. Verify the signature before processing, deduplicate by event id, and return a 2xx response quickly. Retryable failures are retried with backoff; a permanently failing endpoint is paused so it cannot amplify an incident.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.

@@ -26,6 +26,7 @@ func TestDataAPIDevRejectsInvalidInputsBeforeStartingServices(t *testing.T) {
 		{"--directory", project, "--replay", "missing.json"},
 		{"--directory", project, "--once", "--replay", "missing.json"},
 		{"--directory", project, "--check-breaking"},
+		{"--directory", project, "--check-types"},
 		{"--directory", project, "--baseline", "missing.json"},
 		{"--directory", project, "--output", ".gregale/data-api-contract.json"},
 	} {

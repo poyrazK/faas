@@ -28,8 +28,8 @@ def test_workflow_run_history_filters_are_sent_as_query_parameters():
             client=client,
             status="failed",
             workflow_name="paid-invoice",
-            created_after=datetime.datetime(2026, 10, 1, tzinfo=datetime.timezone.utc),
-            created_before=datetime.datetime(2026, 10, 5, 23, 59, 59, tzinfo=datetime.timezone.utc),
+            created_after=datetime.datetime(2026, 10, 1, tzinfo=datetime.UTC),
+            created_before=datetime.datetime(2026, 10, 5, 23, 59, 59, tzinfo=datetime.UTC),
             limit=10,
             offset=20,
         )

@@ -403,6 +403,8 @@ func run(args []string) (status int) {
 		return cmdPark(args[1:])
 	case "wake":
 		return cmdWake(args[1:])
+	case "wake-ahead":
+		return cmdWakeAhead(args[1:])
 	case "test":
 		return cmdTest(args[1:])
 	case "chaos":

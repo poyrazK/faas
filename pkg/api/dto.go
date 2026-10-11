@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1342,15 +1343,15 @@ type CreateAPIConsumerRateCardRequest struct {
 	Currency               string `json:"currency"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-950).
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
-	// Tiers is an optional graduated ladder (ADR-845) that replaces the
+	// Tiers is an optional graduated ladder (ADR-951) that replaces the
 	// flat price and allowance; price_millicents_per_unit is then ignored.
 	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	// RouteWeights counts each request on a listed "METHOD /template" route
-	// as that many units (ADR-846); unlisted routes count 1.
+	// as that many units (ADR-952); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
-	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// PlanID adds the version to a consumer plan's price history (ADR-953);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
@@ -6115,6 +6116,57 @@ type PreAuthObservationsResponse struct {
 	Source   string                     `json:"source"`
 	AsOf     string                     `json:"as_of"`
 	Policies []PreAuthPolicyObservation `json:"policies"`
+	// Suggestion is present only for an observe-mode guard with a healthy
+	// metrics source. It is advice; nothing is applied automatically.
+	Suggestion *PreAuthEnforcementSuggestion `json:"suggestion,omitempty"`
+}
+
+// PreAuthEnforcementSuggestion says whether an observe-mode guard looks safe
+// to switch to enforce, judged on the response range (ADR-829 amendment 1).
+type PreAuthEnforcementSuggestion struct {
+	Status string `json:"status"` // ready | review | insufficient_data
+	Reason string `json:"reason"`
+	// Requests is every gateway request to the app in the range.
+	Requests int64 `json:"requests"`
+	// WouldBlock and WouldBlockSucceeded sum the app and route policies;
+	// succeeded counts 2xx and 3xx final responses.
+	WouldBlock          int64 `json:"would_block"`
+	WouldBlockSucceeded int64 `json:"would_block_succeeded"`
+}
+
+const (
+	PreAuthSuggestionReady            = "ready"
+	PreAuthSuggestionReview           = "review"
+	PreAuthSuggestionInsufficientData = "insufficient_data"
+)
+
+// SuggestPreAuthEnforcement judges an observe-mode guard from one range of
+// observations. Enforce is "ready" only when the range is long enough, the app
+// saw enough traffic, and no request the guard would have blocked succeeded.
+func SuggestPreAuthEnforcement(rng string, requests int64, policies []PreAuthPolicyObservation) PreAuthEnforcementSuggestion {
+	s := PreAuthEnforcementSuggestion{Requests: requests}
+	for _, p := range policies {
+		if p.Kind != "app" && p.Kind != "route" {
+			continue
+		}
+		s.WouldBlock += p.WouldBlock
+		s.WouldBlockSucceeded += p.Result2xx + p.Result3xx
+	}
+	switch {
+	case !slices.Contains(PreAuthSuggestionRanges, rng):
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = "judge enforcement on a range of 24h or longer"
+	case requests < PreAuthSuggestionMinRequests:
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = fmt.Sprintf("only %d requests in %s; at least %d are needed", requests, rng, PreAuthSuggestionMinRequests)
+	case s.WouldBlockSucceeded > 0:
+		s.Status = PreAuthSuggestionReview
+		s.Reason = fmt.Sprintf("enforce would have rejected %d requests that succeeded; raise requests_per_second or burst, or add route overrides, before enforcing", s.WouldBlockSucceeded)
+	default:
+		s.Status = PreAuthSuggestionReady
+		s.Reason = fmt.Sprintf("enforce would have rejected %d of %d requests in %s, none of which succeeded", s.WouldBlock, requests, rng)
+	}
+	return s
 }
 
 type PreAuthPolicyObservation struct {
@@ -8191,6 +8243,9 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	// Template (ADR-968) expands ${name} request values in To and in the
+	// Headers values.
+	Template bool `json:"template,omitempty"`
 }
 
 func (a *EdgeRuleRedirectAction) Validate() *Problem {
@@ -8205,6 +8260,16 @@ func (a *EdgeRuleRedirectAction) Validate() *Problem {
 	if a.To == "" {
 		return ErrValidation("redirect action To is required")
 	}
+	if a.Template {
+		if _, err := CompileEdgeRuleTemplate(a.To, EdgeRuleTemplateRedirect); err != nil {
+			return ErrValidation("redirect action to: " + err.Error())
+		}
+		for name, value := range a.Headers {
+			if _, err := CompileEdgeRuleTemplate(value, EdgeRuleTemplateHeader); err != nil {
+				return ErrValidation(fmt.Sprintf("redirect action header %q: %s", name, err))
+			}
+		}
+	}
 	return nil
 }
 
@@ -8213,6 +8278,8 @@ type EdgeRuleHeaderOp struct {
 	Name   string `json:"name"`
 	Value  string `json:"value,omitempty"`
 	Action string `json:"action"`
+	// Template (ADR-968) expands ${name} request values in Value.
+	Template bool `json:"template,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -8243,6 +8310,14 @@ func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	}
 	if strings.HasPrefix(strings.ToLower(op.Name), "x-faas-") {
 		return ErrHeaderMutationForbidden(op.Name)
+	}
+	if op.Template {
+		if op.Action == "remove" {
+			return ErrValidation("header op template applies only to add and set")
+		}
+		if _, err := CompileEdgeRuleTemplate(op.Value, EdgeRuleTemplateHeader); err != nil {
+			return ErrValidation(fmt.Sprintf("header op %q value: %s", op.Name, err))
+		}
 	}
 	return nil
 }
@@ -8606,12 +8681,17 @@ var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:
 //     decoders may still read it from a response. The field will
 //     be removed in the release after the deprecation notice.
 type EdgeRuleValidateAction struct {
-	Schema                json.RawMessage `json:"schema"`
+	// Schema validates the JSON request body. It may be omitted when
+	// Parameters is set, so a body-less operation can still be validated.
+	Schema                json.RawMessage `json:"schema,omitempty"`
 	ContentTypes          []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming   bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknownFields bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes          int             `json:"max_body_bytes,omitempty"`
 	ValidateMode          string          `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values before the body
+	// is read (ADR-091 amendment: request parameters).
+	Parameters *EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
@@ -8846,7 +8926,12 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 		return ErrValidation("validate action is required")
 	}
 	if len(a.Schema) == 0 {
-		return ErrValidation("validate action: schema is required")
+		if a.Parameters.Empty() {
+			return ErrValidation("validate action: schema or parameters is required")
+		}
+		// Parameter-only rule: the body checks below do not apply. The
+		// parameter schemas are checked against match_path by the caller.
+		return a.validateMode()
 	}
 	if len(a.Schema) > MaxEdgeRuleValidateSchemaBytes {
 		return ErrValidation(fmt.Sprintf(
@@ -8899,11 +8984,14 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: max_body_bytes exceeds the platform cap (%d > %d)",
 			a.MaxBodyBytes, MaxRequestBodyBytes))
 	}
-	// ValidateMode: optional; empty == 'block' (the strictest mode,
-	// matches the NOT NULL DEFAULT 'block' the migration adds at
-	// 00293). Any non-empty value must be one of the three closed
-	// strings; an unknown value gets a 422 with the allowed list,
-	// not a 500.
+	return a.validateMode()
+}
+
+// validateMode checks the deprecated action-level validate_mode: empty ==
+// 'block' (the strictest mode, matching the NOT NULL DEFAULT 'block' added at
+// 00293). Any non-empty value must be one of the three closed strings; an
+// unknown value gets a 422 with the allowed list, not a 500.
+func (a *EdgeRuleValidateAction) validateMode() *Problem {
 	if a.ValidateMode != "" &&
 		a.ValidateMode != ValidateModeBlock &&
 		a.ValidateMode != ValidateModeObserve &&
@@ -9218,7 +9306,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -10907,7 +10995,7 @@ type DebugTelemetrySpan struct {
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
 	// DependencyName is the bounded grouping identity of an app_dependency
-	// span (ADR-934): "SELECT orders", an HTTP host, an RPC method. It never
+	// span (ADR-958): "SELECT orders", an HTTP host, an RPC method. It never
 	// carries literals, paths, query strings or credentials.
 	DependencyName string `json:"dependency_name,omitempty"`
 }
@@ -11055,7 +11143,7 @@ type DebugDependencyLatencyResponse struct {
 }
 
 // DebugDependencyDeploymentComparison splits dependency latency by deployment
-// instead of by time (ADR-934 §5). In each item the Baseline* fields describe
+// instead of by time (ADR-958 §5). In each item the Baseline* fields describe
 // the previous deployment and the Current* fields the compared deployment;
 // Regression uses the same thresholds as the time-split history. Items are
 // regressions first, then by current p95.
@@ -11235,7 +11323,7 @@ type DebugRequestEvidenceResponse struct {
 	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
 	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
 	// DependencyComparison compares this route's dependencies on the request's
-	// deployment with the previous deployment (ADR-934 §5); absent without a
+	// deployment with the previous deployment (ADR-958 §5); absent without a
 	// prior deployment that has retained spans.
 	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
 	Spans                []DebugTelemetrySpan                 `json:"spans"`
@@ -11517,7 +11605,7 @@ type DebugRegressionItem struct {
 	DismissedUntil  string `json:"dismissed_until,omitempty"`
 	ResolvedAt      string `json:"resolved_at,omitempty"`
 	// SuspectedDependency is the dependency whose p95 regressed most between
-	// the previous and this deployment on the route (ADR-934 §5); absent when
+	// the previous and this deployment on the route (ADR-958 §5); absent when
 	// no dependency regressed or no spans were retained.
 	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
 }

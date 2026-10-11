@@ -29,17 +29,21 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("X-Gregale-Upload-ID", c.ID)
 	dispatched := false
 	defer func(parent context.Context) {
-		if !dispatched && req.credential.URL == nil {
+		if !dispatched {
 			c.Status = "failed"
 			c.ErrorCode = "dispatch_failed"
-			_, _ = h.finishGatewayPut(parent, st, c)
+			_, _ = h.finishGatewayPut(parent, st, c, req.credential.URL != nil)
 		}
 	}(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
 	upstream, err := h.gatewayPutRequest(ctx, r, req, key, file, metadata, c)
 	if err != nil {
-		h.providerError(w, r, req, err, key)
+		if errors.Is(err, state.ErrObjectBudget) || errors.Is(err, state.ErrObjectCapacity) || errors.Is(err, state.ErrObjectUsageStale) || errors.Is(err, state.ErrConflict) {
+			h.writeAdmissionError(w, r, req, err)
+		} else {
+			h.providerError(w, r, req, err, key)
+		}
 		return
 	}
 	intent, ok := h.dispatchGatewayPut(w, r, req, st, c)
@@ -67,7 +71,7 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		if response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusRequestTimeout {
 			c.Status = "failed"
 			c.ErrorCode = "provider_write_rejected"
-			if _, err := h.finishGatewayPut(r.Context(), st, c); err != nil {
+			if _, err := h.finishGatewayPut(r.Context(), st, c, false); err != nil {
 				h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 				return
 			}
@@ -114,7 +118,7 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 	version := ack.ProviderVersionID
 	c.ProviderVersionID = version
 	c.RecoveryVersionsObserved = version != "" && version != "null"
-	done, err := h.finishGatewayPut(r.Context(), st, c)
+	done, err := h.finishGatewayPut(r.Context(), st, c, false)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
@@ -127,10 +131,20 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) finishGatewayPut(parent context.Context, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, error) {
+func (h *Handler) finishGatewayPut(parent context.Context, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion, preparedOnly bool) (state.ObjectUploadCompletion, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), api.ObjectUploadSettlementTimeout)
 	defer cancel()
-	done, err := st.FinishTrackedObjectUpload(ctx, c)
+	var done state.ObjectUploadCompletion
+	var err error
+	if preparedOnly {
+		if preparer, ok := st.(state.ObjectPreparedUploadFailureStore); ok {
+			done, err = preparer.FailPreparedObjectUpload(ctx, c)
+		} else {
+			err = objectstorage.ErrUnavailable
+		}
+	} else {
+		done, err = st.FinishTrackedObjectUpload(ctx, c)
+	}
 	if err != nil {
 		h.log.Warn("S3 write settlement deferred", "bucket_id", c.BucketID, "request_id", c.RequestID)
 	}
@@ -138,6 +152,7 @@ func (h *Handler) finishGatewayPut(parent context.Context, st state.ObjectTracke
 }
 
 func (h *Handler) gatewayPutRequest(ctx context.Context, r *http.Request, req requestContext, key string, file *os.File, metadata objectstorage.ObjectMetadata, c state.ObjectUploadCompletion) (*http.Request, error) {
+	ctx = h.conditionalWriteContext(ctx, req)
 	var err error
 	ctx, err = h.protectionContext(ctx, req, c.Protection)
 	if err != nil {

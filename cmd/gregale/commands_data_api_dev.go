@@ -20,6 +20,7 @@ type dataAPIDevOptions struct {
 	Output        string `json:"output"`
 	Port          int    `json:"port"`
 	Check         bool   `json:"check"`
+	CheckTypes    bool   `json:"check_types"`
 	Once          bool   `json:"once"`
 	JSON          bool   `json:"json"`
 	Watch         bool   `json:"watch"`
@@ -28,14 +29,18 @@ type dataAPIDevOptions struct {
 	Scenario      string `json:"scenario"`
 	Replay        string `json:"replay"`
 	CLI           string `json:"cli"`
+	Config        string `json:"config"`
+	OutputSet     bool   `json:"output_set"`
 }
 
 func cmdDataAPIDev(args []string) int {
 	fs := newFlagSet("data-api dev", flag.ContinueOnError)
-	directory := fs.String("directory", ".", "Data API starter directory containing migrations/sql")
+	directory := fs.String("directory", ".", "Data API project directory")
+	config := fs.String("config", "", "project-relative development config (default: data-api.dev.json)")
 	output := fs.String("output", "client/src/database.types.ts", "generated types path relative to the project")
 	port := fs.Int("port", 8080, "loopback gateway port (0 selects a free port)")
-	check := fs.Bool("check", false, "run installed starter client typecheck and tests")
+	check := fs.Bool("check", false, "run configured client checks")
+	checkTypes := fs.Bool("check-types", false, "compare committed types without rewriting them (requires --once)")
 	once := fs.Bool("once", false, "verify the local workflow and exit, removing containers")
 	watch := fs.Bool("watch", true, "watch migrations and refresh the local API and types (disabled by --once)")
 	baseline := fs.String("baseline", "", "read-only contract baseline (default: last successful local contract)")
@@ -45,16 +50,27 @@ func cmdDataAPIDev(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--output FILE] [--port PORT] [--check] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--replay FILE --once] [--scenario NAME]", "data-api")
+	if (*checkTypes && !*once) || fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
+		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--check-types --once] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--replay FILE --once] [--scenario NAME]", "data-api")
 		return 1
 	}
 	base, err := filepath.Abs(*directory)
 	if err != nil {
 		return printErr("Invalid project directory", err)
 	}
-	if info, statErr := os.Stat(filepath.Join(base, "migrations", "sql")); statErr != nil || !info.IsDir() {
-		return printErr("Invalid project directory", errors.New("migrations/sql must exist; initialize a data-api-starter project first"))
+	configPath := filepath.Join(base, "data-api.dev.json")
+	if *config != "" {
+		*config = dataAPISyncPath(base, *config)
+		configPath = *config
+	}
+	if info, statErr := os.Lstat(configPath); statErr == nil {
+		if !info.Mode().IsRegular() || info.Size() > 65536 {
+			return printErr("Invalid development config", errors.New("use a regular JSON file under 64 KiB"))
+		}
+	} else if *config != "" || !errors.Is(statErr, os.ErrNotExist) {
+		return printErr("Invalid development config", statErr)
+	} else if info, statErr := os.Stat(filepath.Join(base, "migrations", "sql")); statErr != nil || !info.IsDir() {
+		return printErr("Invalid project directory", errors.New("configure data-api.dev.json or initialize a data-api-starter project"))
 	}
 	if *replay != "" {
 		*replay = dataAPISyncPath(base, *replay)
@@ -126,7 +142,13 @@ func cmdDataAPIDev(args []string) int {
 			return printErr("Could not prepare local migrations", err)
 		}
 	}
-	options, err := json.Marshal(dataAPIDevOptions{Directory: base, Output: target, Port: *port, Check: *check, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, CLI: cli, Replay: *replay, Scenario: *scenario})
+	outputSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "output" {
+			outputSet = true
+		}
+	})
+	options, err := json.Marshal(dataAPIDevOptions{Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
 	if err != nil {
 		return printErr("Could not prepare local options", err)
 	}

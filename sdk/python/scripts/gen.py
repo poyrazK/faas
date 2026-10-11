@@ -597,6 +597,13 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
         original = text
         # Fix 5: downloads must preserve bytes, including invalid UTF-8 in ZIPs.
         text = text.replace("BytesIO(response.text)", "BytesIO(response.content)")
+        if path.name == "app_manifest.py":
+            # Literal annotations do not validate constructor values. Retain
+            # the transport wire guard when regenerating the manifest model.
+            text = text.replace(
+                "service_binding_transport = self.service_binding_transport\n",
+                "service_binding_transport = check_service_binding_transport(self.service_binding_transport)\n",
+            )
         # Runtime UUID headers are UUID objects in the typed signatures;
         # HTTPX requires their textual wire representation.
         for header, argument in (

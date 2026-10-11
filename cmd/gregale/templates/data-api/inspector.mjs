@@ -4,11 +4,18 @@ const key = location.hash.slice(1)
 history.replaceState(null, '', location.pathname)
 let session, selected = '', fingerprint = '', busy = false
 const show = (id, value) => { element(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
+function showResource(kind, resource) {
+  const computedRelationships = session.snapshot.functions.filter(f => f.schema === resource.schema && f.setof?.from === resource.name)
+  show('schema', kind === 'tables' && computedRelationships.length ? { ...resource, computedRelationships: computedRelationships.map(f => ({ name: f.name, target: f.setof.to, one_to_one: f.setof.one_to_one })) } : resource)
+  const json = kind === 'tables' && resource.columns.find(c => c.type === 'Json' && !/["\\\u0000-\u001f\u007f]/.test(c.name))
+  element('json-help').hidden = !json
+  if (json) show('json-example', `select=status:"${json.name}"->>status,details:"${json.name}"->details\n${json.name}->>status=eq.paid\nselectJson(db.from(${JSON.stringify(resource.name)}), '', { status: jsonText(${JSON.stringify(json.name)}, 'status') })`)
+}
 function selectResource() {
   selected = element('resource').value
   const [kind, name] = JSON.parse(selected)
   const resource = session.snapshot[kind].find(item => `${item.schema}.${item.name}` === name)
-  show('schema', resource)
+  showResource(kind, resource)
   element('path').value = `/rest/v1/${kind === 'functions' ? 'rpc/' : ''}${encodeURIComponent(resource.name)}${kind === 'tables' ? '?select=*' : ''}`
   element('method').value = kind === 'functions' ? 'POST' : 'GET'
   element('body').value = '{}'
@@ -19,6 +26,12 @@ async function refresh() {
     const response = await fetch('session', { headers: { Authorization: `Bearer ${key}` }, cache: 'no-store' })
     if (!response.ok) throw new Error('Open the inspector URL printed by gregale data-api dev to connect.')
     session = await response.json()
+    const identity = element('identity').value
+    element('identity').replaceChildren()
+    for (const [name, value] of Object.entries(session.identities)) {
+      const option = document.createElement('option'); option.value = name; option.textContent = `${name} (${value.subject})`; element('identity').append(option)
+    }
+    if (Object.hasOwn(session.identities, identity)) element('identity').value = identity
     show('status', `${session.status} · API ${session.ready ? 'ready' : 'paused'} · client checks ${session.client_checked ? 'passed' : 'not verified'}`)
     show('detail', session.detail ?? '')
     show('fingerprint', `Schema: ${session.fingerprint}`)
@@ -28,13 +41,13 @@ async function refresh() {
       element('resource').replaceChildren()
       for (const kind of ['tables', 'functions']) for (const resource of session.snapshot[kind]) {
         const option = document.createElement('option')
-        option.value = JSON.stringify([kind, `${resource.schema}.${resource.name}`]); option.textContent = `${kind === 'tables' ? 'Table' : 'RPC'} · ${resource.schema}.${resource.name}`
+        option.value = JSON.stringify([kind, `${resource.schema}.${resource.name}`]); option.textContent = `${kind === 'tables' ? 'Table' : resource.setof?.from ? 'RPC + relationship' : 'RPC'} · ${resource.schema}.${resource.name}`
         element('resource').append(option)
       }
       if ([...element('resource').options].some(option => option.value === selected)) {
         element('resource').value = selected
         const [kind, name] = JSON.parse(selected)
-        show('schema', session.snapshot[kind].find(item => `${item.schema}.${item.name}` === name))
+        showResource(kind, session.snapshot[kind].find(item => `${item.schema}.${item.name}` === name))
       } else if (element('resource').value) selectResource()
     }
     element('send').disabled = !session.ready || busy
