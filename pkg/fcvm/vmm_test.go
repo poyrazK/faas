@@ -1435,73 +1435,27 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 	if err != nil {
 		t.Fatalf("listen %s: %v", sockPath, err)
 	}
-	t.Cleanup(func() { _ = l.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		_ = l.Close()
+		<-done
+	})
 	go func() {
-		c, err := l.Accept()
-		if err != nil {
-			return
-		}
-		defer func() { _ = c.Close() }()
-		// Step 1: read "CONNECT <port>\n". Read byte-by-byte until newline
-		// so we don't block on ReadFull waiting for a fixed count that the
-		// port number's digit count might vary.
-		connectBuf := make([]byte, 0, 32)
-		readByte := make([]byte, 1)
+		defer close(done)
 		for {
-			if _, err := c.Read(readByte); err != nil {
-				_, _ = c.Write([]byte{1})
+			c, err := l.Accept()
+			if err != nil {
 				return
 			}
-			connectBuf = append(connectBuf, readByte[0])
-			if readByte[0] == '\n' {
-				break
-			}
-			if len(connectBuf) > 32 {
-				_, _ = c.Write([]byte{1})
-				return
-			}
+			// A timed-out CONNECT can leave the first accepted socket closed
+			// before its payload arrives. Model the guest's next accept rather
+			// than stranding the host retry on a single-shot fake (ADR-348).
+			stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+			handleFakeVsockHook(t, c, ack, onHook)
+			stop()
 		}
-		if !strings.HasPrefix(string(connectBuf), "CONNECT ") {
-			_, _ = c.Write([]byte{1})
-			return
-		}
-		// Step 2: reply "OK <hostside_port>\n". FC picks an ephemeral
-		// port; the value is for multiplexing bookkeeping and the
-		// host-side reader doesn't validate it.
-		if _, err := c.Write([]byte("OK 1073741824\n")); err != nil {
-			return
-		}
-
-		// Step 3: read the resume-hook payload. Format: 4-byte BE msg type +
-		// 4-byte BE body length + JSON body. Read exactly 8 bytes header,
-		// then the body length bytes.
-		var hdr [8]byte
-		if _, err := io.ReadFull(c, hdr[:]); err != nil {
-			_, _ = c.Write([]byte{1})
-			return
-		}
-		bodyLen := binary.BigEndian.Uint32(hdr[4:8])
-		body := make([]byte, bodyLen)
-		if _, err := io.ReadFull(c, body); err != nil {
-			_, _ = c.Write([]byte{1})
-			return
-		}
-		var payload struct {
-			Nano     int64  `json:"hostTimeUnixNano"`
-			EntropyB string `json:"entropy"`
-		}
-		_ = json.Unmarshal(body, &payload)
-		var entropy []byte
-		if payload.EntropyB != "" {
-			entropy, _ = base64.StdEncoding.DecodeString(payload.EntropyB)
-		}
-		if onHook != nil {
-			if err := onHook(payload.Nano, entropy); err != nil {
-				_, _ = c.Write([]byte{1})
-				return
-			}
-		}
-		_, _ = c.Write(fakeGuestAckFrame(ack))
 	}()
 }
 
@@ -1830,6 +1784,36 @@ func TestTriggerResumeHookAfterRestoreFailure(t *testing.T) {
 	}
 	if reason := ClassifyWakeError(err, WakeContext{}); reason != WakeReasonAfterRestoreFailed {
 		t.Fatalf("wake reason = %q, want %q", reason, WakeReasonAfterRestoreFailed)
+	}
+}
+
+// The fake guest must accept a fresh connection when an earlier CONNECT
+// succeeded but the host closed before sending its resume payload (ADR-348).
+func TestFakeVsockUDSServerReconnectAfterDroppedHandshake(t *testing.T) {
+	base := shortChrootBase(t, "ack-reconnect")
+	root := filepath.Join(base, "f", "iA", "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(root, VsockUDSSocketName)
+	fakeVsockUDSServer(t, socket, resumeHookAckAfterRestore, nil)
+	first, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = first.SetDeadline(time.Now().Add(time.Second))
+	if _, err := first.Write([]byte("CONNECT 1024\n")); err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	ack, err := readConnectAck(first)
+	_ = first.Close()
+	if err != nil || ack != "OK" {
+		t.Fatalf("initial CONNECT = %q, %v", ack, err)
+	}
+	v := &JailerVMM{chrootBase: base, fcName: "f"}
+	if err := v.TriggerResumeHook(t.Context(), Lease{Instance: "iA", Slot: 0}, 1); !errors.Is(err, ErrAfterRestoreHook) {
+		t.Fatalf("reconnected resume error = %v", err)
 	}
 }
 

@@ -366,6 +366,11 @@ login and terminates sessions before deleting grants and the role. It refuses
 to delete a role that owns objects, preserving application data for operator
 repair. Stable schema objects survive migration credential retirement.
 
+Migration owners may create custom schemas in their customer database. SQL
+verification accepts that database `CREATE` privilege only for migration access;
+runtime credentials still reject it. The administrative `CREATEDB` role
+attribute, temporary-object access, and unsafe owner memberships remain denied.
+
 Existing preview administrator bindings require deliberate rotation to adopt
 restricted credentials. Existing table ownership is preserved; an operator may
 need to transfer application objects to the stable schema owner before migration

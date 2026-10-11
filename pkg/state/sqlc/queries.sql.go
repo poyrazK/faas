@@ -50721,7 +50721,7 @@ SELECT session_user::text AS login, current_user::text AS effective_user,
  has_schema_privilege(current_user,'public','CREATE') AS schema_create,
  (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
  OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- (has_database_privilege(current_user,current_database(),'CREATE')
+ (($1::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
  OR has_database_privilege(current_user,current_database(),'TEMPORARY')
  OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
  AND ($1::text<>'migration' OR roleid<>e.oid))
