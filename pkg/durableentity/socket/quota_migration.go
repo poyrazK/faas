@@ -59,7 +59,9 @@ func (q *Quotas) migrationRecord(ctx context.Context, id durableentity.ID) (quot
 	if err != nil {
 		return quotaRecord{}, err
 	}
-	r.Limits = stricterLimits(r.Limits, q.Limits)
+	if r.Schema != 2 {
+		r.Limits = stricterLimits(r.Limits, q.Limits)
+	}
 	prune(&r, q.now())
 	return r, nil
 }
@@ -150,6 +152,11 @@ func (q *Quotas) StartMigration(ctx context.Context, id durableentity.ID, migrat
 			result = r.Migration
 			return nil
 		}
+		for _, c := range r.PolicyChanges {
+			if c.Request.MigrationID == migrationID || c.Request.ExpectedMigrationID == migrationID {
+				return durableentity.ErrInvalid
+			}
+		}
 		if r.Migration == nil {
 			if expectedID != "" || expectedRevision != 0 {
 				return durableentity.ErrConflict
@@ -200,6 +207,39 @@ func (q *Quotas) StepMigration(ctx context.Context, id durableentity.ID, migrati
 	}
 	if page.NextCursor != "" && page.NextCursor == m.Cursor {
 		return nil, durableentity.ErrCorrupt
+	}
+	if _, err := migrationPlan(r, page); err != nil {
+		return nil, err
+	}
+	if r.Schema == 2 {
+		if r.Limits != q.Limits {
+			return nil, ErrPolicyMismatch
+		}
+		updater, ok := scanner.(QuotaEntityCapUpdater)
+		if !ok {
+			return nil, durableentity.ErrUnsupported
+		}
+		for _, entity := range page.Entities {
+			if err := updater.RaiseQuotaEntityLimit(ctx, entity.Entity, r.Limits.EntityBytes); err != nil {
+				return nil, err
+			}
+		}
+		// Verify fresh manifest caps and usage after ownership-fenced updates.
+		page, err = scanner.ScanQuotaInventory(ctx, m.Cursor, id)
+		if err != nil {
+			return nil, err
+		}
+		if page.NextCursor != "" && page.NextCursor == m.Cursor {
+			return nil, durableentity.ErrCorrupt
+		}
+		if _, err := migrationPlan(r, page); err != nil {
+			return nil, err
+		}
+		for _, entity := range page.Entities {
+			if entity.StorageLimitBytes != r.Limits.EntityBytes {
+				return nil, durableentity.ErrInventoryPending
+			}
+		}
 	}
 	var result *QuotaMigration
 	err = q.mutateMigration(ctx, scopeKey(r.Scope), &r.Scope, true, func(current *quotaRecord, _ time.Time) error {

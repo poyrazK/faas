@@ -47,16 +47,18 @@ type entityReservation struct {
 	Bytes int64  `json:"bytes"`
 }
 type quotaRecord struct {
-	Schema       int                 `json:"schema"`
-	Scope        quotaScope          `json:"scope"`
-	Limits       TenantLimits        `json:"limits"`
-	Window       time.Time           `json:"window"`
-	GrantsIssued int                 `json:"grants_issued"`
-	Invocations  int                 `json:"invocations"`
-	Grants       []Grant             `json:"grants"`
-	Connections  []connectionLease   `json:"connections"`
-	Entities     []entityReservation `json:"entities"`
-	Migration    *QuotaMigration     `json:"migration,omitempty"`
+	Schema         int                 `json:"schema"`
+	Scope          quotaScope          `json:"scope"`
+	Limits         TenantLimits        `json:"limits"`
+	Window         time.Time           `json:"window"`
+	GrantsIssued   int                 `json:"grants_issued"`
+	Invocations    int                 `json:"invocations"`
+	Grants         []Grant             `json:"grants"`
+	Connections    []connectionLease   `json:"connections"`
+	Entities       []entityReservation `json:"entities"`
+	Migration      *QuotaMigration     `json:"migration,omitempty"`
+	PolicyRevision uint64              `json:"policy_revision,omitempty"`
+	PolicyChanges  []QuotaPolicyChange `json:"policy_changes,omitempty"`
 }
 type QuotaError struct {
 	Budget          string
@@ -103,10 +105,13 @@ func (q *Quotas) read(ctx context.Context, key string) (quotaRecord, string, err
 		return quotaRecord{}, "", err
 	}
 	var r quotaRecord
-	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || r.Schema != 1 || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > 64 {
+	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || (r.Schema != 1 && r.Schema != 2) || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > 64 {
 		return quotaRecord{}, "", durableentity.ErrCorrupt
 	}
 	if r.Migration != nil && !r.Migration.valid() {
+		return quotaRecord{}, "", durableentity.ErrCorrupt
+	}
+	if !validQuotaPolicy(r) {
 		return quotaRecord{}, "", durableentity.ErrCorrupt
 	}
 	seen := map[string]bool{}
@@ -192,7 +197,13 @@ func (q *Quotas) mutateMigration(ctx context.Context, key string, scope *quotaSc
 		if scope != nil && r.Scope != *scope {
 			return durableentity.ErrCorrupt
 		}
-		r.Limits = stricterLimits(r.Limits, q.Limits)
+		if r.Schema == 2 {
+			if r.Limits != q.Limits {
+				return ErrPolicyMismatch
+			}
+		} else {
+			r.Limits = stricterLimits(r.Limits, q.Limits)
+		}
 		prune(&r, now)
 		if !migration && r.Migration != nil && r.Migration.Phase != "complete" {
 			return ErrMigrationPending
@@ -341,6 +352,9 @@ func (q *Quotas) CheckConnection(ctx context.Context, id durableentity.ID, lease
 	if r.Migration != nil && r.Migration.Phase != "complete" {
 		return ErrGrantDenied
 	}
+	if r.Schema == 2 && r.Limits != q.Limits {
+		return ErrGrantDenied
+	}
 	for _, c := range r.Connections {
 		if c.ID == lease && q.now().Before(c.Expires) {
 			return nil
@@ -417,7 +431,9 @@ func (q *Quotas) Inspect(ctx context.Context, id durableentity.ID) (TenantUsage,
 	} else if err != nil {
 		return TenantUsage{}, err
 	}
-	r.Limits = stricterLimits(r.Limits, q.Limits)
+	if r.Schema != 2 {
+		r.Limits = stricterLimits(r.Limits, q.Limits)
+	}
 	stored := grantBytes(r)
 	expired := 0
 	now := q.now()

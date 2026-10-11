@@ -5,8 +5,9 @@ import "context"
 // QuotaInventoryEntity exposes only identity and committed usage metadata.
 // Missing usage needs the existing fenced per-entity inventory workflow.
 type QuotaInventoryEntity struct {
-	Entity        ID     `json:"entity"`
-	RetainedBytes *int64 `json:"retained_bytes"`
+	Entity            ID     `json:"entity"`
+	RetainedBytes     *int64 `json:"retained_bytes"`
+	StorageLimitBytes int64  `json:"storage_limit_bytes"`
 }
 type QuotaInventoryPage struct {
 	Entities   []QuotaInventoryEntity `json:"entities"`
@@ -43,7 +44,7 @@ func (m *Manager) ScanQuotaInventory(ctx context.Context, cursor string, scope I
 		if id.AccountID != scope.AccountID || id.AppID != scope.AppID || id.EnvironmentID != scope.EnvironmentID || id.TenantID != scope.TenantID {
 			continue
 		}
-		entry := QuotaInventoryEntity{Entity: id}
+		entry := QuotaInventoryEntity{Entity: id, StorageLimitBytes: base.StorageLimitBytes}
 		if base.StorageUsage != nil {
 			n := base.StorageUsage.TotalBytes()
 			entry.RetainedBytes = &n

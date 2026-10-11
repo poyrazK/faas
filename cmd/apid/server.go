@@ -66,6 +66,7 @@ type server struct {
 	durableEntitySessionGrants               *entitysocket.Grants
 	durableEntityTenantQuotas                *entitysocket.Quotas
 	durableEntityQuotaMigrationEnabled       bool
+	durableEntityQuotaPolicyEnabled          bool
 	durableEntityApps                        map[string]bool
 	durableEntityAlarmsEnabled               bool
 	durableEntityHealthEnabled               bool
@@ -2886,6 +2887,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityQuotaMigration))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startEntityQuotaMigration))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stepEntityQuotaMigration))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityQuotaPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-policy/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEntityQuotaPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-policy/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyEntityQuotaPolicy))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/session-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mintEntitySessionGrant))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/entities/session-grants/{grant}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeEntitySessionGrant))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/session-connect", s.connectEntityBrowserSession)
