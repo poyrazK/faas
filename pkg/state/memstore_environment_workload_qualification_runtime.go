@@ -62,5 +62,6 @@ func (m *MemStore) PublishEnvironmentWorkloadQualificationRuntime(ctx context.Co
 		m.instances[ins.ID] = prior
 		return Instance{}, err
 	}
+	m.recordRegionalRuntimeBillingTransitionLocked(prior, ins)
 	return ins, nil
 }

@@ -991,6 +991,7 @@ type DeploymentActivationLocker interface {
 // customer-intent tables through the methods it is given.
 type Store interface {
 	GlobalRuntimeUsageStore
+	RegionalRuntimeBillingHistoryStore
 	// ADR-797: decorators preserve the local global-management admission read.
 	RegionalAppProvisionAdmissionReader
 	// ADR-744: admission authority must survive Store decorators and scheduler

@@ -75,7 +75,7 @@ func (s *MemStore) FailRegionalRuntimeAttempt(ctx context.Context, source runtim
 	if err := s.guardInstanceRuntimeTransitionLocked(old, ins); err != nil {
 		return err
 	}
-	s.instances[source.InstanceKey] = ins
+	s.putInstanceLocked(source.InstanceKey, ins)
 	if s.hostPorts != nil {
 		s.hostPorts.Release(old.NodeID, source.InstanceKey)
 	}

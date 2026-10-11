@@ -6150,6 +6150,25 @@ type RegionalReleaseGrant struct {
 	IssuerAccountID pgtype.UUID
 }
 
+type RegionalRuntimeBillingHistoryStart struct {
+	Singleton bool
+	StartedAt pgtype.Timestamptz
+}
+
+type RegionalRuntimeBillingInterval struct {
+	ID            int64
+	AppID         pgtype.UUID
+	InstanceID    pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	RunID         pgtype.UUID
+	StartedAt     pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+	CompleteStart bool
+	EndedAt       pgtype.Timestamptz
+	UnknownSince  pgtype.Timestamptz
+}
+
 type RegionalRuntimeCapacityReceipt struct {
 	AppID        pgtype.UUID
 	AllocationID pgtype.UUID

@@ -142,7 +142,7 @@ func (m *MemStore) RetireEnvironmentQualificationExecution(ctx context.Context, 
 	status.Retirement, status.RetiredAt = &proof, &at
 	m.qualificationExecutions[execution.InstanceID] = status
 	ins.State, ins.TerminalAt = string(retiredState), &at
-	m.instances[execution.InstanceID] = ins
+	m.putInstanceLocked(execution.InstanceID, ins)
 	return nil
 }
 

@@ -1589,6 +1589,7 @@ type Querier interface {
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
 	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
+	ListRegionalRuntimeBillingIntervals(ctx context.Context, db DBTX, arg ListRegionalRuntimeBillingIntervalsParams) ([]ListRegionalRuntimeBillingIntervalsRow, error)
 	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
 	// ADR-763: issued capacity survives app/instance collection and grant replacement.
 	ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg ListRegionalRuntimeInventoryParams) ([]ListRegionalRuntimeInventoryRow, error)
@@ -2640,6 +2641,8 @@ type Querier interface {
 	RegionalAppProvisioned(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
+	// adr: 799
+	RegionalRuntimeBillingHistoryStart(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
 	RegionalRuntimeConsent(ctx context.Context, db DBTX, id pgtype.UUID) (RegionalRuntimeConsent, error)

@@ -1676,7 +1676,7 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 	if task.StartedAt == nil {
 		task.StartedAt = &now
 	}
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	tasks[taskIndex] = task
 	m.jobTasks[runID] = tasks
 	return ins, nil

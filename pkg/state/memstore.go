@@ -261,6 +261,9 @@ type MemStore struct {
 	regionalRuntimeConsents       map[string]RegionalRuntimeConsent
 	regionalRuntimeCapacity       map[string]RegionalRuntimeCapacityReceipt
 	regionalRuntimeLaunchSources  map[string]RegionalRuntimeLaunchSource
+	regionalRuntimeBillingStart   time.Time
+	regionalRuntimeBillingNext    int64
+	regionalRuntimeBillingRows    map[int64]RegionalRuntimeBillingInterval
 	regionalRuntimeServingSeats   map[string]RegionalRuntimeServingSeatReceipt
 	regionalRuntimeServingResumes map[string]RegionalRuntimeServingResumeReceipt
 	globalRuntimeUsageAuthority   GlobalRuntimeUsageAuthority
@@ -1200,6 +1203,8 @@ func NewMemStore() *MemStore {
 		regionalRuntimeConsents:       map[string]RegionalRuntimeConsent{},
 		regionalRuntimeCapacity:       map[string]RegionalRuntimeCapacityReceipt{},
 		regionalRuntimeLaunchSources:  map[string]RegionalRuntimeLaunchSource{},
+		regionalRuntimeBillingStart:   time.Now().UTC(),
+		regionalRuntimeBillingRows:    map[int64]RegionalRuntimeBillingInterval{},
 		regionalRuntimeServingSeats:   map[string]RegionalRuntimeServingSeatReceipt{},
 		regionalRuntimeServingResumes: map[string]RegionalRuntimeServingResumeReceipt{},
 
@@ -5364,7 +5369,7 @@ func (m *MemStore) FailRunningInstanceIfOwnedByNode(_ context.Context, id, nodeI
 	}
 	ts := terminalAt
 	ins.TerminalAt = &ts
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -5601,7 +5606,7 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
 	ins.MigrationStartedAt = &now
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	return nil
 }
 
@@ -5652,7 +5657,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
 	delete(m.instanceRuntimeConfigReceipts, instanceID)
@@ -5689,7 +5694,7 @@ func (m *MemStore) CancelInstanceMigration(_ context.Context, instanceID, origin
 	}
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	return nil
 }
 
@@ -5768,7 +5773,7 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 	ins.MigratedAt = &now
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	return nil
 }
 
@@ -5802,7 +5807,7 @@ func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseTo
 	}
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	return nil
 }
 
@@ -5906,7 +5911,7 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, 
 	}
 	now := m.clock()
 	ins.TerminalAt = &now
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 	return nil
 }
 
@@ -6453,7 +6458,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for key, v := range m.instances {
 		if v.AppID == id {
-			delete(m.instances, key)
+			m.deleteInstanceLocked(key)
 			delete(m.runtimeInstanceConfigProofs, key)
 			delete(m.instanceRuntimeConfigReceipts, key)
 			m.deleteSecretRuntimeProcessesLocked(key)
@@ -11011,7 +11016,7 @@ func (m *MemStore) SetInstanceMigratedFromForTest(instanceID, nodeID string) {
 	}
 	copy := nodeID
 	ins.MigratedFromNodeID = &copy
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 }
 
 // SetInstanceMigrationStartedAtForTest is a test-only hook for exercising
@@ -11025,7 +11030,7 @@ func (m *MemStore) SetInstanceMigrationStartedAtForTest(instanceID string, at ti
 	}
 	copyAt := at
 	ins.MigrationStartedAt = &copyAt
-	m.instances[instanceID] = ins
+	m.putInstanceLocked(instanceID, ins)
 }
 
 // ClaimQueuedBuild atomically flips queued → running under m.mu (PR-A
@@ -13993,7 +13998,7 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		return Instance{}, err
 	}
 	m.recordInstanceCapacityLocked(ins)
-	m.instances[ins.ID] = ins
+	m.putInstanceLocked(ins.ID, ins)
 	return ins, nil
 }
 
@@ -14056,7 +14061,7 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		return Instance{}, err
 	}
 	m.recordInstanceCapacityLocked(ins)
-	m.instances[ins.ID] = ins
+	m.putInstanceLocked(ins.ID, ins)
 	return ins, nil
 }
 
@@ -14113,7 +14118,7 @@ func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID
 		return Instance{}, err
 	}
 	m.recordInstanceCapacityLocked(ins)
-	m.instances[ins.ID] = ins
+	m.putInstanceLocked(ins.ID, ins)
 	return ins, nil
 }
 
@@ -14545,7 +14550,7 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14583,7 +14588,7 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14601,7 +14606,7 @@ func (m *MemStore) IncInstanceRequestCount(_ context.Context, id string, delta i
 		return -1, nil
 	}
 	ins.RequestCount += delta
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return ins.RequestCount, nil
 }
 
@@ -14633,7 +14638,7 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14663,7 +14668,7 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 	}
 	ts := terminalAt
 	ins.TerminalAt = &ts
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14686,7 +14691,7 @@ func (m *MemStore) SetInstanceFrameworkReadyAt(_ context.Context, id string, rea
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14710,7 +14715,7 @@ func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMo
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14728,7 +14733,7 @@ func (m *MemStore) ClearInstanceFrameworkReadyAt(_ context.Context, id string) e
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14758,7 +14763,7 @@ func (m *MemStore) BumpInstanceTailCount(_ context.Context, id string, delta int
 		post = 0
 	}
 	ins.TailCount = post
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return int32(post), nil
 }
 
@@ -14784,7 +14789,7 @@ func (m *MemStore) DecrementInstanceTailCount(_ context.Context, id string, n in
 	} else {
 		ins.TailCount -= int(n)
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14865,7 +14870,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 		candidates = candidates[:limit]
 	}
 	for _, row := range candidates {
-		delete(m.instances, row.id)
+		m.deleteInstanceLocked(row.id)
 		delete(m.runtimeInstanceConfigProofs, row.id)
 		delete(m.instanceRuntimeConfigReceipts, row.id)
 		m.deleteSecretRuntimeProcessesLocked(row.id)
@@ -14904,7 +14909,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	if _, ok := m.instances[id]; !ok {
 		return ErrNotFound
 	}
-	delete(m.instances, id)
+	m.deleteInstanceLocked(id)
 	delete(m.runtimeInstanceConfigProofs, id)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
@@ -14958,7 +14963,7 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -14980,7 +14985,7 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return Instance{}, err
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return ins, nil
 }
 
@@ -14997,7 +15002,7 @@ func (m *MemStore) SetInstanceStartupCPUBoostUntil(_ context.Context, id string,
 		stamp := until.UTC()
 		ins.StartupCPUBoostUntil = &stamp
 	}
-	m.instances[id] = ins
+	m.putInstanceLocked(id, ins)
 	return nil
 }
 
@@ -15051,7 +15056,7 @@ func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceT
 			continue
 		}
 		ins.LastRequestAt = t.LastRequest
-		m.instances[t.InstanceID] = ins
+		m.putInstanceLocked(t.InstanceID, ins)
 		applied++
 	}
 	return applied, nil
@@ -15074,7 +15079,7 @@ func (m *MemStore) TouchInstancesWithRequestDelta(_ context.Context, touches []I
 		}
 		ins.LastRequestAt = t.LastRequest
 		ins.RequestCount += t.RequestDelta
-		m.instances[t.InstanceID] = ins
+		m.putInstanceLocked(t.InstanceID, ins)
 		applied++
 	}
 	return applied, nil
@@ -21443,7 +21448,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	}
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
-			delete(m.instances, iid)
+			m.deleteInstanceLocked(iid)
 			delete(m.runtimeInstanceConfigProofs, iid)
 			delete(m.instanceRuntimeConfigReceipts, iid)
 			m.deleteSecretRuntimeProcessesLocked(iid)
@@ -24024,7 +24029,7 @@ func (m *MemStore) BackdateForTest(id string, startedAt time.Time) {
 	defer m.mu.Unlock()
 	if ins, ok := m.instances[id]; ok {
 		ins.StartedAt = startedAt
-		m.instances[id] = ins
+		m.putInstanceLocked(id, ins)
 	}
 }
 
@@ -24037,7 +24042,7 @@ func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
 	defer m.mu.Unlock()
 	if ins, ok := m.instances[id]; ok {
 		ins.ParkedAt = parkedAt
-		m.instances[id] = ins
+		m.putInstanceLocked(id, ins)
 	}
 }
 
@@ -24052,7 +24057,7 @@ func (m *MemStore) SetTerminalAtForTest(id string, terminalAt time.Time) {
 	if ins, ok := m.instances[id]; ok {
 		ts := terminalAt
 		ins.TerminalAt = &ts
-		m.instances[id] = ins
+		m.putInstanceLocked(id, ins)
 	}
 }
 

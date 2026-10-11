@@ -51,6 +51,7 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 			return Instance{}, err
 		}
 	}
+	m.recordRegionalRuntimeBillingTransitionLocked(prior, instance)
 	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
 	return instance, nil
 }

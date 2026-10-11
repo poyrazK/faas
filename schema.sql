@@ -1207,6 +1207,67 @@ $$;
 
 
 --
+-- Name: capture_regional_runtime_billing_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_regional_runtime_billing_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ old_billable boolean := false;
+ new_billable boolean := false;
+ same_run boolean := false;
+ changed_at timestamptz;
+ old_app uuid;
+ new_app uuid;
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  old_billable := OLD.app_id IS NOT NULL AND OLD.app_id <> '00000000-0000-0000-0000-000000000000'::uuid AND OLD.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND COALESCE(OLD.mode,'normal') <> 'mirror';
+ END IF;
+ IF TG_OP <> 'DELETE' THEN
+  new_billable := NEW.app_id IS NOT NULL AND NEW.app_id <> '00000000-0000-0000-0000-000000000000'::uuid AND NEW.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND COALESCE(NEW.mode,'normal') <> 'mirror';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  same_run := (NEW.app_id,NEW.id,NEW.deployment_id,NEW.node_id,NEW.wake_id) IS NOT DISTINCT FROM
+   (OLD.app_id,OLD.id,OLD.deployment_id,OLD.node_id,OLD.wake_id);
+ END IF;
+ IF old_billable=new_billable AND (NOT old_billable OR same_run) THEN RETURN NULL; END IF;
+ IF old_billable THEN old_app:=OLD.app_id; END IF;
+ IF new_billable THEN new_app:=NEW.app_id; END IF;
+ -- Serialize actual journal mutations with issuance and future minute sealing.
+ -- Both roots use the quota journal's canonical order on reparenting.
+ IF LEAST(old_app,new_app) IS NOT NULL THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||LEAST(old_app,new_app)::text,0));
+ END IF;
+ IF GREATEST(old_app,new_app) IS DISTINCT FROM LEAST(old_app,new_app) THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||GREATEST(old_app,new_app)::text,0));
+ END IF;
+ changed_at:=clock_timestamp();
+ IF old_billable AND (TG_OP='DELETE' OR NOT same_run OR NOT new_billable) THEN
+  IF TG_OP='DELETE' OR NOT same_run THEN
+   UPDATE regional_runtime_billing_intervals SET unknown_since=GREATEST(started_at,changed_at)
+    WHERE instance_id=OLD.id AND ended_at IS NULL AND unknown_since IS NULL;
+  ELSE
+   UPDATE regional_runtime_billing_intervals SET ended_at=GREATEST(started_at,changed_at)
+    WHERE instance_id=OLD.id AND ended_at IS NULL AND unknown_since IS NULL;
+  END IF;
+ END IF;
+ IF new_billable AND (NOT old_billable OR NOT same_run) THEN
+  INSERT INTO regional_runtime_billing_intervals
+   (app_id,instance_id,deployment_id,node_id,run_id,started_at,recorded_at,complete_start)
+  VALUES (NEW.app_id,NEW.id,NULLIF(NEW.deployment_id,'00000000-0000-0000-0000-000000000000'::uuid),
+   NULLIF(NEW.node_id,'00000000-0000-0000-0000-000000000000'::uuid),
+   NULLIF(NEW.wake_id,'00000000-0000-0000-0000-000000000000'::uuid),
+   CASE WHEN TG_OP='INSERT' THEN COALESCE(NEW.started_at,changed_at) ELSE changed_at END,changed_at,true);
+ END IF;
+ RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: capture_service_binding_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7490,6 +7551,31 @@ END; $$;
 
 
 --
+-- Name: guard_regional_runtime_billing_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_runtime_billing_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR pg_trigger_depth() < 2 THEN
+  RAISE EXCEPTION 'regional runtime billing history is lifecycle owned' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (
+  (NEW.id,NEW.app_id,NEW.instance_id,NEW.deployment_id,NEW.node_id,NEW.run_id,
+   NEW.started_at,NEW.recorded_at,NEW.complete_start) IS DISTINCT FROM
+  (OLD.id,OLD.app_id,OLD.instance_id,OLD.deployment_id,OLD.node_id,OLD.run_id,
+   OLD.started_at,OLD.recorded_at,OLD.complete_start)
+  OR OLD.ended_at IS NOT NULL OR OLD.unknown_since IS NOT NULL
+  OR (NEW.ended_at IS NULL AND NEW.unknown_since IS NULL)) THEN
+  RAISE EXCEPTION 'regional runtime billing interval cannot be rewritten' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: guard_regional_runtime_capacity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11228,6 +11314,19 @@ BEGIN
     RAISE EXCEPTION 'regional release receipts cannot be truncated'
         USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_identity';
 END;
+$$;
+
+
+--
+-- Name: refuse_regional_runtime_billing_history_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_regional_runtime_billing_history_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'regional runtime billing history is retained' USING ERRCODE='23514';
+END
 $$;
 
 
@@ -18440,41 +18539,6 @@ CREATE TABLE public.global_release_recovery_work (
 
 
 --
--- Name: global_runtime_consents; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.global_runtime_consents (
-    id uuid NOT NULL,
-    issuer_id uuid NOT NULL,
-    global_app_id uuid NOT NULL,
-    owner_id uuid NOT NULL,
-    global_app_slug text NOT NULL,
-    binding jsonb NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    status text DEFAULT 'pending'::text NOT NULL,
-    regional_created_at timestamp with time zone,
-    regional_revoked_at timestamp with time zone,
-    CONSTRAINT global_runtime_consents_binding_check CHECK ((((jsonb_typeof(binding) = 'object'::text) AND (binding ?& ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) AND ((binding - ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) = '{}'::jsonb) AND (jsonb_typeof((binding -> 'CellID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'Region'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAccountID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalOrgID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppSlug'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'APIBase'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'CellGeneration'::text)) = 'number'::text) AND ((binding ->> 'RegionalOrgID'::text) = ''::text) AND ((binding ->> 'CellGeneration'::text) ~ '^[1-9][0-9]*$'::text) AND (((binding ->> 'CellGeneration'::text))::numeric <= ('9007199254740991'::bigint)::numeric) AND ((binding ->> 'CellID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAccountID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAppID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'CellID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAccountID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAppID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((length((binding ->> 'RegionalAppSlug'::text)) >= 3) AND (length((binding ->> 'RegionalAppSlug'::text)) <= 40)) AND ((binding ->> 'RegionalAppSlug'::text) ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text) AND (octet_length((binding ->> 'APIBase'::text)) <= 2048) AND ((binding ->> 'APIBase'::text) ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text)) IS TRUE)),
-    CONSTRAINT global_runtime_consents_check CHECK ((isfinite(regional_created_at) AND (regional_created_at < expires_at) AND (regional_created_at <> '0001-01-01 01:55:52+01:55:52'::timestamp with time zone))),
-    CONSTRAINT global_runtime_consents_check1 CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '6 days'::interval)))),
-    CONSTRAINT global_runtime_consents_check2 CHECK (((status = 'revoked'::text) = (regional_revoked_at IS NOT NULL))),
-    CONSTRAINT global_runtime_consents_check3 CHECK (((status <> 'active'::text) OR (regional_created_at IS NOT NULL))),
-    CONSTRAINT global_runtime_consents_check4 CHECK (((status <> 'pending'::text) OR (regional_created_at IS NULL))),
-    CONSTRAINT global_runtime_consents_check5 CHECK (((regional_revoked_at IS NULL) OR ((regional_created_at IS NOT NULL) AND (regional_revoked_at >= regional_created_at)))),
-    CONSTRAINT global_runtime_consents_created_at_check CHECK (isfinite(created_at)),
-    CONSTRAINT global_runtime_consents_expires_at_check CHECK (isfinite(expires_at)),
-    CONSTRAINT global_runtime_consents_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_consents_global_app_slug_check CHECK ((((length(global_app_slug) >= 3) AND (length(global_app_slug) <= 40)) AND (global_app_slug ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text))),
-    CONSTRAINT global_runtime_consents_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_consents_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_consents_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_consents_regional_revoked_at_check CHECK (isfinite(regional_revoked_at)),
-    CONSTRAINT global_runtime_consents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'revoking'::text, 'revoked'::text])))
-);
-
-
---
 -- Name: global_runtime_quota_allocations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18512,18 +18576,6 @@ CREATE TABLE public.global_runtime_quota_allocations (
 
 
 --
--- Name: global_runtime_quota_delivery_owners; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.global_runtime_quota_delivery_owners (
-    owner_id uuid NOT NULL,
-    last_claimed_at timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
-    CONSTRAINT global_runtime_quota_delivery_owners_last_claimed_at_check CHECK (isfinite(last_claimed_at)),
-    CONSTRAINT global_runtime_quota_delivery_owners_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid))
-);
-
-
---
 -- Name: global_runtime_quota_issuer; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18532,50 +18584,6 @@ CREATE TABLE public.global_runtime_quota_issuer (
     issuer_id uuid NOT NULL,
     CONSTRAINT global_runtime_quota_issuer_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_runtime_quota_issuer_singleton_check CHECK (singleton)
-);
-
-
---
--- Name: global_runtime_quota_policies; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.global_runtime_quota_policies (
-    policy_id text NOT NULL,
-    plan text NOT NULL,
-    max_concurrency integer NOT NULL,
-    max_peak_concurrency integer NOT NULL,
-    CONSTRAINT global_runtime_quota_policies_check CHECK ((max_peak_concurrency >= max_concurrency)),
-    CONSTRAINT global_runtime_quota_policies_max_concurrency_check CHECK ((max_concurrency > 0)),
-    CONSTRAINT global_runtime_quota_policies_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT global_runtime_quota_policies_policy_id_check CHECK ((policy_id ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
--- Name: global_runtime_usage_minutes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.global_runtime_usage_minutes (
-    global_app_id uuid NOT NULL,
-    allocation_id uuid NOT NULL,
-    cell_id uuid NOT NULL,
-    minute timestamp with time zone NOT NULL,
-    account_id uuid NOT NULL,
-    app_slug text NOT NULL,
-    billing_instance_id uuid NOT NULL,
-    usage_claims jsonb NOT NULL,
-    envelope jsonb NOT NULL,
-    imported_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT global_runtime_usage_minutes_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_usage_minutes_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_usage_minutes_app_slug_check CHECK ((((length(app_slug) >= 3) AND (length(app_slug) <= 40)) AND (app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
-    CONSTRAINT global_runtime_usage_minutes_billing_instance_id_check CHECK ((billing_instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_usage_minutes_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_usage_minutes_envelope_check CHECK (((jsonb_typeof(envelope) = 'object'::text) AND (octet_length((envelope)::text) <= 8192))),
-    CONSTRAINT global_runtime_usage_minutes_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_runtime_usage_minutes_imported_at_check CHECK (isfinite(imported_at)),
-    CONSTRAINT global_runtime_usage_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_trunc('minute'::text, minute)) AND (minute > '1970-01-01 00:00:00+00'::timestamp with time zone))),
-    CONSTRAINT global_runtime_usage_minutes_usage_claims_check CHECK (((jsonb_typeof(usage_claims) = 'object'::text) AND (octet_length((usage_claims)::text) <= 4096)))
 );
 
 
@@ -18624,6 +18632,97 @@ CREATE VIEW public.global_runtime_billing_issued AS
      JOIN public.global_runtime_quota_targets target USING (global_app_id, allocation_id))
      LEFT JOIN public.global_runtime_quota_issuer issuer ON (true))
   WHERE ((owner.account_id IS NOT NULL) AND (owner.org_id IS NULL) AND (target.issued_at IS NOT NULL));
+
+
+--
+-- Name: global_runtime_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_consents (
+    id uuid NOT NULL,
+    issuer_id uuid NOT NULL,
+    global_app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    global_app_slug text NOT NULL,
+    binding jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    regional_created_at timestamp with time zone,
+    regional_revoked_at timestamp with time zone,
+    CONSTRAINT global_runtime_consents_binding_check CHECK ((((jsonb_typeof(binding) = 'object'::text) AND (binding ?& ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) AND ((binding - ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) = '{}'::jsonb) AND (jsonb_typeof((binding -> 'CellID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'Region'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAccountID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalOrgID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppSlug'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'APIBase'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'CellGeneration'::text)) = 'number'::text) AND ((binding ->> 'RegionalOrgID'::text) = ''::text) AND ((binding ->> 'CellGeneration'::text) ~ '^[1-9][0-9]*$'::text) AND (((binding ->> 'CellGeneration'::text))::numeric <= ('9007199254740991'::bigint)::numeric) AND ((binding ->> 'CellID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAccountID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAppID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'CellID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAccountID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAppID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((length((binding ->> 'RegionalAppSlug'::text)) >= 3) AND (length((binding ->> 'RegionalAppSlug'::text)) <= 40)) AND ((binding ->> 'RegionalAppSlug'::text) ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text) AND (octet_length((binding ->> 'APIBase'::text)) <= 2048) AND ((binding ->> 'APIBase'::text) ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text)) IS TRUE)),
+    CONSTRAINT global_runtime_consents_check CHECK ((isfinite(regional_created_at) AND (regional_created_at < expires_at) AND (regional_created_at <> '0001-01-01 01:55:52+01:55:52'::timestamp with time zone))),
+    CONSTRAINT global_runtime_consents_check1 CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '6 days'::interval)))),
+    CONSTRAINT global_runtime_consents_check2 CHECK (((status = 'revoked'::text) = (regional_revoked_at IS NOT NULL))),
+    CONSTRAINT global_runtime_consents_check3 CHECK (((status <> 'active'::text) OR (regional_created_at IS NOT NULL))),
+    CONSTRAINT global_runtime_consents_check4 CHECK (((status <> 'pending'::text) OR (regional_created_at IS NULL))),
+    CONSTRAINT global_runtime_consents_check5 CHECK (((regional_revoked_at IS NULL) OR ((regional_created_at IS NOT NULL) AND (regional_revoked_at >= regional_created_at)))),
+    CONSTRAINT global_runtime_consents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT global_runtime_consents_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT global_runtime_consents_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_global_app_slug_check CHECK ((((length(global_app_slug) >= 3) AND (length(global_app_slug) <= 40)) AND (global_app_slug ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text))),
+    CONSTRAINT global_runtime_consents_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_consents_regional_revoked_at_check CHECK (isfinite(regional_revoked_at)),
+    CONSTRAINT global_runtime_consents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'revoking'::text, 'revoked'::text])))
+);
+
+
+--
+-- Name: global_runtime_quota_delivery_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_quota_delivery_owners (
+    owner_id uuid NOT NULL,
+    last_claimed_at timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
+    CONSTRAINT global_runtime_quota_delivery_owners_last_claimed_at_check CHECK (isfinite(last_claimed_at)),
+    CONSTRAINT global_runtime_quota_delivery_owners_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: global_runtime_quota_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_quota_policies (
+    policy_id text NOT NULL,
+    plan text NOT NULL,
+    max_concurrency integer NOT NULL,
+    max_peak_concurrency integer NOT NULL,
+    CONSTRAINT global_runtime_quota_policies_check CHECK ((max_peak_concurrency >= max_concurrency)),
+    CONSTRAINT global_runtime_quota_policies_max_concurrency_check CHECK ((max_concurrency > 0)),
+    CONSTRAINT global_runtime_quota_policies_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT global_runtime_quota_policies_policy_id_check CHECK ((policy_id ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: global_runtime_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_usage_minutes (
+    global_app_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    account_id uuid NOT NULL,
+    app_slug text NOT NULL,
+    billing_instance_id uuid NOT NULL,
+    usage_claims jsonb NOT NULL,
+    envelope jsonb NOT NULL,
+    imported_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT global_runtime_usage_minutes_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_app_slug_check CHECK ((((length(app_slug) >= 3) AND (length(app_slug) <= 40)) AND (app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT global_runtime_usage_minutes_billing_instance_id_check CHECK ((billing_instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_envelope_check CHECK (((jsonb_typeof(envelope) = 'object'::text) AND (octet_length((envelope)::text) <= 8192))),
+    CONSTRAINT global_runtime_usage_minutes_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_usage_minutes_imported_at_check CHECK (isfinite(imported_at)),
+    CONSTRAINT global_runtime_usage_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_trunc('minute'::text, minute)) AND (minute > '1970-01-01 02:00:00+02'::timestamp with time zone))),
+    CONSTRAINT global_runtime_usage_minutes_usage_claims_check CHECK (((jsonb_typeof(usage_claims) = 'object'::text) AND (octet_length((usage_claims)::text) <= 4096)))
+);
 
 
 --
@@ -23792,6 +23891,63 @@ CREATE TABLE public.regional_release_grants (
 
 
 --
+-- Name: regional_runtime_billing_history_start; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_billing_history_start (
+    singleton boolean DEFAULT true NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT regional_runtime_billing_history_start_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: regional_runtime_billing_intervals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_billing_intervals (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    deployment_id uuid,
+    node_id uuid,
+    run_id uuid,
+    started_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    complete_start boolean NOT NULL,
+    ended_at timestamp with time zone,
+    unknown_since timestamp with time zone,
+    CONSTRAINT regional_runtime_billing_intervals_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_billing_intervals_check CHECK (((ended_at IS NULL) OR (ended_at >= started_at))),
+    CONSTRAINT regional_runtime_billing_intervals_check1 CHECK (((unknown_since IS NULL) OR (unknown_since >= started_at))),
+    CONSTRAINT regional_runtime_billing_intervals_check2 CHECK (((ended_at IS NULL) OR (unknown_since IS NULL))),
+    CONSTRAINT regional_runtime_billing_intervals_deployment_id_check CHECK (((deployment_id IS NULL) OR (deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT regional_runtime_billing_intervals_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_billing_intervals_node_id_check CHECK (((node_id IS NULL) OR (node_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT regional_runtime_billing_intervals_run_id_check CHECK (((run_id IS NULL) OR (run_id <> '00000000-0000-0000-0000-000000000000'::uuid)))
+);
+
+
+--
+-- Name: regional_runtime_billing_intervals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.regional_runtime_billing_intervals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: regional_runtime_billing_intervals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.regional_runtime_billing_intervals_id_seq OWNED BY public.regional_runtime_billing_intervals.id;
+
+
+--
 -- Name: regional_runtime_capacity_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25974,6 +26130,13 @@ ALTER TABLE ONLY public.execution_events ALTER COLUMN id SET DEFAULT nextval('pu
 --
 
 ALTER TABLE ONLY public.instance_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.instance_billing_intervals_id_seq'::regclass);
+
+
+--
+-- Name: regional_runtime_billing_intervals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.regional_runtime_billing_intervals_id_seq'::regclass);
 
 
 --
@@ -30867,6 +31030,22 @@ ALTER TABLE ONLY public.regional_release_grants
 
 ALTER TABLE ONLY public.regional_release_grants
     ADD CONSTRAINT regional_release_grants_token_sha256_key UNIQUE (token_sha256);
+
+
+--
+-- Name: regional_runtime_billing_history_start regional_runtime_billing_history_start_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_billing_history_start
+    ADD CONSTRAINT regional_runtime_billing_history_start_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: regional_runtime_billing_intervals regional_runtime_billing_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_billing_intervals
+    ADD CONSTRAINT regional_runtime_billing_intervals_pkey PRIMARY KEY (id);
 
 
 --
@@ -36485,6 +36664,20 @@ CREATE INDEX regional_resume_permit ON public.regional_runtime_serving_resumes U
 
 
 --
+-- Name: regional_runtime_billing_app_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_billing_app_page_idx ON public.regional_runtime_billing_intervals USING btree (app_id, id);
+
+
+--
+-- Name: regional_runtime_billing_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX regional_runtime_billing_open_idx ON public.regional_runtime_billing_intervals USING btree (instance_id) WHERE ((ended_at IS NULL) AND (unknown_since IS NULL));
+
+
+--
 -- Name: regional_runtime_capacity_held; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41063,6 +41256,34 @@ CREATE TRIGGER regional_release_grants_truncate_guard BEFORE TRUNCATE ON public.
 
 
 --
+-- Name: regional_runtime_billing_intervals regional_runtime_billing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_billing_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_billing_intervals FOR EACH ROW EXECUTE FUNCTION public.guard_regional_runtime_billing_history();
+
+
+--
+-- Name: regional_runtime_billing_history_start regional_runtime_billing_start_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_billing_start_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_billing_history_start FOR EACH ROW EXECUTE FUNCTION public.refuse_regional_runtime_billing_history_truncate();
+
+
+--
+-- Name: regional_runtime_billing_history_start regional_runtime_billing_start_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_billing_start_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_billing_history_start FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_billing_history_truncate();
+
+
+--
+-- Name: regional_runtime_billing_intervals regional_runtime_billing_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_billing_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_billing_intervals FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_billing_history_truncate();
+
+
+--
 -- Name: regional_runtime_consents regional_runtime_consent_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -41648,6 +41869,13 @@ CREATE TRIGGER zz_environment_gitops_guard_queue_consumer BEFORE INSERT OR DELET
 --
 
 CREATE TRIGGER zz_environment_secret_reference_shadow BEFORE INSERT OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_reference_shadow();
+
+
+--
+-- Name: instances zz_instances_regional_runtime_billing_history; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_instances_regional_runtime_billing_history AFTER INSERT OR DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_regional_runtime_billing_history();
 
 
 --

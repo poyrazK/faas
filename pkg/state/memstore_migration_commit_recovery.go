@@ -17,7 +17,7 @@ func (m *MemStore) ResolveInstanceMigrationCommit(_ context.Context, attempt Mig
 	resolution := classifyMigrationCommit(instance, attempt)
 	if resolution == MigrationCommitAborted && instance.LeaseToken == attempt.LeaseToken {
 		instance.State, instance.LeaseToken, instance.MigrationStartedAt = string(StateParked), "", nil
-		m.instances[instance.ID] = instance
+		m.putInstanceLocked(instance.ID, instance)
 	}
 	return resolution, nil
 }

@@ -44,7 +44,7 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(_ context.Context, id, 
 	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], instance); err != nil {
 		return err
 	}
-	m.instances[id] = instance
+	m.putInstanceLocked(id, instance)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	if input.Inputs != nil {
 		// The new wake and matching deployment were checked before mutation.

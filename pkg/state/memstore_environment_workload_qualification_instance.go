@@ -69,7 +69,7 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 		return EnvironmentWorkloadQualificationAdmission{}, err
 	}
 	m.recordInstanceCapacityLocked(ins)
-	m.instances[ins.ID] = ins
+	m.putInstanceLocked(ins.ID, ins)
 	execution := qualificationExecution(current, ins, uuid.NewString())
 	m.qualificationExecutions[ins.ID] = EnvironmentQualificationExecutionStatus{Execution: execution}
 	return EnvironmentWorkloadQualificationAdmission{Instance: ins, Execution: execution, Created: true}, nil

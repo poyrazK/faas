@@ -7112,6 +7112,31 @@
     "kind": "account_identity"
   },
   {
+    "table": "regional_runtime_billing_history_start",
+    "columns": [
+      "singleton",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "regional_runtime_billing_intervals",
+    "columns": [
+      "app_id",
+      "complete_start",
+      "deployment_id",
+      "ended_at",
+      "id",
+      "instance_id",
+      "node_id",
+      "recorded_at",
+      "run_id",
+      "started_at",
+      "unknown_since"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "regional_runtime_capacity_receipts",
     "columns": [
       "allocation_id",

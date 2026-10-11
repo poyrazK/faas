@@ -267,6 +267,7 @@ func (m *MemStore) PublishInstanceRuntimeWithConfig(_ context.Context, id, expec
 		m.instances[id] = prior
 		return Instance{}, err
 	}
+	m.recordRegionalRuntimeBillingTransitionLocked(prior, instance)
 	return instance, nil
 }
 

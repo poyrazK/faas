@@ -56,8 +56,9 @@ delivery also waits because its combined spend cap depends on compute totals.
 PostgreSQL import into the existing monthly, hour, financial and provider
 billing surfaces. Ordinary provider delivery invokes the coverage guard.
 
-This change does not yet provide the regional producer or its transport. The
-producer must retain original run and resource intervals, capture every closed
+ADR-799 adds retained regional run intervals and original launch resource reads
+across instance and app collection. The regional producer and its transport
+remain pending. The producer must capture every closed
 minute once, preserve history across instance/app collection and replay outages.
 It must route managed app compute to this ledger instead of charging the
 regional account, and define min-instance floor and app-task accounting before
