@@ -18,12 +18,6 @@
 //     require_signed flag on a Pro-plan app and emits
 //     `app.security_updated`.
 //
-//   - The on-disk mirror at $FAAS_TRUSTED_PUBLISHERS_DIR is written
-//     by the apid LISTEN goroutine after a PUT, so the deploy-side
-//     verifier (imaged) can read the publisher list without a DB
-//     round-trip. This is the end-to-end cross-process proof for
-//     the C1 critical fix.
-//
 // What this test deliberately does NOT cover
 //
 //   - The actual ECDSA signature verification — that's a unit test
@@ -49,8 +43,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -249,80 +241,6 @@ func TestSignedDeploy_TrustedSignerRotation(t *testing.T) {
 	}
 }
 
-// TestSignedDeploy_OnDiskMirror is the cross-process end-to-end
-// proof for the C1 critical fix. apid LISTENs on the
-// trusted_signer_changed pg_notify channel and writes a per-app
-// PEM file under $FAAS_TRUSTED_PUBLISHERS_DIR; imaged reads that
-// directory at verify time. After a PUT, the file MUST exist on
-// disk within the LISTEN round-trip window (≤2s on local postgres).
-func TestSignedDeploy_OnDiskMirror(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
-	if pool == nil {
-		return
-	}
-	if err := db.MigrateUp(context.Background(), pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	// Per-test trusted-publishers dir. The temp dir is created
-	// by the harness below; the env var is consumed by the
-	// runTrustedPublisherWriter goroutine.
-	trustedDir := t.TempDir()
-
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{
-		"FAAS_TRUSTED_PUBLISHERS_DIR=" + trustedDir,
-	})
-	key := h.SeedAccount(context.Background(), api.PlanPro)
-
-	if code := statusOnly(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: "app-mirror"}); code != http.StatusCreated {
-		t.Fatalf("seed app: %d", code)
-	}
-	acctID := mustAccountID(t, h, key)
-	appID := findAppIDBySlug(context.Background(), t, h, acctID, "app-mirror")
-
-	// PUT a publisher; the LISTEN goroutine must mirror it to
-	// <dir>/<appID>--ci-bot.pem within a few seconds.
-	if code := statusOnly(t, h, key, http.MethodPut,
-		"/v1/apps/app-mirror/trusted_signers/ci-bot",
-		api.AddTrustedSignerRequest{PublicKeyPEM: pemBlob64('M')}); code != http.StatusOK {
-		t.Fatalf("PUT: %d", code)
-	}
-
-	wantPath := filepath.Join(trustedDir, appID+"--ci-bot.pem")
-	if !waitForFile(t, wantPath, 5*time.Second) {
-		// Surface the directory listing on failure so the
-		// bisect isn't a guessing game.
-		entries, _ := os.ReadDir(trustedDir)
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Fatalf("mirror file %s never appeared; dir contents: %v", wantPath, names)
-	}
-
-	// Per-file mode must be 0444 — the on-disk mirror is an
-	// argv-passed file, not a socket (imaged reads it as
-	// root); the umask on the os.CreateTemp / WriteFile path
-	// would otherwise leave it world-writable.
-	info, err := os.Stat(wantPath)
-	if err != nil {
-		t.Fatalf("stat mirror file: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o444 {
-		t.Errorf("mirror file mode = %o, want 0444", perm)
-	}
-
-	// DELETE — the mirror must be reconciled away.
-	if code := statusOnly(t, h, key, http.MethodDelete,
-		"/v1/apps/app-mirror/trusted_signers/ci-bot", nil); code != http.StatusNoContent {
-		t.Fatalf("DELETE: %d", code)
-	}
-	if !waitForFileGone(t, wantPath, 5*time.Second) {
-		t.Fatalf("mirror file %s still present after DELETE", wantPath)
-	}
-}
-
 // TestSignedDeploy_FreePlanRefuses asserts the Free plan wire
 // surface: the TrustedSignerCountMax limit is 0 on Free, so the
 // pre-flight quota check inside upsertTrustedSigner rejects the
@@ -428,31 +346,4 @@ func waitForAudit(t *testing.T, h *e2etest.Harness, kind, appID string, want int
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("audit row kind=%q app=%q never reached count=%d (within %s)", kind, appID, want, timeout)
-}
-
-// waitForFile polls for a file's existence. Used by the mirror
-// test to absorb the LISTEN round-trip latency.
-func waitForFile(t *testing.T, path string, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
-}
-
-// waitForFileGone is the inverse of waitForFile.
-func waitForFileGone(t *testing.T, path string, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return false
 }

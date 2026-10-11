@@ -377,6 +377,10 @@ var methodRouteMap = map[string]string{
 	// Business workflow observation routes use domain-oriented SDK method names.
 	"GET /v1/apps/{slug}/workflow-attention":                                          "ListAccountWorkflowAttention",
 	"GET /v1/apps/{slug}/workflow-attention/summary":                                  "SummarizeAccountWorkflowAttention",
+	"GET /v1/apps/{slug}/workflow-performance/summary":                                "SummarizeAccountWorkflowPerformance",
+	"GET /v1/apps/{slug}/workflow-performance/instances":                              "ListAccountWorkflowPerformanceInstances",
+	"GET /v1/platform-tenant-self/workflow-performance/summary":                       "SummarizePlatformTenantSelfWorkflowPerformance",
+	"GET /v1/platform-tenant-self/workflow-performance/instances":                     "ListPlatformTenantSelfWorkflowPerformanceInstances",
 	"GET /v1/apps/{slug}/workflow-outcomes":                                           "ListAccountWorkflowOutcomes",
 	"GET /v1/apps/{slug}/workflow-outcomes/summary":                                   "SummarizeAccountWorkflowOutcomes",
 	"POST /v1/apps/{slug}/workflow-readiness":                                         "CheckAccountWorkflowReadiness",
@@ -457,6 +461,12 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":                          "UnbindOutboundIntegration",
 	"PUT /v1/outbound/integrations/{integration}/credential":                          "PutOutboundCredential",
 	"DELETE /v1/outbound/integrations/{integration}/credential":                       "DeleteOutboundCredential",
+	"GET /v1/apps/{slug}/routes/advice":                                               "GetRouteAdvice",
+	"GET /v1/apps/{slug}/service-wake-ahead":                                          "GetServiceWakeAhead",
+	"PUT /v1/apps/{slug}/service-wake-ahead":                                          "SetServiceWakeAhead",
+	"GET /v1/apps/{slug}/route-priorities":                                            "GetRoutePriorities",
+	"PUT /v1/apps/{slug}/route-priorities":                                            "SetRoutePriorities",
+	"DELETE /v1/apps/{slug}/route-priorities":                                         "ResetRoutePriorities",
 	"GET /v1/apps/{slug}/route-monitor":                                               "GetRouteMonitor",
 	"PUT /v1/apps/{slug}/route-monitor":                                               "SetRouteMonitor",
 	"POST /v1/apps/{slug}/route-monitor/preview":                                      "PreviewRouteMonitor",
@@ -549,6 +559,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/previews":                                             "CreatePreview",
 	"GET /v1/apps/{slug}/instances":                                             "ListInstances",
 	"POST /v1/apps/{slug}/park":                                                 "Park",
+	"POST /v1/apps/{slug}/park/conditional":                                     "ParkIfDeployment",
 	"POST /v1/apps/{slug}/wake":                                                 "Wake",
 	"POST /v1/apps/{slug}/restart":                                              "RestartApp",
 	"DELETE /v1/apps/{slug}/cache":                                              "PurgeAppCache",
@@ -672,6 +683,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
+	"GET /v1/apps/{slug}/edge-protection":                                             "GetAppEdgeProtection",                 // literal hyphen, like env-diff; follows the spec operationId `getAppEdgeProtection`.
 	"GET /v1/apps/{slug}/env-diff":                                                    "GetAppEnvDiff",                        // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
 	"GET /v1/apps/{slug}/openapi":                                                     "GetAppOpenAPI",                        // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
 	"POST /v1/apps/{slug}/openapi":                                                    "ImportAppOpenAPI",                     // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
@@ -719,6 +731,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-plans/{plan_id}":                                          "UpdateAPIConsumerPlanLimits",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                          "ListAPIConsumerPlanAssignments",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                         "AssignAPIConsumerPlan",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts":                              "ListAPIConsumerUsageAlerts",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                          "ListAPIConsumerUsageStatements",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                         "CreateAPIConsumerUsageStatement",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}":           "GetAPIConsumerUsageStatement",
@@ -885,6 +898,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/edge-rules/{id}":         "GetEdgeRule",
 	"PATCH /v1/edge-rules/{id}":       "UpdateEdgeRule",
 	"DELETE /v1/edge-rules/{id}":      "DeleteEdgeRule",
+	// ADR-961 §2 — rule-set versions and rollback.
+	"GET /v1/apps/{slug}/edge-rules/versions":           "ListEdgeRuleSetVersions",
+	"GET /v1/apps/{slug}/edge-rules/versions/{version}": "GetEdgeRuleSetVersion",
+	"POST /v1/apps/{slug}/edge-rules/rollback":          "RollbackEdgeRules",
+	"GET /v1/apps/{slug}/edge-rules/stats":              "GetEdgeRuleStats",
+	"GET /v1/apps/{slug}/edge-rules/events":             "ListEdgeRuleEvents",
+	"GET /v1/edge-rule-lists":                           "ListEdgeRuleLists",
+	"POST /v1/edge-rule-lists":                          "CreateEdgeRuleList",
+	"GET /v1/edge-rule-lists/{name}":                    "GetEdgeRuleList",
+	"PATCH /v1/edge-rule-lists/{name}":                  "UpdateEdgeRuleList",
+	"DELETE /v1/edge-rule-lists/{name}":                 "DeleteEdgeRuleList",
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender. Auto-derivation would produce
 	// "GetAppsSlugThrottle-suggestions" (literal hyphen) due to the
@@ -1168,10 +1192,18 @@ var methodRouteMap = map[string]string{
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and
 	// conforms to the SDK's flat resource naming.
-	"POST /v1/apps/{slug}/invoke":          "InvokeApp",
-	"POST /v1/apps/{slug}/invoke/async":    "InvokeAppAsync",
-	"POST /v1/apps/{slug}/entities/invoke": "InvokeDurableEntity",
-	"POST /v1/apps/{slug}/inbox":           "SendAppMessage",
+	"POST /v1/apps/{slug}/invoke":                    "InvokeApp",
+	"POST /v1/apps/{slug}/invoke/async":              "InvokeAppAsync",
+	"POST /v1/apps/{slug}/entities/invoke":           "InvokeDurableEntity",
+	"GET /v1/apps/{slug}/entities/inspect":           "InspectDurableEntity",
+	"POST /v1/apps/{slug}/entities/retry":            "RetryDurableEntity",
+	"GET /v1/apps/{slug}/entities/export":            "ExportDurableEntity",
+	"POST /v1/apps/{slug}/entities/restore":          "RestoreDurableEntity",
+	"GET /v1/apps/{slug}/entities/backups":           "ListDurableEntityBackups",
+	"GET /v1/apps/{slug}/entities/backups/get":       "GetDurableEntityBackup",
+	"POST /v1/apps/{slug}/entities/restore/preview":  "PreviewDurableEntityRestore",
+	"POST /v1/apps/{slug}/entities/restore/validate": "ValidateDurableEntityRestore",
+	"POST /v1/apps/{slug}/inbox":                     "SendAppMessage",
 	// ADR-430: pin the hyphenated Commit routes to their typed client methods.
 	"POST /v1/apps/{slug}/commit-sources":                                    "CreateCommitSource",
 	"GET /v1/commit-sources/{source}":                                        "GetCommitSource",

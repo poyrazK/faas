@@ -275,6 +275,7 @@ func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	// Roll back newest first, then restore the complete stack after the test.
 	var restore []string
 	for _, name := range []string{
+		"20261008214233280_object_conditional_put_capabilities.sql",
 		"20261007170933372_object_versioned_read_capabilities.sql",
 		"20261005175131410_object_event_write_protection.sql",
 	} {
@@ -334,7 +335,7 @@ func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 		t.Fatal("restored validator accepted malformed protection", valid, err)
 	}
 	var constraints int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='object_storage_s3_credentials'::regclass AND conname='object_s3_versioned_url_request'`).Scan(&constraints); err != nil || constraints != 1 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='object_storage_s3_credentials'::regclass AND conname='object_s3_conditional_url_request'`).Scan(&constraints); err != nil || constraints != 1 {
 		t.Fatal("version-bound authority constraint not restored", constraints, err)
 	}
 }

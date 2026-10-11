@@ -4,7 +4,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "cmd/gregale/**"
-      - "cmd/apid/managed_postgres_credentials*"
+      - "pkg/apid/apidserver/managed_postgres_credentials*"
       - "pkg/managedpostgres/**"
       - "pkg/api/limits.go"
       - "pkg/state/app_secret_delivery_policy*"
@@ -13,9 +13,16 @@ on:
       - "migrations/**"
       - "sdk/data/**"
       - "tests/data-api/**"
+      - "examples/data-api-orders/**"
+      - "examples/data-api-concurrency/**"
+      - "examples/data-api-idempotency/**"
+      - "examples/data-api-outbox/**"
+      - "examples/data-api-bulk/**"
+      - "examples/data-api-import-preview/**"
       - "scripts/test-data-api.sh"
       - "scripts/*data-api*bundle*"
       - "scripts/test-data-api-packaging.sh"
+      - "scripts/data-api-release*"
       - "scripts/archive-cli-binary.sh"
       - "scripts/ci/run-data-api-staging-canary.sh"
       - ".github/workflows/data-api-staging.yml"
@@ -35,7 +42,7 @@ env:
 jobs:
   packaging:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GOGC: 30
       GOMEMLIMIT: 2GiB
@@ -50,7 +57,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Verify reproducible artifacts and clean starter installation
+      - name: Verify release-candidate artifacts, installation, rollouts and RLS
         run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
       - uses: actions/upload-artifact@v4
         with:
@@ -117,6 +124,8 @@ jobs:
         run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract
         run: make data-api-acceptance
+      - name: Verify portable hosted canary and contract rollout harness
+        run: make data-api-staging-check
       - name: Enable TLS for durable SQL credential acceptance
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}

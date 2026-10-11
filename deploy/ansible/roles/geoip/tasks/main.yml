@@ -81,6 +81,73 @@
     mode: "0644"
   when: faas_geoip_enabled | bool
 
+- name: geoip — assert the ASN checksums are pinned (64 hex chars)
+  ansible.builtin.assert:
+    that:
+      - faas_geoip_asn_gz_sha256 is match('^[0-9a-f]{64}$')
+      - faas_geoip_asn_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      faas_geoip_asn_gz_sha256 / faas_geoip_asn_sha256 must be the pinned
+      SHA-256 of the {{ faas_geoip_asn_release }} DB-IP ASN release.
+  when: faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool
+
+- name: geoip — download the pinned DB-IP ASN release
+  ansible.builtin.get_url:
+    url: "{{ faas_geoip_asn_url }}"
+    dest: "{{ faas_geoip_dir }}/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb.gz"
+    checksum: "sha256:{{ faas_geoip_asn_gz_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 120
+  when: faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool
+
+- name: geoip — decompress the pinned ASN release next to the archive
+  ansible.builtin.command:
+    argv:
+      - gzip
+      - --decompress
+      - --keep
+      - --force
+      - "{{ faas_geoip_dir }}/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb.gz"
+    creates: "{{ faas_geoip_dir }}/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb"
+  when: faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool
+
+- name: geoip — checksum the decompressed ASN database
+  ansible.builtin.stat:
+    path: "{{ faas_geoip_dir }}/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb"
+    checksum_algorithm: sha256
+  register: faas_geoip_asn_db_stat
+  when: faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool
+
+- name: geoip — refuse an ASN database that does not match the pin
+  ansible.builtin.assert:
+    that:
+      - faas_geoip_asn_db_stat.stat.exists
+      - faas_geoip_asn_db_stat.stat.checksum == faas_geoip_asn_sha256
+    fail_msg: >-
+      {{ faas_geoip_dir }}/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb
+      has sha256 {{ faas_geoip_asn_db_stat.stat.checksum | default('(missing)') }},
+      expected {{ faas_geoip_asn_sha256 }}.
+  when: faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool
+
+- name: geoip — point the canonical ASN path at the pinned release
+  ansible.builtin.file:
+    src: "{{ faas_geoip_dir }}/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb"
+    dest: "{{ faas_geoip_asn_db_path }}"
+    state: link
+    owner: root
+    group: root
+  notify: restart faas-gatewayd-internal
+  when: faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool
+
+- name: geoip — remove the canonical ASN path when disabled
+  ansible.builtin.file:
+    path: "{{ faas_geoip_asn_db_path }}"
+    state: absent
+  notify: restart faas-gatewayd-internal
+  when: not (faas_geoip_enabled | bool and faas_geoip_asn_enabled | bool)
+
 - name: geoip — remove the canonical path when the role is disabled
   ansible.builtin.file:
     path: "{{ faas_geoip_db_path }}"

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; }
+    main { padding: 1rem 0; }
+    footer { font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.85rem; }
+    .good { background: #d1fae5; color: #065f46; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .pending { background: #fef3c7; color: #92400e; }
+    .neutral { background: #f3f4f6; color: #374151; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    .table-scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; text-align: left; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.65rem; vertical-align: top; }
+    caption { text-align: left; padding-bottom: 0.75rem; }
+    dl { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr; gap: 0.55rem 1rem; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+    label { display: flex; flex-direction: column; gap: 0.35rem; }
+    input, select, button { font: inherit; padding: 0.4rem; }
+    ol li { padding-bottom: 0.75rem; }
+    @media (max-width: 640px) { dl { grid-template-columns: 1fr; gap: 0.25rem; } dd { margin-bottom: 0.6rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Gregale</strong>
+    <nav aria-label="Dashboard"><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/jobs">Jobs &amp; queues</a><a href="/dashboard/account">Account</a></nav>
+  </header>
+  <main>
+    <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.ListURL}}">Customer operations</a></p>
+    <h1>Business workflow performance</h1>
+    <form method="get" action="{{.Data.SummaryURL}}">
+      <label>Environment<input name="scope" value="{{.Data.Scope}}" required></label>
+      <label>Workflow<input name="workflow" value="{{.Data.Workflow}}" required></label>
+      <label>Customer<input name="tenant_id" value="{{.Data.TenantID}}"></label>
+      <button type="submit">View performance</button>
+    </form>
+    {{if .Data.CohortChanged}}<section class="card"><h2>Workflow performance changed</h2><p>The retained cohort or its evidence changed since this summary was evaluated.</p><p><a href="{{.Data.RefreshURL}}">Refresh the performance summary →</a></p></section>{{end}}
+    {{with .Data.Drilldown}}<section class="card"><h2>{{$.Data.GroupLabel}}</h2>
+      <p>{{.Cohort}} cohort · evaluated at <time>{{$.Data.EvaluatedAt}}</time> · {{.Duration.WorkflowCount}} contributing workflows · {{.Duration.TotalSeconds}} total seconds · p50 {{.Duration.P50Seconds}} · p95 {{.Duration.P95Seconds}}.</p>
+      <p>{{.MatchingWorkflowCount}} matching · {{.SampledWorkflowCount}} sampled · {{.CompleteHistoryWorkflowCount}} complete histories · {{.ExcludedIncompleteWorkflowCount}} excluded for incomplete history.</p>
+      {{if .CohortTruncated}}<p>This is the latest retained sample, not every matching workflow.</p>{{end}}
+      {{if .Exclusions}}<p>Coverage exclusions: {{range .Exclusions}}<code>{{.Reason}}</code>: {{.WorkflowCount}} {{end}}</p>{{end}}
+      <p><a href="{{$.Data.RefreshURL}}">Refresh the performance summary →</a></p>
+      {{range $.Data.Contributors}}<section class="card"><h3><a href="{{.HistoryURL}}">{{.Entry.State.InstanceID}}</a> · {{.Entry.ObservedSeconds}} seconds</h3>
+        <p>Business subject <code>{{.Entry.Subject.Type}}:{{.Entry.Subject.ID}}</code> · customer <code>{{.Entry.PlatformTenantID}}</code> · current state <code>{{.Entry.State.State}}</code> · revision {{.Entry.State.Revision}}.</p>
+        {{with .Entry.State}}{{with .SLA}}<p>State SLA: <strong>{{.Status}}</strong> · budget {{.BudgetSeconds}} seconds{{with .WarningPercent}} · warning at {{.}}%{{end}}{{with .WarningAt}} · warning time <time>{{.}}</time>{{end}}{{if .HistoryComplete}} · entered <time>{{.EnteredAt}}</time> · due <time>{{.DueAt}}</time> · remaining {{.RemainingSeconds}} seconds · breached by {{.BreachedSeconds}} seconds{{else}} · current state entry is unknown in retained history{{end}}.</p>{{end}}{{end}}
+        {{if .Entry.State.Blockers}}<h4>Current blockers</h4><ul>{{range .Entry.State.Blockers}}<li><code>{{.Operation}} / {{.Code}}</code>: {{.Description}} · owner {{if .Owner}}{{.Owner}}{{else}}unassigned{{end}}{{if .NextAction}} · next: {{.NextAction}}{{end}}</li>{{end}}</ul>{{else}}<p>No current application blockers.</p>{{end}}
+        {{if .Entry.AwaitingVerificationCount}}<p>{{.Entry.AwaitingVerificationCount}} pending verification obligations (preview up to 16).</p><ul>{{range .Entry.ResolutionVerifications}}{{if eq .Status "awaiting_verification"}}<li><code>{{.Resolution.Code}}</code> · owner {{if .Resolution.VerificationOwner}}{{.Resolution.VerificationOwner}}{{else}}unassigned{{end}} · expects <code>{{.Resolution.VerificationMilestoneName}}</code> / <code>{{.Resolution.VerificationMilestoneID}}</code></li>{{end}}{{end}}</ul>{{else}}<p>No pending verification obligations.</p>{{end}}
+        <p><a href="{{.HistoryURL}}">Workflow history →</a> · <a href="{{.OperationURL}}">Reporting Operation →</a></p>
+      </section>{{else}}<p>No complete-history instances contributed to this group in the selected cohort.</p>{{end}}
+      <p class="muted">Ranked by observed duration, with stable identity ties. Contributions include historical intervals; current blockers and owners can differ from those that produced this group. Links to workflow history show its current retained view.</p>
+    </section>{{end}}
+    {{if .Data.Summary}}
+    <p>Evaluated at <time>{{.Data.EvaluatedAt}}</time>. The latest {{.Data.Summary.CohortLimit}} retained instances in each cohort are considered. All durations below are seconds.</p>
+    {{range .Data.Cohorts}}
+    <section class="card"><h2>{{.Name}} workflows</h2>
+      <p>{{.MatchingWorkflowCount}} matching · {{.SampledWorkflowCount}} sampled · {{.CompleteHistoryWorkflowCount}} with complete history · {{.ExcludedIncompleteWorkflowCount}} excluded for incomplete history.</p>
+      <p>State SLA coverage: {{.SLAConfiguredWorkflowCount}} configured workflows · {{.SLAEvaluatedWorkflowCount}} evaluated · {{.SLABreachedWorkflowCount}} with at least one breached visit · {{.SLAUnknownWorkflowCount}} unknown.</p>
+      {{if .CohortTruncated}}<p>More workflows match than the sample includes. Results describe the latest retained instances in this cohort.</p>{{end}}
+      {{if .Exclusions}}<p>Coverage exclusions (a workflow may have several): {{range .Exclusions}}<code>{{.Reason}}</code>: {{.WorkflowCount}} {{end}}</p>{{end}}
+      {{if .CompleteHistoryWorkflowCount}}
+      <table><caption>Complete-history instance totals</caption><thead><tr><th>Measure</th><th>Workflows</th><th>Total seconds</th><th>Median (p50)</th><th>p95</th></tr></thead><tbody>
+        <tr><td><a href="{{.StateTimeURL}}">State time</a></td><td>{{.StateTime.WorkflowCount}}</td><td>{{.StateTime.TotalSeconds}}</td><td>{{.StateTime.P50Seconds}}</td><td>{{.StateTime.P95Seconds}}</td></tr>
+        <tr><td><a href="{{.BlockedTimeURL}}">Blocked time</a></td><td>{{.BlockedTime.WorkflowCount}}</td><td>{{.BlockedTime.TotalSeconds}}</td><td>{{.BlockedTime.P50Seconds}}</td><td>{{.BlockedTime.P95Seconds}}</td></tr>
+        <tr><td><a href="{{.VerificationWaitURL}}">Verification wait</a></td><td>{{.VerificationWait.WorkflowCount}}</td><td>{{.VerificationWait.TotalSeconds}}</td><td>{{.VerificationWait.P50Seconds}}</td><td>{{.VerificationWait.P95Seconds}}</td></tr>
+      </tbody></table>
+      <h3>State bottlenecks</h3><table><thead><tr><th>State / contract</th><th>SLA visits / breaches</th><th>Workflows</th><th>Total seconds</th><th>Median</th><th>p95</th></tr></thead><tbody>{{range .StateGroups}}<tr><td><a href="{{.URL}}">{{.State}} / {{.ContractVersion}}</a></td><td>{{.SLAEvaluatedVisitCount}} / {{.SLABreachedVisitCount}}</td><td>{{.Duration.WorkflowCount}}</td><td>{{.Duration.TotalSeconds}}</td><td>{{.Duration.P50Seconds}}</td><td>{{.Duration.P95Seconds}}</td></tr>{{else}}<tr><td colspan="6">No state observations.</td></tr>{{end}}</tbody></table>
+      {{if .StatesTruncated}}<p>Showing the 32 state groups with the most total time.</p>{{end}}
+      <h3>Blocker bottlenecks</h3><table><thead><tr><th>Operation / code / contract</th><th>Owner</th><th>Workflows</th><th>Total seconds</th><th>Median</th><th>p95</th></tr></thead><tbody>{{range .BlockerGroups}}<tr><td><a href="{{.URL}}">{{.Operation}} / {{.Code}} / {{.ContractVersion}}</a></td><td>{{if .Owner}}{{.Owner}}{{else}}unassigned{{end}}</td><td>{{.Duration.WorkflowCount}}</td><td>{{.Duration.TotalSeconds}}</td><td>{{.Duration.P50Seconds}}</td><td>{{.Duration.P95Seconds}}</td></tr>{{else}}<tr><td colspan="6">No blocker observations.</td></tr>{{end}}</tbody></table>
+      {{if .BlockersTruncated}}<p>Showing the 32 blocker groups with the most total time.</p>{{end}}
+      <h3>Verification bottlenecks</h3><table><thead><tr><th>Owner</th><th>Workflows</th><th>Pending obligations</th><th>Total seconds</th><th>Median</th><th>p95</th></tr></thead><tbody>{{range .VerificationGroups}}<tr><td><a href="{{.URL}}">{{if .Owner}}{{.Owner}}{{else}}unassigned{{end}}</a></td><td>{{.Duration.WorkflowCount}}</td><td>{{.PendingResolutionCount}}</td><td>{{.Duration.TotalSeconds}}</td><td>{{.Duration.P50Seconds}}</td><td>{{.Duration.P95Seconds}}</td></tr>{{else}}<tr><td colspan="6">No verification obligations.</td></tr>{{end}}</tbody></table>
+      {{if .VerificationOwnersTruncated}}<p>Showing the 32 verification owner groups with the most total time.</p>{{end}}
+      {{else}}<p>No complete retained histories are available for comparison in this sample.</p>{{end}}
+    </section>{{end}}
+    <p class="muted">Ongoing durations are elapsed time as of evaluation, not predictions of completion. Completed workflows may still have pending verification obligations. Only complete histories enter percentiles. Each group has one accumulated duration per workflow that reported it; totals also include zero values for workflows without blockers or verification. Percentiles use nearest rank. Concurrent blocker and verification groups may overlap. Retention and new reports can change these results.</p>
+    {{else if and (not .Data.Drilldown) (not .Data.CohortChanged)}}<p>Select an environment and workflow to compare business state, blocker and verification time across instances.</p>{{end}}
+  </main>
+  <footer>Gregale · workflow performance</footer>
+</body>
+</html>

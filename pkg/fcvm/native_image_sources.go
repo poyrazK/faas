@@ -15,6 +15,7 @@ import (
 )
 
 const nativeImageRootMarker = ".gregale-image-owner.json"
+const nativeImageStagingSuffix = ".source"
 
 type nativeImageMetadata struct {
 	Mode uint32 `json:"mode"`
@@ -143,6 +144,18 @@ type nativeWritableImageBackend interface {
 	PrepareWritable(context.Context, nativeLaunchRecord, string, string, string) (nativeImagePreparation, error)
 }
 
+// A disk staging claim is separate from the host-lifetime image journal. It
+// owns a temporary name across reboot, without granting a recovered VM lease.
+type nativeDiskImagePreparation interface {
+	OwnAnonymousSource(nativeImageSourceRecord, string) error
+}
+
+type nativeDiskImageBackend interface {
+	withDiskStagingRoot(string) nativeImageSourceBackend
+	DiskStagingRequired() bool
+	LockDiskStaging(context.Context) (*os.File, error)
+}
+
 type nativeImageSourceJournal struct {
 	owner        *nativeLaunchJournal
 	backend      nativeImageSourceBackend
@@ -255,7 +268,7 @@ func (j *nativeImageSourceJournal) records() ([]nativeImageSourceRecord, error) 
 		return nil, err
 	}
 	for _, entry := range entries {
-		if !epochs[entry.Name()] {
+		if !epochs[strings.TrimSuffix(entry.Name(), nativeImageStagingSuffix)] {
 			return nil, errors.New("native image source: anchor has no ownership epoch")
 		}
 	}
@@ -421,6 +434,11 @@ func (j *nativeImageSourceJournal) stageOwned(ctx context.Context, expected nati
 	}
 	if err := j.write(record); err != nil {
 		return "", err
+	}
+	if disk, ok := preparation.(nativeDiskImagePreparation); ok {
+		if err := disk.OwnAnonymousSource(record, j.anchor(record)); err != nil {
+			return "", err
+		}
 	}
 	index := len(record.References) - 1
 	// Failures retain the frame. Native stop owns its recovery and cannot

@@ -867,6 +867,20 @@ func validateTestSecrets(workload string, secrets map[string]string, scenario te
 	return nil
 }
 
+// scenarioInternalServiceURLs maps each scenario workload to the URL other
+// workloads reach it at inside the platform, http://<name>.svc.gregale:10081,
+// as docs/scenario-tests.md documents. Hunt #9 H9-52: workload secrets used
+// to get the public app URL, so service calls never crossed the internal
+// HTTP service proxy where HTTP chaos rules act; a rule installed and
+// matched nothing.
+func scenarioInternalServiceURLs(workloads map[string]string) map[string]string {
+	out := make(map[string]string, len(workloads))
+	for name := range workloads {
+		out[name] = fmt.Sprintf("http://%s.%s:%d", name, appNetworkServiceDomain, api.ServiceBindingPort)
+	}
+	return out
+}
+
 func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string, tcpPorts ...map[string][]int) (string, error) {
 	var expansionErr error
 	expanded := testSecretReferencePattern.ReplaceAllStringFunc(value, func(match string) string {
@@ -1230,6 +1244,9 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		bucketEnv = append(bucketEnv, "GREGALE_TEST_BUCKET_PREFIX_"+strings.ToUpper(strings.ReplaceAll(spec.Name, "-", "_"))+"="+binding.Prefix)
 	}
 	tcpPorts := make(map[string][]int, len(workloads))
+	// serviceURLs are the public app URLs, for the CLI's own requests and
+	// local commands. Workload secrets get the in-platform service URLs
+	// instead (scenarioInternalServiceURLs).
 	serviceURLs := make(map[string]string, len(workloads))
 	serviceSlugs := make(map[string]string, len(workloads))
 	serviceAppIDs := make(map[string]string, len(workloads))
@@ -1245,6 +1262,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		serviceSlugs[workload.name] = workload.session.App.Slug
 		serviceAppIDs[workload.name] = workload.session.App.ID
 	}
+	internalServiceURLs := scenarioInternalServiceURLs(serviceSlugs)
 	for _, workload := range workloads {
 		secrets := scenario.Secrets
 		if workload.name != scenario.Project {
@@ -1279,7 +1297,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			value, err := expandTestSecretValue(secrets[key], serviceURLs, serviceSlugs, bucketByName, receipt.RunID, runSecret, tcpPorts)
+			value, err := expandTestSecretValue(secrets[key], internalServiceURLs, serviceSlugs, bucketByName, receipt.RunID, runSecret, tcpPorts)
 			if err != nil {
 				receipt.Error = fmt.Sprintf("resolve secret %s for %s: %v", key, workload.name, err)
 				return

@@ -233,6 +233,35 @@ func TestCompileThrottleRules_PreservesDimensionalPolicy(t *testing.T) {
 	}
 }
 
+// Only a non-positive rate from a direct-DB write is replaced; a fractional
+// rate apid accepted is kept (hunt #9: 0.1 rps compiled to 1 rps).
+func TestCompileThrottleRules_KeepsFractionalRate(t *testing.T) {
+	for _, tc := range []struct {
+		rps, want float64
+	}{
+		{rps: 0.1, want: 0.1},
+		{rps: 2.5, want: 2.5},
+		{rps: 0, want: 1},
+		{rps: -1, want: 1},
+	} {
+		got, parseErrs := compileThrottleRules([]state.EdgeRule{{
+			ID: "rule-throttle", AccountID: "acct-1", AppID: "app-1",
+			MatchHost: "api.example.com", MatchPath: "/login", Enabled: true,
+			Kind: state.EdgeRuleKindThrottle,
+			Action: state.EdgeRuleAction{
+				Kind:     state.EdgeRuleKindThrottle,
+				Throttle: &state.EdgeRuleThrottleAction{RequestsPerSecond: tc.rps, Burst: 5},
+			},
+		}})
+		if len(parseErrs) != 0 || len(got) != 1 {
+			t.Fatalf("rps %g: compiled %d rules, errors %v", tc.rps, len(got), parseErrs)
+		}
+		if got[0].RequestsPerSecond != tc.want {
+			t.Errorf("rps %g compiled to %g, want %g", tc.rps, got[0].RequestsPerSecond, tc.want)
+		}
+	}
+}
+
 // TestCompileRouteRules_MalformedGlobDroppedAndReported (review fix R3)
 // pins the new behaviour: a rule whose MatchPath fails stdlib
 // path.Match validation (unmatched bracket, etc.) is dropped
@@ -665,6 +694,25 @@ func TestCompileHeadersRules_CopiesOpsInOrder(t *testing.T) {
 	}
 	if len(got[0].ResponseHeaders) != 3 || got[0].ResponseHeaders[2].Action != "remove" {
 		t.Errorf("ResponseHeaders order not preserved: %v", got[0].ResponseHeaders)
+	}
+}
+
+// Equal-priority rules arrive from the store already in match order
+// (priority, created_at, id). Compile must keep that order: an unstable sort
+// let the gateway pick a different first match than the listing showed.
+func TestCompileHeadersRules_KeepsStoreOrderOnPriorityTies(t *testing.T) {
+	var in []state.EdgeRule
+	for i := range 40 {
+		in = append(in, sampleHeadersActionRule(fmt.Sprintf("headers-%02d", i), 100, "a.example.com", "/", nil, nil, nil))
+	}
+	got, _ := compileHeadersRules(in)
+	if len(got) != len(in) {
+		t.Fatalf("got %d rules, want %d", len(got), len(in))
+	}
+	for i := range got {
+		if got[i].ID != in[i].ID {
+			t.Fatalf("position %d: got %s, want %s", i, got[i].ID, in[i].ID)
+		}
 	}
 }
 

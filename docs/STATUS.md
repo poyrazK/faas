@@ -7,6 +7,147 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Local built validators and project publication — 2026-10-10
+
+[ADR-948](adr/948-built-validator-artifacts-and-project-publication.md) adds explicit
+source-bundle packaging and automatic publication from verified source builds before
+cache/VM work. Gated environment promotion/clone paths carry immutable validator
+bindings to copied deployments; graph publication and rollback recheck members.
+Deployment detail reports bounded validator availability/digest observations, with
+updated SDK models. Shared storage remains default off. Direct image deployments
+retain the explicit publisher; this is not a universal SQL publication fence.
+Source cases are written; tests, builds, unit/env checks and native/GCS acceptance
+remain unrun. No PR, live artifacts, unit installation or deployment settings changed.
+
+## Local shared durable entity validator artifacts — 2026-10-09
+
+[ADR-947](adr/947-shared-durable-entity-validator-artifacts.md) adds private immutable
+object-storage content and deployment bindings, a release publisher hook, restart-free
+API lookup, and shared readiness checks before schedd prime, imaged live publication
+and covered API traffic/rollback paths. Existing serving wakes remain independent of
+artifact reads. Shared storage is default off; source cases are written. Tests, builds,
+daemon contract checks and native/GCS acceptance remain unrun. Publication coverage is
+per path, not a universal SQL fence; separate project/environment publication paths
+remain to qualify. No PR, live artifact upload or deployment settings changed.
+
+## Local durable entity validator release tooling — 2026-10-09
+
+[ADR-946](adr/946-durable-entity-validator-release-tooling.md) adds a shared registry
+contract, offline packaging/merge command with automatic digests and an optional
+APID validator-availability gate for explicit promotion, traffic redistribution and
+promote/advance recovery. Registry staging and API restarts remain operator release
+steps; initial builder publication and autonomous scheduler/recovery paths are outside
+this gate. Source cases are written; tests, builds and native/live qualification are
+unrun. No PR, deployed registry or deployment changes.
+
+## Local durable entity operation visibility — 2026-10-09
+
+[ADR-945](adr/945-durable-entity-operation-observability.md) adds bounded storage and
+engine latency metrics, restore/validation/export outcomes, an operator dashboard
+and a [qualification handoff](runbooks/FaasDurableEntityQualification.md). Existing
+restore audit records now include the validator bundle digest. This does not add
+an entity history API or qualify durability. Source cases are written; tests,
+builds, Grafana/PromQL checks and native/private-bucket acceptance remain unrun.
+[ADR-944](adr/944-durable-entity-isolated-restore-validation.md)'s separate validator
+bundle path remains local, unqualified and default off. No PR or deployment.
+
+## Local application-validated durable entity restore — 2026-10-09
+
+[ADR-943](adr/943-durable-entity-application-validated-restore.md) adds default-off
+application restore validation, a separate verdict-only guest route and owner
+validation endpoint. Enabled restores require an explicit deployment pin and
+revalidate under the private claim after receipt/version checks. Rejection prevents
+publication; replay skips validation; takeover still fences commit. Go/Node guest
+helpers, Go/Node/Python owner clients and source cases are written. Purity is an
+application contract; deployment selection and bucket commit are not atomic.
+Tests/builds/provider qualification remain delegated and unrun. No PR or deployment.
+
+## Local durable entity scheduled backups and preview — 2026-10-09
+
+[ADR-942](adr/942-durable-entity-scheduled-backups-and-restore-preview.md) adds a
+default-off hourly application backup worker, bounded eventual seven-day pruning,
+owner backup list/read endpoints and read-only restore preview. Go/Node/Python
+clients are updated. Schema compatibility remains unverified; preview grants no
+restore authority. Orphaned backups require operator lifecycle/account-erasure
+cleanup. Cases and [operator guidance](runbooks/FaasDurableEntityBackups.md) are
+written; tests/builds/provider checks remain delegated and unrun. No PR or
+production enablement.
+
+## Local durable entity owner export/restore API — 2026-10-09
+
+[ADR-941](adr/941-durable-entity-owner-state-recovery-api.md) wires owner-scoped
+export and fenced restore endpoints, sensitive no-store responses, strict bounded
+requests and best-effort metadata audit events. Go/Node/Python clients are updated.
+Restore acquires only existing committed entities. Source qualification cases are
+written; tests, builds and provider checks remain delegated and unrun. No PR or
+production enablement.
+
+## Local durable entity state export/restore engine — 2026-10-09
+
+[ADR-940](adr/940-durable-entity-state-export-restore.md) adds read-only data
+exports and private-claim fenced restores with an expected business version and
+stable request receipt. Restore preserves current alarms, outgoing work and retry
+metadata. Internal engine methods only; customer API/SDK exposure remains to be
+implemented. Source cases are written; tests and builds are delegated and unrun.
+No PR, deployment or production enablement.
+
+## Local durable entity application schema upgrades — 2026-10-09
+
+[ADR-939](adr/939-durable-entity-application-schema-migrations.md) adds opt-in
+Go/Node schema-aware guest calls. Pure sequential upgrades produce local state
+and persist only with the normal fenced transition. Future schemas, missing
+steps and invalid outputs fail closed; legacy adoption is explicit. Versioned
+readers/writers must be deployed before newer envelopes are written because
+unaware legacy application code is not fenced by these SDK helpers. Examples
+and cases are written; tests, builds and native/provider qualification remain
+pending. Work is local with no PR or feature-gate change.
+
+## Local typed durable entity SDK — 2026-10-09
+
+[ADR-938](adr/938-typed-durable-entity-sdk.md) adds Go/Node scope-bound entity
+handles and typed pure guest calls/transition builders. Handles preserve
+selectors and require explicit replay identity; result decode errors retain
+acknowledgement metadata. Guest builders preserve existing alarms by default,
+allow explicit schedule/clear, and reject partial publication after invalid
+webhook intents. A typed counter/reminder example and SDK cases are written.
+No server or feature-gate change is introduced. Work remains local with no PR;
+tests, builds and native/provider qualification remain pending.
+
+## Local durable entity operational health — 2026-10-09
+
+[ADR-937](adr/937-durable-entity-operational-health.md) adds a bounded read-only
+health worker, sampled backlog/exhaustion observations, recovery outcomes and
+freshness-aware alert rules. New outgoing messages retain an engine-generated
+timestamp; legacy message age remains explicitly unknown. Only fully successful
+rotations refresh gauges. The worker defaults off and requires explicit preview
+and app enablement. Metrics contain no entity identifiers and are not exact fleet
+inventory. Test cases and the [operator runbook](runbooks/FaasDurableEntityHealth.md)
+are written; tests, rules and native/provider qualification remain unverified.
+Work remains local with no PR.
+
+## Local durable entity recovery — 2026-10-09
+
+[ADR-936](adr/936-durable-entity-exhausted-work-recovery.md) adds an owner-only
+retry API and Go/Node/Python SDK methods for exhausted alarms and outbox heads.
+Fresh inspection version/revision and exact target checks fence stale requests
+and later retry cycles at the same business version. Recovery changes only
+retry metadata on an existing unowned entity; guest execution and transport
+acceptance remain with existing workers. Successful acknowledged recovery emits
+an audit event through the existing best-effort path. Tests and native/provider
+qualification remain pending with the testing agent. Work is local with no PR;
+feature defaults remain disabled.
+
+## Local durable entity inspection — 2026-10-09
+
+[ADR-935](adr/935-durable-entity-owner-inspection.md) adds account-scoped,
+metadata-only inspection of committed version, alarms and pending outbox work,
+plus a separate scoped head-delivery observation. Go, Node and Python clients
+include the read API. Inspection performs no ownership acquisition or guest
+execution. Missing delivery history means unknown; an empty outbox does not
+prove receiver completion. The reservation example now matches initial engine
+state `{}`. Work is local with no PR; tests and native/provider acceptance are
+pending with the testing agent. Existing feature gates remain disabled.
+
 ## Local runtime update work — 2026-10-06
 
 [ADR-693](adr/693-private-runtime-routing-and-health-verification.md) adds private
@@ -44,18 +185,40 @@ runtime qualification; the dedicated acceptance project is suspended.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
-Durable entity outbox update (2026-10-09): the private state engine can commit
+Durable entity guest outbox work (2026-10-09, local verification pending): a
+separate default-off handler gate selects protocol v2 behind the relay gate.
+V2 handlers can return bounded registered app-webhook intents with state,
+result and alarm; apid checks current scope/destination admission before engine
+publication. V1 remains unchanged. Go/Node SDK helpers validate pure transitions,
+and a reservation/confirmation example bundles the Node helpers. Added cases
+have not been run; the testing agent must qualify relay and guest behavior before
+enablement. No PR or rollout was performed
+([ADR-934](adr/934-durable-entity-guest-outbox-protocol.md)).
+
+Durable entity outbox relay work (2026-10-09, local verification pending): an
+opt-in apid worker reserves FIFO heads in object storage, deduplicates acceptance
+into the existing webhook ledger with receipts that outlive delivery history,
+and acknowledges through a fenced snapshot commit. Bounded retry/backoff,
+exhausted-head inspection/operator replay and indexed discovery with independent
+repair scans are implemented. Manifest writers now use schema 6; stop older
+writers and apply the transport-acceptance migration before enabling the relay.
+The flag remains disabled and guest protocol v1 still rejects outgoing intents;
+the separately gated v2 draft above adds handler exposure.
+Automated checks and native/live-GCS qualification remain with the testing agent
+([ADR-933](adr/933-durable-entity-outbox-relay.md)).
+
+Durable entity outbox commit update (2026-10-09): the private state engine can commit
 bounded outgoing webhook intents with state and request receipts through one
 manifest CAS. Pending work survives replay, restart, takeover and cleanup and
-counts toward snapshot/storage caps. Manifest schema 5 requires stopping older
-writers before upgrade. Guest protocol v1 continues to reject outgoing work;
-delivery/admission/retry remain a separate milestone. Native-host and live-bucket
+counts toward snapshot/storage caps. Its schema-5 upgrade is superseded by the
+schema-6 relay writer above. Guest protocol v1 continues to reject outgoing work.
+Native-host and live-bucket
 qualification remain pending ([ADR-903](adr/903-object-storage-entity-outbox-contract.md)).
 
 Durable entity alarm update (2026-10-08): the opt-in object-storage preview adds
 an advisory time-ordered alarm index with bounded repair scans, fenced retry
 reservations with backoff and exhaustion, and exact-scope private operator
-inspection. Its schema-4 upgrade is superseded by the schema-5 writer above.
+inspection. Its schema-4 upgrade is superseded by the schema-6 writer above.
 Native-host and live-provider qualification remain pending; this does
 not promote the preview to production availability
 ([ADR-712](adr/712-object-storage-durable-entities.md)).

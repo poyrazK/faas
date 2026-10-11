@@ -31,6 +31,7 @@ func (m *Manager) nativeVMM() nativeRecoveryVMM {
 
 // RecoverNativeProcesses quarantines ownership only. Recovered tasks never
 // enter live, the CID index, readiness, or a scheduler qualification receipt.
+// It also resumes already-authorized artifact deletes before opening admission.
 // Admission and prepared-network allocation also call this gate themselves.
 func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	if checker, ok := m.vmm.(interface{ checkNativeRecoveryMode() error }); ok {
@@ -64,6 +65,11 @@ func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	m.mu.Unlock()
 	leases, err := v.nativeRecoveryLeases(ctx)
 	if err == nil {
+		if recovery, ok := m.vmm.(nativeQualificationArtifactRecoveryVMM); ok {
+			err = recovery.RecoverNativeQualificationArtifactRetirements(ctx)
+		}
+	}
+	if err == nil {
 		err = m.alloc.reserveRecovered(leases)
 	}
 	m.mu.Lock()
@@ -79,6 +85,47 @@ func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	close(flight.done)
 	m.mu.Unlock()
 	return err
+}
+
+// RecoverNativeQualificationArtifactRetirements retries only artifact deletes
+// that already have a durable owner-authorized retirement marker. The initial
+// call also establishes native ownership recovery before the journal is
+// consulted; later calls provide the recurring retry path without reopening
+// capture, restore, or qualification admission.
+func (m *Manager) RecoverNativeQualificationArtifactRetirements(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	if err := m.RecoverNativeProcesses(ctx); err != nil {
+		return err
+	}
+	recovery, ok := m.vmm.(nativeQualificationArtifactRecoveryVMM)
+	if !ok {
+		return nil
+	}
+	return recovery.RecoverNativeQualificationArtifactRetirements(ctx)
+}
+
+type nativeQualificationArtifactRecoveryPagerVMM interface {
+	RecoverNativeQualificationArtifactRetirementPage(context.Context, string, int) (NativeQualificationArtifactRetirementPage, error)
+}
+
+// RecoverNativeQualificationArtifactRetirementPage advances the recurring,
+// bounded retry cursor only after native ownership recovery is ready. The
+// initial startup recovery remains authoritative and complete; this path is
+// for later retries of already-authorized tombstones.
+func (m *Manager) RecoverNativeQualificationArtifactRetirementPage(ctx context.Context, after string, limit int) (NativeQualificationArtifactRetirementPage, error) {
+	if m == nil {
+		return NativeQualificationArtifactRetirementPage{}, nil
+	}
+	if err := m.RecoverNativeProcesses(ctx); err != nil {
+		return NativeQualificationArtifactRetirementPage{}, err
+	}
+	pager, ok := m.vmm.(nativeQualificationArtifactRecoveryPagerVMM)
+	if !ok {
+		return NativeQualificationArtifactRetirementPage{}, nil
+	}
+	return pager.RecoverNativeQualificationArtifactRetirementPage(ctx, after, limit)
 }
 
 func (m *Manager) prepareNativeLease(ctx context.Context, lease Lease) error {

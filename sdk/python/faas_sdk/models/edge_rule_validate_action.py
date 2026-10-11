@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
+    from ..models.edge_rule_validate_parameters import EdgeRuleValidateParameters
 
 
 T = TypeVar("T", bound="EdgeRuleValidateAction")
@@ -37,10 +38,13 @@ class EdgeRuleValidateAction:
     ship an external `$ref`.
 
     Field-by-field:
-      * `schema` — required JSON Schema document (Draft 2020-12).
-        Capped at 64 KiB. External `$ref` / `$id` URLs are
-        rejected at create-time; internal pointers (`#/definitions/Foo`)
-        pass through.
+      * `schema` — JSON Schema document (Draft 2020-12) for the
+        request body. Capped at 64 KiB. External `$ref` / `$id` URLs
+        are rejected at create-time; internal pointers
+        (`#/definitions/Foo`) pass through. Optional when
+        `parameters` is set, so a body-less request can be validated.
+      * `parameters` — optional path, query, and header schemas,
+        checked before the body is read (ADR-091 amendment).
       * `content_types` — optional media-type allowlist.
         Closed set `application/*`. Empty = match any.
       * `apply_while_streaming` — per-rule opt-in for the
@@ -52,13 +56,25 @@ class EdgeRuleValidateAction:
       * `max_body_bytes` — per-rule inbound body cap. 0 =
         inherit `MaxRequestBodyBytes` (per-plan 25 MB buffered /
         100 MB streaming). Must be > 0 and <= `MaxRequestBodyBytes`.
+    At least one of `schema` and `parameters` is required.
 
     """
 
-    schema: EdgeRuleValidateActionSchema
+    schema: EdgeRuleValidateActionSchema | Unset = UNSET
     """Inline JSON Schema document (Draft 2020-12). The schema
     is preserved byte-exact across apid↔gatewayd round-trips
     so the SHA-256 cache key in `pkg/edgevalidate` is stable.
+    """
+    parameters: EdgeRuleValidateParameters | Unset = UNSET
+    """Path, query, and header validation for a kind=validate rule
+    (ADR-091 amendment: request parameters). Each schema is a JSON
+    Schema object whose properties are parameter names; property types
+    must be string, integer, number, boolean, or an array of those.
+    Request values are converted to the declared type before
+    validation, and a value that does not convert stays a string so
+    the schema reports it. All three are checked before the body is
+    read, in the rule's validate_mode; errors name the location
+    (`path/id`, `query/limit`, `headers/x-tenant`).
     """
     content_types: list[str] | Unset = UNSET
     """Optional media-type allowlist. Every entry must start
@@ -96,7 +112,13 @@ class EdgeRuleValidateAction:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        schema = self.schema.to_dict()
+        schema: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schema, Unset):
+            schema = self.schema.to_dict()
+
+        parameters: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.parameters, Unset):
+            parameters = self.parameters.to_dict()
 
         content_types: list[str] | Unset = UNSET
         if not isinstance(self.content_types, Unset):
@@ -114,11 +136,11 @@ class EdgeRuleValidateAction:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "schema": schema,
-            }
-        )
+        field_dict.update({})
+        if schema is not UNSET:
+            field_dict["schema"] = schema
+        if parameters is not UNSET:
+            field_dict["parameters"] = parameters
         if content_types is not UNSET:
             field_dict["content_types"] = content_types
         if apply_while_streaming is not UNSET:
@@ -135,9 +157,22 @@ class EdgeRuleValidateAction:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
+        from ..models.edge_rule_validate_parameters import EdgeRuleValidateParameters
 
         d = dict(src_dict)
-        schema = EdgeRuleValidateActionSchema.from_dict(d.pop("schema"))
+        _schema = d.pop("schema", UNSET)
+        schema: EdgeRuleValidateActionSchema | Unset
+        if isinstance(_schema, Unset):
+            schema = UNSET
+        else:
+            schema = EdgeRuleValidateActionSchema.from_dict(_schema)
+
+        _parameters = d.pop("parameters", UNSET)
+        parameters: EdgeRuleValidateParameters | Unset
+        if isinstance(_parameters, Unset):
+            parameters = UNSET
+        else:
+            parameters = EdgeRuleValidateParameters.from_dict(_parameters)
 
         content_types = cast(list[str], d.pop("content_types", UNSET))
 
@@ -156,6 +191,7 @@ class EdgeRuleValidateAction:
 
         edge_rule_validate_action = cls(
             schema=schema,
+            parameters=parameters,
             content_types=content_types,
             apply_while_streaming=apply_while_streaming,
             reject_on_unknown_fields=reject_on_unknown_fields,

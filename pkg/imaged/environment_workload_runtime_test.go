@@ -33,15 +33,19 @@ func (s changedEnvironmentImageRuntimeStore) AppByID(ctx context.Context, id str
 
 func TestEnvironmentWorkloadFrozenManifestProjection(t *testing.T) {
 	deniedCallers := []string{}
+	image := "registry.example/runtime@sha256:" + strings.Repeat("a", 64)
 	app := state.App{ID: "app", StartCommand: "./changed-after-review", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeRequest}}
 	frozen := state.EnvironmentWorkloadRuntime{SourceID: "source", EnvironmentID: "original-environment", RevisionID: "approved-revision",
 		Generation: 2, PlanHash: strings.Repeat("a", 64), AppID: app.ID, AppType: state.AppTypeApp, Scope: "production", Resource: "workload/api", StartCommand: "./reviewed",
+		Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: image},
 		Baseline: state.AppManifest{ExecutionMode: api.ExecutionModeService, StartupDeadlineS: 12, ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
 			AllowedServiceCallers: &deniedCallers, BuildDockerfile: "Reviewed.Dockerfile"}, Runtime: map[string]json.RawMessage{
 			"port": json.RawMessage(`9090`), "ports": json.RawMessage(`[]`), "healthz": json.RawMessage(`"/ready"`),
-			"stop_grace_period": json.RawMessage(`1500000000`), "service_replicas": json.RawMessage(`{"min":1,"max":2,"desired":2}`)}}
+			"execution_mode": json.RawMessage(`"service"`), "stop_grace_period": json.RawMessage(`1500000000`),
+			"service_replicas": json.RawMessage(`{"min":1,"max":2,"desired":2}`)}}
 	raw, _ := json.Marshal(frozen)
-	dep := state.Deployment{AppID: app.ID, Scope: "production", EnvironmentWorkloadRuntime: string(raw), OverridePort: 7070}
+	dep := state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: image,
+		EnvironmentWorkloadRuntime: string(raw), OverridePort: 7070}
 	resolved, err := state.AppForDeploymentRuntime(app, dep)
 	if err != nil || resolved.StartCommand != "./reviewed" || resolved.Manifest.ExecutionMode != api.ExecutionModeService || resolved.Manifest.ServiceReplicas.Desired != 2 {
 		t.Fatalf("frozen app projection: %+v %v", resolved, err)
@@ -87,10 +91,12 @@ func TestEnvironmentWorkloadDurableImageHandoffRejectsOrdinaryDeployment(t *test
 }
 
 func TestEnvironmentWorkloadExplicitEntrypointRescuesEmptyImageCommand(t *testing.T) {
+	image := "registry.example/runtime@sha256:" + strings.Repeat("a", 64)
 	frozen := state.EnvironmentWorkloadRuntime{SourceID: "source", EnvironmentID: "environment", RevisionID: "revision", AppType: state.AppTypeApp,
-		AppID: "app", Scope: "production", Generation: 1, PlanHash: strings.Repeat("a", 64), Runtime: map[string]json.RawMessage{"entrypoint": json.RawMessage(`["./reviewed"]`)}}
+		AppID: "app", Scope: "production", Generation: 1, PlanHash: strings.Repeat("a", 64),
+		Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: image}, Runtime: map[string]json.RawMessage{"entrypoint": json.RawMessage(`["./reviewed"]`)}}
 	raw, _ := json.Marshal(frozen)
-	dep := state.Deployment{AppID: "app", Scope: "production", EnvironmentWorkloadRuntime: string(raw)}
+	dep := state.Deployment{AppID: "app", Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: image, EnvironmentWorkloadRuntime: string(raw)}
 	manifest, err := manifestFromImageConfigWithDeployment(oci.ImageConfig{}, state.App{}, dep)
 	if err != nil || len(manifest.Entrypoint) != 1 || manifest.Entrypoint[0] != "./reviewed" {
 		t.Fatalf("reviewed executable was not applied: %+v %v", manifest, err)

@@ -135,6 +135,17 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	if instance := page.WorkflowInstance; instance != nil {
+		if instance.State != nil {
+			if err := printWorkflowSLA(out, instance.State.SLA); err != nil {
+				return err
+			}
+		}
+		if err := printWorkflowBottlenecks(out, instance.Bottlenecks); err != nil {
+			return err
+		}
+		if err := printResolutionVerifications(out, instance.ResolutionVerifications, instance.AwaitingVerificationCount, instance.ResolutionVerificationCount); err != nil {
+			return err
+		}
 		if overview := instance.Readiness; overview != nil {
 			for _, item := range overview.Items {
 				if _, err := fmt.Fprintf(out, "workflow-readiness\toperation=%s\tfrom=%s\tto=%s\tdeclared=%t\tready=%t\trevision=%d\treasons=%s\tmissing-milestones=%s\tadvisories=%s\n", item.Transition.Operation, item.Transition.From, item.Transition.To, item.Declared, item.Ready, item.StateRevision, strings.Join(item.Reasons, ","), strings.Join(item.MissingMilestones, ","), strings.Join(item.Advisories, ",")); err != nil {
@@ -243,6 +254,15 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	for _, transition := range page.WorkflowStateHistory {
+		var pending int64
+		for _, v := range transition.ResolutionVerifications {
+			if v.Status == "awaiting_verification" {
+				pending++
+			}
+		}
+		if err := printResolutionVerifications(out, transition.ResolutionVerifications, pending, int64(len(transition.ResolutionVerifications))); err != nil {
+			return err
+		}
 		for _, resolution := range transition.BlockerResolutions {
 			if _, err := fmt.Fprintf(out, "workflow-blocker-resolution\t%s\tinstance=%s\trevision=%d\treport=%s\treported-by=%s\ttarget-operation=%s\tcode=%s\tblocker-revision=%d\tblocker-report=%s\tblocker-operation=%s\toccurred=%s\tpublished=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, transition.ID, transition.OperationID, resolution.Operation, resolution.Code, resolution.BlockerRevision, resolution.BlockerReportID, resolution.BlockerOperationID, transition.OccurredAt.UTC().Format(time.RFC3339Nano), transition.PublishedAt.UTC().Format(time.RFC3339Nano), resolution.Description); err != nil {
 				return err
@@ -305,6 +325,31 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 	if page.NextWorkflowStateCursor != "" {
 		_, err := fmt.Fprintf(out, "Next workflow state page: --workflow-state-cursor %s\n", page.NextWorkflowStateCursor)
 		return err
+	}
+	return nil
+}
+
+func printWorkflowBottlenecks(out io.Writer, b *api.OperationWorkflowBottlenecks) error {
+	if b == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "workflow-bottlenecks\tcomplete=%t\treports=%d\tstate-seconds=%d\tblocked-seconds=%d\tverification-wait-seconds=%d\tunknown-verification-starts=%d\tincomplete=%s\thistory-truncated=%t\tstates-truncated=%t\tblockers-truncated=%t\tverification-owners-truncated=%t\n", b.HistoryComplete, b.ReportsInWindow, b.StateSeconds, b.BlockedSeconds, b.VerificationWaitSeconds, b.VerificationUnknownStartCount, strings.Join(b.IncompleteReasons, ","), b.HistoryTruncated, b.StatesTruncated, b.BlockersTruncated, b.VerificationOwnersTruncated); err != nil {
+		return err
+	}
+	for _, g := range b.States {
+		if _, err := fmt.Fprintf(out, "workflow-state-duration\tversion=%d\tstate=%s\tseconds=%d\tongoing=%t\n", g.ContractVersion, g.State, g.ObservedSeconds, g.Ongoing); err != nil {
+			return err
+		}
+	}
+	for _, g := range b.Blockers {
+		if _, err := fmt.Fprintf(out, "workflow-blocker-duration\tversion=%d\toperation=%s\tcode=%s\towner=%s\tseconds=%d\tongoing=%t\n", g.ContractVersion, g.Operation, g.Code, g.Owner, g.ObservedSeconds, g.Ongoing); err != nil {
+			return err
+		}
+	}
+	for _, g := range b.VerificationOwners {
+		if _, err := fmt.Fprintf(out, "workflow-verification-duration\towner=%s\tseconds=%d\tresolutions=%d\tpending=%d\tunknown-starts=%d\n", g.Owner, g.ObservedSeconds, g.ResolutionCount, g.PendingCount, g.UnknownStartCount); err != nil {
+			return err
+		}
 	}
 	return nil
 }

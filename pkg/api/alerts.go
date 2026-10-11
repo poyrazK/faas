@@ -148,6 +148,10 @@ var AllowedAlertRuleMetrics = []string{
 	"queue_depth",
 	"pre_auth_target_threshold",
 	"pre_auth_target_signal_gap_pct",
+	"pre_auth_pressure",
+	"edge_validation_failures",
+	"edge_rejections",
+	"edge_waf_detections",
 	"workflow_failures",
 	"workflow_schedule_quota_skips",
 	"workflow_pending_age_seconds",
@@ -207,10 +211,21 @@ func AllowedAlertRuleAction(v string) bool {
 	return containsString(AllowedAlertRuleActions, v)
 }
 
+// IsEdgeSecurityAlertMetric reports metrics that external traffic can drive
+// (pre-auth decisions and edge validation). Alerts on them must never change a
+// deployment, or an attacker could trigger a rollback.
+func IsEdgeSecurityAlertMetric(metric string) bool {
+	switch metric {
+	case "pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "pre_auth_pressure", "edge_validation_failures", "edge_rejections", "edge_waf_detections":
+		return true
+	}
+	return false
+}
+
 // Pre-auth target observations and signal health can be influenced by
 // external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
+	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"

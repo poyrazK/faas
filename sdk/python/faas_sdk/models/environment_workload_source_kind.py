@@ -1,9 +1,10 @@
 from typing import Literal
 
-EnvironmentWorkloadSourceKind = Literal["dockerfile", "image", "source"]
+EnvironmentWorkloadSourceKind = Literal["dockerfile", "function", "image", "source"]
 
 ENVIRONMENT_WORKLOAD_SOURCE_KIND_VALUES: set[EnvironmentWorkloadSourceKind] = {
     "dockerfile",
+    "function",
     "image",
     "source",
 }

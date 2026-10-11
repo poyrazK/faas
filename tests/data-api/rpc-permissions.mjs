@@ -16,6 +16,24 @@ export async function verifyPermissions({ root, owner, admin, role, migrationURL
   assert.equal(applied.refreshRequired, true)
   assert.equal((await permissions(migrationURL)).ready, true)
   assert.equal((await permissions(migrationURL, options)).refreshRequired, false)
+  await owner.query(`CREATE FUNCTION api.permission_related(source_row api.notes) RETURNS SETOF api.notes LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog
+      AS 'SELECT n.* FROM api.notes n WHERE n.subject=source_row.subject';
+    REVOKE ALL ON FUNCTION api.permission_related(api.notes) FROM PUBLIC;
+    COMMENT ON FUNCTION api.permission_related(api.notes) IS '@gregale:rpc'`)
+  try {
+    assert.deepEqual((await permissions(migrationURL)).missing, ['permission_related'])
+    assert.equal((await release(migrationURL)).refreshRequired, true)
+    assert.equal((await permissions(migrationURL)).ready, true)
+    const { inspect } = await import(pathToFileURL(join(root, 'migrations/rpc-runtime/types.mjs')))
+    assert.deepEqual((await inspect(loginURL, ['api'])).functions.find(f => f.name === 'permission_related').setof, { from: 'notes', to: 'notes', one_to_one: false })
+    await owner.query(`CREATE FUNCTION api.permission_unapproved(source_row api.notes) RETURNS SETOF api.notes LANGUAGE sql STABLE AS 'SELECT n.* FROM api.notes n';
+      GRANT EXECUTE ON FUNCTION api.permission_unapproved(api.notes) TO PUBLIC`)
+    try {
+      assert.ok((await permissions(migrationURL)).blockers.includes('computed_relationship_not_approved:api.permission_unapproved'))
+      await assert.rejects(release(migrationURL), /Permission setup blocked/)
+      await assert.rejects(inspect(loginURL, ['api']), /Unapproved computed relationship execution/)
+    } finally { await owner.query('DROP FUNCTION api.permission_unapproved(api.notes)') }
+  } finally { await owner.query('DROP FUNCTION api.permission_related(api.notes)') }
   await owner.query(`CREATE FUNCTION api.permission_private(value text) RETURNS text LANGUAGE sql AS 'SELECT value';
     REVOKE ALL ON FUNCTION api.permission_private(text) FROM PUBLIC;
     CREATE FUNCTION api.permission_unsafe(value text) RETURNS text LANGUAGE sql SECURITY DEFINER AS 'SELECT value';

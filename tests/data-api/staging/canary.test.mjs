@@ -213,7 +213,7 @@ async function journey(t, failure = '') {
     let single = false, deleted = false
     const builder = {
       select: () => builder, eq: () => builder, single: () => { single = true; return builder },
-      delete: () => { deleted = true; return builder }, retry: () => builder,
+      delete: () => { deleted = true; return builder }, insert: () => { builder.then = resolve => resolve({ error: { code: '42501' }, data: null }); return builder }, retry: () => builder,
       then: resolve => { emit(options.onResponse, 'GET', 'rest'); resolve({ error: null, data: deleted ? [{ id: 7 }] : single ? { id: 7, body: 'updated', priority: 0 } : [] }) },
     }
     return builder
@@ -286,6 +286,8 @@ async function journey(t, failure = '') {
     if (url.endsWith('/openapi.json')) return new Response('{"paths":{"/notes":{},"/rpc/create_note":{"post":{}}}}')
     return new Response('{}', { status: 401 })
   }
+  runner.captureContract = async () => '/simulated/contract.json'
+  runner.qualifyRollout = async () => {}
   // The simulated API is immediately ready; no sleeping or provider access.
   runner.wait = async (read, ready) => { const value = await read(); assert.ok(ready(value), 'simulated operation must be complete'); return value }
   return runner

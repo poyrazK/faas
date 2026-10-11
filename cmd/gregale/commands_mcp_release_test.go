@@ -152,13 +152,15 @@ func TestMCPTaskDefaultsMatchAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var defaults struct {
+		MaxRunning             int
+		MaxRunningPerOwner     int
 		MaxOutstanding         int
 		MaxOutstandingPerOwner int
 	}
 	if err := json.Unmarshal(body, &defaults); err != nil {
 		t.Fatal(err)
 	}
-	if defaults.MaxOutstanding != api.MCPTaskDefaultMaxOutstanding || defaults.MaxOutstandingPerOwner != api.MCPTaskDefaultMaxOutstandingPerOwner {
+	if defaults.MaxRunning != api.MCPTaskDefaultMaxRunning || defaults.MaxRunningPerOwner != api.MCPTaskDefaultMaxRunningPerOwner || defaults.MaxOutstanding != api.MCPTaskDefaultMaxOutstanding || defaults.MaxOutstandingPerOwner != api.MCPTaskDefaultMaxOutstandingPerOwner {
 		t.Fatalf("starter defaults drifted: %+v", defaults)
 	}
 }

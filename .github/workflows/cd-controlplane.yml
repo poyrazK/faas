@@ -126,8 +126,11 @@ jobs:
     if: github.repository == 'poyrazK/faas'
     # Raised from 15 for ADR-580: a changed control-plane contract runs the
     # control-plane roles before activation. An unchanged one costs under a
-    # minute.
-    timeout-minutes: 40
+    # minute. Raised from 40: on production-us the role converge alone takes
+    # about 30 minutes (rc.252: 00:52-01:23 UTC, also on a re-dispatch) and
+    # activation about 9 more, so rc.249, rc.251 and rc.252 were all
+    # cancelled during activation.
+    timeout-minutes: 75
 
     steps:
       - uses: actions/checkout@v7

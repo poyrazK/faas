@@ -73,3 +73,35 @@ func TestServiceAliasAllowedStoreFailure(t *testing.T) {
 		t.Fatalf("store failure = %v, %v", ok, err)
 	}
 }
+
+type qualificationServiceAliasTestStore struct {
+	state.Store
+	allowed bool
+	err     error
+}
+
+func (s qualificationServiceAliasTestStore) EnvironmentQualificationServiceAliasAllowed(context.Context, string, string) (bool, error) {
+	return s.allowed, s.err
+}
+
+func TestServiceAliasAllowedUsesScopedQualificationBinding(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "qualification-alias@local", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "frontend", Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := newServiceAliasAllowed(qualificationServiceAliasTestStore{Store: store, allowed: true})
+	if ok, err := allowed(ctx, caller.ID, "backend"); err != nil || !ok {
+		t.Fatalf("scoped qualification alias = %v, %v", ok, err)
+	}
+	failure := errors.New("qualification store unavailable")
+	allowed = newServiceAliasAllowed(qualificationServiceAliasTestStore{Store: store, err: failure})
+	if ok, err := allowed(ctx, caller.ID, "backend"); err == nil || ok || !errors.Is(err, failure) {
+		t.Fatalf("qualification alias store failure = %v, %v", ok, err)
+	}
+}

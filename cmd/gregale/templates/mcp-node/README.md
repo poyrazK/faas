@@ -68,8 +68,11 @@ by verified scopes. Calls, reads and prompt gets are checked before dispatch and
 again in the callback using the SDK's verified request context. Insufficient
 scopes produce a 403 bearer challenge naming the required scopes. Client headers,
 arguments and annotations cannot grant permission. Check ownership of any
-tenant/object inside the callback using verified identity
-(`ctx.http.authInfo.extra.subject`), never an unverified tenant ID from arguments.
+tenant/object inside the callback using `verifiedCallerIdentity(ctx.http.authInfo)`;
+it returns the verified `subject` and `clientId` without exposing the token. Never
+use a tenant ID from arguments as the caller identity. The sample records are
+owned by `demo-caller-a` (`example-1`, `example-3`) and `demo-caller-b`
+(`example-2`); open mode keeps these synthetic examples public.
 This is application policy, so custom servers must implement their own
 enforcement.
 
@@ -77,7 +80,8 @@ enforcement.
 
 The `summarize` prompt completes its optional `style` argument with `brief`,
 `technical` and `executive`. The customer-record template completes only the
-three harmless sample IDs included in the starter. Try either through the CLI:
+three harmless sample IDs included in the starter, filtered by the verified
+caller's sample-record ownership in external OAuth mode. Try either through the CLI:
 
 ```sh
 gregale mcp complete --url http://127.0.0.1:8080/mcp \
@@ -90,6 +94,8 @@ Use `--context` or `--context-file` to pass other already-resolved string
 arguments for dependent suggestions. MCP completions are not tool calls. Keep
 suggestions bounded and caller-scoped; never return customer IDs or other private
 values unless the current caller is authorized to see them.
+Completion requests pass through the same per-entry prompt and resource scope
+checks as `prompts/get` and `resources/read` before suggestions are computed.
 
 Use a client token via `--token-env MCP_TOKEN`; Gregale CLI account credentials are
 never forwarded to this server. Capture `mcp lock` baselines with the same identity
@@ -121,10 +127,11 @@ them, attach a read/write PostgreSQL binding to the app, keep a stable
 }
 ```
 
-The starter creates and migrates its namespaced task table, queue and fairness
-indexes, owner-cursor table, claim-order sequence, notification and fairness
-functions, and their triggers in that database. The bound role must be able to
-create and alter tables, indexes, sequences, functions, and triggers. The store
+Run `npm run tasks:migrate -- apply` with a separate schema-owner binding in
+`MCP_TASK_MIGRATION_DATABASE_URL` before starting the app. This creates or upgrades
+the Task schema and prepares the namespace. The application binding uses the
+runtime role and needs Task DML and metadata SELECT privileges; startup performs
+read-only checks. The store
 hashes owner identity and encrypts arguments, results, and errors with AES-256-GCM
 before writing them. Workers rotate among active owner partitions and preserve
 FIFO order within each owner; open-mode callers share one partition.
@@ -290,3 +297,266 @@ JWT edge rule. The provider retains login and token issuance; keep application
 catalog filtering and owner checks. Gateway resource policies accept simple
 `{variable}` templates. Native deployment, restore and real provider/client login
 qualification must be completed before claiming production support.
+
+
+### Running Task capacity
+
+`tasks.max_running` (default 16) limits live execution leases across all worker
+replicas in a namespace. `tasks.max_running_per_owner` (default 4) limits each
+owner within that namespace and must not exceed the namespace limit. These are
+separate from `worker_concurrency`, which limits each worker process, and from
+outstanding Task admission limits. PostgreSQL serializes capacity checks and
+claims, while owner rotation skips owners whose execution capacity is full.
+
+Use the same limits on every worker and metrics observer in a namespace, and
+upgrade every worker before relying on enforcement. Completion, failure, and
+input pauses release execution capacity. Running cancellation releases capacity
+when acknowledged or when its lease expires. Expired Task TTLs and leases stop
+counting automatically; expired leases cannot be renewed. Lease expiration does
+not guarantee that an old handler has physically stopped, so handlers must still
+make external side effects idempotent.
+
+The `mcp_tasks_running` gauge counts unexpired live leases.
+`mcp_tasks_capacity_waiting` counts unexpired queued Tasks and expired-lease
+running Tasks blocked by namespace or owner capacity, regardless of handler
+availability or retry eligibility. A capacity limit can explain backlog even
+when more replicas would not help. Both gauges use the configured observer limits
+and contain no customer identifiers.
+
+
+### Task retry policy and failure metrics
+
+Handler errors remain terminal by default. Opt into retries only for failures
+that are safe to repeat:
+
+```js
+import { RetryableMcpTaskError } from './tasks.js';
+// Inside a Task handler, after classifying a transient provider failure:
+throw new RetryableMcpTaskError('Provider temporarily unavailable');
+```
+
+Configure `tasks.max_attempts` (default 3, range 1–10, including the initial
+execution), `tasks.retry_base_delay_ms` (default 1000), and
+`tasks.retry_max_delay_ms` (default 60000). Delay bounds must be integer
+milliseconds between 100 and 86400000, and the maximum must be at least the
+base. Each retry waits a random delay between half and all of
+`min(maximum, base * 2^(attempt - 1))`. PostgreSQL persists the due time; retries
+survive restarts, retain the same Task ID and encrypted arguments, and release
+running capacity during the wait. Delayed retries still count against outstanding
+admission limits. Cancellation wins over retry scheduling. Exhausted attempts or
+a delay that would reach the Task TTL produce a terminal failure. Retries never
+extend TTL. Input pauses do not consume another execution attempt.
+
+Keep retry settings consistent across every worker in a namespace. Upgrade all
+workers before enabling retryable handler errors, since older workers do not
+respect delayed retry scheduling. Handlers still need idempotent external side
+effects keyed by Task ID; retry classification does not provide exactly-once
+execution. Worker crashes continue to recover via lease expiration. Stored and
+client-visible execution errors use a generic message, without handler exception
+messages or provider details.
+
+`mcp_tasks_retry_waiting` counts queued Tasks whose persisted retry time is still
+in the future. `mcp_tasks_failed` counts terminal failed Tasks retained within
+TTL; it is a current gauge, not a cumulative failure counter or rate. Expired
+Tasks are excluded. Delayed retries are excluded from
+`mcp_tasks_capacity_waiting`, but remain in `mcp_tasks_outstanding`. Interpret
+these together when diagnosing backlog and autoscaling.
+
+
+### Task operational diagnostics
+
+`gregale mcp tasks status --app <worker-app>` shows running Tasks, capacity waits,
+delayed retries, retained failures, active worker registrations, unsupported
+handler versions, and observer heartbeat freshness. JSON output adds stable
+`diagnostics` entries with `code` and `message`, plus `worker_heartbeats_fresh`
+and `observer_heartbeat_fresh`. Missing or stale metrics produce an unknown-health
+explanation instead of being interpreted as zero work. Queue explanations include
+`execution_capacity`, `retry_delay`, `failed_tasks_retained`,
+`unsupported_handler`, `no_active_workers`, and `idle_queue`.
+
+Workers register their supported tool/handler-version pairs in
+`gregale_mcp_task_workers`. Heartbeats refresh at a bounded cadence (20–30 seconds,
+depending on polling), expire after 90 seconds using database time, and are
+withdrawn when a worker stops accepting work. Worker registrations describe
+availability to claim work; they are not a guarantee that a handler succeeds.
+Expired registrations do not participate in inventory and are pruned by workers.
+The observer reads this table without writing registrations or migrating schema.
+Run `npm run tasks:migrate -- apply` with migration credentials before
+starting an upgraded observer. Include read access to the worker registry in any
+observer database grants, and upgrade every worker so the inventory is complete.
+
+`mcp_tasks_active_workers` counts unexpired registrations.
+`mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and
+expired-lease running Tasks with no matching version among registered workers.
+Future retries and live executions are excluded; retry-attempt eligibility is
+separate from handler compatibility. When there are no registered
+workers the unsupported count is zero and compatibility is unknown; status reports
+worker absence rather than claiming that all handlers are compatible.
+
+Only the observer role publishes `mcp_tasks_observer_heartbeat` (value 1), after
+its database read and aggregate metric publication succeed. Worker publishers do
+not overwrite it. The CLI uses server-reported metric freshness; a fresh observer
+heartbeat indicates a recent successful reporting cycle, not proof of continuous
+uptime. Worker freshness means that the latest fresh aggregate reported a live
+registration; allow for registry TTL and metric publication delays. Scale-to-zero
+status reports an unknown observer when that heartbeat is absent or stale.
+Telemetry contains aggregate counts and declared handler inventory, without Task
+arguments, results, bearer tokens, caller identities, or exception messages.
+
+
+### Task payload encryption key rotation
+
+Keep `MCP_TASK_OWNER_KEY` stable for the namespace. It identifies callers and
+supports legacy payloads; rotating payload encryption does not change ownership.
+The store persists an irreversible ownership fingerprint and immutable key-ID
+fingerprints, never the secrets themselves. Use a new namespace when intentionally
+changing caller identity. Existing legacy payloads are authenticated before first
+binding the ownership fingerprint.
+
+Set `tasks.encryption_keys_env` to a distinct secret environment variable, such
+as `MCP_TASK_PAYLOAD_KEYS`. Its value is JSON:
+
+```json
+{"activeKeyId":"2026_10","keys":{"2026_09":"<old secret>","2026_10":"<new secret>"}}
+```
+
+Each secret must contain at least 32 UTF-8 bytes; generate independent random
+secrets rather than using the example placeholders. IDs contain 1–64 ASCII
+letters, digits, underscores or hyphens. The ring supports at most 16 explicit
+keys. `legacy` is reserved for the original owner-derived payload key and is
+always available. Omit `encryption_keys_env` to retain legacy writes, or use
+`activeKeyId: "legacy"` with a populated ring while preparing a rollout.
+
+New encrypted fields carry an authenticated key ID. Reads select the matching
+key; completing or resuming an older Task can use the new active key without
+rewriting its arguments. Startup checks key usage across arguments, input state,
+results, and errors for every unexpired Task, including terminal Tasks, and
+rejects missing keys. Reusing a key ID with a different secret is rejected even
+when old Tasks have expired. Payloads remain bound to namespace, Task ID and field.
+
+Rotate in phases: run the explicit migration with the complete union of keys
+to register their fingerprints, then upgrade all web and worker processes with the complete union
+of old and new keys first; then activate the new key. Retain old keys until every
+Task field using them has expired. Stop or reconfigure every writer still using
+the old active key before removing it from configuration. Startup validation is
+a snapshot and cannot prevent another already-running process with an obsolete
+configuration from writing afterward; all participating processes must follow
+the rollout order. This feature does not re-encrypt historical payloads or rotate
+the ownership secret. Observers remain read-only and require no encryption secrets.
+
+### Read-only Task preflight
+
+After migrating the Task namespace, run `npm run doctor:tasks` with the worker's
+bindings and `MCP_TASK_NAMESPACE`. The JSON report checks schema, runtime DML
+permissions, retained encryption keys, live workers and eligible handler coverage.
+Exit code 1 means failed or unknown readiness. No schema changes or Task claims
+are made. Detailed database errors, keys and payloads are omitted. Repeat on every
+writer during key rotation; this report cannot establish fleet-wide consistency.
+For remote metrics and scale-to-zero checks, use `gregale mcp doctor --hosting
+--app <worker-app> --preflight-path <this-directory>` with the same environment.
+
+Task workers drain on SIGTERM/SIGINT. Set `tasks.shutdown_timeout_ms` (default
+30000, range 1000–300000) below the platform termination grace period. New claims
+stop immediately; active handlers renew leases until completion or the deadline.
+At the deadline handlers receive an abort signal and leases expire naturally for
+recovery. Dedicated workers exit after cleanup even if a handler ignores abort.
+External effects must remain idempotent by Task ID. Available and draining
+workers publish separate aggregate gauges; migrate the updated worker schema
+before upgrading read-only observers.
+
+Before retiring a handler, run `npm run check:task-compatibility` with the candidate
+code and queue database/namespace bindings. It checks all unexpired nonterminal
+Tasks against `mcpTaskHandlers`, including `previousVersions`, and returns counts
+and latest expiry for missing versions. Delayed retries, input pauses and leased
+work are included. Missing or unknown coverage returns exit code 1. The Task
+doctor includes the same gate. Stop old-version producers before the final check:
+this read-only snapshot does not fence future Task admission.
+
+Admission is now enforced by a shared database trigger, including for older
+producers. Explicit migrations register current versions and preserve disabled
+and retired entries. Runtime startup only checks the migrated state. Use `npm run tasks:admission -- disable <tool> <version>`,
+keep compatible workers to drain retained Tasks, then run `retire <tool> <version>`
+before removing handler code. `status` reports retained counts and `canRetire`;
+`audit` returns the latest 100 state changes. `allow` explicitly reopens a version.
+These commands use database/namespace bindings and need no payload secrets.
+Upgrade schema first, preserve registry tombstones, and keep the admission trigger
+enabled. Database owners can bypass enforcement; restrict policy administration.
+
+### Explicit migrations and role grants
+
+Before starting any Task process, run `npm run tasks:migrate -- apply` with
+`MCP_TASK_MIGRATION_DATABASE_URL`, `MCP_TASK_NAMESPACE`, the stable owner secret
+and candidate payload-key ring. The migration account must own the dedicated
+schema and existing objects. Configure the same `search_path` in every binding;
+commands use `current_schema()`. Schema version 1 consolidates the previous startup
+DDL. Migration is transactional and serialized; unknown future versions fail.
+Runtime startup is read-only and requires migrated schema, namespace, handler
+registrations and key fingerprints. Repeat migration before deploying new
+handlers, namespaces or keys. `tasks:migrate -- status` checks deployed schema.
+
+Use existing separate accounts with `npm run tasks:roles -- plan <profile> <role>`
+and `npm run tasks:roles -- grant <profile> <role>`; profiles are `runtime`,
+`observer` and `operator`. Granting requires migration credentials and adds only
+the profile's required privileges. It does not create accounts or remove prior
+privileges. Runtime roles have Task DML and policy/key SELECT, with no DDL or
+policy writes. Admission and audit triggers use the migration owner's permissions
+with a pinned trusted-schema search path. Keep CREATE away from PUBLIC and
+application roles. Grants cover the selected schema, not individual namespaces.
+
+`npm run doctor:tasks -- --role observer` and `--role operator` validate those
+role profiles without payload secrets. The default doctor checks the runtime
+profile, encryption keys, handler compatibility and operational signals.
+
+### Gated Task releases
+
+Run `npm run tasks:release -- release-plan.json` from the candidate starter with
+its runtime bindings and `MCP_TASK_MIGRATION_DATABASE_URL` bound to the schema
+owner. All accounts must target the same database and trusted schema.
+
+```json
+{
+  "timeoutMs": 60000,
+  "start": ["/deployment/start-candidate", "candidate-image"],
+  "drain": ["/deployment/drain-workers"]
+}
+```
+
+Hooks are executable argument arrays, without a shell. They receive JSON in
+`MCP_TASK_RELEASE_INPUT`: start receives `previousWorkerIDs` and `timeoutMs`;
+drain also receives `replacementWorkerIDs`. Start must launch the candidate
+artifact and return only `{"workerIDs":["uuid"]}` on stdout. Dedicated workers
+emit their ID in `mcp_task_worker_started`; orchestrator adapters must associate
+these IDs with their deployment processes. Drain must signal exactly the
+previous workers and await their exit within the platform shutdown deadline.
+Migration credentials are removed from hook environments.
+
+The gate serializes cooperating releases per namespace, migrates first, checks
+runtime privileges, retained keys, retained handlers and every allowed admission
+version, then verifies each specified replacement has a fresh, non-draining
+heartbeat covering the candidate inventory. It drains old workers only after
+readiness, waits for their registrations to disappear, and rechecks replacements
+and compatibility. A nonzero exit and sanitized failing stage block promotion.
+Disable unsupported admission versions before removing handlers, and coordinate
+all writers during key changes. Restrict independent admission/schema changes
+during release; the release lock coordinates this command, not arbitrary SQL.
+
+Each hook and readiness/drain wait has its own bounded deadline. Failed releases
+leave migrations and any started replacements in place for operator recovery;
+there is no automatic rollback or destructive cleanup. A heartbeat proves
+registered handler coverage, not artifact identity, web endpoint readiness,
+future uptime, or observer health. The deployment adapter must verify the
+candidate artifact and external endpoints before reporting start success. A
+worker that exceeds its shutdown deadline retains its registration until expiry;
+the gate fails rather than promoting prematurely.
+
+Gregale also provides a native deployment adapter:
+`gregale mcp tasks release --plan release.json --state release-state.json`.
+Its plan names the web app/source, an empty candidate worker app/source, previous
+worker apps, and the always-on observer and its metric destination. It deploys
+candidates, verifies endpoint/observer health, captures worker IDs from runtime
+logs, promotes web traffic with a serving-revision guard, and parks old worker
+apps after Task readiness. Use separate worker apps to prevent early retirement
+by the worker scheduler. Configure previous worker stop grace longer than the
+Task shutdown deadline. See `docs/mcp.md`'s native adapter section for the full
+plan and recovery contract. Keep the journal and `.gate` checkpoint outside
+source directories; rerunning unchanged sources resumes recorded deployments.

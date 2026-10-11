@@ -1,0 +1,8 @@
+{
+  "scope": "Local exact starter HTTP process against disposable Neon replacement credentials; active SQL session termination on direct and pooled endpoints.",
+  "passed": [
+    "direct_active_disconnect_no_commit_and_recovers",
+    "pooled_active_disconnect_no_commit_and_recovers"
+  ],
+  "failed": null
+}

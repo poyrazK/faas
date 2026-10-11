@@ -4156,7 +4156,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// IncrementSpansWriteOutcome.
 	spansWriteOutcomes := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_spans_writes_total",
-		Help: "Apid-side spans_writer RPC outcomes (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, validation_error, db_error}. `inserted` is the successful UPDATE on request_telemetry.spans_summary. `rate_limited` is the per-account token-bucket overflow on the write path. `validation_error` is a client-side rejection (bad trace_id regex, invalid JSON, malformed account_id, DB CHECK violation) — PR-D code-review #7 split this from `db_error` so dashboards distinguish. `db_error` is a real Postgres failure (connection trip, transaction rollback). Single-registry: registered on every daemon; only apid increments via IncrementSpansWriteOutcome.",
+		Help: "Apid-side spans_writer RPC outcomes (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, validation_error, db_error, no_row}. `inserted` is the successful UPDATE on request_telemetry.spans_summary. `no_row` means the request row was not written yet; producers retry on their next flush (ADR-958). `rate_limited` is the per-account token-bucket overflow on the write path. `validation_error` is a client-side rejection (bad trace_id regex, invalid JSON, malformed account_id, DB CHECK violation) — PR-D code-review #7 split this from `db_error` so dashboards distinguish. `db_error` is a real Postgres failure (connection trip, transaction rollback). Single-registry: registered on every daemon; only apid increments via IncrementSpansWriteOutcome.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, spansWriteOutcomes)
 	// ADR-127 PR-B: regression cron tick gauge.

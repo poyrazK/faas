@@ -173,6 +173,7 @@ func TestReconcileWorkerAppKeepsNewestSingleton(t *testing.T) {
 	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 
 	engine.ReconcileWorkerApp(context.Background(), app.ID)
+	engine.WaitWorkerStops()
 	oldAfter, _ := store.InstanceByID(context.Background(), oldWorker.ID)
 	newAfter, _ := store.InstanceByID(context.Background(), newWorker.ID)
 	if oldAfter.State != string(state.StateStopped) || newAfter.State != string(state.StateRunning) {

@@ -14,6 +14,9 @@ from typing import Any
 from uuid import uuid4
 
 from ._operation_contract import (
+    OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES,
+    OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES,
+    OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES,
     OPERATION_IDENTITY_BYTES,
     OPERATION_MILESTONE_BATCH_BYTES,
     OPERATION_MILESTONE_PAYLOAD_BYTES,
@@ -753,6 +756,10 @@ async def _save_workflow_states(
                     b["first_observed_at"] = report.occurred_at.astimezone(dt.timezone.utc).isoformat()
             if "first_observed_at" in b and dt.datetime.fromisoformat(b["first_observed_at"].replace("Z", "+00:00")) > report.occurred_at:
                 raise ValueError("blocker first observation exceeds report time")
+            if b.get("acknowledged_at"):
+                ack = dt.datetime.fromisoformat(b["acknowledged_at"].replace("Z", "+00:00"))
+                if ack > report.occurred_at or b.get("first_observed_at") and ack < dt.datetime.fromisoformat(b["first_observed_at"].replace("Z", "+00:00")):
+                    raise ValueError("blocker acknowledgement is outside observation/report interval")
         saved_report = OperationWorkflowStateReport.from_dict(report_data)
         evidence_json = _json_bytes([item.to_dict() for item in state_evidence]).decode("utf-8")
 
@@ -809,6 +816,15 @@ async def _save_workflow_states(
         saved.append(saved_report)
     return saved
 
+def _canonical_blocker_text(value, max_bytes: int):
+    if value is UNSET or value == "":
+        return UNSET
+    if not isinstance(value, str) or any(ord(c) < 0x20 or ord(c) == 0x7f or 0xd800 <= ord(c) <= 0xdfff for c in value):
+        raise ValueError("invalid public blocker assignment or attribution")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise ValueError("public blocker assignment or attribution exceeds byte limit")
+    return value
+
 def _canonical_workflow_blockers(blockers: list[OperationWorkflowBlocker]) -> list[OperationWorkflowBlocker]:
     if not isinstance(blockers, list) or len(blockers) > 16:
         raise ValueError("workflow blockers require at most 16 public reasons")
@@ -821,13 +837,36 @@ def _canonical_workflow_blockers(blockers: list[OperationWorkflowBlocker]) -> li
             or any(ord(c) < 0x20 or ord(c) == 0x7f for c in b.description) or (b.operation, b.code) in seen):
             raise ValueError("invalid workflow blocker public fields or duplicate target/code")
         seen.add((b.operation, b.code))
+        priority = b.priority
+        if priority is not UNSET and priority not in ("", "low", "normal", "high", "urgent"):
+            raise ValueError("invalid blocker priority")
+        if priority == "": priority = UNSET
         first = b.first_observed_at
         if first is not UNSET:
-            if not isinstance(first, str): raise ValueError("invalid blocker observation time")
-            parsed = dt.datetime.fromisoformat(first.replace("Z", "+00:00"))
-            if parsed.tzinfo is None: raise ValueError("blocker observation needs a timezone")
-            first = parsed.astimezone(dt.timezone.utc).isoformat()
-        result.append(OperationWorkflowBlocker(code=b.code, description=b.description, operation=b.operation, first_observed_at=first))
+            if isinstance(first, str):
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", first):
+                    raise ValueError("invalid blocker observation time")
+                first = dt.datetime.fromisoformat(first.replace("Z", "+00:00"))
+            if not isinstance(first, dt.datetime):
+                raise ValueError("invalid blocker observation time")
+            if first.tzinfo is None or first.utcoffset() is None:
+                raise ValueError("blocker observation needs a timezone")
+            first = first.astimezone(dt.timezone.utc)
+        def canonical_time(value):
+            if value is UNSET or value == "": return UNSET
+            if isinstance(value, str):
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value):
+                    raise ValueError("invalid blocker acknowledgement timestamp")
+                value = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if not isinstance(value, dt.datetime) or value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("blocker timestamp needs a timezone")
+            return value.astimezone(dt.timezone.utc)
+        ack, due = canonical_time(b.acknowledged_at), canonical_time(b.follow_up_at)
+        actor = _canonical_blocker_text(b.acknowledged_by, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES)
+        if (ack is UNSET) != (actor is UNSET) or due is not UNSET and ack is UNSET or ack is not UNSET and first is not UNSET and ack < first or due is not UNSET and due < ack:
+            raise ValueError("invalid blocker acknowledgement or follow-up")
+        result.append(OperationWorkflowBlocker(priority=priority, business_impact=_canonical_blocker_text(b.business_impact, OPERATION_WORKFLOW_BLOCKER_IMPACT_BYTES), acknowledged_at=ack, acknowledged_by=actor, follow_up_at=due, code=b.code, description=b.description, operation=b.operation, first_observed_at=first,
+            owner=_canonical_blocker_text(b.owner, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES), next_action=_canonical_blocker_text(b.next_action, OPERATION_WORKFLOW_BLOCKER_ACTION_BYTES)))
     return sorted(result, key=lambda b: (b.operation, b.code))
 
 def _canonical_workflow_resolutions(resolutions: list[OperationWorkflowBlockerResolution], blockers: list[OperationWorkflowBlocker]) -> list[OperationWorkflowBlockerResolution]:
@@ -843,7 +882,22 @@ def _canonical_workflow_resolutions(resolutions: list[OperationWorkflowBlockerRe
             or type(v.blocker_revision) is not int or not 1 <= v.blocker_revision <= 9_007_199_254_740_991):
             raise ValueError("resolution requires a prior report identity and revision")
         fields.append(OperationWorkflowBlocker(code=v.code, operation=v.operation, description=v.description))
-        result.append(OperationWorkflowBlockerResolution.from_dict(v.to_dict()))
+        resolved = OperationWorkflowBlockerResolution.from_dict(v.to_dict())
+        mid, name, oid = v.verification_milestone_id, v.verification_milestone_name, v.verification_operation_id
+        mid = UNSET if mid == "" else mid
+        name = UNSET if name == "" else name
+        oid = UNSET if oid == "" else oid
+        owner = _canonical_blocker_text(v.verification_owner, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES)
+        if (mid is UNSET) != (name is UNSET) or mid is UNSET and (oid is not UNSET or owner is not UNSET):
+            raise ValueError("invalid resolution verification requirement")
+        if mid is not UNSET and (not isinstance(mid, str) or not _UUID.fullmatch(mid) or mid == "00000000-0000-0000-0000-000000000000" or not isinstance(name, str) or not _STATE.fullmatch(name)):
+            raise ValueError("invalid resolution verification milestone")
+        if oid is not UNSET and (not isinstance(oid, str) or not _UUID.fullmatch(oid) or oid == "00000000-0000-0000-0000-000000000000"):
+            raise ValueError("invalid resolution verification Operation")
+        resolved.verification_milestone_id, resolved.verification_milestone_name = mid, name
+        resolved.verification_operation_id, resolved.verification_owner = oid, owner
+        resolved.resolved_by = _canonical_blocker_text(v.resolved_by, OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES)
+        result.append(resolved)
     canonical_fields = _canonical_workflow_blockers(fields)
     if any((v.operation, v.code) in active for v in canonical_fields):
         raise ValueError("a resolved blocker cannot remain in the replacement list")
