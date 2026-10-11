@@ -107,3 +107,7 @@
 
 # Integration removed the stale 686 and 911 entries; no new exceptions.
 
+
+# Existing collisions inherited from main at 195c48c80.
+933
+967
