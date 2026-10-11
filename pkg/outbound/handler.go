@@ -263,17 +263,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bindingAppID := ""
-	var bindingDailyRequestLimit *int64
+	var bindingDailyRequestLimit, bindingDailyAITokenLimit *int64
 	_, explicitlyBound := integration.BindingAppIDs[appID]
 	if appID != "" && (integration.OwnerKind == IntegrationOwnerCustomer || explicitlyBound) {
 		bindingAppID = appID
 		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
+		bindingDailyAITokenLimit = integration.BindingDailyAITokenLimits[appID]
 	}
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
 		DailyRequestLimit:              integration.DailyRequestLimit,
 		DailyAITokenLimit:              copyInt64Pointer(integration.DailyAITokenLimit),
+		BindingDailyAITokenLimit:       copyInt64Pointer(bindingDailyAITokenLimit),
+		DailyAICostLimit:               copyInt64Pointer(integration.DailyAICostLimit),
+		MonthlyAICostLimit:             copyInt64Pointer(integration.MonthlyAICostLimit),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,

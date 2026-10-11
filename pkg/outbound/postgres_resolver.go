@@ -47,7 +47,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var enabled bool
 	var policyUpdatedAt time.Time
 	var aiProvider string
-	var aiDailyTokenLimitValue int64
+	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
@@ -58,14 +58,15 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       integration.credential_source, integration.allowed_methods,
 		       integration.allowed_path_prefixes, integration.owner_kind,
 		       COALESCE(integration.daily_request_limit, 0),
-		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0)
+		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0),
+		       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0)
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
-			&aiProvider, &aiDailyTokenLimitValue)
+			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -112,12 +113,13 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		retryBudgetPerMinute = policy.RetryBudgetPerMinute
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint
+		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true, NULL::bigint, NULL::bigint
 		  FROM outbound_integration_apps attachment
 		  JOIN apps app ON app.id = attachment.app_id
 		 WHERE attachment.integration_id = $1 AND app.account_id = $3 AND app.status <> 'deleted'
 		UNION ALL
-		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false, binding.daily_request_limit
+		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false, binding.daily_request_limit,
+		       binding.ai_daily_token_limit
 		  FROM outbound_app_bindings binding
 		  JOIN apps app ON app.id = binding.app_id
 		 WHERE binding.integration_id = $1 AND binding.account_id = $3
@@ -132,13 +134,17 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	bindingApps := make(map[string]struct{})
 	customerRoutes := make(map[string]RoutePolicy)
 	bindingDailyRequestLimits := make(map[string]*int64)
+	bindingDailyAITokenLimits := make(map[string]*int64)
 	for rows.Next() {
 		var appID string
 		var methods, paths []string
 		var operator bool
-		var bindingDailyRequestLimit *int64
-		if err := rows.Scan(&appID, &methods, &paths, &operator, &bindingDailyRequestLimit); err != nil {
+		var bindingDailyRequestLimit, bindingDailyAITokenLimit *int64
+		if err := rows.Scan(&appID, &methods, &paths, &operator, &bindingDailyRequestLimit, &bindingDailyAITokenLimit); err != nil {
 			return Integration{}, err
+		}
+		if !operator && bindingDailyAITokenLimit != nil && *bindingDailyAITokenLimit > 0 {
+			bindingDailyAITokenLimits[appID] = bindingDailyAITokenLimit
 		}
 		apps[appID] = struct{}{}
 		if operator {
@@ -163,6 +169,13 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	if err := rows.Err(); err != nil {
 		return Integration{}, err
 	}
+	rows.Close()
+	var prices []AIPrice
+	if aiProvider != "" {
+		if prices, err = r.currentAIPrices(ctx, integrationID); err != nil {
+			return Integration{}, err
+		}
+	}
 	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, AppIDs: apps,
 		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
@@ -176,14 +189,44 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		RetryBudgetPerMinute:           retryBudgetPerMinute,
 		PolicyRevision:                 policyUpdatedAt.UnixNano(),
 		ProviderAuthMode:               providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
-		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider}
-	if aiDailyTokenLimitValue > 0 {
-		i.DailyAITokenLimit = &aiDailyTokenLimitValue
-	}
+		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider,
+		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
+		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
+		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue)}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}
 	return i, nil
+}
+
+// currentAIPrices loads the newest price list already in effect (ADR-983).
+func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uuid.UUID) ([]AIPrice, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
+		       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok
+		  FROM outbound_ai_price_entries entry
+		 WHERE entry.price_list_id = (
+		       SELECT list.id FROM outbound_ai_price_lists list
+		        WHERE list.integration_id = $1 AND list.effective_from <= now()
+		        ORDER BY list.effective_from DESC, list.created_at DESC
+		        LIMIT 1)`, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := make([]api.OutboundAIPriceEntry, 0)
+	for rows.Next() {
+		var entry api.OutboundAIPriceEntry
+		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
+			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ResolveAIPrices(entries), nil
 }
 
 var _ Resolver = (*PostgresResolver)(nil)

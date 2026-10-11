@@ -31,6 +31,10 @@ type memoryState struct {
 	retryBudgetRefill        time.Time
 	retryBudgetPerMinute     int
 	dailyAITokenCount        int64
+	bindingAITokenCounts     map[string]int64
+	dailyAICost              int64
+	usageMonth               string
+	monthlyAICost            int64
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
 	initialized              bool
 }
@@ -41,6 +45,7 @@ type memoryAIUsageKey struct{ caller, model string }
 type AIUsageTotals struct {
 	Requests, ErrorRequests, UsageUnknownRequests                  int64
 	InputTokens, CachedInputTokens, CacheWriteTokens, OutputTokens int64
+	CostMillicents                                                 int64
 }
 
 // MemoryBackend is a deterministic in-process backend for tests and local
@@ -77,6 +82,14 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	}
 	if spec.DailyAITokenLimit != nil && (*spec.DailyAITokenLimit < 1 || *spec.DailyAITokenLimit > api.MaxOutboundAITokensPerDay) {
 		return Decision{}, fmt.Errorf("%w: daily token limit is outside the supported range", ErrInvalidIntegration)
+	}
+	if spec.BindingDailyAITokenLimit != nil && (spec.BindingAppID == "" || *spec.BindingDailyAITokenLimit < 1 || *spec.BindingDailyAITokenLimit > api.MaxOutboundAITokensPerDay) {
+		return Decision{}, fmt.Errorf("%w: binding daily token limit is invalid", ErrInvalidIntegration)
+	}
+	for _, limit := range []*int64{spec.DailyAICostLimit, spec.MonthlyAICostLimit} {
+		if limit != nil && (*limit < 1 || *limit > api.MaxOutboundAICostMillicents) {
+			return Decision{}, fmt.Errorf("%w: AI cost limit is outside the supported range", ErrInvalidIntegration)
+		}
 	}
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
@@ -164,13 +177,11 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
-	if spec.DailyAITokenLimit != nil && state.dailyAITokenCount >= *spec.DailyAITokenLimit {
-		nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
-		retry := nextDay.Sub(utcNow)
-		if retry < time.Millisecond {
-			retry = time.Millisecond
-		}
-		return Decision{RetryAfter: retry, Reason: ReasonDailyTokenLimit, RequestTimeout: ttl}, nil
+	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
+		dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCounts[spec.BindingAppID],
+		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost,
+	}, aiBudgetLimitsFromSpec(spec)); limited {
+		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
 	}
 	state.tokens--
 	state.dailyRequestCount++
@@ -378,16 +389,25 @@ func validUUID(value string) bool {
 
 // rollDay resets every UTC-day counter when the day changes.
 func (s *memoryState) rollDay(today string) {
+	if month := today[:7]; s.usageMonth != month {
+		s.usageMonth = month
+		s.monthlyAICost = 0
+	}
 	if s.dailyUsageDate != today {
 		s.dailyUsageDate = today
 		s.dailyRequestCount = 0
 		s.dailyAITokenCount = 0
+		s.dailyAICost = 0
 		s.bindingDailyCounts = make(map[string]int64)
+		s.bindingAITokenCounts = make(map[string]int64)
 		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
 		return
 	}
 	if s.bindingDailyCounts == nil {
 		s.bindingDailyCounts = make(map[string]int64)
+	}
+	if s.bindingAITokenCounts == nil {
+		s.bindingAITokenCounts = make(map[string]int64)
 	}
 	if s.aiUsage == nil {
 		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
@@ -412,6 +432,9 @@ func (b *MemoryBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord)
 	}
 	state.rollDay(b.now().UTC().Format("2006-01-02"))
 	state.dailyAITokenCount += record.Usage.BudgetTokens()
+	state.bindingAITokenCounts[record.Caller] += record.Usage.BudgetTokens()
+	state.dailyAICost += record.CostMillicents
+	state.monthlyAICost += record.CostMillicents
 	key := memoryAIUsageKey{caller: record.Caller, model: record.Usage.Model}
 	if _, exists := state.aiUsage[key]; !exists && memoryDistinctModels(state.aiUsage) >= api.OutboundAIUsageModelsPerDay {
 		key.model = aiUsageOverflowModel
@@ -428,8 +451,27 @@ func (b *MemoryBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord)
 	row.CachedInputTokens += record.Usage.CachedInputTokens
 	row.CacheWriteTokens += record.Usage.CacheWriteTokens
 	row.OutputTokens += record.Usage.OutputTokens
+	row.CostMillicents += record.CostMillicents
 	state.aiUsage[key] = row
 	return nil
+}
+
+// AICost reports the settled UTC-day and calendar-month cost for tests.
+func (b *MemoryBackend) AICost(integrationID string) (daily, monthly int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil {
+		return 0, 0
+	}
+	today := b.now().UTC().Format("2006-01-02")
+	if state.dailyUsageDate == today {
+		daily = state.dailyAICost
+	}
+	if state.usageMonth == today[:7] {
+		monthly = state.monthlyAICost
+	}
+	return daily, monthly
 }
 
 func memoryDistinctModels(rows map[memoryAIUsageKey]AIUsageTotals) int {

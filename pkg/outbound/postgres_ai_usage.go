@@ -42,7 +42,7 @@ func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecor
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO outbound_ai_usage_daily AS usage
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
-		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens)
+		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -50,7 +50,7 @@ func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecor
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11
+		       1, $6, $7, $8, $9, $10, $11, $12
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -60,23 +60,44 @@ func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecor
 		    cached_input_tokens = usage.cached_input_tokens + EXCLUDED.cached_input_tokens,
 		    cache_write_tokens = usage.cache_write_tokens + EXCLUDED.cache_write_tokens,
 		    output_tokens = usage.output_tokens + EXCLUDED.output_tokens,
+		    cost_millicents = usage.cost_millicents + EXCLUDED.cost_millicents,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
-		usage.OutputTokens); err != nil {
+		usage.OutputTokens, record.CostMillicents); err != nil {
 		return err
 	}
-	// The counter follows admission's UTC-day reset. A call that straddles
-	// midnight counts toward the day it settles in.
-	if budgetTokens := usage.BudgetTokens(); budgetTokens > 0 {
+	// The counters follow admission's UTC-day and calendar-month resets. A
+	// call that straddles midnight counts toward the day it settles in.
+	budgetTokens := usage.BudgetTokens()
+	if budgetTokens > 0 || record.CostMillicents > 0 {
 		if _, err := tx.Exec(ctx, `
 			UPDATE outbound_admission_state
 			   SET daily_request_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
 			                                  THEN daily_request_count ELSE 0 END,
 			       daily_ai_token_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
 			                                   THEN daily_ai_token_count + $2 ELSE $2 END,
+			       daily_ai_cost_millicents = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                       THEN daily_ai_cost_millicents + $3 ELSE $3 END,
+			       monthly_ai_cost_millicents = CASE WHEN monthly_usage_month = (date_trunc('month', now() AT TIME ZONE 'UTC'))::date
+			                                         THEN monthly_ai_cost_millicents + $3 ELSE $3 END,
+			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
+			       monthly_usage_month = (date_trunc('month', now() AT TIME ZONE 'UTC'))::date
+			 WHERE integration_id = $1`, integrationID, budgetTokens, record.CostMillicents); err != nil {
+			return err
+		}
+	}
+	// ADR-983: the app's own binding counter, when the app has a binding row.
+	// Operator attachments and Runs have none, so nothing is updated.
+	if budgetTokens > 0 && record.Caller != AIUsageCallerRuns {
+		if _, err := tx.Exec(ctx, `
+			UPDATE outbound_app_binding_usage
+			   SET daily_request_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                  THEN daily_request_count ELSE 0 END,
+			       daily_ai_token_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			                                   THEN daily_ai_token_count + $3 ELSE $3 END,
 			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date
-			 WHERE integration_id = $1`, integrationID, budgetTokens); err != nil {
+			 WHERE integration_id = $1 AND app_id = $2`, integrationID, uuid.MustParse(record.Caller), budgetTokens); err != nil {
 			return err
 		}
 	}

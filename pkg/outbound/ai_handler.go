@@ -113,8 +113,13 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	if first := observer.FirstByteAt(); !first.IsZero() && first.After(upstreamStarted) {
 		timeToFirstByte = first.Sub(upstreamStarted)
 	}
+	cost := aiCostMillicents(integration.AIPrices, usage)
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
+	h.Metrics.ObserveAICost(metricIntegrationID, cost)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
+	if cost > 0 {
+		span.SetAttributes(attribute.Int64("gregale.ai.cost_millicents", cost))
+	}
 	recorder, ok := h.Backend.(AIUsageBackend)
 	if !ok {
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "unavailable")
@@ -127,7 +132,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiUsageRecordTimeout)
 	defer cancel()
 	if err := recorder.RecordAIUsage(recordCtx, AIUsageRecord{
-		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage,
+		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
 	}); err != nil {
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
 		return

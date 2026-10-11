@@ -56,6 +56,10 @@ type OutboundIntegrationOffer struct {
 	// extraction and the optional daily token limit (ADR-979).
 	AIProvider        string `json:"ai_provider,omitempty"`
 	AIDailyTokenLimit *int64 `json:"ai_daily_token_limit"`
+	// Cost limits in millicents per UTC day and calendar month, priced from
+	// the integration's price list (ADR-983).
+	AIDailyCostLimitMillicents   *int64 `json:"ai_daily_cost_limit_millicents"`
+	AIMonthlyCostLimitMillicents *int64 `json:"ai_monthly_cost_limit_millicents"`
 }
 
 // Outbound AI providers select the response format the gateway parses for
@@ -86,8 +90,16 @@ func ValidOutboundAIPolicy(provider string, dailyTokenLimit *int64) bool {
 // PutOutboundAIPolicyRequest replaces an integration's AI gateway settings.
 // An empty provider turns AI handling off and requires a null token limit.
 type PutOutboundAIPolicyRequest struct {
-	AIProvider      string `json:"ai_provider"`
-	DailyTokenLimit *int64 `json:"daily_token_limit"`
+	AIProvider                 string `json:"ai_provider"`
+	DailyTokenLimit            *int64 `json:"daily_token_limit"`
+	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
+	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
+}
+
+// Valid reports whether the complete AI policy can be stored.
+func (r PutOutboundAIPolicyRequest) Valid() bool {
+	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
+		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents)
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
@@ -103,6 +115,9 @@ type OutboundAIUsageItem struct {
 	CachedInputTokens    int64  `json:"cached_input_tokens"`
 	CacheWriteTokens     int64  `json:"cache_write_tokens"`
 	OutputTokens         int64  `json:"output_tokens"`
+	// CostMillicents is priced from the price list effective at each call,
+	// rounded up per call; zero without a price list (ADR-983).
+	CostMillicents int64 `json:"cost_millicents"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.
@@ -115,6 +130,12 @@ type OutboundAIUsageResponse struct {
 	DailyTokenLimit *int64                `json:"daily_token_limit"`
 	ResetsAt        time.Time             `json:"resets_at"`
 	Items           []OutboundAIUsageItem `json:"items"`
+	// Settled cost of usage_date and of its calendar month through that day.
+	DailyCostMillicents        int64  `json:"daily_cost_millicents"`
+	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
+	Month                      string `json:"month"`
+	MonthlyCostMillicents      int64  `json:"monthly_cost_millicents"`
+	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
 }
 
 // OutboundRequestPolicy is the per-integration admission and timeout policy.
@@ -289,6 +310,8 @@ type OutboundAppBinding struct {
 	AllowedPathPrefixes []string                 `json:"allowed_path_prefixes"`
 	DailyRequestLimit   *int64                   `json:"daily_request_limit"`
 	CreatedAt           time.Time                `json:"created_at"`
+	// AIDailyTokenLimit is this app's own UTC-day AI token limit (ADR-983).
+	AIDailyTokenLimit *int64 `json:"ai_daily_token_limit"`
 }
 
 // UpdateOutboundBindingPolicyRequest narrows an app's route access within

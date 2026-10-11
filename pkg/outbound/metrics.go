@@ -25,6 +25,8 @@ type Metrics struct {
 	aiTimeToFirstByte      *prometheus.HistogramVec
 	aiUsageRecordEvents    *prometheus.CounterVec
 	relayConnections       *prometheus.CounterVec
+	aiCost                 *prometheus.CounterVec
+	aiRouteFallbacks       *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -93,6 +95,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_relay_connections_total",
 			Help: "App relay connections from vmmd by bounded outcome (accepted, rejected, or overload).",
 		}, []string{"outcome"}),
+		aiCost: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_cost_millicents_total",
+			Help: "Customer-priced AI cost settled by integration, in millicents rounded up per call.",
+		}, []string{"integration_id"}),
+		aiRouteFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_fallbacks_total",
+			Help: "AI route calls that moved past a target, by bounded reason (rejected, provider_status, or transport).",
+		}, []string{"reason"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -109,6 +119,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiTimeToFirstByte,
 		m.aiUsageRecordEvents,
 		m.relayConnections,
+		m.aiCost,
+		m.aiRouteFallbacks,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -226,6 +238,20 @@ func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, u
 			m.aiTokens.WithLabelValues(integrationID, kind).Add(float64(value))
 		}
 	}
+}
+
+func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {
+	if m == nil || m.aiCost == nil || millicents <= 0 {
+		return
+	}
+	m.aiCost.WithLabelValues(integrationID).Add(float64(millicents))
+}
+
+func (m *Metrics) ObserveAIRouteFallback(reason string) {
+	if m == nil || m.aiRouteFallbacks == nil {
+		return
+	}
+	m.aiRouteFallbacks.WithLabelValues(reason).Inc()
 }
 
 func (m *Metrics) ObserveRelayConnection(outcome string) {

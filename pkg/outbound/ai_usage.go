@@ -42,6 +42,9 @@ type AIUsageRecord struct {
 	Caller        string
 	Outcome       AIUsageOutcome
 	Usage         AIUsage
+	// CostMillicents is priced at settlement from the integration's price
+	// list (ADR-983); zero when no price matches.
+	CostMillicents int64
 }
 
 // AIUsageCallerRuns aggregates every Run's calls; Runs have no app ID.
@@ -69,6 +72,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 		if value < 0 || value > 3*api.OutboundAIMaxTokensPerResponse {
 			return fmt.Errorf("%w: AI usage token count is out of range", ErrInvalidIntegration)
 		}
+	}
+	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
+		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
 	}
 	return nil
 }
