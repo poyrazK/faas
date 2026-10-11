@@ -120,6 +120,24 @@ func TestPgEnvironmentGitOpsMixedGraphServingWaitsForQueueDelivery(t *testing.T)
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)
 	lease, plan, requests := preparedQualificationFixture(t, store)
+	var worker state.EnvironmentWorkloadQualificationRequest
+	for _, request := range requests {
+		if request.Resource == "workload/worker" {
+			worker = request
+		}
+	}
+	if worker.ID == "" {
+		t.Fatal("prepared graph has no worker")
+	}
+	var bindingID, triggerID string
+	if err := pool.QueryRow(t.Context(), `SELECT binding.id::text,queue_trigger.id::text
+		FROM queue_bindings binding JOIN triggers queue_trigger ON queue_trigger.queue_binding_id=binding.id
+		WHERE binding.app_id=$1::uuid AND binding.name='orders' AND queue_trigger.enabled`, worker.AppID).
+		Scan(&bindingID, &triggerID); err != nil {
+		t.Fatal(err)
+	}
+	staleInvocationID := completePushServingTestDelivery(t, store, lease.Source.AccountID, worker.AppID,
+		lease.Source.EnvironmentSlug, bindingID, triggerID, worker.DeploymentID, false)
 	for _, request := range requests {
 		completeRequestQualificationReceipts(t, store, request)
 	}
@@ -141,47 +159,64 @@ func TestPgEnvironmentGitOpsMixedGraphServingWaitsForQueueDelivery(t *testing.T)
 		!slices.Equal(pending.Acknowledgements[receipt.Routes[0].Generation], []string{"edge-a"}) {
 		t.Fatalf("restart lost pending route or queue expectation: %+v %t %v", pending, serving, err)
 	}
-	var worker state.EnvironmentWorkloadQualificationRequest
-	for _, request := range requests {
-		if request.Resource == "workload/worker" {
-			worker = request
-		}
-	}
-	if worker.ID == "" {
-		t.Fatal("prepared graph has no worker")
-	}
 	consumer := receipt.ExpectedQueueConsumers[0]
-	invocation, err := store.EnqueueInvocation(t.Context(), state.Invocation{AccountID: lease.Source.AccountID,
-		AppID: worker.AppID, Source: state.InvocationQueue, QueueName: "orders", QueueBindingID: consumer.BindingID,
-		DeploymentScope: lease.Source.EnvironmentSlug, DueAt: time.Now()})
-	if err != nil {
-		t.Fatal(err)
+	if consumer.BindingID != bindingID || consumer.TriggerID != triggerID {
+		t.Fatalf("active consumer differs from reviewed pre-activation binding: %+v", consumer)
 	}
-	claimedInvocation, err := store.ClaimQueueTriggerInvocation(t.Context(), invocation.ID, consumer.TriggerID, worker.AppID, "orders", 600)
-	if err != nil {
-		t.Fatal(err)
+	err = restarted.RecordEnvironmentGitOpsQueueServingAcknowledgement(t.Context(), state.EnvironmentWorkloadQueueServingAcknowledgement{
+		Mode: "push", AppID: worker.AppID, Scope: lease.Source.EnvironmentSlug, BindingID: bindingID,
+		TriggerID: triggerID, DeploymentID: worker.DeploymentID, InvocationID: staleInvocationID,
+	})
+	if err == nil {
+		t.Fatal("pre-activation queue delivery acknowledged the newly active graph")
 	}
-	triggerRecord, err := store.InsertTriggerRecord(t.Context(), consumer.TriggerID, invocation.ID, []byte(`{}`), nil, nil)
-	if err != nil {
-		t.Fatal(err)
+	evidence, err := restarted.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan)
+	if err != nil || evidence.Serving {
+		t.Fatalf("pre-activation queue delivery established serving: %+v %v", evidence, err)
 	}
-	claimed, err := store.ClaimTriggerRecords(t.Context(), consumer.TriggerID, 1)
-	if err != nil || len(claimed) != 1 || claimed[0].ID.String() != triggerRecord {
-		t.Fatalf("trigger claim: %+v %v", claimed, err)
-	}
-	finalized, err := store.CompleteEnvironmentQueueDeliveryClaims(t.Context(), worker.AppID, consumer.TriggerID, "queue",
-		[]string{invocation.ID}, []int32{int32(claimedInvocation.Attempts)}, []int64{claimedInvocation.ReplayGeneration},
-		[]state.EnvironmentWorkloadQueueServingAcknowledgement{{
-			Mode: "push", AppID: worker.AppID, Scope: lease.Source.EnvironmentSlug, BindingID: consumer.BindingID,
-			TriggerID: consumer.TriggerID, DeploymentID: worker.DeploymentID, InvocationID: invocation.ID,
-		}})
-	if err != nil || !slices.Equal(finalized, []string{invocation.ID}) {
-		t.Fatalf("successful reviewed queue delivery did not finalize: %+v %v", finalized, err)
-	}
+	completePushServingTestDelivery(t, restarted, lease.Source.AccountID, worker.AppID,
+		lease.Source.EnvironmentSlug, bindingID, triggerID, worker.DeploymentID, true)
 	served, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan)
 	if err != nil || !served.Serving || !served.Activated || !served.Qualified {
 		t.Fatalf("complete mixed graph not serving: %+v %v", served, err)
 	}
+}
+
+func completePushServingTestDelivery(t *testing.T, store *state.PgStore, accountID, appID, scope,
+	bindingID, triggerID, deploymentID string, acknowledge bool) string {
+	t.Helper()
+	invocation, err := store.EnqueueInvocation(t.Context(), state.Invocation{AccountID: accountID,
+		AppID: appID, Source: state.InvocationQueue, QueueName: "orders", QueueBindingID: bindingID,
+		DeploymentScope: scope, DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedInvocation, err := store.ClaimQueueTriggerInvocation(t.Context(), invocation.ID, triggerID, appID, "orders", 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	triggerRecord, err := store.InsertTriggerRecord(t.Context(), triggerID, invocation.ID, []byte(`{}`), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimTriggerRecords(t.Context(), triggerID, 1)
+	if err != nil || len(claimed) != 1 || claimed[0].ID.String() != triggerRecord {
+		t.Fatalf("trigger claim: %+v %v", claimed, err)
+	}
+	var acknowledgements []state.EnvironmentWorkloadQueueServingAcknowledgement
+	if acknowledge {
+		acknowledgements = []state.EnvironmentWorkloadQueueServingAcknowledgement{{
+			Mode: "push", AppID: appID, Scope: scope, BindingID: bindingID,
+			TriggerID: triggerID, DeploymentID: deploymentID, InvocationID: invocation.ID,
+		}}
+	}
+	finalized, err := store.CompleteEnvironmentQueueDeliveryClaims(t.Context(), appID, triggerID, "queue",
+		[]string{invocation.ID}, []int32{int32(claimedInvocation.Attempts)}, []int64{claimedInvocation.ReplayGeneration},
+		acknowledgements)
+	if err != nil || !slices.Equal(finalized, []string{invocation.ID}) {
+		t.Fatalf("successful reviewed queue delivery did not finalize: %+v %v", finalized, err)
+	}
+	return invocation.ID
 }
 
 func registerServingGateway(t *testing.T, store *state.PgStore, name string) {

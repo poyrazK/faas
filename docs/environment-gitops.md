@@ -82,7 +82,9 @@ neither creates a customer invocation or queue row. HTTP functions continue to
 use push bindings only. Push and pull workers may activate dark after
 qualification; Gregale reports them serving only after a successfully completed
 named-queue or generic pull invocation is atomically recorded against the
-selected live deployment. Queue-bound HTTP functions use the same durable
+selected live deployment. The invocation must complete after that active
+release was published; an older delivery or acknowledgement cannot establish
+serving for a later release. Queue-bound HTTP functions use the same durable
 push-consumer acknowledgement, scoped to a reviewed function and
 `workload_class: http`; they require both the queue acknowledgement and their
 request-route acknowledgements. A gateway route acknowledgement cannot prove
