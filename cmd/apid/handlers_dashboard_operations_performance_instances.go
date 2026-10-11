@@ -44,7 +44,7 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 			measure = "Blocked time"
 		}
 		return fmt.Sprintf("%s · condition %s = %s · decision %s · rule %s / %s → %s · contract %d", measure, group.ConditionID, group.ConditionResult, group.DecisionCode, group.RuleID, group.RuleVersion, group.OutcomeCode, group.ContractVersion)
-	case "decision_completion", "decision_blocked":
+	case "decision_completion", "decision_blocked", "active_condition_elapsed", "active_condition_blocked":
 		return workflowDecisionOutcomeGroupLabel(group)
 	case "state":
 		return fmt.Sprintf("State %s · contract %d", group.State, group.ContractVersion)
@@ -106,6 +106,14 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 }
 
 func workflowDecisionOutcomeGroupLabel(group api.OperationWorkflowPerformanceGroup) string {
+	if group.Dimension == "active_condition_elapsed" || group.Dimension == "active_condition_blocked" {
+		measure := "Elapsed time"
+		if group.Dimension == "active_condition_blocked" {
+			measure = "Blocked time"
+		}
+		return fmt.Sprintf("%s · last reported %s=%s · decision %s · rule %s / %s · contract %d", measure, group.ConditionID, group.ConditionResult, group.DecisionCode, group.RuleID, group.RuleVersion, group.ContractVersion)
+	}
+
 	measure := "Completion time"
 	if group.Dimension == "decision_blocked" {
 		measure = "Blocked time"

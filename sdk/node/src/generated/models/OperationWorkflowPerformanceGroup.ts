@@ -19,7 +19,7 @@ export type OperationWorkflowPerformanceGroup = {
   group_id?: string;
   path_id?: string;
   outcome_code?: string;
-  dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked';
+  dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked';
   contract_version?: number;
   state?: string;
   operation?: string;

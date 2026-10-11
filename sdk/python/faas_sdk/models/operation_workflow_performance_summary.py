@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
     from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
     from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
     from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
@@ -38,6 +39,13 @@ class OperationWorkflowPerformanceSummary:
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
    """
+    active_conditions: OperationWorkflowActiveConditionSummary | Unset = UNSET
+    """Latest explicit condition snapshots in the ongoing sample with complete retained history. The latest reason
+    and latest nonempty selected-path snapshot provide independent contexts; a path without a fact clears that path
+    context. Metadata-only reports preserve evidence. Explicit decision omission removes older conditions. Contract
+    changes reset contexts. Conflicting results for an exact identity exclude the workflow. Missing conditions
+    remain unreported. At most 256 contexts and 256 final condition identities per workflow qualify. Groups overlap;
+    no present business truth or causation is inferred."""
     condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset = UNSET
     """Observed condition/result associations with latest reported outcomes in the completed performance sample.
     Only complete histories with a reported outcome and at most 256 exact condition identities qualify. Reasons and
@@ -63,6 +71,10 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = self.ongoing.to_dict()
 
+        active_conditions: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.active_conditions, Unset):
+            active_conditions = self.active_conditions.to_dict()
+
         condition_outcomes: dict[str, Any] | Unset = UNSET
         if not isinstance(self.condition_outcomes, Unset):
             condition_outcomes = self.condition_outcomes.to_dict()
@@ -83,6 +95,8 @@ class OperationWorkflowPerformanceSummary:
                 "ongoing": ongoing,
             }
         )
+        if active_conditions is not UNSET:
+            field_dict["active_conditions"] = active_conditions
         if condition_outcomes is not UNSET:
             field_dict["condition_outcomes"] = condition_outcomes
         if decision_outcomes is not UNSET:
@@ -92,6 +106,7 @@ class OperationWorkflowPerformanceSummary:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
         from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
         from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
         from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
@@ -108,6 +123,13 @@ class OperationWorkflowPerformanceSummary:
         completed = OperationWorkflowPerformanceCohort.from_dict(d.pop("completed"))
 
         ongoing = OperationWorkflowPerformanceCohort.from_dict(d.pop("ongoing"))
+
+        _active_conditions = d.pop("active_conditions", UNSET)
+        active_conditions: OperationWorkflowActiveConditionSummary | Unset
+        if isinstance(_active_conditions, Unset):
+            active_conditions = UNSET
+        else:
+            active_conditions = OperationWorkflowActiveConditionSummary.from_dict(_active_conditions)
 
         _condition_outcomes = d.pop("condition_outcomes", UNSET)
         condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset
@@ -130,6 +152,7 @@ class OperationWorkflowPerformanceSummary:
             cohort_limit=cohort_limit,
             completed=completed,
             ongoing=ongoing,
+            active_conditions=active_conditions,
             condition_outcomes=condition_outcomes,
             decision_outcomes=decision_outcomes,
         )

@@ -9,6 +9,7 @@ type OperationWorkflowPerformanceOptions struct {
 
 // OperationWorkflowPerformanceSummary compares complete retained histories by cohort.
 type OperationWorkflowPerformanceSummary struct {
+	ActiveConditions  *OperationWorkflowActiveConditionSummary  `json:"active_conditions,omitempty"`
 	ConditionOutcomes *OperationWorkflowConditionOutcomeSummary `json:"condition_outcomes,omitempty"`
 	DecisionOutcomes  *OperationWorkflowDecisionOutcomeSummary  `json:"decision_outcomes,omitempty"`
 	CohortToken       string                                    `json:"cohort_token"`
@@ -190,4 +191,33 @@ type OperationWorkflowConditionOutcomeGroup struct {
 	ChangingResultWorkflowCount int64                                 `json:"changing_result_workflow_count"`
 	CompletionTime              OperationWorkflowDurationDistribution `json:"completion_time"`
 	BlockedTime                 OperationWorkflowDurationDistribution `json:"blocked_time"`
+}
+
+// OperationWorkflowActiveConditionSummary describes latest explicit snapshots in ongoing runs.
+type OperationWorkflowActiveConditionSummary struct {
+	MatchingWorkflowCount                  int64                                   `json:"matching_workflow_count"`
+	SampledWorkflowCount                   int64                                   `json:"sampled_workflow_count"`
+	LinkedWorkflowCount                    int64                                   `json:"linked_workflow_count"`
+	ExcludedIncompleteWorkflowCount        int64                                   `json:"excluded_incomplete_workflow_count"`
+	ExcludedAmbiguousWorkflowCount         int64                                   `json:"excluded_ambiguous_workflow_count"`
+	ExcludedConditionEvidenceWorkflowCount int64                                   `json:"excluded_condition_evidence_workflow_count"`
+	UnclassifiedWorkflowCount              int64                                   `json:"unclassified_workflow_count"`
+	CohortTruncated                        bool                                    `json:"cohort_truncated"`
+	GroupsTruncated                        bool                                    `json:"groups_truncated"`
+	Groups                                 []OperationWorkflowActiveConditionGroup `json:"groups"`
+}
+
+// OperationWorkflowActiveConditionGroup measures full workflow durations, not condition latency.
+type OperationWorkflowActiveConditionGroup struct {
+	ContractVersion      int                                   `json:"contract_version"`
+	DecisionCode         string                                `json:"decision_code"`
+	RuleID               string                                `json:"rule_id"`
+	RuleVersion          string                                `json:"rule_version"`
+	ConditionID          string                                `json:"condition_id"`
+	ConditionDescription string                                `json:"condition_description"`
+	ConditionResult      string                                `json:"condition_result"`
+	StaleWorkflowCount   int64                                 `json:"stale_workflow_count"`
+	ElapsedTime          OperationWorkflowDurationDistribution `json:"elapsed_time"`
+	BlockedTime          OperationWorkflowDurationDistribution `json:"blocked_time"`
+	EvidenceAge          OperationWorkflowDurationDistribution `json:"evidence_age"`
 }

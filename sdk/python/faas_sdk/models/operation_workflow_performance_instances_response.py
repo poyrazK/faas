@@ -13,6 +13,7 @@ from ..models.operation_workflow_performance_instances_response_cohort import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
     from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
     from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
     from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
@@ -48,6 +49,13 @@ class OperationWorkflowPerformanceInstancesResponse:
     """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
     zero."""
     items: list[OperationWorkflowPerformanceInstance]
+    active_conditions: OperationWorkflowActiveConditionSummary | Unset = UNSET
+    """Latest explicit condition snapshots in the ongoing sample with complete retained history. The latest reason
+    and latest nonempty selected-path snapshot provide independent contexts; a path without a fact clears that path
+    context. Metadata-only reports preserve evidence. Explicit decision omission removes older conditions. Contract
+    changes reset contexts. Conflicting results for an exact identity exclude the workflow. Missing conditions
+    remain unreported. At most 256 contexts and 256 final condition identities per workflow qualify. Groups overlap;
+    no present business truth or causation is inferred."""
     condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset = UNSET
     """Observed condition/result associations with latest reported outcomes in the completed performance sample.
     Only complete histories with a reported outcome and at most 256 exact condition identities qualify. Reasons and
@@ -93,6 +101,10 @@ class OperationWorkflowPerformanceInstancesResponse:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        active_conditions: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.active_conditions, Unset):
+            active_conditions = self.active_conditions.to_dict()
+
         condition_outcomes: dict[str, Any] | Unset = UNSET
         if not isinstance(self.condition_outcomes, Unset):
             condition_outcomes = self.condition_outcomes.to_dict()
@@ -120,6 +132,8 @@ class OperationWorkflowPerformanceInstancesResponse:
                 "items": items,
             }
         )
+        if active_conditions is not UNSET:
+            field_dict["active_conditions"] = active_conditions
         if condition_outcomes is not UNSET:
             field_dict["condition_outcomes"] = condition_outcomes
         if decision_outcomes is not UNSET:
@@ -129,6 +143,7 @@ class OperationWorkflowPerformanceInstancesResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
         from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
         from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
         from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
@@ -173,6 +188,13 @@ class OperationWorkflowPerformanceInstancesResponse:
 
             items.append(items_item)
 
+        _active_conditions = d.pop("active_conditions", UNSET)
+        active_conditions: OperationWorkflowActiveConditionSummary | Unset
+        if isinstance(_active_conditions, Unset):
+            active_conditions = UNSET
+        else:
+            active_conditions = OperationWorkflowActiveConditionSummary.from_dict(_active_conditions)
+
         _condition_outcomes = d.pop("condition_outcomes", UNSET)
         condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset
         if isinstance(_condition_outcomes, Unset):
@@ -201,6 +223,7 @@ class OperationWorkflowPerformanceInstancesResponse:
             exclusions=exclusions,
             duration=duration,
             items=items,
+            active_conditions=active_conditions,
             condition_outcomes=condition_outcomes,
             decision_outcomes=decision_outcomes,
         )

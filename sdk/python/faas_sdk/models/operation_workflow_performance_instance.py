@@ -36,9 +36,10 @@ class OperationWorkflowPerformanceInstance:
     awaiting_verification_count: int
     resolution_verification_count: int
     decision_evidence: OperationWorkflowDecisionOutcomeEvidence | Unset = UNSET
-    """Earliest retained report classifying this contributor for the selected decision outcome group. The optional
-    business decision snapshot references its fact within operation_id. A path without a decision is evidenced by
-    the report itself. These are application-reported facts and do not establish causation."""
+    """Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact;
+    active condition groups use the latest matching fact among current decision contexts. The optional business
+    decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report
+    itself. These are application-reported facts and do not establish causation."""
     platform_tenant_id: UUID | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

@@ -222,7 +222,14 @@ def sync_detailed(
     condition_id/condition_description/condition_result and outcome_code. They reject
     kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
     results can produce overlapping groups. The earliest qualifying fact and all results observed for
-    that exact identity are returned. Missing conditions are not classified as unknown.
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
+    Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):
@@ -339,7 +346,14 @@ def sync(
     condition_id/condition_description/condition_result and outcome_code. They reject
     kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
     results can produce overlapping groups. The earliest qualifying fact and all results observed for
-    that exact identity are returned. Missing conditions are not classified as unknown.
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
+    Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):
@@ -451,7 +465,14 @@ async def asyncio_detailed(
     condition_id/condition_description/condition_result and outcome_code. They reject
     kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
     results can produce overlapping groups. The earliest qualifying fact and all results observed for
-    that exact identity are returned. Missing conditions are not classified as unknown.
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
+    Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):
@@ -566,7 +587,14 @@ async def asyncio(
     condition_id/condition_description/condition_result and outcome_code. They reject
     kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
     results can produce overlapping groups. The earliest qualifying fact and all results observed for
-    that exact identity are returned. Missing conditions are not classified as unknown.
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results.
+    Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):

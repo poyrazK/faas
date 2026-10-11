@@ -44,6 +44,7 @@ type OperationWorkflowPerformanceInstance struct {
 
 // OperationWorkflowPerformanceInstancesResponse preserves cohort coverage alongside ranked contributors.
 type OperationWorkflowPerformanceInstancesResponse struct {
+	ActiveConditions                *OperationWorkflowActiveConditionSummary     `json:"active_conditions,omitempty"`
 	ConditionOutcomes               *OperationWorkflowConditionOutcomeSummary    `json:"condition_outcomes,omitempty"`
 	DecisionOutcomes                *OperationWorkflowDecisionOutcomeSummary     `json:"decision_outcomes,omitempty"`
 	EvaluatedAt                     time.Time                                    `json:"evaluated_at"`
@@ -61,8 +62,9 @@ type OperationWorkflowPerformanceInstancesResponse struct {
 	Items                           []OperationWorkflowPerformanceInstance       `json:"items"`
 }
 
-// OperationWorkflowDecisionOutcomeEvidence identifies the earliest qualifying report and optional decision fact.
+// OperationWorkflowDecisionOutcomeEvidence identifies the qualifying report and optional decision fact. Active groups use latest snapshots.
 type OperationWorkflowDecisionOutcomeEvidence struct {
+	EvidenceAgeSeconds       *int64                                `json:"evidence_age_seconds,omitempty"`
 	Condition                *OperationBusinessConditionResult     `json:"condition,omitempty"`
 	ObservedConditionResults []string                              `json:"observed_condition_results,omitempty"`
 	ConditionComparison      *OperationWorkflowConditionComparison `json:"condition_comparison,omitempty"`

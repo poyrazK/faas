@@ -1,6 +1,8 @@
 from typing import Literal
 
 OperationWorkflowPerformanceGroupDimension = Literal[
+    "active_condition_blocked",
+    "active_condition_elapsed",
     "blocked_time",
     "blocker",
     "condition_blocked",
@@ -14,6 +16,8 @@ OperationWorkflowPerformanceGroupDimension = Literal[
 ]
 
 OPERATION_WORKFLOW_PERFORMANCE_GROUP_DIMENSION_VALUES: set[OperationWorkflowPerformanceGroupDimension] = {
+    "active_condition_blocked",
+    "active_condition_elapsed",
     "blocked_time",
     "blocker",
     "condition_blocked",

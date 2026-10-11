@@ -24,9 +24,10 @@ T = TypeVar("T", bound="OperationWorkflowDecisionOutcomeEvidence")
 
 @_attrs_define
 class OperationWorkflowDecisionOutcomeEvidence:
-    """Earliest retained report classifying this contributor for the selected decision outcome group. The optional business
-    decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report
-    itself. These are application-reported facts and do not establish causation.
+    """Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact; active
+    condition groups use the latest matching fact among current decision contexts. The optional business decision
+    snapshot references its fact within operation_id. A path without a decision is evidenced by the report itself. These
+    are application-reported facts and do not establish causation.
 
     """
 
@@ -35,6 +36,9 @@ class OperationWorkflowDecisionOutcomeEvidence:
     revision: int
     state: str
     occurred_at: datetime.datetime
+    evidence_age_seconds: int | Unset = UNSET
+    """Age of the selected active condition fact at evaluated_at; not a condition expiry or assertion of current
+    truth."""
     condition: OperationBusinessConditionResult | Unset = UNSET
     """Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
     unreported; unknown is explicit. No execution authority or causal inference."""
@@ -63,6 +67,8 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = self.state
 
         occurred_at = self.occurred_at.isoformat()
+
+        evidence_age_seconds = self.evidence_age_seconds
 
         condition: dict[str, Any] | Unset = UNSET
         if not isinstance(self.condition, Unset):
@@ -100,6 +106,8 @@ class OperationWorkflowDecisionOutcomeEvidence:
                 "occurred_at": occurred_at,
             }
         )
+        if evidence_age_seconds is not UNSET:
+            field_dict["evidence_age_seconds"] = evidence_age_seconds
         if condition is not UNSET:
             field_dict["condition"] = condition
         if observed_condition_results is not UNSET:
@@ -131,6 +139,8 @@ class OperationWorkflowDecisionOutcomeEvidence:
         state = d.pop("state")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
+
+        evidence_age_seconds = d.pop("evidence_age_seconds", UNSET)
 
         _condition = d.pop("condition", UNSET)
         condition: OperationBusinessConditionResult | Unset
@@ -183,6 +193,7 @@ class OperationWorkflowDecisionOutcomeEvidence:
             revision=revision,
             state=state,
             occurred_at=occurred_at,
+            evidence_age_seconds=evidence_age_seconds,
             condition=condition,
             observed_condition_results=observed_condition_results,
             condition_comparison=condition_comparison,

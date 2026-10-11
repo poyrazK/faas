@@ -9655,3 +9655,7 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// Active condition summaries bound context retention and displayed groups.
+const OperationWorkflowActiveConditionContextsMax = 256
+const OperationWorkflowActiveConditionGroupsMax = 64

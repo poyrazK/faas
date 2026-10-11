@@ -1076,6 +1076,8 @@ export type { OperationSummary } from './models/OperationSummary.js';
 export type { OperationTenantIdentity } from './models/OperationTenantIdentity.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
+export type { OperationWorkflowActiveConditionGroup } from './models/OperationWorkflowActiveConditionGroup.js';
+export type { OperationWorkflowActiveConditionSummary } from './models/OperationWorkflowActiveConditionSummary.js';
 export type { OperationWorkflowArtifactResponse } from './models/OperationWorkflowArtifactResponse.js';
 export type { OperationWorkflowAttentionEntry } from './models/OperationWorkflowAttentionEntry.js';
 export type { OperationWorkflowAttentionGroup } from './models/OperationWorkflowAttentionGroup.js';

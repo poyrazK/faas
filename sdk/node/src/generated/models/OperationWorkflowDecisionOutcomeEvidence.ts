@@ -6,9 +6,13 @@ import type { OperationBusinessConditionResult } from './OperationBusinessCondit
 import type { OperationBusinessDecision } from './OperationBusinessDecision.js';
 import type { OperationWorkflowConditionComparison } from './OperationWorkflowConditionComparison.js';
 /**
- * Earliest retained report classifying this contributor for the selected decision outcome group. The optional business decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report itself. These are application-reported facts and do not establish causation.
+ * Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact; active condition groups use the latest matching fact among current decision contexts. The optional business decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report itself. These are application-reported facts and do not establish causation.
  */
 export type OperationWorkflowDecisionOutcomeEvidence = {
+  /**
+   * Age of the selected active condition fact at evaluated_at; not a condition expiry or assertion of current truth.
+   */
+  evidence_age_seconds?: number;
   condition?: OperationBusinessConditionResult;
   /**
    * All results reported before or at the first terminal report for the selected exact contract and decision and rule and condition ID/description identity. Present on condition contributors; multiple results explain overlapping group membership.

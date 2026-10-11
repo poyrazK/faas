@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.ActiveConditionGroups = workflowActiveConditionLinks(data.SummaryURL, opts, summary)
 		data.ConditionGroups = workflowConditionOutcomeLinks(data.SummaryURL, opts, summary)
 		if summary.DecisionOutcomes != nil {
 			data.DecisionGroups = workflowDecisionOutcomeLinks(data.SummaryURL, opts, summary)
@@ -146,6 +147,21 @@ func workflowConditionOutcomeLinks(path string, opts api.OperationWorkflowPerfor
 		link := dashboard.WorkflowConditionOutcomeLink{OperationWorkflowConditionOutcomeGroup: value, CompletionURL: workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)}
 		group.Dimension = "condition_blocked"
 		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)
+		links = append(links, link)
+	}
+	return links
+}
+
+func workflowActiveConditionLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowActiveConditionLink {
+	links := []dashboard.WorkflowActiveConditionLink{}
+	if summary.ActiveConditions == nil {
+		return links
+	}
+	for _, value := range summary.ActiveConditions.Groups {
+		group := api.OperationWorkflowPerformanceGroup{Dimension: "active_condition_elapsed", ContractVersion: value.ContractVersion, DecisionCode: value.DecisionCode, RuleID: value.RuleID, RuleVersion: value.RuleVersion, ConditionID: value.ConditionID, ConditionDescription: value.ConditionDescription, ConditionResult: value.ConditionResult}
+		link := dashboard.WorkflowActiveConditionLink{OperationWorkflowActiveConditionGroup: value, ElapsedURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)}
+		group.Dimension = "active_condition_blocked"
+		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)
 		links = append(links, link)
 	}
 	return links

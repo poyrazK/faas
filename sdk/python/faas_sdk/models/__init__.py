@@ -2043,6 +2043,11 @@ from .operation_tenant_identity import OperationTenantIdentity
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
 from .operation_workflow_action_preview_response_reason import OperationWorkflowActionPreviewResponseReason
+from .operation_workflow_active_condition_group import OperationWorkflowActiveConditionGroup
+from .operation_workflow_active_condition_group_condition_result import (
+    OperationWorkflowActiveConditionGroupConditionResult,
+)
+from .operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
 from .operation_workflow_artifact_response import OperationWorkflowArtifactResponse
 from .operation_workflow_attention_entry import OperationWorkflowAttentionEntry
 from .operation_workflow_attention_entry_reasons_item import OperationWorkflowAttentionEntryReasonsItem
@@ -5517,6 +5522,9 @@ __all__ = (
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
     "OperationWorkflowActionPreviewResponseReason",
+    "OperationWorkflowActiveConditionGroup",
+    "OperationWorkflowActiveConditionGroupConditionResult",
+    "OperationWorkflowActiveConditionSummary",
     "OperationWorkflowArtifactResponse",
     "OperationWorkflowAttentionEntry",
     "OperationWorkflowAttentionEntryReasonsItem",

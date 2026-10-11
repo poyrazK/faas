@@ -1,6 +1,8 @@
 from typing import Literal
 
 ListAccountWorkflowPerformanceInstancesDimension = Literal[
+    "active_condition_blocked",
+    "active_condition_elapsed",
     "blocked_time",
     "blocker",
     "condition_blocked",
@@ -14,6 +16,8 @@ ListAccountWorkflowPerformanceInstancesDimension = Literal[
 ]
 
 LIST_ACCOUNT_WORKFLOW_PERFORMANCE_INSTANCES_DIMENSION_VALUES: set[ListAccountWorkflowPerformanceInstancesDimension] = {
+    "active_condition_blocked",
+    "active_condition_elapsed",
     "blocked_time",
     "blocker",
     "condition_blocked",

@@ -202,7 +202,7 @@ func workflowPerformanceSummary(instances []workflowPerformanceInstance, opts ap
 			ongoing = append(ongoing, instance)
 		}
 	}
-	return api.OperationWorkflowPerformanceSummary{ConditionOutcomes: workflowConditionOutcomes(completed), DecisionOutcomes: workflowDecisionOutcomes(completed), EvaluatedAt: at, Workflow: opts.Workflow, CohortLimit: api.OperationWorkflowPerformanceCohortMax, Completed: workflowPerformanceCohort(completed, at), Ongoing: workflowPerformanceCohort(ongoing, at)}
+	return api.OperationWorkflowPerformanceSummary{ActiveConditions: workflowActiveConditions(ongoing, at), ConditionOutcomes: workflowConditionOutcomes(completed), DecisionOutcomes: workflowDecisionOutcomes(completed), EvaluatedAt: at, Workflow: opts.Workflow, CohortLimit: api.OperationWorkflowPerformanceCohortMax, Completed: workflowPerformanceCohort(completed, at), Ongoing: workflowPerformanceCohort(ongoing, at)}
 }
 
 func (m *MemStore) SummarizeAccountWorkflowPerformance(ctx context.Context, account string, opts api.OperationWorkflowPerformanceOptions) (api.OperationWorkflowPerformanceSummary, error) {

@@ -2221,3 +2221,30 @@ Managed-operation retries therefore retain the run/step receipt identity from
 ADR-587; ordinary HTTP delivery remains at least once. See
 `docs/adr/588-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
 the API and CLI contract.
+
+### Active workflow condition visibility
+
+Performance summaries expose optional `active_conditions` for the same latest
+100 ongoing workflows and evaluation time. Complete retained histories supply
+the latest explicit reason decision and latest nonempty selected-path snapshot.
+Each explicit decision replaces its condition array, so an omitted condition is
+unreported rather than carried forward as unknown. Metadata-only reports retain
+prior evidence. A new contract version resets contexts; paths without a decision
+fact remove their context. Different rule versions in independent contexts stay
+separate; conflicting results for the same exact identity exclude the whole run.
+
+Coverage separates incomplete, conflicting, bounded-evidence and unclassified
+runs. Limits are 256 contexts and 256 final identities per workflow; the first 64
+lexical groups retain exact memberships. Counts overlap across conditions. Each
+group shows full workflow elapsed/blocked duration, evidence age and stale-state
+counts. State staleness uses the declared workflow threshold, not predicate
+expiry. These snapshots are application reports, never current business truth.
+
+`active_condition_elapsed` and `active_condition_blocked` contributors require
+`cohort=ongoing`, the summary token, and the exact returned contract/decision/rule/
+version/condition ID/description/result identity. Outcome, path and other group
+selectors are rejected. Shared selection logic gives matching counts, ranked
+workflow links, decision fact/report timestamps and evidence age frozen at the
+summary evaluation time. Changed retained evidence requires a refreshed summary.
+Completed condition outcome behavior remains unchanged. No migration or business
+execution is introduced; applications own evaluation and actions.

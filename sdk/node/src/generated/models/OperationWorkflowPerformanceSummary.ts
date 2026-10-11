@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowActiveConditionSummary } from './OperationWorkflowActiveConditionSummary.js';
 import type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
 import type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
 import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
@@ -9,6 +10,7 @@ import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerf
  * Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
  */
 export type OperationWorkflowPerformanceSummary = {
+  active_conditions?: OperationWorkflowActiveConditionSummary;
   condition_outcomes?: OperationWorkflowConditionOutcomeSummary;
   decision_outcomes?: OperationWorkflowDecisionOutcomeSummary;
   /**

@@ -304,3 +304,5 @@ export type { OperationWorkflowRuleComparisonSummary, OperationWorkflowRuleCompa
 export type { OperationWorkflowRuleVersionCohort, OperationWorkflowRuleVersionOverlap } from './customer-operations.js';
 
 export { type OperationWorkflowConditionOutcomeSummary, type OperationWorkflowConditionOutcomeGroup } from './customer-operations.js';
+
+export type { OperationWorkflowActiveConditionSummary, OperationWorkflowActiveConditionGroup } from './customer-operations.js';

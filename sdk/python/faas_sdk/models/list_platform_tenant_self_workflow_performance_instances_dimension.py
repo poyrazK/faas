@@ -1,6 +1,8 @@
 from typing import Literal
 
 ListPlatformTenantSelfWorkflowPerformanceInstancesDimension = Literal[
+    "active_condition_blocked",
+    "active_condition_elapsed",
     "blocked_time",
     "blocker",
     "condition_blocked",
@@ -16,6 +18,8 @@ ListPlatformTenantSelfWorkflowPerformanceInstancesDimension = Literal[
 LIST_PLATFORM_TENANT_SELF_WORKFLOW_PERFORMANCE_INSTANCES_DIMENSION_VALUES: set[
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension
 ] = {
+    "active_condition_blocked",
+    "active_condition_elapsed",
     "blocked_time",
     "blocker",
     "condition_blocked",

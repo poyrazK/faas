@@ -159,7 +159,13 @@ func workflowConditionOutcomeGroupKey(g api.OperationWorkflowConditionOutcomeGro
 	return workflowConditionOutcomeSelector(api.OperationWorkflowPerformanceGroup{ContractVersion: g.ContractVersion, DecisionCode: g.DecisionCode, RuleID: g.RuleID, RuleVersion: g.RuleVersion, ConditionID: g.ConditionID, ConditionDescription: g.ConditionDescription, ConditionResult: g.ConditionResult, OutcomeCode: g.OutcomeCode})
 }
 func validateConditionOutcomeGroup(g api.OperationWorkflowPerformanceGroup) error {
-	if g.ContractVersion < 1 || g.ContractVersion > api.OperationWorkflowContractVersionMax || g.State != "" || g.Operation != "" || g.Code != "" || g.Owner != "" || g.Unassigned || g.Kind != "" || g.GroupID != "" || g.PathID != "" || api.ValidateOperationWorkflowStateName(g.OutcomeCode) != nil {
+	if api.ValidateOperationWorkflowStateName(g.OutcomeCode) != nil {
+		return ErrInvalidArgument
+	}
+	return validateConditionGroupSelectors(g)
+}
+func validateConditionGroupSelectors(g api.OperationWorkflowPerformanceGroup) error {
+	if g.ContractVersion < 1 || g.ContractVersion > api.OperationWorkflowContractVersionMax || g.State != "" || g.Operation != "" || g.Code != "" || g.Owner != "" || g.Unassigned || g.Kind != "" || g.GroupID != "" || g.PathID != "" {
 		return ErrInvalidArgument
 	}
 	if api.ValidateOperationBusinessDecision(api.OperationBusinessDecision{Workflow: "workflow", InstanceID: "instance", Code: g.DecisionCode, Description: "decision", RuleID: g.RuleID, RuleVersion: g.RuleVersion}) != nil {

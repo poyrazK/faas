@@ -206,3 +206,6 @@ type OperationWorkflowRuleVersionOutcome = api.OperationWorkflowRuleVersionOutco
 
 type OperationWorkflowRuleVersionCohort = api.OperationWorkflowRuleVersionCohort
 type OperationWorkflowRuleVersionOverlap = api.OperationWorkflowRuleVersionOverlap
+
+type OperationWorkflowActiveConditionSummary = api.OperationWorkflowActiveConditionSummary
+type OperationWorkflowActiveConditionGroup = api.OperationWorkflowActiveConditionGroup

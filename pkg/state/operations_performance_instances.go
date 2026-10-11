@@ -94,6 +94,9 @@ func parseWorkflowPerformanceToken(raw string, query string, now time.Time) (wor
 	return token, nil
 }
 func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) error {
+	if activeConditionDimension(g.Dimension) {
+		return validateActiveConditionGroup(g)
+	}
 	if conditionOutcomeDimension(g.Dimension) {
 		return validateConditionOutcomeGroup(g)
 	}
@@ -172,6 +175,9 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	if businessOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
+	if activeConditionDimension(opts.Dimension) && (opts.Cohort != "ongoing" || opts.CohortToken == "") {
+		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+	}
 	opts.OperationWorkflowPerformanceOptions = base
 	var expected workflowPerformanceTokenValue
 	if opts.CohortToken != "" {
@@ -231,6 +237,20 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 		}
 	}
+	if activeConditionDimension(opts.Dimension) {
+		out.ActiveConditions = workflowActiveConditions(cohort, at)
+		found := false
+		selector := workflowConditionOutcomeSelector(opts.OperationWorkflowPerformanceGroup)
+		for _, group := range out.ActiveConditions.Groups {
+			if workflowActiveConditionGroupKey(group) == selector {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+		}
+	}
 	type identity struct {
 		InstanceID, OperationID string
 		Subject                 api.OperationSubject
@@ -249,6 +269,10 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		}
 		if conditionOutcomeDimension(opts.Dimension) {
 			seconds, decisionEvidence = workflowConditionOutcomeContribution(i, opts.OperationWorkflowPerformanceGroup)
+			matched = decisionEvidence != nil
+		}
+		if activeConditionDimension(opts.Dimension) {
+			seconds, decisionEvidence = workflowActiveConditionContribution(i, opts.OperationWorkflowPerformanceGroup, at)
 			matched = decisionEvidence != nil
 		}
 		if !matched {
