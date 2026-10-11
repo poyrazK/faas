@@ -15,7 +15,7 @@ func cmdCommitRecoveryAlerts(args []string) int {
 	path := fs.String("checkpoint", "", "saved recovery watch checkpoint")
 	acks := fs.String("ack-alerts", "", "exact incident_id/sequence acknowledgements JSON")
 	replay := fs.Bool("replay", false, "emit pending historical alerts as JSON lines")
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "replay")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}

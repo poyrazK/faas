@@ -34,7 +34,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	limit := fs.Int("limit", api.CommitRecoveryStatusMax, "subscriber observations")
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "diagnostics", "alerts-json", "watch", "watch-diagnostics")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
