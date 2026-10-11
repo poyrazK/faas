@@ -22,10 +22,15 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityQuotaPolicyEnabled = false
 	s.durableEntityRetirementEnabled = false
 	s.durableEntityRegistryEnabled = false
+	s.durableEntityRegistryCleanupEnabled = false
 	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
 	migration := getenv("FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED") == "1"
 	policy := getenv("FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED") == "1"
 	registry := getenv("FAAS_DURABLE_ENTITY_REGISTRY_ENABLED") == "1"
+	registryCleanup := getenv("FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED") == "1"
+	if registryCleanup && !registry {
+		return errors.New("registry cleanup requires registry management")
+	}
 	if registry && !policy {
 		return errors.New("entity registry requires quota policy management")
 	}
@@ -135,6 +140,11 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 		}
 		tenantQuotas = &entitysocket.Quotas{Store: store, Limits: limits, RegistryCache: cache}
 	}
+	if registryCleanup {
+		if err := tenantQuotas.CheckRegistryCleanup(ctx); err != nil {
+			return errors.New("registry cleanup requires verified private listing and delete permission")
+		}
+	}
 	// The request budget is shorter than this lease. We deliberately avoid a
 	// renewal writer racing every transition in the first synchronous slice.
 	probeCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
@@ -201,6 +211,7 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityQuotaPolicyEnabled = policy
 	s.durableEntityRetirementEnabled = retirement
 	s.durableEntityRegistryEnabled = registry
+	s.durableEntityRegistryCleanupEnabled = registryCleanup
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance

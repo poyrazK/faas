@@ -69,6 +69,7 @@ type server struct {
 	durableEntityQuotaPolicyEnabled          bool
 	durableEntityRetirementEnabled           bool
 	durableEntityRegistryEnabled             bool
+	durableEntityRegistryCleanupEnabled      bool
 	durableEntityApps                        map[string]bool
 	durableEntityAlarmsEnabled               bool
 	durableEntityHealthEnabled               bool
@@ -2890,6 +2891,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startEntityQuotaMigration))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stepEntityQuotaMigration))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityQuotaPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/registry/cleanup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityRegistryCleanup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/cleanup/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startEntityRegistryCleanup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/cleanup/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stepEntityRegistryCleanup))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/registry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityRegistry))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/enable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.enableEntityRegistry))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/retirement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityRetirement))))

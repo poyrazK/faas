@@ -24,6 +24,7 @@ type quotaRegistry struct {
 	Actor          string    `json:"actor"`
 	At             time.Time `json:"at"`
 	Shards         []string  `json:"shards"`
+	Epoch          uint64    `json:"epoch,omitempty"`
 }
 type registryShard struct {
 	Scope       string              `json:"scope"`
@@ -33,13 +34,13 @@ type registryShard struct {
 }
 
 func entityCapacity(r quotaRecord) int {
-	if r.Schema == 4 {
+	if r.Schema >= 4 {
 		return 1024
 	}
 	return 64
 }
 func retirementCapacity(r quotaRecord) int {
-	if r.Schema == 4 {
+	if r.Schema >= 4 {
 		return 4096
 	}
 	return 256
@@ -49,12 +50,18 @@ func registryDigest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }
-func registryPath(scope string, index int, hash string) string {
+func registryPath(scope string, index int, hash string, epochs ...uint64) string {
+	if len(epochs) > 0 && epochs[0] > 0 {
+		return registryEpochPrefix(scope, epochs[0]) + string("0123456789abcdef"[index]) + "/" + hash
+	}
 	return "tenant-registry/v1/" + scope + "/" + string("0123456789abcdef"[index]) + "/" + hash
 }
 
 func (q *Quotas) loadRegistry(ctx context.Context, key string, r *quotaRecord) error {
-	if r.Schema != 4 {
+	if !validRegistryCleanup(*r) {
+		return durableentity.ErrCorrupt
+	}
+	if r.Schema < 4 {
 		if r.Registry != nil {
 			return durableentity.ErrCorrupt
 		}
@@ -71,9 +78,9 @@ func (q *Quotas) loadRegistry(ctx context.Context, key string, r *quotaRecord) e
 		var shard registryShard
 		var err error
 		if q.RegistryCache != nil {
-			shard, err = q.RegistryCache.read(ctx, key, index, hash)
+			shard, err = q.RegistryCache.read(ctx, key, index, hash, root.Epoch)
 		} else {
-			shard, _, err = readRegistryShard(ctx, q.Store, key, index, hash)
+			shard, _, err = readRegistryShard(ctx, q.Store, key, index, hash, root.Epoch)
 		}
 		if err != nil {
 			return err
@@ -84,8 +91,8 @@ func (q *Quotas) loadRegistry(ctx context.Context, key string, r *quotaRecord) e
 	return nil
 }
 
-func readRegistryShard(ctx context.Context, store durableentity.ObjectStore, scope string, index int, hash string) (registryShard, int64, error) {
-	body, version, err := store.Get(ctx, registryPath(scope, index, hash), registryShardBytes)
+func readRegistryShard(ctx context.Context, store durableentity.ObjectStore, scope string, index int, hash string, epochs ...uint64) (registryShard, int64, error) {
+	body, version, err := store.Get(ctx, registryPath(scope, index, hash, epochs...), registryShardBytes)
 	if errors.Is(err, durableentity.ErrNotFound) {
 		return registryShard{}, 0, durableentity.ErrCorrupt
 	}
@@ -117,7 +124,7 @@ func readRegistryShard(ctx context.Context, store durableentity.ObjectStore, sco
 // All mutations, including policy changes, must use this serializer. The single
 // subsequent root CAS publishes fences, recovery charges and credits atomically.
 func (q *Quotas) marshalQuota(ctx context.Context, key string, r quotaRecord) ([]byte, error) {
-	if r.Schema == 4 {
+	if r.Schema >= 4 {
 		if r.Registry == nil || !validQuotaRetirements(r) {
 			return nil, durableentity.ErrCorrupt
 		}
@@ -160,7 +167,7 @@ func (q *Quotas) marshalQuota(ctx context.Context, key string, r quotaRecord) ([
 			if len(r.Registry.Shards) == registryShards && r.Registry.Shards[i] == hash {
 				continue
 			}
-			path := registryPath(key, i, hash)
+			path := registryPath(key, i, hash, root.Epoch)
 			version, err := q.Store.Put(ctx, path, body, "")
 			if errors.Is(err, durableentity.ErrConflict) {
 				existing, v, readErr := q.Store.Get(ctx, path, registryShardBytes)
@@ -197,11 +204,13 @@ type RegistryStatus struct {
 	Retired         int       `json:"retired"`
 	ActiveCapacity  int       `json:"active_capacity"`
 	RetiredCapacity int       `json:"retired_capacity"`
+	Epoch           uint64    `json:"epoch,omitempty"`
 }
 
 func registryStatus(r quotaRecord, version string) RegistryStatus {
-	out := RegistryStatus{Enabled: r.Schema == 4, Revision: registryDigest([]byte(version)), Active: len(r.Entities), Retired: len(r.Retirements), ActiveCapacity: entityCapacity(r), RetiredCapacity: retirementCapacity(r)}
+	out := RegistryStatus{Enabled: r.Schema >= 4, Revision: registryDigest([]byte(version)), Active: len(r.Entities), Retired: len(r.Retirements), ActiveCapacity: entityCapacity(r), RetiredCapacity: retirementCapacity(r)}
 	if r.Registry != nil {
+		out.Epoch = r.Registry.Epoch
 		out.OperationID = r.Registry.OperationID
 		out.Actor = r.Registry.Actor
 		out.At = r.Registry.At
@@ -335,7 +344,7 @@ func retirementSpace(r quotaRecord, key string) bool {
 	if len(r.Retirements) >= retirementCapacity(r) {
 		return false
 	}
-	if r.Schema != 4 {
+	if r.Schema < 4 {
 		return true
 	}
 	count := 0

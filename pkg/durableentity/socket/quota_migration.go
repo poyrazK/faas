@@ -120,7 +120,7 @@ func migrationPlan(r quotaRecord, page durableentity.QuotaInventoryPage) (QuotaM
 		}
 	}
 	plan.EntityShortfall = max(0, len(r.Entities)+newEntities-entityCapacity(r))
-	if r.Schema == 4 {
+	if r.Schema >= 4 {
 		counts := make([]int, registryShards)
 		known := map[string]bool{}
 		for _, e := range r.Entities {

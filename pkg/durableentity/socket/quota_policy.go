@@ -99,7 +99,7 @@ func policyPreview(r quotaRecord, p QuotaPolicyRequest, node TenantLimits) (Quot
 	}
 	preview.AdditionalBytes = preview.ProjectedReservedBytes - preview.CurrentReservedBytes
 	preview.ByteShortfall = max(0, preview.ProjectedReservedBytes-p.Limits.RetainedBytes)
-	preview.ReadyToApply = preview.ByteShortfall == 0 && preview.NodeMatches && !pendingRetirements(r) && r.PolicyRevision == p.ExpectedRevision && r.Migration != nil && r.Migration.Phase != "complete" && r.Migration.ID == p.ExpectedMigrationID && r.Migration.Revision == p.ExpectedMigrationRevision && p.MigrationID != r.Migration.ID && len(r.Connections) == 0
+	preview.ReadyToApply = !registryCleanupActive(r) && preview.ByteShortfall == 0 && preview.NodeMatches && !pendingRetirements(r) && r.PolicyRevision == p.ExpectedRevision && r.Migration != nil && r.Migration.Phase != "complete" && r.Migration.ID == p.ExpectedMigrationID && r.Migration.Revision == p.ExpectedMigrationRevision && p.MigrationID != r.Migration.ID && len(r.Connections) == 0
 	return preview, nil
 }
 func (q *Quotas) PreviewPolicy(ctx context.Context, id durableentity.ID, p QuotaPolicyRequest) (QuotaPolicyPreview, error) {
@@ -135,6 +135,9 @@ func (q *Quotas) ApplyPolicy(ctx context.Context, id durableentity.ID, p QuotaPo
 				}
 				return &c, nil
 			}
+		}
+		if registryCleanupActive(r) {
+			return nil, ErrRegistryCleanupPending
 		}
 		prune(&r, q.now())
 		preview, err := policyPreview(r, p, q.Limits)

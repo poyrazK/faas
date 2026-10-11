@@ -48,20 +48,21 @@ type entityReservation struct {
 	Bytes int64  `json:"bytes"`
 }
 type quotaRecord struct {
-	Schema         int                 `json:"schema"`
-	Scope          quotaScope          `json:"scope"`
-	Limits         TenantLimits        `json:"limits"`
-	Window         time.Time           `json:"window"`
-	GrantsIssued   int                 `json:"grants_issued"`
-	Invocations    int                 `json:"invocations"`
-	Grants         []Grant             `json:"grants"`
-	Connections    []connectionLease   `json:"connections"`
-	Entities       []entityReservation `json:"entities"`
-	Migration      *QuotaMigration     `json:"migration,omitempty"`
-	PolicyRevision uint64              `json:"policy_revision,omitempty"`
-	PolicyChanges  []QuotaPolicyChange `json:"policy_changes,omitempty"`
-	Retirements    []QuotaRetirement   `json:"retirements,omitempty"`
-	Registry       *quotaRegistry      `json:"registry,omitempty"`
+	Schema          int                 `json:"schema"`
+	Scope           quotaScope          `json:"scope"`
+	Limits          TenantLimits        `json:"limits"`
+	Window          time.Time           `json:"window"`
+	GrantsIssued    int                 `json:"grants_issued"`
+	Invocations     int                 `json:"invocations"`
+	Grants          []Grant             `json:"grants"`
+	Connections     []connectionLease   `json:"connections"`
+	Entities        []entityReservation `json:"entities"`
+	Migration       *QuotaMigration     `json:"migration,omitempty"`
+	PolicyRevision  uint64              `json:"policy_revision,omitempty"`
+	PolicyChanges   []QuotaPolicyChange `json:"policy_changes,omitempty"`
+	Retirements     []QuotaRetirement   `json:"retirements,omitempty"`
+	Registry        *quotaRegistry      `json:"registry,omitempty"`
+	RegistryCleanup *RegistryCleanup    `json:"registry_cleanup,omitempty"`
 }
 type QuotaError struct {
 	Budget          string
@@ -108,7 +109,7 @@ func (q *Quotas) read(ctx context.Context, key string) (quotaRecord, string, err
 		return quotaRecord{}, "", err
 	}
 	var r quotaRecord
-	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || (r.Schema < 1 || r.Schema > 4) || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > entityCapacity(r) {
+	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || (r.Schema < 1 || r.Schema > 5) || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > entityCapacity(r) {
 		return quotaRecord{}, "", durableentity.ErrCorrupt
 	}
 	if err := q.loadRegistry(ctx, key, &r); err != nil {
@@ -209,6 +210,9 @@ func (q *Quotas) mutateMigration(ctx context.Context, key string, scope *quotaSc
 			}
 		} else {
 			r.Limits = stricterLimits(r.Limits, q.Limits)
+		}
+		if registryCleanupActive(r) {
+			return ErrRegistryCleanupPending
 		}
 		prune(&r, now)
 		if !migration && r.Migration != nil && r.Migration.Phase != "complete" {

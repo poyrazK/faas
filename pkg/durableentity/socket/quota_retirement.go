@@ -94,7 +94,7 @@ func (q *Quotas) PreviewRetirement(ctx context.Context, id durableentity.ID) (Qu
 		return QuotaRetirementPreview{}, err
 	}
 	prune(&r, q.now())
-	out := QuotaRetirementPreview{Ready: r.Schema >= 2 && r.Limits == q.Limits && r.Migration != nil && r.Migration.Phase == "complete" && len(r.Connections) == 0 && retirementSpace(r, entityKey(id))}
+	out := QuotaRetirementPreview{Ready: !registryCleanupActive(r) && r.Schema >= 2 && r.Limits == q.Limits && r.Migration != nil && r.Migration.Phase == "complete" && len(r.Connections) == 0 && retirementSpace(r, entityKey(id))}
 	for _, e := range r.Entities {
 		if e.Key == entityKey(id) {
 			out.ReservedBytes = e.Bytes

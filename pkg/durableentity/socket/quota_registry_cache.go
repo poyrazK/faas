@@ -49,8 +49,8 @@ func cloneRegistryShard(s registryShard) registryShard {
 	s.Retirements = append([]QuotaRetirement(nil), s.Retirements...)
 	return s
 }
-func (c *RegistryCache) read(ctx context.Context, scope string, index int, hash string) (registryShard, error) {
-	key := registryPath(scope, index, hash)
+func (c *RegistryCache) read(ctx context.Context, scope string, index int, hash string, epochs ...uint64) (registryShard, error) {
+	key := registryPath(scope, index, hash, epochs...)
 	for {
 		if err := ctx.Err(); err != nil {
 			return registryShard{}, err
@@ -101,7 +101,7 @@ func (c *RegistryCache) read(ctx context.Context, scope string, index int, hash 
 		flight := &registryFlight{done: make(chan struct{})}
 		c.flights[key] = flight
 		c.mu.Unlock()
-		shard, weight, err := readRegistryShard(ctx, c.store, scope, index, hash)
+		shard, weight, err := readRegistryShard(ctx, c.store, scope, index, hash, epochs...)
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}

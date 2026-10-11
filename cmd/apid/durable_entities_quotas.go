@@ -49,6 +49,10 @@ func writeEntityTenantQuotaProblem(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(410, "durable_entity_retired", "Entity retired", "this entity identity is permanently retired; use a new identity for new work"))
 		return
 	}
+	if errors.Is(err, entitysocket.ErrRegistryCleanupPending) {
+		api.WriteProblem(w, api.NewProblem(503, "durable_entity_registry_cleanup_pending", "Registry cleanup pending", "scope admission is held until registry cleanup completes"))
+		return
+	}
 	if errors.Is(err, entitysocket.ErrPolicyMismatch) {
 		api.WriteProblem(w, api.NewProblem(503, "durable_entity_quota_policy_mismatch", "Quota policy mismatch", "this node's configured limits differ from the approved scope policy"))
 		return
