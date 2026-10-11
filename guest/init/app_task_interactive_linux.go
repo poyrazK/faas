@@ -36,29 +36,39 @@ const (
 
 func appTaskInteractiveHandler(log *slog.Logger) apptaskproto.InteractiveHandler {
 	return func(ctx context.Context, session *apptaskproto.InteractiveSession) (apptaskproto.Result, error) {
-		runtime, failure := loadAppTaskRuntime(log)
-		if failure != nil {
-			return *failure, nil
+		result, err := runAppTaskInteractive(ctx, session, log)
+		if err != nil {
+			log.Warn("interactive app task interrupted", "err", err, "cause", context.Cause(ctx))
+		} else {
+			log.Info("interactive app task finished", "status", result.Status, "failure_code", result.FailureCode)
 		}
-		req := session.Request
-		if api.IsAppTaskSessionBuiltin(req.Command) {
-			if !api.ValidAppTaskSessionBuiltin(req.Command, req.CommandShell, req.TTY) {
-				return appTaskInfraFailure("builtin_invalid", "the session built-in was called with invalid arguments", 2), nil
-			}
-			if req.Command[0] == api.AppTaskPortForwardCommand {
-				return runAppTaskPortForward(ctx, session, req.Command[1])
-			}
-			return runAppTaskCopyOut(ctx, session, runtime, req.Command[1])
-		}
-		cmd, credential, failure := prepareAppTaskCommand(session.Request, runtime.manifest, runtime.secrets, runtime.apiEnv)
-		if failure != nil {
-			return *failure, nil
-		}
-		if session.Request.TTY {
-			return runAppTaskTTY(ctx, session, cmd, credential, log)
-		}
-		return runAppTaskPipes(ctx, session, cmd, credential)
+		return result, err
 	}
+}
+
+func runAppTaskInteractive(ctx context.Context, session *apptaskproto.InteractiveSession, log *slog.Logger) (apptaskproto.Result, error) {
+	runtime, failure := loadAppTaskRuntime(log)
+	if failure != nil {
+		return *failure, nil
+	}
+	req := session.Request
+	if api.IsAppTaskSessionBuiltin(req.Command) {
+		if !api.ValidAppTaskSessionBuiltin(req.Command, req.CommandShell, req.TTY) {
+			return appTaskInfraFailure("builtin_invalid", "the session built-in was called with invalid arguments", 2), nil
+		}
+		if req.Command[0] == api.AppTaskPortForwardCommand {
+			return runAppTaskPortForward(ctx, session, req.Command[1])
+		}
+		return runAppTaskCopyOut(ctx, session, runtime, req.Command[1])
+	}
+	cmd, credential, failure := prepareAppTaskCommand(session.Request, runtime.manifest, runtime.secrets, runtime.apiEnv)
+	if failure != nil {
+		return *failure, nil
+	}
+	if session.Request.TTY {
+		return runAppTaskTTY(ctx, session, cmd, credential, log)
+	}
+	return runAppTaskPipes(ctx, session, cmd, credential)
 }
 
 func runAppTaskTTY(ctx context.Context, session *apptaskproto.InteractiveSession, cmd *exec.Cmd, credential *syscall.Credential, log *slog.Logger) (apptaskproto.Result, error) {

@@ -234,7 +234,7 @@ func (s *Server) executeInteractiveAppTaskStream(req *vmmdpb.ExecuteAppTaskReque
 	}
 	terminal := interactiveTerminal(req.GetTaskId(), result, runErr, clientCtx.Err() != nil)
 	if runErr != nil {
-		s.log.Warn("vmmd: interactive app task ended without a guest result", "task_id", req.GetTaskId(), "failure_code", terminal.GetFailureCode())
+		s.log.Warn("vmmd: interactive app task ended without a guest result", "task_id", req.GetTaskId(), "failure_code", terminal.GetFailureCode(), "err", runErr)
 	}
 	_ = client.send(attachTerminalEvent(terminal))
 	return stream.Send(appTaskTerminalEvent(terminal))

@@ -72,13 +72,7 @@ func listenAppTaskHook() (net.Listener, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("app task vsock listen: %w", err)
 	}
-	f := os.NewFile(uintptr(fd), "app-task-vsock")
-	ln, err := net.FileListener(f)
-	_ = f.Close()
-	if err != nil {
-		return nil, fmt.Errorf("app task vsock listener: %w", err)
-	}
-	return ln, nil
+	return newFDListener(fd, vsockAddr{port: VsockAppTaskPort}), nil
 }
 
 func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto.Handler, interactive apptaskproto.InteractiveHandler) error {
@@ -90,7 +84,24 @@ func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto
 		return fmt.Errorf("app task vsock accept: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	return apptaskproto.ServeSession(ctx, conn, handler, interactive)
+	serveErr := apptaskproto.ServeSession(ctx, conn, handler, interactive)
+	awaitAppTaskHostClose(conn, appTaskHostCloseWait)
+	return serveErr
+}
+
+// appTaskHostCloseWait bounds how long the guest waits for the host to close
+// the session after the result frame.
+const appTaskHostCloseWait = 3 * time.Second
+
+// awaitAppTaskHostClose holds the guest until the host closes the connection
+// (or wait elapses). A vsock write only queues bytes: powering off right
+// after writing the result frame can drop it before the host reads it. The
+// host closes as soon as it has the result.
+func awaitAppTaskHostClose(conn net.Conn, wait time.Duration) {
+	if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, conn)
 }
 
 var poweroffAppTask = func() error {
@@ -112,6 +123,8 @@ func runAppTaskGuest(log *slog.Logger) error {
 	}
 	ln, err := listenAppTaskHook()
 	if err != nil {
+		// Power-off halts before boot() can report the error, so log it here.
+		log.Error("app task listener unavailable", "err", err)
 		_ = poweroffAppTask()
 		return err
 	}
@@ -119,6 +132,8 @@ func runAppTaskGuest(log *slog.Logger) error {
 	serveErr := serveAppTaskOnce(context.Background(), ln, appTaskHandler(log), appTaskInteractiveHandler(log))
 	if serveErr != nil {
 		log.Warn("app task guest exchange failed", "err", serveErr)
+	} else {
+		log.Info("app task guest exchange complete")
 	}
 	if powerErr := poweroffAppTask(); powerErr != nil {
 		if serveErr != nil {

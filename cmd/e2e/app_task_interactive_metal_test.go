@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -194,7 +196,7 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		session.send(api.AppTaskAttachStdin, []byte("exit\n"))
 		terminal := session.drain(&out)
 		if terminal.ExitCode == nil || *terminal.ExitCode != 7 {
-			t.Fatalf("terminal = %+v", terminal)
+			t.Fatalf("terminal = %s", describeTerminal(terminal))
 		}
 		if _, status := attachInteractiveTask(t, h, key, task, task.Attach.Token, ""); status != http.StatusGone {
 			t.Fatalf("reattach status = %d, want 410", status)
@@ -220,7 +222,7 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		var archive bytes.Buffer
 		terminal := session.drain(&archive)
 		if terminal.ExitCode == nil || *terminal.ExitCode != 0 {
-			t.Fatalf("copy terminal = %+v", terminal)
+			t.Fatalf("copy terminal = %s", describeTerminal(terminal))
 		}
 		tr := tar.NewReader(&archive)
 		header, err := tr.Next()
@@ -254,13 +256,19 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 
 		stdoutR, stdoutW := io.Pipe()
 		go func() {
+			// No t.Fatalf off the test goroutine: report through the pipe.
 			for {
-				msg := session.next()
-				if msg[0] == api.AppTaskAttachStdout {
+				_ = session.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+				_, msg, err := session.conn.ReadMessage()
+				if err != nil {
+					_ = stdoutW.CloseWithError(err)
+					return
+				}
+				if len(msg) > 0 && msg[0] == api.AppTaskAttachStdout {
 					_, _ = stdoutW.Write(msg[1:])
 				}
-				if msg[0] == api.AppTaskAttachTerminal {
-					_ = stdoutW.Close()
+				if len(msg) > 0 && msg[0] == api.AppTaskAttachTerminal {
+					_ = stdoutW.CloseWithError(errors.New("session ended: " + string(msg[1:])))
 					return
 				}
 			}
@@ -287,6 +295,18 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		}
 		session.send(api.AppTaskAttachStdinClose, nil)
 	})
+}
+
+func describeTerminal(terminal api.AppTaskAttachTerminalMessage) string {
+	exit := "none"
+	if terminal.ExitCode != nil {
+		exit = fmt.Sprint(*terminal.ExitCode)
+	}
+	failure := "none"
+	if terminal.Failure != nil {
+		failure = terminal.Failure.Code + ": " + terminal.Failure.Message
+	}
+	return fmt.Sprintf("status=%s exit=%s failure=%s", terminal.Status, exit, failure)
 }
 
 type writerTo func([]byte) error
