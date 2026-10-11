@@ -1,0 +1,234 @@
+package apidserver
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func TestParseAppWebhooksPath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+		ok   bool
+	}{
+		{name: "bare", path: "demo/webhooks", want: "demo", ok: true},
+		{name: "trailing slash", path: "demo/webhooks/", want: "demo", ok: true},
+		{name: "nested", path: "demo/other/webhooks", ok: false},
+		{name: "missing slug", path: "/webhooks", ok: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseAppWebhooksPath(tc.path)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("parseAppWebhooksPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestDashboardHandler_AppWebhooks(t *testing.T) {
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanPro); err != nil {
+		t.Fatalf("UpdateAccountPlan: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "hooks-app", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	webhook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: acct.ID, AppID: app.ID, TargetURL: "https://example.com/events", SecretSealed: []byte("sealed"),
+		EventFilter: []string{"app.deployed"}, RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAppWebhook: %v", err)
+	}
+	delivery, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID, Event: state.AppWebhookEventAppDeployed,
+		Status: state.AppWebhookDeliveryDead, Attempt: 7, LastError: "receiver returned 503", LastResponseCode: 503,
+		NextAttemptAt: time.Now(), Payload: json.RawMessage(`{"deployment_id":"redacted-from-page"}`),
+	})
+	if err != nil {
+		t.Fatalf("RecordAppWebhookDelivery: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"Webhooks for", "https://example.com/events", "app.deployed", "receiver returned 503", "Retry", "Rotate secret", "Create webhook", delivery.ID,
+		"Queue:", "1 dead", "24h terminal success",
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("body missing %q\n%s", want, rec.Body.String())
+		}
+	}
+	if strings.Contains(rec.Body.String(), "redacted-from-page") {
+		t.Error("delivery payload leaked into dashboard page")
+	}
+	if cookie := findDashboardCookie(rec.Result().Cookies(), dashboardWebhooksCSRFCookie); cookie == nil || cookie.Value == "" {
+		t.Fatalf("GET webhooks: missing %s cookie", dashboardWebhooksCSRFCookie)
+	}
+	tracked, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+		Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{"private":"do-not-render"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, err=%v", claimed, err)
+	}
+	if err := store.MarkAppWebhookDeliveryDead(t.Context(), tracked.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	history := httptest.NewRecorder()
+	historyReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks?delivery_id="+tracked.ID, nil)
+	historyReq.AddCookie(cookie)
+	h.ServeHTTP(history, historyReq)
+	if history.Code != http.StatusOK || !strings.Contains(history.Body.String(), "Attempts for") || !strings.Contains(history.Body.String(), "410") {
+		t.Fatalf("attempt history page = %d: %s", history.Code, history.Body)
+	}
+	if strings.Contains(history.Body.String(), "do-not-render") {
+		t.Error("attempt history page exposed delivery payload")
+	}
+	paused, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+		Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim cooldown delivery = %+v, %v", claimed, err)
+	}
+	until := time.Now().Add(2 * time.Minute)
+	if err := store.MarkAppWebhookDeliveryFailed(t.Context(), paused.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: webhook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	cooldownPage := httptest.NewRecorder()
+	cooldownReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	cooldownReq.AddCookie(cookie)
+	h.ServeHTTP(cooldownPage, cooldownReq)
+	if cooldownPage.Code != http.StatusOK || !strings.Contains(cooldownPage.Body.String(), "receiver cooldown until") {
+		t.Fatalf("dashboard cooldown = %d: %s", cooldownPage.Code, cooldownPage.Body)
+	}
+	newURL := webhook.TargetURL + "/replacement"
+	if _, err := store.UpdateAppWebhook(t.Context(), webhook.ID, state.UpdateAppWebhookParams{TargetURL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+			WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+			Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{}`),
+			NextAttemptAt: time.Now().Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now())
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial replacement claim = %+v, %v", initial, err)
+	}
+	expired := time.Now().Add(-time.Second)
+	if err := store.MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", expired, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &expired, ReceiverCooldownTargetURL: newURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now())
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("recovery probe = %+v, %v", probe, err)
+	}
+	probePage := httptest.NewRecorder()
+	probeReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	probeReq.AddCookie(cookie)
+	h.ServeHTTP(probePage, probeReq)
+	if probePage.Code != http.StatusOK || !strings.Contains(probePage.Body.String(), "receiver recovery probe in flight") ||
+		!strings.Contains(probePage.Body.String(), "oldest overdue: none") {
+		t.Fatalf("dashboard probe state = %d: %s", probePage.Code, probePage.Body)
+	}
+}
+
+func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanPro); err != nil {
+		t.Fatalf("UpdateAccountPlan: %v", err)
+	}
+	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "hooks-create", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/hooks-create/webhooks", map[string]string{
+		"target_url": "https://example.com/events", "webhook_secret": "secret", "enabled": "true",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), middleware.FormFieldName) && !strings.Contains(strings.ToLower(rec.Body.String()), "csrf") {
+		t.Fatalf("missing csrf problem: %s", rec.Body.String())
+	}
+}
+
+func TestDashboardAppWebhookRotateInstallsSuppliedSecret(t *testing.T) {
+	teardown := withTestRecipient(t)
+	t.Cleanup(teardown)
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "hooks-rotate", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: acct.ID, AppID: app.ID, TargetURL: "https://example.com/events",
+		SecretSealed: []byte("old-sealed"), RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardWebhooksAction, acct.ID, dashboardWebhooksCSRFCookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/hooks-rotate/webhooks/"+hook.ID+"/rotate-secret", map[string]string{
+		middleware.FormFieldName: token,
+		"webhook_secret":         "known-dashboard-replacement",
+	}, &http.Cookie{Name: dashboardWebhooksCSRFCookie, Value: token})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := store.AppWebhookByID(t.Context(), hook.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated.SecretSealed) == "old-sealed" || strings.Contains(string(updated.SecretSealed), "known-dashboard-replacement") {
+		t.Fatalf("dashboard did not replace and seal the supplied secret")
+	}
+}

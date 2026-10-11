@@ -643,17 +643,26 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
-	CodeValidation                      = "validation_failed"
-	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
-	CodeAutomationVersionConflict       = "automation_version_conflict"
-	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
-	CodeAutomationInvalid               = "automation_invalid"
-	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
-	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
-	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
-	CodeConflict                        = "conflict"
+	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
+	CodeValidation                     = "validation_failed"
+	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
+	CodeAutomationVersionConflict      = "automation_version_conflict"
+	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
+	CodeAutomationInvalid              = "automation_invalid"
+	CodeRealtimeConditionConflict      = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
+	CodeConflict                       = "conflict"
+	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
+	// that is no longer the app's latest.
+	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
+	// ADR-963 reusable edge-rule lists.
+	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
+	CodeEdgeRuleListExists              = "edge_rule_list_exists"
+	CodeEdgeRuleListInUse               = "edge_rule_list_in_use"
+	CodePlanLimitEdgeRuleLists          = "plan_limit_edge_rule_lists"
+	CodePlanLimitEdgeRuleListItems      = "plan_limit_edge_rule_list_items"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
@@ -1899,6 +1908,14 @@ func StatusForCode(code string) int {
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
+	case CodeEdgeRulesVersionMismatch:
+		return http.StatusPreconditionFailed
+	case CodeEdgeRuleListNotFound:
+		return http.StatusNotFound
+	case CodeEdgeRuleListExists, CodeEdgeRuleListInUse:
+		return http.StatusConflict
+	case CodePlanLimitEdgeRuleLists, CodePlanLimitEdgeRuleListItems:
+		return http.StatusForbidden
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
@@ -4741,10 +4758,20 @@ func ErrSecretInvalidKey(detail string) *Problem {
 // Limits.SecretValueMaxBytes. apid checks the byte length of the request body
 // BEFORE sealing so the cap is enforced on the wire (no over-quota ciphertext
 // ever lands in PG).
+// secretValueTooLargeDetail names the plan only when the caller knows it.
+// Most callers pass just the byte cap, which printed " plan caps ..." with
+// an empty plan name (hunt #9 H9-70).
+func secretValueTooLargeDetail(l Limits, observedBytes int) string {
+	if l.Plan != "" {
+		return fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)
+	}
+	return fmt.Sprintf("Secret values are capped at %d bytes; got %d.", l.SecretValueMaxBytes, observedBytes)
+}
+
 func ErrSecretValueTooLarge(l Limits, observedBytes int) *Problem {
 	return NewProblem(http.StatusRequestEntityTooLarge, CodeSecretValueTooLarge,
 		"Secret value too large",
-		fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)).
+		secretValueTooLargeDetail(l, observedBytes)).
 		WithLimit(int64(l.SecretValueMaxBytes), int64(observedBytes)).
 		WithDocs(docsBase + "/secrets#limits")
 }
@@ -5774,6 +5801,57 @@ func ErrInvalidPublicAuthIPAllowlist(entry string, reason error) *Problem {
 func ErrValidation(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation,
 		"Validation failed", detail)
+}
+
+// ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
+// whose If-Match no longer names the app's latest rule-set version.
+func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
+	return NewProblem(http.StatusPreconditionFailed, CodeEdgeRulesVersionMismatch,
+		"Edge rules changed",
+		fmt.Sprintf("If-Match %s does not match the current edge-rule set version %q; re-read the rules and retry", expected, EdgeRuleSetETag(current)))
+}
+
+// ErrEdgeRuleListNotFound is the 404 for an unknown list name in the
+// caller's account (ADR-963).
+func ErrEdgeRuleListNotFound(name string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeEdgeRuleListNotFound,
+		"Edge rule list not found", fmt.Sprintf("no edge rule list named %q in this account", name))
+}
+
+// ErrEdgeRuleListExists is the 409 for a create that reuses a name.
+func ErrEdgeRuleListExists(name string) *Problem {
+	return NewProblem(http.StatusConflict, CodeEdgeRuleListExists,
+		"Edge rule list exists", fmt.Sprintf("an edge rule list named %q already exists in this account", name))
+}
+
+// ErrEdgeRuleListInUse is the 409 for deleting a list that rules reference.
+func ErrEdgeRuleListInUse(name string, ruleIDs []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeEdgeRuleListInUse,
+		"Edge rule list in use",
+		fmt.Sprintf("edge rule list %q is referenced by %d rule(s) (%s); remove the references first", name, len(ruleIDs), strings.Join(ruleIDs, ", ")))
+}
+
+// ErrPlanLimitEdgeRuleLists is the 403 for an account at its list cap.
+func ErrPlanLimitEdgeRuleLists(plan Plan, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitEdgeRuleLists,
+		"Edge rule list limit reached",
+		fmt.Sprintf("%s plan caps edge rule lists at %d per account; you have %d.", plan, limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#edge-rules")
+}
+
+// ErrPlanLimitEdgeRuleListItems is the 403 for a list over its item cap.
+func ErrPlanLimitEdgeRuleListItems(plan Plan, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitEdgeRuleListItems,
+		"Edge rule list too large",
+		fmt.Sprintf("%s plan caps an edge rule list at %d items; this list would have %d.", plan, limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#edge-rules")
+}
+
+// EdgeRuleSetETag renders an app's edge-rule set version as an ETag value.
+func EdgeRuleSetETag(version int) string {
+	return fmt.Sprintf("\"%d\"", version)
 }
 
 // ErrPlanQueueDepth is returned by the apid handlers on POST

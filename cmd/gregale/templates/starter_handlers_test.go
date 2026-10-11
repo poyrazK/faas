@@ -272,3 +272,8 @@ func TestPostgresStarterMigrationCredentialBoundary(t *testing.T) {
 	runNodeStarterTests(t, "rest-api-postgres", "test/migration.test.js")
 	runNodeStarterTests(t, "customer-platform", "test/migration.test.js")
 }
+
+func TestPostgresStarterConnectionRecovery(t *testing.T) {
+	runNodeStarterTests(t, "rest-api-postgres", "test/database.test.js")
+	runNodeStarterTests(t, "rest-api-postgres", "test/app.test.js")
+}

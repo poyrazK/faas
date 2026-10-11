@@ -123,6 +123,17 @@ Version 2 JSON output adds `scenario` to each `replay_result` and emits `replay_
 
 
 
+## Configure local development
+
+`data-api.dev.json` declares this starter's migrations, identities, required
+`notes-rls` verification, types output and client checks. Change it to develop
+another schema with named test identities and optional seed SQL. Required
+scenarios run before readiness and after migrations, and must exercise two
+subjects. Restart dev after changing configuration or seeds. `--config FILE`
+selects another config and `--output FILE` overrides its types destination.
+The inspector uses the configured identities. Legacy projects without a config
+retain the original Alice/Bob notes checks.
+
 ## Install the client
 
 Use Node.js 22 or newer, npm, curl and tar. Obtain an approved Data API bundle,
@@ -238,10 +249,32 @@ const comments = await notes.listComments()
 
 The generator preserves composite foreign-key column order and detects
 one-to-one relationships from matching primary-key/unique constraints.
+
+Ordinary views that directly project complete foreign keys or referenced keys
+also receive typed relationships, including renamed columns and readable view
+chains in the same exposed schema. Use `security_invoker=true` and keep RLS on
+the underlying tables. Expressions, missing key columns, unions, inaccessible
+origins and materialized views are excluded. Use constraint hints for multiple
+foreign keys; repeated aliases of one composite key can remain ambiguous even
+with a hint. Changing key origins changes the fingerprint and is checked by
+`data-api diff`, including when the view's column types stay unchanged.
 `comments.note_id` is nullable; unattached comments have a null parent embed.
 An absent details row yields null, and notes without replies return an empty
 array. Add `!inner` to an embed to omit rows without a visible match. Nested
 projection types only expose the selected columns.
+
+Approved relation-set RPCs also support typed nested projections and filters.
+A uniquely named `@gregale:rpc` STABLE/IMMUTABLE security-invoker function with
+one named, required source-row argument and a SETOF readable relation result
+defines a computed relationship in the same exposed schema. Source fields must
+use recognized types. `ROWS 1` embeds an object or null; direct RPC responses
+remain arrays. Names cannot shadow relations, FKs or source columns. The owner
+permission workflow grants supported functions and blocks executable unapproved
+relationships, including PUBLIC execution. Revoke those grants or make the
+function eligible, then fresh-restart and regenerate contracts. Snapshot version
+3 carries this metadata; upgrade the CLI and owner dashboard with the runtime.
+Function bodies still need owner review and subject RLS; supplying a row as an
+RPC argument does not prove the caller owns that row.
 
 Both child tables enforce their own subject RLS. Their composite foreign keys
 include the same subject as the parent, so a user cannot attach a comment or
@@ -592,11 +625,29 @@ idempotency. Abort and token callbacks work as they do for CRUD.
 Type export and fresh startup include only annotated, executable security-
 invoker functions in exposed schemas. Supported signatures have unique names
 without overloads, named input arguments of recognized types, and scalar, void,
-scalar-set or exposed-relation-set results. Defaults make arguments optional;
-PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
-OUT/INOUT, arbitrary composite and non-set composite signatures are excluded.
+scalar-set, named-composite or exposed-relation-set results. Named composites
+return objects; `SETOF` composites return arrays. Composite arguments accept JSON
+objects. Defaults make arguments optional;
+PostgreSQL permits null arguments and scalar results. Eligible computed
+relationships may accept their source relation row. Variadic, unnamed,
+OUT/INOUT, unsupported or inaccessible composite dependencies, and non-set
+relation-row signatures are excluded.
 Unapproved functions are absent from generated `Functions` and public OpenAPI,
 and their RPC routes return 404. OpenAPI advertises approved calls as POST only.
+
+Named `CREATE TYPE api.address AS (...)` objects generate
+`Database['api']['CompositeTypes']['address']` and a
+`CompositeTypes<'address'>` helper. Nested fields and arrays use these types.
+Composite fields remain nullable, including domain attributes, because a NULL
+composite RPC result expands to an object of null fields. All object keys are
+required by the generated contract. Hidden dependencies become `unknown` and
+exclude dependent RPCs. These types do not add REST table endpoints.
+
+New exports use normalized snapshot version 3 in the version 1 contract envelope.
+Upgrade the CLI before consuming them. The current diff command also reads
+legacy version 1/2 baselines and flags nested composite changes even when the RPC
+return type name stays unchanged. Removed fields, changed field types/nullability
+and added required keys are breaking; new composite types are compatible.
 
 Function bodies remain owner-authored application code: invoker status alone
 cannot prove a body safe. Schema-qualify objects, review all called functions,
@@ -830,3 +881,24 @@ without a response do not. Duration measures token lookup and fetch through
 headers, not body processing, SQL execution or platform wake time. See the
 [Data API guide](https://gregale.dev/docs/data-api#typed-client-response-diagnostics)
 for a typed example.
+
+### Check committed types in local CI
+
+Run `gregale data-api dev --port 0 --once --check-types --check` after installing
+client dependencies. The disposable database applies your project migrations,
+verifies authorization scenarios, and compares generated types byte-for-byte
+with the configured output file. Missing or stale types exit nonzero without
+creating or overwriting that file. `--check` then runs configured client checks;
+`--check-types` requires `--once`. Containers and volumes are removed on success
+and failure. No hosted account or staging credentials are required.
+
+To update types, run `gregale data-api dev --port 0 --once` with the same
+`--directory`, `--config` and `--output` options, then commit the generated file.
+This detects drift; use `--check-breaking` separately for compatibility checks.
+The workflow still creates local contract artifacts and runs configured setup
+and authorization steps; the types output alone is preserved by this flag.
+
+The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
+`cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
+timestamp/id validation remain the same, including PostgreSQL microseconds.
+Upgrade the installed SDK bundle alongside the starter to use these helpers.

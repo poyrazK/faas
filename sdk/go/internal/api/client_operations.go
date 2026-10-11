@@ -360,10 +360,13 @@ func (c *Client) ListPlatformTenantSelfBusinessMilestones(ctx context.Context, o
 
 func operationWorkflowAttentionQuery(opts OperationWorkflowAttentionOptions, customer bool) string {
 	query := url.Values{"scope": {opts.Scope}}
-	for key, value := range map[string]string{"dependency_status": opts.DependencyStatus, "required_outcome_code": opts.RequiredOutcomeCode, "blocker_code": opts.BlockerCode, "workflow": opts.Workflow, "target_operation": opts.TargetOperation, "reason": opts.Reason, "cursor": opts.Cursor} {
+	for key, value := range map[string]string{"priority": opts.Priority, "sort": opts.Sort, "owner": opts.Owner, "dependency_status": opts.DependencyStatus, "required_outcome_code": opts.RequiredOutcomeCode, "blocker_code": opts.BlockerCode, "workflow": opts.Workflow, "target_operation": opts.TargetOperation, "reason": opts.Reason, "cursor": opts.Cursor} {
 		if value != "" {
 			query.Set(key, value)
 		}
+	}
+	if opts.Unassigned {
+		query.Set("unassigned", "true")
 	}
 	if customer {
 		query.Set("app_id", opts.AppID)
@@ -475,5 +478,60 @@ func (c *Client) PreviewAccountWorkflowActions(ctx context.Context, slug string,
 func (c *Client) PreviewPlatformTenantSelfWorkflowActions(ctx context.Context, req OperationWorkflowActionPreviewRequest) (OperationWorkflowActionPreviewResponse, error) {
 	var out OperationWorkflowActionPreviewResponse
 	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-actions/preview", req, &out)
+	return out, err
+}
+
+func operationWorkflowPerformanceQuery(opts OperationWorkflowPerformanceOptions, customer bool) string {
+	q := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}}
+	if customer {
+		q.Set("app_id", opts.AppID)
+	} else if opts.TenantID != "" {
+		q.Set("tenant_id", opts.TenantID)
+	}
+	return "?" + q.Encode()
+}
+
+// SummarizeAccountWorkflowPerformance compares retained workflow instances within the account.
+func (c *Client) SummarizeAccountWorkflowPerformance(ctx context.Context, slug string, opts OperationWorkflowPerformanceOptions) (OperationWorkflowPerformanceSummary, error) {
+	var out OperationWorkflowPerformanceSummary
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-performance/summary"+operationWorkflowPerformanceQuery(opts, false), nil, &out)
+	return out, err
+}
+
+// SummarizePlatformTenantSelfWorkflowPerformance uses authenticated customer ownership.
+func (c *Client) SummarizePlatformTenantSelfWorkflowPerformance(ctx context.Context, opts OperationWorkflowPerformanceOptions) (OperationWorkflowPerformanceSummary, error) {
+	var out OperationWorkflowPerformanceSummary
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-performance/summary"+operationWorkflowPerformanceQuery(opts, true), nil, &out)
+	return out, err
+}
+
+func operationWorkflowPerformanceInstanceQuery(opts OperationWorkflowPerformanceInstanceOptions, customer bool) string {
+	query := operationWorkflowPerformanceQuery(opts.OperationWorkflowPerformanceOptions, customer)
+	q := url.Values{"cohort": {opts.Cohort}, "dimension": {opts.Dimension}}
+	if opts.ContractVersion != 0 {
+		q.Set("contract_version", strconv.Itoa(opts.ContractVersion))
+	}
+	for key, value := range map[string]string{"state": opts.State, "operation": opts.Operation, "code": opts.Code, "owner": opts.Owner, "cohort_token": opts.CohortToken} {
+		if value != "" {
+			q.Set(key, value)
+		}
+	}
+	if opts.Unassigned {
+		q.Set("unassigned", "true")
+	}
+	return query + "&" + q.Encode()
+}
+
+// ListAccountWorkflowPerformanceInstances lists complete-history contributors within an account.
+func (c *Client) ListAccountWorkflowPerformanceInstances(ctx context.Context, slug string, opts OperationWorkflowPerformanceInstanceOptions) (OperationWorkflowPerformanceInstancesResponse, error) {
+	var out OperationWorkflowPerformanceInstancesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-performance/instances"+operationWorkflowPerformanceInstanceQuery(opts, false), nil, &out)
+	return out, err
+}
+
+// ListPlatformTenantSelfWorkflowPerformanceInstances uses authenticated customer ownership.
+func (c *Client) ListPlatformTenantSelfWorkflowPerformanceInstances(ctx context.Context, opts OperationWorkflowPerformanceInstanceOptions) (OperationWorkflowPerformanceInstancesResponse, error) {
+	var out OperationWorkflowPerformanceInstancesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-performance/instances"+operationWorkflowPerformanceInstanceQuery(opts, true), nil, &out)
 	return out, err
 }

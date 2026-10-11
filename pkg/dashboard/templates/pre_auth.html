@@ -68,6 +68,11 @@
     {{else}}
       {{if eq .Data.Config.Mode "enforce"}}<p class="notice">Would-block response classes are collected in observe mode. Enforced 429 responses do not appear in that table; target failure signals can still be recorded.</p>{{end}}
       {{if .Data.NoActivity}}<p class="notice">No observation events were recorded in this window.</p>{{end}}
+      {{with .Data.Observations.Suggestion}}
+        {{if eq .Status "ready"}}<p class="notice">Ready to enforce: {{.Reason}}. Run <code>gregale app {{$.Data.AppSlug}} --pre-auth enforce</code>.</p>
+        {{else if eq .Status "review"}}<p class="degraded">Review before enforcing: {{.Reason}}.</p>
+        {{else}}<p class="muted">Enforce readiness: {{.Reason}}.</p>{{end}}
+      {{end}}
       {{if .Data.DecisionPolicies}}
       <div class="scroll"><table>
         <thead><tr><th>Policy</th><th>Route</th><th>Would block</th><th>2xx</th><th>3xx</th><th>4xx</th><th>5xx</th><th>Unknown</th></tr></thead>

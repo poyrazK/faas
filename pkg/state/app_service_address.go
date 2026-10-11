@@ -184,10 +184,11 @@ func (m *MemStore) ComputeNodeServiceAddressReadyAt(_ context.Context, nodeID st
 // creation time and NodeReadyAt the node's readiness stamp; both come from
 // the database clock, so they compare without skew.
 type ServiceAddressCaller struct {
-	AppID       string
-	AccountID   string
-	StartedAt   time.Time
-	NodeReadyAt *time.Time
+	AppID        string
+	AccountID    string
+	DeploymentID string
+	StartedAt    time.Time
+	NodeReadyAt  *time.Time
 }
 
 // ServiceAddressCapable reports whether the caller's namespace was created
@@ -204,7 +205,7 @@ func (s *PgStore) ServiceAddressCallerByHostIP(ctx context.Context, nodeName, ho
 		return ServiceAddressCaller{}, ErrInvalidArgument
 	}
 	rows, err := s.pool.Query(ctx, `
-		select i.app_id::text, a.account_id::text, i.started_at, n.service_address_ready_at
+		select i.app_id::text, a.account_id::text, coalesce(i.deployment_id::text,''), i.started_at, n.service_address_ready_at
 		  from instances i
 		  join apps a on a.id = i.app_id
 		  join compute_nodes n on n.id = i.node_id
@@ -220,7 +221,7 @@ func (s *PgStore) ServiceAddressCallerByHostIP(ctx context.Context, nodeName, ho
 	var found []ServiceAddressCaller
 	for rows.Next() {
 		var caller ServiceAddressCaller
-		if err := rows.Scan(&caller.AppID, &caller.AccountID, &caller.StartedAt, &caller.NodeReadyAt); err != nil {
+		if err := rows.Scan(&caller.AppID, &caller.AccountID, &caller.DeploymentID, &caller.StartedAt, &caller.NodeReadyAt); err != nil {
 			return ServiceAddressCaller{}, fmt.Errorf("state: scan service address caller: %w", err)
 		}
 		found = append(found, caller)
@@ -255,7 +256,7 @@ func (m *MemStore) ServiceAddressCallerByHostIP(_ context.Context, nodeName, hos
 		if !ok {
 			continue
 		}
-		caller := ServiceAddressCaller{AppID: app.ID, AccountID: app.AccountID, StartedAt: instance.StartedAt}
+		caller := ServiceAddressCaller{AppID: app.ID, AccountID: app.AccountID, DeploymentID: instance.DeploymentID, StartedAt: instance.StartedAt}
 		if at, ok := m.serviceAddressReadyAt[node.ID]; ok {
 			caller.NodeReadyAt = &at
 		}
@@ -270,7 +271,7 @@ func singleServiceAddressCaller(found []ServiceAddressCaller) (ServiceAddressCal
 		return ServiceAddressCaller{}, ErrNotFound
 	}
 	for _, other := range found[1:] {
-		if other.AppID != found[0].AppID {
+		if other.AppID != found[0].AppID || other.DeploymentID != found[0].DeploymentID {
 			return ServiceAddressCaller{}, ErrConflict
 		}
 	}

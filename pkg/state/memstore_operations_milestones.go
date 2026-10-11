@@ -381,6 +381,7 @@ func (m *MemStore) listOperationMilestones(account, tenant string, opts api.Oper
 		page = projectOperationWorkflowInstance(page, opts.Workflow, opts.WorkflowInstanceID, declarations, workflowInstanceState,
 			operationWorkflowStepFactSummaryList(retainedWorkflowFacts))
 	}
+	m.projectResolutionVerificationsLocked(&page, account, tenant, opts, now)
 	m.projectRelatedWorkflowsLocked(&page, account, tenant, opts, operator, now)
 	if !opts.ReadinessOnly {
 		m.projectDependencyImpactLocked(&page, account, tenant, opts, operator, now)

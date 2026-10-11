@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -565,6 +566,7 @@ type CreateAppRequest struct {
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                   `json:"max_retries,omitempty"`
 	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
@@ -866,7 +868,7 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
-// InjectScenarioTestChaosRequest installs bounded request faults on service
+// InjectScenarioTestChaosRequest installs bounded HTTP and TCP faults on service
 // calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
@@ -874,20 +876,35 @@ type InjectScenarioTestChaosRequest struct {
 	Rules      []ScenarioTestChaosRule `json:"rules"`
 }
 
-// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+// ScenarioTestChaosRule describes one bounded HTTP or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
-	From       string `json:"from,omitempty"`
-	To         string `json:"to"`
-	Kind       string `json:"kind"`
-	Percent    int    `json:"percent"`
-	LatencyMS  int64  `json:"latency_ms,omitempty"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Seed       uint64 `json:"seed"`
+	From             string `json:"from,omitempty"`
+	To               string `json:"to"`
+	Kind             string `json:"kind"`
+	Percent          int    `json:"percent"`
+	LatencyMS        int64  `json:"latency_ms,omitempty"`
+	StatusCode       int    `json:"status_code,omitempty"`
+	Seed             uint64 `json:"seed"`
+	Port             int    `json:"port,omitempty"`
+	Direction        string `json:"direction,omitempty"`
+	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
 }
 
 type InjectScenarioTestChaosResponse struct {
 	ExpiresAt      time.Time `json:"expires_at"`
 	RulesInstalled int       `json:"rules_installed"`
+	Generation     string    `json:"generation"`
+}
+
+type ScenarioTestChaosMatchesResponse struct {
+	Generation string                   `json:"generation,omitempty"`
+	Matches    []ScenarioTestChaosMatch `json:"matches"`
+}
+
+type ScenarioTestChaosMatch struct {
+	RuleID string `json:"rule_id"`
+	Count  int64  `json:"count"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
@@ -931,6 +948,7 @@ type UpdateAppRequest struct {
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
@@ -1326,15 +1344,15 @@ type CreateAPIConsumerRateCardRequest struct {
 	Currency               string `json:"currency"`
 	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
 	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-950).
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
-	// Tiers is an optional graduated ladder (ADR-845) that replaces the
+	// Tiers is an optional graduated ladder (ADR-951) that replaces the
 	// flat price and allowance; price_millicents_per_unit is then ignored.
 	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	// RouteWeights counts each request on a listed "METHOD /template" route
-	// as that many units (ADR-846); unlisted routes count 1.
+	// as that many units (ADR-952); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
-	// PlanID adds the version to a consumer plan's price history (ADR-847);
+	// PlanID adds the version to a consumer plan's price history (ADR-953);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
@@ -3034,7 +3052,8 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	StageState json.RawMessage `json:"stage_state,omitempty"`
+	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
+	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -3755,9 +3774,11 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped response from
 // GET /v1/capabilities. Enabled is fail-closed for unknown plans.
 type CapabilitiesResponse struct {
-	RegistryVersion int                `json:"registry_version"`
-	Plan            string             `json:"plan"`
-	Capabilities    []CapabilityStatus `json:"capabilities"`
+	// ConditionalParking reports support on the serving control plane; omission means unsupported.
+	ConditionalParking bool               `json:"conditional_parking"`
+	RegistryVersion    int                `json:"registry_version"`
+	Plan               string             `json:"plan"`
+	Capabilities       []CapabilityStatus `json:"capabilities"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -6096,6 +6117,57 @@ type PreAuthObservationsResponse struct {
 	Source   string                     `json:"source"`
 	AsOf     string                     `json:"as_of"`
 	Policies []PreAuthPolicyObservation `json:"policies"`
+	// Suggestion is present only for an observe-mode guard with a healthy
+	// metrics source. It is advice; nothing is applied automatically.
+	Suggestion *PreAuthEnforcementSuggestion `json:"suggestion,omitempty"`
+}
+
+// PreAuthEnforcementSuggestion says whether an observe-mode guard looks safe
+// to switch to enforce, judged on the response range (ADR-829 amendment 1).
+type PreAuthEnforcementSuggestion struct {
+	Status string `json:"status"` // ready | review | insufficient_data
+	Reason string `json:"reason"`
+	// Requests is every gateway request to the app in the range.
+	Requests int64 `json:"requests"`
+	// WouldBlock and WouldBlockSucceeded sum the app and route policies;
+	// succeeded counts 2xx and 3xx final responses.
+	WouldBlock          int64 `json:"would_block"`
+	WouldBlockSucceeded int64 `json:"would_block_succeeded"`
+}
+
+const (
+	PreAuthSuggestionReady            = "ready"
+	PreAuthSuggestionReview           = "review"
+	PreAuthSuggestionInsufficientData = "insufficient_data"
+)
+
+// SuggestPreAuthEnforcement judges an observe-mode guard from one range of
+// observations. Enforce is "ready" only when the range is long enough, the app
+// saw enough traffic, and no request the guard would have blocked succeeded.
+func SuggestPreAuthEnforcement(rng string, requests int64, policies []PreAuthPolicyObservation) PreAuthEnforcementSuggestion {
+	s := PreAuthEnforcementSuggestion{Requests: requests}
+	for _, p := range policies {
+		if p.Kind != "app" && p.Kind != "route" {
+			continue
+		}
+		s.WouldBlock += p.WouldBlock
+		s.WouldBlockSucceeded += p.Result2xx + p.Result3xx
+	}
+	switch {
+	case !slices.Contains(PreAuthSuggestionRanges, rng):
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = "judge enforcement on a range of 24h or longer"
+	case requests < PreAuthSuggestionMinRequests:
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = fmt.Sprintf("only %d requests in %s; at least %d are needed", requests, rng, PreAuthSuggestionMinRequests)
+	case s.WouldBlockSucceeded > 0:
+		s.Status = PreAuthSuggestionReview
+		s.Reason = fmt.Sprintf("enforce would have rejected %d requests that succeeded; raise requests_per_second or burst, or add route overrides, before enforcing", s.WouldBlockSucceeded)
+	default:
+		s.Status = PreAuthSuggestionReady
+		s.Reason = fmt.Sprintf("enforce would have rejected %d of %d requests in %s, none of which succeeded", s.WouldBlock, requests, rng)
+	}
+	return s
 }
 
 type PreAuthPolicyObservation struct {
@@ -8172,6 +8244,9 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	// Template (ADR-968) expands ${name} request values in To and in the
+	// Headers values.
+	Template bool `json:"template,omitempty"`
 }
 
 func (a *EdgeRuleRedirectAction) Validate() *Problem {
@@ -8186,6 +8261,16 @@ func (a *EdgeRuleRedirectAction) Validate() *Problem {
 	if a.To == "" {
 		return ErrValidation("redirect action To is required")
 	}
+	if a.Template {
+		if _, err := CompileEdgeRuleTemplate(a.To, EdgeRuleTemplateRedirect); err != nil {
+			return ErrValidation("redirect action to: " + err.Error())
+		}
+		for name, value := range a.Headers {
+			if _, err := CompileEdgeRuleTemplate(value, EdgeRuleTemplateHeader); err != nil {
+				return ErrValidation(fmt.Sprintf("redirect action header %q: %s", name, err))
+			}
+		}
+	}
 	return nil
 }
 
@@ -8194,6 +8279,8 @@ type EdgeRuleHeaderOp struct {
 	Name   string `json:"name"`
 	Value  string `json:"value,omitempty"`
 	Action string `json:"action"`
+	// Template (ADR-968) expands ${name} request values in Value.
+	Template bool `json:"template,omitempty"`
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
@@ -8224,6 +8311,14 @@ func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	}
 	if strings.HasPrefix(strings.ToLower(op.Name), "x-faas-") {
 		return ErrHeaderMutationForbidden(op.Name)
+	}
+	if op.Template {
+		if op.Action == "remove" {
+			return ErrValidation("header op template applies only to add and set")
+		}
+		if _, err := CompileEdgeRuleTemplate(op.Value, EdgeRuleTemplateHeader); err != nil {
+			return ErrValidation(fmt.Sprintf("header op %q value: %s", op.Name, err))
+		}
 	}
 	return nil
 }
@@ -8424,6 +8519,10 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string  `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string             `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *MCPResourcePolicy `json:"mcp,omitempty"`
+	// RequireExp rejects tokens without an `exp` claim. Off by default
+	// for compatibility: JWT validation only checks exp when present, so
+	// a token minted without one never expires unless this is set.
+	RequireExp bool `json:"require_exp,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -8583,12 +8682,17 @@ var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:
 //     decoders may still read it from a response. The field will
 //     be removed in the release after the deprecation notice.
 type EdgeRuleValidateAction struct {
-	Schema                json.RawMessage `json:"schema"`
+	// Schema validates the JSON request body. It may be omitted when
+	// Parameters is set, so a body-less operation can still be validated.
+	Schema                json.RawMessage `json:"schema,omitempty"`
 	ContentTypes          []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming   bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknownFields bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes          int             `json:"max_body_bytes,omitempty"`
 	ValidateMode          string          `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values before the body
+	// is read (ADR-091 amendment: request parameters).
+	Parameters *EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
@@ -8823,7 +8927,12 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 		return ErrValidation("validate action is required")
 	}
 	if len(a.Schema) == 0 {
-		return ErrValidation("validate action: schema is required")
+		if a.Parameters.Empty() {
+			return ErrValidation("validate action: schema or parameters is required")
+		}
+		// Parameter-only rule: the body checks below do not apply. The
+		// parameter schemas are checked against match_path by the caller.
+		return a.validateMode()
 	}
 	if len(a.Schema) > MaxEdgeRuleValidateSchemaBytes {
 		return ErrValidation(fmt.Sprintf(
@@ -8876,11 +8985,14 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: max_body_bytes exceeds the platform cap (%d > %d)",
 			a.MaxBodyBytes, MaxRequestBodyBytes))
 	}
-	// ValidateMode: optional; empty == 'block' (the strictest mode,
-	// matches the NOT NULL DEFAULT 'block' the migration adds at
-	// 00293). Any non-empty value must be one of the three closed
-	// strings; an unknown value gets a 422 with the allowed list,
-	// not a 500.
+	return a.validateMode()
+}
+
+// validateMode checks the deprecated action-level validate_mode: empty ==
+// 'block' (the strictest mode, matching the NOT NULL DEFAULT 'block' added at
+// 00293). Any non-empty value must be one of the three closed strings; an
+// unknown value gets a 422 with the allowed list, not a 500.
+func (a *EdgeRuleValidateAction) validateMode() *Problem {
 	if a.ValidateMode != "" &&
 		a.ValidateMode != ValidateModeBlock &&
 		a.ValidateMode != ValidateModeObserve &&
@@ -9195,7 +9307,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -9222,6 +9334,13 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// KeyFields (ADR-965) are the request fields a key_by="composite" rule
+	// combines into one bucket identity, e.g. ["ip", "path"].
+	KeyFields []string `json:"key_fields,omitempty"`
+	// CountStatuses (ADR-965), when set, makes the rule charge its bucket
+	// only for responses with one of these statuses; requests are still
+	// rejected while the bucket is empty.
+	CountStatuses []int `json:"count_statuses,omitempty"`
 }
 
 // ThrottleKeyByNone is the explicit Phase-3 opt-out value. The empty
@@ -9237,6 +9356,13 @@ const (
 	ThrottleKeyByJWTSubject = "jwt_subject"
 	ThrottleKeyByJWTClaim   = "jwt_claim"
 	ThrottleKeyByCountry    = "country"
+	// ThrottleKeyByIP keys one bucket per trusted client IP (the single
+	// sanitized X-Forwarded-For hop); IPv6 clients are keyed by their /64 so
+	// one host cannot dodge the limit by rotating addresses in its prefix.
+	ThrottleKeyByIP = "ip"
+	// ThrottleKeyByComposite keys one bucket per combination of KeyFields
+	// values (ADR-965).
+	ThrottleKeyByComposite = "composite"
 
 	// ThrottleMissingKeyShared preserves the permissive historical posture for
 	// a dimensional rule when the request has no usable identity: all such
@@ -9272,11 +9398,79 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry, ThrottleKeyByIP, ThrottleKeyByComposite:
 		return true
 	default:
 		return false
 	}
+}
+
+// ADR-965 bounds.
+const (
+	ThrottleKeyFieldsMax     = 4
+	ThrottleCountStatusesMax = 16
+)
+
+var throttleHeaderNameRegex = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
+
+// ThrottleKeyFieldName parses a composite key field: one of the single
+// key_by dimensions, "method", "path", or "header:<name>". It returns the
+// field kind and, for headers, the canonical header name.
+func ThrottleKeyFieldName(field string) (kind, header string, ok bool) {
+	switch field {
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim,
+		ThrottleKeyByCountry, ThrottleKeyByIP, "method", "path":
+		return field, "", true
+	}
+	if name, found := strings.CutPrefix(field, "header:"); found && throttleHeaderNameRegex.MatchString(name) {
+		return "header", http.CanonicalHeaderKey(name), true
+	}
+	return "", "", false
+}
+
+// validateThrottleKeyFields checks a composite rule's fields.
+func validateThrottleKeyFields(a *EdgeRuleThrottleAction) *Problem {
+	if len(a.KeyFields) == 0 || len(a.KeyFields) > ThrottleKeyFieldsMax {
+		return ErrValidation(fmt.Sprintf("throttle action: key_by=\"composite\" needs 1..%d key_fields (got %d)", ThrottleKeyFieldsMax, len(a.KeyFields)))
+	}
+	seen := map[string]bool{}
+	usesClaim := false
+	for _, f := range a.KeyFields {
+		kind, _, ok := ThrottleKeyFieldName(f)
+		if !ok {
+			return ErrValidation(fmt.Sprintf("throttle action: key field %q is not one of ip, country, api_key, consumer_id, jwt_subject, jwt_claim, method, path, header:<name>", f))
+		}
+		if seen[strings.ToLower(f)] {
+			return ErrValidation(fmt.Sprintf("throttle action: key field %q is repeated", f))
+		}
+		seen[strings.ToLower(f)] = true
+		usesClaim = usesClaim || kind == ThrottleKeyByJWTClaim
+	}
+	if usesClaim && !jwtClaimNameRegex.MatchString(a.JWTClaimName) {
+		return ErrValidation("throttle action: key field jwt_claim needs jwt_claim_name matching ^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+	}
+	if !usesClaim && a.JWTClaimName != "" {
+		return ErrValidation("throttle action: jwt_claim_name requires the jwt_claim key field")
+	}
+	return nil
+}
+
+// validateThrottleCountStatuses checks count_statuses.
+func validateThrottleCountStatuses(statuses []int) *Problem {
+	if len(statuses) > ThrottleCountStatusesMax {
+		return ErrValidation(fmt.Sprintf("throttle action: at most %d count_statuses (got %d)", ThrottleCountStatusesMax, len(statuses)))
+	}
+	seen := map[int]bool{}
+	for _, code := range statuses {
+		if code < 100 || code > 599 {
+			return ErrValidation(fmt.Sprintf("throttle action: count_statuses entry %d is not an HTTP status (100..599)", code))
+		}
+		if seen[code] {
+			return ErrValidation(fmt.Sprintf("throttle action: count_statuses entry %d is repeated", code))
+		}
+		seen[code] = true
+	}
+	return nil
 }
 
 // ThrottleValidationContext is the per-plan ceiling that
@@ -9333,6 +9527,12 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 			"throttle action: burst %d exceeds the plan ceiling %d — a throttle rule is strictly a tightening primitive",
 			a.Burst, ctx.PlanMaxBurst))
 	}
+	if prob := validateThrottleCountStatuses(a.CountStatuses); prob != nil {
+		return prob
+	}
+	if a.KeyBy != ThrottleKeyByComposite && len(a.KeyFields) > 0 {
+		return ErrValidation("throttle action: key_fields requires key_by=\"composite\"")
+	}
 	dimensional := ThrottleKeyByIsPerConsumer(a.KeyBy)
 	switch a.MissingKeyPolicy {
 	case "":
@@ -9363,11 +9563,18 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if a.MaxKeysPerRule != 0 {
 			return ErrValidation("throttle action: max_keys_per_rule requires key_by != \"none\" (got key_by=\"\")")
 		}
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry, ThrottleKeyByIP:
 		if a.JWTClaimName != "" {
 			return ErrValidation(fmt.Sprintf(
 				"throttle action: jwt_claim_name is only valid with key_by=\"jwt_claim\" (got key_by=%q)",
 				a.KeyBy))
+		}
+		if err := validateThrottleMaxKeys(a.MaxKeysPerRule, ctx.PlanMaxKeysPerRule); err != nil {
+			return err
+		}
+	case ThrottleKeyByComposite:
+		if prob := validateThrottleKeyFields(a); prob != nil {
+			return prob
 		}
 		if err := validateThrottleMaxKeys(a.MaxKeysPerRule, ctx.PlanMaxKeysPerRule); err != nil {
 			return err
@@ -9386,7 +9593,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		}
 	default:
 		return ErrValidation(fmt.Sprintf(
-			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\")",
+			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\", \"ip\", \"composite\")",
 			a.KeyBy))
 	}
 	return nil
@@ -9724,8 +9931,40 @@ type EdgeRuleResponse struct {
 	Kind         string            `json:"kind"`
 	ValidateMode string            `json:"validate_mode,omitempty"`
 	Action       json.RawMessage   `json:"action"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	Name         string            `json:"name,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	// ExpiresAt is when the gateway stops applying the rule; Expired
+	// reports that it has passed (the row is kept for the listing).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Expired   bool       `json:"expired,omitempty"`
+	// Match (ADR-962) is the optional condition ANDed with the selectors.
+	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
+	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
+	Mode      string    `json:"mode"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
+const (
+	EdgeRuleNameMaxChars        = 100
+	EdgeRuleDescriptionMaxChars = 1000
+)
+
+// ValidateEdgeRuleMetadata checks the operator-facing name, description and
+// expiry. A nil field is not being set. An expiry must lie in the future:
+// a rule created or re-armed already expired would silently never apply.
+func ValidateEdgeRuleMetadata(name, description *string, expiresAt *time.Time, now time.Time) *Problem {
+	if name != nil && utf8.RuneCountInString(strings.TrimSpace(*name)) > EdgeRuleNameMaxChars {
+		return ErrValidation(fmt.Sprintf("name exceeds %d characters", EdgeRuleNameMaxChars))
+	}
+	if description != nil && utf8.RuneCountInString(*description) > EdgeRuleDescriptionMaxChars {
+		return ErrValidation(fmt.Sprintf("description exceeds %d characters", EdgeRuleDescriptionMaxChars))
+	}
+	if expiresAt != nil && !expiresAt.After(now) {
+		return ErrValidation("expires_at must be in the future")
+	}
+	return nil
 }
 
 // CreateEdgeRuleRequest is the wire shape for POST /v1/apps/{slug}/edge-rules.
@@ -9738,15 +9977,20 @@ type EdgeRuleResponse struct {
 // action-level `action.validate_mode` (deprecated). Empty == 'block'
 // (the SQL-side default; the column is NOT NULL).
 type CreateEdgeRuleRequest struct {
-	MatchHost    string            `json:"match_host"`
-	MatchPath    string            `json:"match_path"`
-	MatchMethods []string          `json:"match_methods,omitempty"`
-	MatchHeaders map[string]string `json:"match_headers,omitempty"`
-	Priority     *int              `json:"priority,omitempty"`
-	Enabled      *bool             `json:"enabled,omitempty"`
-	Kind         string            `json:"kind"`
-	ValidateMode string            `json:"validate_mode,omitempty"`
-	Action       json.RawMessage   `json:"action"`
+	MatchHost    string             `json:"match_host"`
+	MatchPath    string             `json:"match_path"`
+	MatchMethods []string           `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string  `json:"match_headers,omitempty"`
+	Priority     *int               `json:"priority,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	Kind         string             `json:"kind"`
+	ValidateMode string             `json:"validate_mode,omitempty"`
+	Action       json.RawMessage    `json:"action"`
+	Name         string             `json:"name,omitempty"`
+	Description  string             `json:"description,omitempty"`
+	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
+	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
+	Mode         string             `json:"mode,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -9766,6 +10010,139 @@ type UpdateEdgeRuleRequest struct {
 	Enabled      *bool              `json:"enabled,omitempty"`
 	ValidateMode *string            `json:"validate_mode,omitempty"`
 	Action       *json.RawMessage   `json:"action,omitempty"`
+	// Name / Description: an explicit "" clears the label.
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// ExpiresAt sets a new expiry; ClearExpiresAt removes it (the rule
+	// then applies indefinitely). Setting both is rejected.
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
+	// Match replaces the condition (ADR-962); ClearMatch removes it.
+	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
+	ClearMatch bool               `json:"clear_match,omitempty"`
+	Mode       *string            `json:"mode,omitempty"`
+}
+
+// Edge-rule modes (ADR-960).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// ValidateEdgeRuleMode accepts "" (unchanged / default enforce), enforce and log.
+func ValidateEdgeRuleMode(mode string) *Problem {
+	switch mode {
+	case "", EdgeRuleModeEnforce, EdgeRuleModeLog:
+		return nil
+	}
+	return ErrValidation(fmt.Sprintf("mode %q must be enforce or log", mode))
+}
+
+// EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
+type EdgeRuleHitStatsResponse struct {
+	RuleID  string `json:"rule_id"`
+	Matched int64  `json:"matched"`
+	Logged  int64  `json:"logged"`
+}
+
+// EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
+type EdgeRuleStatsResponse struct {
+	Window string                     `json:"window"`
+	Since  time.Time                  `json:"since"`
+	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
+}
+
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match. RuleName and
+// RuleKind are empty once the rule has been deleted.
+type EdgeRuleEventResponse struct {
+	ID         string    `json:"id"`
+	RuleID     string    `json:"rule_id"`
+	RuleName   string    `json:"rule_name,omitempty"`
+	RuleKind   string    `json:"rule_kind,omitempty"`
+	Outcome    string    `json:"outcome"`
+	OccurredAt time.Time `json:"occurred_at"`
+	RequestID  string    `json:"request_id,omitempty"`
+	Method     string    `json:"method,omitempty"`
+	Host       string    `json:"host,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	ClientIP   string    `json:"client_ip,omitempty"`
+	Country    string    `json:"country,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
+}
+
+// EdgeRuleEventsResponse is GET /v1/apps/{slug}/edge-rules/events. Since is
+// the effective window start after the plan clamp; NextCursor continues the
+// listing when more events match.
+type EdgeRuleEventsResponse struct {
+	Since      time.Time               `json:"since"`
+	Events     []EdgeRuleEventResponse `json:"events"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+}
+
+// EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
+// is a duration such as 1h, 24h or 7d (default 24h).
+type EdgeRuleEventsQuery struct {
+	RuleID  string
+	Outcome string
+	Since   string
+	Limit   int
+	Cursor  string
+}
+
+// EdgeRuleListResponse (ADR-963) is one account-level list. Items is
+// returned only when a single list is fetched; ReferencedBy names the rules
+// whose match conditions use the list.
+type EdgeRuleListResponse struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Kind         string    `json:"kind"`
+	Description  string    `json:"description,omitempty"`
+	ItemCount    int       `json:"item_count"`
+	Items        []string  `json:"items,omitempty"`
+	ReferencedBy []string  `json:"referenced_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ListEdgeRuleListsResponse is GET /v1/edge-rule-lists.
+type ListEdgeRuleListsResponse struct {
+	Lists []EdgeRuleListResponse `json:"lists"`
+}
+
+// CreateEdgeRuleListRequest is POST /v1/edge-rule-lists.
+type CreateEdgeRuleListRequest struct {
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Description string   `json:"description,omitempty"`
+	Items       []string `json:"items"`
+}
+
+// UpdateEdgeRuleListRequest is PATCH /v1/edge-rule-lists/{name}. Items
+// replaces the whole list and cannot be combined with Add / Remove, which
+// edit it in place (Remove applies after Add).
+type UpdateEdgeRuleListRequest struct {
+	Description *string   `json:"description,omitempty"`
+	Items       *[]string `json:"items,omitempty"`
+	Add         []string  `json:"add,omitempty"`
+	Remove      []string  `json:"remove,omitempty"`
+}
+
+// EdgeRuleSetVersionResponse (ADR-961) describes one recorded state of an
+// app's whole edge-rule set. Rules is populated only when a single version
+// is fetched. Current marks the app's latest version.
+type EdgeRuleSetVersionResponse struct {
+	Version     int                `json:"version"`
+	RuleCount   int                `json:"rule_count"`
+	RulesSHA256 string             `json:"rules_sha256"`
+	CreatedAt   time.Time          `json:"created_at"`
+	Current     bool               `json:"current"`
+	Rules       []EdgeRuleResponse `json:"rules,omitempty"`
+}
+
+// RollbackEdgeRulesRequest restores an app's edge rules to a recorded
+// version. The restore itself is recorded as a new version.
+type RollbackEdgeRulesRequest struct {
+	Version int `json:"version"`
 }
 
 const (
@@ -10079,9 +10456,9 @@ type ThrottleSuggestionsResponse struct {
 
 // ThrottlePreviewRow is one row of the dry-run preview
 // (ADR-104 amendment 5, issue #881 Phase 4 D1). For each
-// non-collapsed route we report the count of sub-windows where the
-// observed rate exceeded the candidate rps — a count of "would-have-
-// rejected" requests over the window. WindowStart / WindowEnd echo
+// non-collapsed route we report the count of 1-minute sub-windows where
+// the observed average rate exceeded the candidate rps (not a request
+// count; burst is not modelled). WindowStart / WindowEnd echo
 // the window edges so dashboards can render "N of M sub-windows" /
 // "X of Y minutes" without re-deriving from Range.
 //
@@ -10618,6 +10995,10 @@ type DebugTelemetrySpan struct {
 	// classifications. Raw span attributes never cross the debugger boundary.
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
+	// DependencyName is the bounded grouping identity of an app_dependency
+	// span (ADR-958): "SELECT orders", an HTTP host, an RPC method. It never
+	// carries literals, paths, query strings or credentials.
+	DependencyName string `json:"dependency_name,omitempty"`
 }
 
 // DebugRequestCriticalPath is the bounded causal path reconstructed from
@@ -10642,6 +11023,7 @@ type DebugCriticalPathSpan struct {
 	Kind           string `json:"kind"`
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
+	DependencyName string `json:"dependency_name,omitempty"`
 	Status         string `json:"status,omitempty"`
 	StartTime      string `json:"start_time"`
 	EndTime        string `json:"end_time"`
@@ -10755,6 +11137,27 @@ type DebugDependencyLatencyResponse struct {
 	SpanSamples         int64                        `json:"span_samples"`
 	Dependencies        []DebugDependencyLatencyItem `json:"dependencies"`
 	Edges               []DebugDependencyImpactEdge  `json:"edges"`
+	// DeploymentComparison compares the newest deployment observed in the
+	// window with the deployment before it. Absent when fewer than two
+	// deployments have retained spans.
+	DeploymentComparison *DebugDependencyDeploymentComparison `json:"deployment_comparison,omitempty"`
+}
+
+// DebugDependencyDeploymentComparison splits dependency latency by deployment
+// instead of by time (ADR-958 §5). In each item the Baseline* fields describe
+// the previous deployment and the Current* fields the compared deployment;
+// Regression uses the same thresholds as the time-split history. Items are
+// regressions first, then by current p95.
+type DebugDependencyDeploymentComparison struct {
+	CurrentDeploymentID   string                       `json:"current_deployment_id"`
+	CurrentDeploymentTag  string                       `json:"current_deployment_tag,omitempty"`
+	CurrentCommitSHA      string                       `json:"current_commit_sha,omitempty"`
+	PreviousDeploymentID  string                       `json:"previous_deployment_id"`
+	PreviousDeploymentTag string                       `json:"previous_deployment_tag,omitempty"`
+	PreviousCommitSHA     string                       `json:"previous_commit_sha,omitempty"`
+	Route                 string                       `json:"route,omitempty"`
+	Dependencies          []DebugDependencyLatencyItem `json:"dependencies"`
+	Truncated             bool                         `json:"truncated"`
 }
 
 // DebugCriticalPathSegment is one redacted span identity in a historical
@@ -10920,10 +11323,14 @@ type DebugRequestEvidenceResponse struct {
 	CriticalPath               *DebugRequestCriticalPath       `json:"critical_path,omitempty"`
 	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
 	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
-	Spans                      []DebugTelemetrySpan            `json:"spans"`
-	SpansTruncated             bool                            `json:"spans_truncated"`
-	Explanation                DebugEvidenceExplanation        `json:"explanation"`
-	GeneratedAt                string                          `json:"generated_at"`
+	// DependencyComparison compares this route's dependencies on the request's
+	// deployment with the previous deployment (ADR-958 §5); absent without a
+	// prior deployment that has retained spans.
+	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
+	Spans                []DebugTelemetrySpan                 `json:"spans"`
+	SpansTruncated       bool                                 `json:"spans_truncated"`
+	Explanation          DebugEvidenceExplanation             `json:"explanation"`
+	GeneratedAt          string                               `json:"generated_at"`
 }
 
 // RequestAnalyticsRoute is one aggregated route/method row returned by
@@ -11198,6 +11605,22 @@ type DebugRegressionItem struct {
 	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
 	DismissedUntil  string `json:"dismissed_until,omitempty"`
 	ResolvedAt      string `json:"resolved_at,omitempty"`
+	// SuspectedDependency is the dependency whose p95 regressed most between
+	// the previous and this deployment on the route (ADR-958 §5); absent when
+	// no dependency regressed or no spans were retained.
+	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
+}
+
+// DebugSuspectedDependency is a bounded, redacted dependency identity with
+// its p95 on the previous (base) and the regressed deployment. The same JSON
+// object is stored on the observation and sent in regression webhooks.
+type DebugSuspectedDependency struct {
+	Type             string  `json:"type"`
+	Kind             string  `json:"kind,omitempty"`
+	Name             string  `json:"name"`
+	P95BaseMS        int64   `json:"p95_base_ms"`
+	P95MS            int64   `json:"p95_ms"`
+	RegressionFactor float64 `json:"regression_factor"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug

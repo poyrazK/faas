@@ -416,11 +416,25 @@ func (f *fakeVmmdClient) RetireEnvironmentQualification(context.Context, *vmmdpb
 	panic("RetireEnvironmentQualification: not stubbed")
 }
 
+func (f *fakeVmmdClient) RestoreEnvironmentQualification(context.Context, *vmmdpb.RestoreEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RestoreEnvironmentQualificationResponse, error) {
+	panic("RestoreEnvironmentQualification: not stubbed")
+}
+
+func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context, *vmmdpb.RetireEnvironmentQualificationArtifactsRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationArtifactsResponse, error) {
+	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }
 func (f *fakeVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
 	panic("JobColdBoot: not stubbed")
+}
+func (f *fakeVmmdClient) JobColdBootHeld(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
+	panic("JobColdBootHeld: not stubbed")
+}
+func (f *fakeVmmdClient) ReleaseJobStart(context.Context, *vmmdpb.ReleaseJobStartRequest, ...grpc.CallOption) (*vmmdpb.ReleaseJobStartResponse, error) {
+	panic("ReleaseJobStart: not stubbed")
 }
 func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (*vmmdpb.ExecuteExecutionResponse, error) {
 	panic("ExecuteExecution: not stubbed")

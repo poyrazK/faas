@@ -8,7 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
     from ..models.debug_dependency_impact_edge import DebugDependencyImpactEdge
     from ..models.debug_dependency_latency_item import DebugDependencyLatencyItem
 
@@ -33,6 +36,9 @@ class DebugDependencyLatencyResponse:
     span_samples: int
     dependencies: list[DebugDependencyLatencyItem]
     edges: list[DebugDependencyImpactEdge]
+    deployment_comparison: DebugDependencyDeploymentComparison | Unset = UNSET
+    """Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment,
+    current_* the compared one. Regressions first, then by current p95."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +72,10 @@ class DebugDependencyLatencyResponse:
             edges_item = edges_item_data.to_dict()
             edges.append(edges_item)
 
+        deployment_comparison: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deployment_comparison, Unset):
+            deployment_comparison = self.deployment_comparison.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -84,11 +94,14 @@ class DebugDependencyLatencyResponse:
                 "edges": edges,
             }
         )
+        if deployment_comparison is not UNSET:
+            field_dict["deployment_comparison"] = deployment_comparison
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
         from ..models.debug_dependency_impact_edge import DebugDependencyImpactEdge
         from ..models.debug_dependency_latency_item import DebugDependencyLatencyItem
 
@@ -127,6 +140,13 @@ class DebugDependencyLatencyResponse:
 
             edges.append(edges_item)
 
+        _deployment_comparison = d.pop("deployment_comparison", UNSET)
+        deployment_comparison: DebugDependencyDeploymentComparison | Unset
+        if isinstance(_deployment_comparison, Unset):
+            deployment_comparison = UNSET
+        else:
+            deployment_comparison = DebugDependencyDeploymentComparison.from_dict(_deployment_comparison)
+
         debug_dependency_latency_response = cls(
             app_id=app_id,
             since=since,
@@ -140,6 +160,7 @@ class DebugDependencyLatencyResponse:
             span_samples=span_samples,
             dependencies=dependencies,
             edges=edges,
+            deployment_comparison=deployment_comparison,
         )
 
         debug_dependency_latency_response.additional_properties = d

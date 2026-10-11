@@ -195,6 +195,76 @@ func TestPgProjectReleaseGraphSurvivesExpiredDirectPin(t *testing.T) {
 	}
 }
 
+func TestPgProjectReleaseSetRejectsHeldGitOpsCandidateUntilGraphActivation(t *testing.T) {
+	s, ctx, pool := pgWithPool(t)
+	// This test needs a pre-existing held row and, later, a legacy live row.
+	// Seed those fixtures without the candidate transition triggers; normal
+	// writes below must still pass through the production guards.
+	seedDeployment := func(query string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `ALTER TABLE deployments DISABLE TRIGGER USER`); err != nil {
+			t.Fatal(err)
+		}
+		_, writeErr := pool.Exec(ctx, query, args...)
+		_, enableErr := pool.Exec(ctx, `ALTER TABLE deployments ENABLE TRIGGER USER`)
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if enableErr != nil {
+			t.Fatal(enableErr)
+		}
+	}
+	account, err := s.CreateAccount(ctx, "held-release-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "held-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "held-app-" + uuid.NewString()[:8],
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 60,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:held-candidate", Status: state.DeployPending, Scope: "production",
+		TrafficPercent: 0, TrafficPercentExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedDeployment(`UPDATE deployments SET environment_workload_runtime=jsonb_build_object(
+		'source_id',$1::text,'environment_id',$1::text,'revision_id',$1::text,
+		'generation',1,'intent_version',1,'resource','workload/held',
+		'plan_hash',repeat('a',64),'app_id',$2::text,'scope','production',
+		'baseline','{}'::jsonb,'start_command','[]'::jsonb,'runtime','{}'::jsonb),
+		environment_workload_held=true WHERE id=$1`, candidate.ID, app.ID)
+	if err := s.MarkDeploymentLive(ctx, candidate.ID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("ordinary promotion of held candidate = %v, want conflict", err)
+	}
+	if err := s.MarkDeploymentLiveDark(ctx, candidate.ID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("individual dark promotion of held candidate = %v, want conflict", err)
+	}
+	if current, err := s.DeploymentByID(ctx, candidate.ID); err != nil || current.Status != state.DeployPending {
+		t.Fatalf("held candidate changed after rejected promotion: %+v, %v", current, err)
+	}
+	// Simulate a held row left live by a pre-gate path. Regular release-set
+	// publication must still keep it off environment routes.
+	seedDeployment(`UPDATE deployments SET status='live', rollout_state='complete' WHERE id=$1`, candidate.ID)
+	if _, err := s.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: candidate.ID}}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("release set accepted held GitOps candidate = %v, want conflict", err)
+	}
+	if _, err := s.PublishProjectReleaseSetIfActive(ctx, account.ID, project.ID, "production", "", nil, 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: candidate.ID}}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("compare-and-swap release set accepted held GitOps candidate = %v, want conflict", err)
+	}
+	if _, err := s.ActiveProjectReleaseSet(ctx, account.ID, project.ID, "production"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rejected candidate became active in a release set: %v", err)
+	}
+}
+
 func TestPgProjectReleasePromotionCASAndRollback(t *testing.T) {
 	s, ctx, _ := pgWithPool(t)
 	account, err := s.CreateAccount(ctx, "graph-promotion-"+uuid.NewString()+"@example.com", api.PlanPro)

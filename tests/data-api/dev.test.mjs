@@ -3,7 +3,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, cp, writeFile, readFile, readdir, stat, rm, unlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, stat, rm, unlink, rename } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,18 +17,74 @@ const dev = runtime ? await import(pathToFileURL(join(runtime, 'dev.mjs'))) : un
 const containers = async () => (await execute('docker', ['container', 'ls', '--all', '--filter', 'label=gregale.data-api.dev=true', '--format', '{{.Names}}'])).stdout.trim().split('\n').filter(Boolean).sort()
 const volumes = async () => (await execute('docker', ['volume', 'ls', '--format', '{{.Name}}'])).stdout.trim().split('\n').filter(Boolean).sort()
 
+test('local compatibility approvals accept exact breaks and reject stale candidates without overwriting files', { skip: !enabled, timeout: 240000 }, async t => {
+  const beforeContainers = await containers(), beforeVolumes = await volumes()
+  const { config, options } = await fixture(t, { check: false, json: true })
+  const migrations = join(options.directory, 'migrations/sql')
+  await writeFile(join(migrations, '0011_compatibility_field.sql'), 'ALTER TABLE api.notes ADD COLUMN compatibility_field integer;')
+  await execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 60000 })
+  const baseline = join(options.directory, 'schema.json')
+  const originalBaseline = await readFile(join(options.directory, '.gregale/data-api-contract.json'), 'utf8')
+  await writeFile(baseline, originalBaseline)
+  await writeFile(join(migrations, '0012_drop_compatibility_field.sql'), 'ALTER TABLE api.notes DROP COLUMN compatibility_field;')
+  await writeFile(config, JSON.stringify({ ...options, baseline }))
+  const candidate = await execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 60000 })
+  const report = candidate.stdout.trim().split('\n').map(line => JSON.parse(line)).find(event => event.status === 'compatibility')
+  assert.equal(report.breaking, 1)
+  assert.equal(report.unapproved, 1)
+  const approval = join(options.directory, 'approval.json')
+  const approvalContent = JSON.stringify({ version: 1, baseline_fingerprint: report.baseline_fingerprint, current_fingerprint: report.current_fingerprint,
+    changes: report.changes.filter(change => change.breaking).map(({ path, reason }) => ({ path, reason, rationale: 'The client no longer uses compatibility_field.' })) })
+  await writeFile(approval, approvalContent)
+  await writeFile(config, JSON.stringify({ ...options, baseline, approval, check_breaking: true }))
+  const accepted = await execute(options.cli, ['--json', 'data-api', 'dev', '--directory', options.directory, '--port', '0', '--once', '--baseline', 'schema.json', '--check-breaking', '--approval', 'approval.json'], { timeout: 60000 })
+  const approved = accepted.stdout.trim().split('\n').map(line => JSON.parse(line)).find(event => event.status === 'compatibility')
+  assert.equal(approved.breaking, 1); assert.equal(approved.approved, 1); assert.equal(approved.unapproved, 0)
+  assert.equal(approved.changes[0].approved, true)
+  const types = await readFile(options.output, 'utf8')
+  await writeFile(join(migrations, '0013_new_candidate.sql'), 'ALTER TABLE api.notes ADD COLUMN release_label text;')
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 60000 }), error => {
+    assert.match(error.stderr, /approval fingerprints and named changes/)
+    return true
+  })
+  assert.equal(await readFile(options.output, 'utf8'), types)
+  assert.equal(await readFile(baseline, 'utf8'), originalBaseline)
+  assert.equal(await readFile(approval, 'utf8'), approvalContent)
+  assert.deepEqual(await containers(), beforeContainers); assert.deepEqual(await volumes(), beforeVolumes)
+})
+
 async function fixture(t, overrides = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'gregale-dev-test-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const project = join(directory, 'project')
   await cp(starter, project, { recursive: true })
-  if (!overrides.starterReplay) await rm(join(project, 'data-api.requests.json'), { force: true })
-  const { starterReplay, ...runtimeOverrides } = overrides
+  if (!overrides.starterReplay) {
+    await rm(join(project, 'data-api.requests.json'), { force: true })
+    await rm(join(project, 'data-api.dev.json'), { force: true })
+  }
+  const { starterReplay, projectSetup, ...runtimeOverrides } = overrides
+  if (projectSetup) await projectSetup(project)
   const options = { directory: project, output: join(project, 'client/src/database.types.ts'), port: 0, once: true, check: true, cli: process.env.DATA_API_DEV_CLI, ...runtimeOverrides }
   const config = join(directory, 'options.json')
   await writeFile(config, JSON.stringify(options))
   return { config, options }
 }
+
+async function ordersSetup(project) {
+  await rm(join(project, 'migrations'), { recursive: true })
+  await cp(new URL('../../examples/data-api-orders/', import.meta.url), project, { recursive: true })
+}
+
+test('an orders project verifies custom identities and seeds without a notes table', { skip: !enabled, timeout: 180000 }, async t => {
+  const before = await containers(), beforeVolumes = await volumes()
+  const { options } = await fixture(t, { check: false, projectSetup: ordersSetup, json: true })
+  await rename(join(options.directory, 'data-api.dev.json'), join(options.directory, 'orders.dev.json'))
+  const result = await execute(options.cli, ['--json', 'data-api', 'dev', '--directory', options.directory, '--config', 'orders.dev.json', '--port', '0', '--once'], { timeout: 150000 })
+  assert.equal(JSON.parse(result.stdout.trim()).status, 'verified')
+  const types = await readFile(join(options.directory, 'database.types.ts'), 'utf8')
+  assert.match(types, /"orders"/); assert.doesNotMatch(types, /"notes"/)
+  assert.deepEqual(await containers(), before); assert.deepEqual(await volumes(), beforeVolumes)
+})
 
 async function runningFixture(t, overrides = {}) {
   const fixtureResult = await fixture(t, { once: false, check: false, json: true, ...overrides })
@@ -58,6 +114,33 @@ async function runningFixture(t, overrides = {}) {
   }
   return { ...fixtureResult, child, events, wait, close, ready: await wait('ready') }
 }
+
+test('configured authorization checks pause permissive reloads and preserve contracts', { skip: !enabled, timeout: 180000 }, async t => {
+  const session = await runningFixture(t, { projectSetup: ordersSetup })
+  const { options, ready, events, wait } = session
+  const typesPath = join(options.directory, 'database.types.ts')
+  const baseline = join(options.directory, '.gregale/data-api-contract.json')
+  const types = await readFile(typesPath, 'utf8'), contract = await readFile(baseline, 'utf8')
+  const identities = JSON.parse(await readFile(ready.identities_file, 'utf8')).identities
+  assert.deepEqual(Object.keys(identities), ['buyer', 'other'])
+  const claims = JSON.parse(Buffer.from(identities.buyer.token.split('.')[1], 'base64url'))
+  assert.equal(claims.tenant, 'shop-a')
+  assert.equal(claims.sub, 'customer-a')
+  let mark = events.length
+  await writeFile(join(options.directory, 'migrations/0002_permissive.sql'), 'ALTER POLICY own_orders ON api.orders USING (true) WITH CHECK (true);')
+  assert.match((await wait('reload_failed', mark)).detail, /required project authorization verification/)
+  assert.equal((await fetch(`${ready.url}/healthz`)).status, 503)
+  assert.equal(await readFile(typesPath, 'utf8'), types)
+  assert.equal(await readFile(baseline, 'utf8'), contract)
+  mark = events.length
+  await writeFile(join(options.directory, 'migrations/0003_repair.sql'), `DELETE FROM api.orders WHERE total <> 42;
+    ALTER POLICY own_orders ON api.orders
+      USING (owner=current_setting('request.jwt.claims',true)::jsonb->>'sub')
+      WITH CHECK (owner=current_setting('request.jwt.claims',true)::jsonb->>'sub');`)
+  await wait('reloaded', mark)
+  assert.equal((await fetch(`${ready.url}/healthz`)).status, 200)
+  await session.close()
+})
 
 test('local Docker contexts cannot redirect development services to remote hosts', { skip: !enabled }, () => {
   for (const host of ['unix:///var/run/docker.sock', 'npipe:////./pipe/docker_engine', 'tcp://127.0.0.1:2376', 'tcp://[::1]:2376']) assert.equal(dev.localDockerHost(host), true)
@@ -385,6 +468,9 @@ test('inspector protects identities and supports browser RLS requests and reload
       assert.equal(await evaluate('location.hash'), '')
       assert.ok(await evaluate("document.getElementById('resource').options.length > 1"))
       await evaluate("{const resources=document.getElementById('resource'); resources.value=[...resources.options].find(option=>option.textContent==='Table · api.notes').value; resources.dispatchEvent(new Event('change'))}")
+      await evaluate("document.getElementById('expected-fingerprint').value='d'.repeat(64); document.getElementById('send').click()")
+      await wait("document.getElementById('result-status').textContent.startsWith('409') && !document.getElementById('send').disabled")
+      await evaluate(`document.getElementById('expected-fingerprint').value=${JSON.stringify(local.ready.fingerprint)}`)
       await evaluate(`document.getElementById('method').value='POST'; document.getElementById('body').value=JSON.stringify({subject:'alice',body:'<img src=x onerror=alert(1)>'}); document.getElementById('send').click()`)
       await wait("document.getElementById('result-status').textContent.startsWith('201')")
       assert.equal(await evaluate("document.getElementById('response').querySelector('img')"), null)
@@ -411,6 +497,7 @@ test('inspector protects identities and supports browser RLS requests and reload
       await wait("document.getElementById('saved-status').textContent === 'Collection loaded.'")
       await evaluate("document.getElementById('load-saved').click()")
       await wait("document.getElementById('path').value === '/rest/v1/notes?subject=eq.alice'")
+      assert.equal(await evaluate("document.getElementById('expected-fingerprint').value"),local.ready.fingerprint)
       await evaluate("document.getElementById('request-name').value='Capture browser note'; document.getElementById('identity').value='alice'; document.getElementById('method').value='POST'; document.getElementById('path').value='/rest/v1/notes'; document.getElementById('body').value=JSON.stringify({subject:'alice',body:'Variable browser'}); document.getElementById('expected-json').value=''; document.getElementById('expected-status').value='201'; document.getElementById('capture').value=JSON.stringify({browser_id:'/0/id'}); document.getElementById('save-request').click()")
       await wait("document.getElementById('saved-status').textContent === 'Saved Capture browser note.'")
       await evaluate("document.getElementById('load-saved').click()")
@@ -561,4 +648,97 @@ test('shipped starter collection passes all workflows repeatedly and cleans its 
   assert.equal(events.filter(event => event.event === 'replay_scenario_summary').length, 3)
   assert.equal(events.at(-1).status, 'verified')
   assert.deepEqual(await containers(), before); assert.deepEqual(await volumes(), beforeVolumes)
+})
+
+
+test('local CI checks committed types without rewriting stale or missing files', { skip: !enabled, timeout: 600000 }, async t => {
+  const before = await containers(), beforeVolumes = await volumes()
+  const { config, options } = await fixture(t, { check: false, json: true })
+  await execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 })
+  const original = await readFile(options.output, 'utf8')
+  await writeFile(config, JSON.stringify({ ...options, check_types: true }))
+  const matching = await execute(options.cli, ['--json', 'data-api', 'dev', '--directory', options.directory, '--port', '0', '--once', '--check-types'], { timeout: 150000 })
+  assert.equal(matching.stdout.trim().split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(value => value.types_checked)?.types_checked, true)
+  assert.equal(await readFile(options.output, 'utf8'), original)
+  await writeFile(join(options.directory, 'migrations/sql/0011_ci_drift.sql'), 'ALTER TABLE api.notes ADD COLUMN ci_extra text;\n')
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 }), error => /types are stale.*regenerate/.test(error.stderr))
+  assert.equal(await readFile(options.output, 'utf8'), original)
+  await writeFile(options.output, 'stale committed types\n')
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 }), error => /types are stale.*regenerate/.test(error.stderr))
+  assert.equal(await readFile(options.output, 'utf8'), 'stale committed types\n')
+  await unlink(options.output)
+  await assert.rejects(execute(process.execPath, [join(runtime, 'dev.mjs'), config], { timeout: 150000 }), error => /types are missing.*regenerate/.test(error.stderr))
+  await assert.rejects(readFile(options.output), { code: 'ENOENT' })
+  assert.deepEqual(await containers(), before); assert.deepEqual(await volumes(), beforeVolumes)
+})
+
+test('local contract policies replay mixed clients, revoke acceptance and pause stale reloads without losing the session', { skip: !enabled, timeout: 300000 }, async t => {
+  const beforeContainers = await containers(), beforeVolumes = await volumes()
+  const { config, options } = await fixture(t, { check: false, json: true })
+  await execute(process.execPath, [join(runtime,'dev.mjs'),config], {timeout:60000})
+  const oldPath = join(options.directory,'old.json')
+  const oldContent = await readFile(join(options.directory,'.gregale/data-api-contract.json'),'utf8')
+  const older = JSON.parse(oldContent).fingerprint
+  await writeFile(oldPath,oldContent)
+  const addition = 'ALTER TABLE api.notes ADD COLUMN rollout_label text;'
+  await writeFile(join(options.directory,'migrations/sql/0011_rollout.sql'),addition)
+  await execute(process.execPath, [join(runtime,'dev.mjs'),config], {timeout:60000})
+  const currentPath = join(options.directory,'.gregale/data-api-contract.json')
+  const current = JSON.parse(await readFile(currentPath,'utf8')).fingerprint
+  const policyPath = join(options.directory,'accepted.json')
+  await execute(options.cli,['data-api','diff','--baseline',oldPath,'--current',currentPath,'--accept-contract',policyPath],{timeout:60000})
+  const validPolicy = await readFile(policyPath,'utf8')
+  const retainedTypes = await readFile(options.output,'utf8'), retainedContract = await readFile(currentPath,'utf8')
+  await writeFile(policyPath,JSON.stringify({version:1,current_fingerprint:older,accepted_fingerprints:[current]}))
+  await assert.rejects(execute(options.cli,['data-api','dev','--directory',options.directory,'--port','0','--once','--accepted-contracts','accepted.json'],{timeout:60000}), error => /Accepted contracts are stale/.test(error.stderr))
+  assert.equal(await readFile(options.output,'utf8'),retainedTypes)
+  assert.equal(await readFile(currentPath,'utf8'),retainedContract)
+  await writeFile(policyPath,validPolicy)
+  const rejected = 'd'.repeat(64)
+  const pinned = (name,hash,identity,method,path,expect,extra={}) => ({name,expectedSchemaFingerprint:hash,identity,method,path,expect,...extra})
+  const requests = [
+    pinned('old writes',older,'alice','POST','/rest/v1/notes',{status:201},{body:{subject:'alice',body:'rollout-replay'},capture:{id:'/0/id'}}),
+    pinned('current respects RLS',current,'bob','GET','/rest/v1/notes?id=eq.{{id}}',{status:200,json:[]}),
+    pinned('unapproved write rejected',rejected,'alice','POST','/rest/v1/notes',{status:409},{body:{subject:'alice',body:'must-not-write'}}),
+    pinned('old RPC',older,'alice','POST','/rest/v1/rpc/create_note_with_tags',{status:200},{body:{note_body:'old-rpc',tag_names:[]}}),
+    pinned('old deletes',older,'alice','DELETE','/rest/v1/notes?id=eq.{{id}}',{status:200}),
+  ]
+  await writeFile(join(options.directory,'rollout.requests.json'),JSON.stringify({version:2,scenarios:[{name:'mixed',requests}]}))
+  const replay = await execute(options.cli,['--json','data-api','dev','--directory',options.directory,'--port','0','--once','--accepted-contracts','accepted.json','--replay','rollout.requests.json'],{timeout:60000})
+  assert.equal(replay.stdout.trim().split('\n').map(line=>JSON.parse(line)).find(event=>event.event==='replay_summary').failed,0)
+  const session = await runningFixture(t,{accepted_contracts:policyPath,projectSetup:project=>writeFile(join(project,'migrations/sql/0011_rollout.sql'),addition)})
+  const identities = JSON.parse(await readFile(session.ready.identities_file,'utf8')).identities
+  const headers = {Authorization:`Bearer ${identities.alice.token}`}
+  const route = hash => `${session.ready.url}/__gregale/contract/${hash}/rest/v1/notes?select=id`
+  assert.equal((await fetch(route(older),{headers})).status,200)
+  const types = await readFile(session.options.output,'utf8')
+  const contractPath = join(session.options.directory,'.gregale/data-api-contract.json')
+  const contract = await readFile(contractPath,'utf8')
+  let mark = session.events.length
+  await writeFile(policyPath,JSON.stringify({version:1,current_fingerprint:current,accepted_fingerprints:[rejected]}))
+  await session.wait('reloaded',mark)
+  assert.equal((await fetch(route(older),{headers})).status,409)
+  assert.equal((await fetch(route(current),{headers})).status,200)
+  mark = session.events.length
+  await writeFile(join(session.options.directory,'migrations/sql/0012_stale.sql'),'ALTER TABLE api.notes ADD COLUMN future_label text;')
+  const failed = await session.wait('reload_failed',mark)
+  assert.match(failed.detail,/Accepted contracts are stale/)
+  assert.equal((await fetch(route(current),{headers})).status,503)
+  assert.equal(await readFile(session.options.output,'utf8'),types)
+  assert.equal(await readFile(contractPath,'utf8'),contract)
+  const receipt = JSON.parse(await readFile(session.ready.identities_file,'utf8'))
+  assert.deepEqual(receipt.identities,identities)
+  // Inspect the migrated schema in an independent disposable run without rewriting the retained files.
+  const fixedBaseline = join(session.options.directory,'fixed.json');await writeFile(fixedBaseline,contract)
+  const candidate = await execute(options.cli,['--json','data-api','dev','--directory',session.options.directory,'--port','0','--once','--baseline','fixed.json','--output','candidate.types.ts'],{timeout:60000})
+  const next = candidate.stdout.trim().split('\n').map(line=>JSON.parse(line)).find(event=>event.status==='verified').fingerprint
+  mark = session.events.length
+  await writeFile(policyPath,JSON.stringify({version:1,current_fingerprint:next,accepted_fingerprints:[older]}))
+  await session.wait('reloaded',mark)
+  assert.equal((await fetch(route(older),{headers})).status,200)
+  assert.equal((await fetch(route(next),{headers})).status,200)
+  assert.equal((await fetch(route(current),{headers})).status,409)
+  assert.deepEqual(JSON.parse(await readFile(session.ready.identities_file,'utf8')).identities,identities)
+  await session.close()
+  assert.deepEqual(await containers(),beforeContainers);assert.deepEqual(await volumes(),beforeVolumes)
 })

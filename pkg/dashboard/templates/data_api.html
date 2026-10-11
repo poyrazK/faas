@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+{{if .Data.RefreshSeconds}}<meta http-equiv="refresh" content="{{.Data.RefreshSeconds}}">{{end}}
+<title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem}section{margin:2rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc}code{overflow-wrap:anywhere}form{display:inline-block;margin-right:1rem}button{padding:.5rem}pre{white-space:pre-wrap}</style></head>
+<body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
+<main>{{template "email-verification-banner" .}}<h1>Data API</h1>
+<p>Inspect the database schema and download application types from your deployed <code>data-api</code> app.</p>
+{{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
+<section><h2>Database bindings</h2>{{if .Data.Bindings}}<table><tr><th>Database</th><th>State</th><th>Credential generation</th></tr>{{range .Data.Bindings}}<tr><td>{{.DatabaseName}}</td><td>{{.State}}{{if .RotationPending}} · rotation pending{{end}}</td><td>{{.CredentialGeneration}}</td></tr>{{end}}</table>{{else}}<p>No managed Data API binding is recorded in the default environment. Check the app's database configuration before running operations.</p>{{end}}</section>
+<section><h2>Schema and types</h2>
+{{if .Data.Enabled}}<form method="post" action="/dashboard/apps/{{.Data.Slug}}/data-api/schema"><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Inspect schema</button></form><form method="post" action="/dashboard/apps/{{.Data.Slug}}/data-api/types"><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Generate TypeScript</button></form>{{else}}<p>Schema operations require app tasks to be enabled on this host.</p>{{end}}
+{{if .Data.TaskID}}<p role="status">Operation <code>{{.Data.TaskID}}</code>: {{.Data.TaskStatus}}</p>{{end}}
+{{if .Data.Fingerprint}}<p>Schema fingerprint: <code>{{.Data.Fingerprint}}</code></p><p>The contract describes the schema at the time of this operation. Generate it again after migrations.</p>{{end}}
+{{if .Data.TypesReady}}<p><a href="/dashboard/apps/{{.Data.Slug}}/data-api/types/{{.Data.TaskID}}">Download database.types.ts</a></p>{{end}}
+{{with .Data.Schema}}{{range .Tables}}<h3>{{.Schema}}.{{.Name}}{{if .View}} (view){{end}}</h3><table><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Insert</th><th>Update</th></tr>{{range .Columns}}<tr><td>{{.Name}}</td><td><code>{{.Type}}</code></td><td>{{.Nullable}}</td><td>{{.Insertable}}</td><td>{{.Updatable}}</td></tr>{{end}}</table>{{end}}{{range .Functions}}<h3>RPC {{.Schema}}.{{.Name}}</h3><p>Returns <code>{{.Returns}}</code></p>{{with .Setof}}<p>Supports projections and joins on <code>{{.To}}</code>.{{if .From}} Relationship from <code>{{.From}}</code>: {{if .OneToOne}}one row or null{{else}}an array of rows{{end}}.{{end}}</p>{{end}}{{range .Args}}<p><code>{{.Name}}: {{.Type}}</code>{{if .Optional}} (optional){{end}}</p>{{end}}{{end}}{{end}}
+{{with .Data.Schema}}{{range .Composites}}<h3>Composite {{.Schema}}.{{.Name}}</h3><table><tr><th>Field</th><th>Type</th><th>Nullable</th></tr>{{range .Fields}}<tr><td>{{.Name}}</td><td><code>{{.Type}}</code></td><td>{{.Nullable}}</td></tr>{{end}}</table>{{end}}{{end}}
+</section><section><h2>Refresh the deployed API</h2><p>After migrations or authentication configuration changes, refresh the app to reload its runtime and schema cache. Follow progress on the next page, then check the API with your application token.</p>
+<form method="post" action="/dashboard/apps/{{.Data.Slug}}/data-api/refresh"><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Refresh Data API</button></form>
+<p>Local development: <code>gregale data-api dev --config data-api.dev.json</code></p></section></main></body></html>

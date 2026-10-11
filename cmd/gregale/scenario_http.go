@@ -82,7 +82,12 @@ func testHTTPDataFields(scenario testScenario) []string {
 			}
 		}
 	}
-	for _, step := range append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...) {
+	steps := append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...)
+	for _, scenarioStep := range scenario.Steps {
+		steps = append(steps, scenarioStep.Requests...)
+		steps = append(steps, scenarioStep.Checks...)
+	}
+	for _, step := range steps {
 		collect(step.Path)
 		for _, value := range step.Headers {
 			collect(value)

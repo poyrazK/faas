@@ -1,0 +1,93 @@
+import { readFileSync } from 'node:fs';
+import pg from 'pg';
+import { checkMcpTaskSchema } from './task-schema.js';
+import { mcpTaskHandlers } from './tasks.js';
+import { createMcpTaskAdmissionController } from './task-admission.js';
+import { checkMcpTaskCompatibility } from './task-compatibility.js';
+import { resolveMcpTaskSettings } from './task-runtime.js';
+import { createMcpTaskPayloadCipher } from './task-crypto.js';
+import { createMcpTaskQueueObserver } from './task-store.js';
+
+// Read-only preflight: no schema initialization, claims, or payload output.
+const report = { ok: true, checks: [] };
+function add(name, status, detail) {
+  report.checks.push({ name, status, detail });
+  if (status !== 'passed') report.ok = false;
+}
+let pool;
+let stage = 'configuration';
+try {
+  const args = process.argv.slice(2);
+  const role = args.length === 0 ? 'runtime' : args.length === 2 && args[0] === '--role' ? args[1] : '';
+  if (!['runtime', 'observer', 'operator'].includes(role)) throw new Error('Invalid Task doctor role');
+  const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
+  const settings = resolveMcpTaskSettings(config, { role: role === 'runtime' ? 'worker' : 'observer' });
+  const cipher = role === 'runtime' ? createMcpTaskPayloadCipher(settings.ownerKey, settings.encryptionKeys) : undefined;
+  add('configuration', 'passed', 'Task bindings for the requested role are available');
+  stage = 'database_schema_and_permissions';
+  pool = new pg.Pool({ connectionString: settings.databaseURL, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN READ ONLY');
+    const schema = await checkMcpTaskSchema({ pool: client, namespace: settings.namespace, role, inTransaction: true });
+    report.schema = schema;
+    add('database_schema_and_permissions', 'passed', 'Supported schema version and runtime role privileges are available');
+    if (role === 'runtime') {
+    stage = 'task_admission';
+    const admission = await createMcpTaskAdmissionController({ pool: client, namespace: settings.namespace }).status();
+    report.taskAdmission = admission;
+    const currentHandlers = Object.entries(mcpTaskHandlers);
+    const allowed = admission.enforced && currentHandlers.every(([name, handler]) => admission.versions.some(entry => entry.tool === name && entry.version === handler.version && entry.state === 'allowed'));
+    const trigger = await client.query("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'gregale_mcp_tasks'::regclass AND tgname = 'gregale_mcp_tasks_admission_' || md5($1) AND tgenabled IN ('O', 'A') AND NOT tgisinternal) AS enabled", [settings.namespace]);
+    add(stage, allowed && trigger.rows[0].enabled ? 'passed' : 'failed', allowed && trigger.rows[0].enabled ? 'Current handler admission is allowed and database enforcement is enabled' : 'Enable the admission trigger and explicitly allow current handler versions before accepting Tasks');
+    stage = 'retained_handler_coverage';
+    const compatibility = await checkMcpTaskCompatibility({ pool: client, namespace: settings.namespace, handlers: mcpTaskHandlers });
+    report.handlerCompatibility = compatibility;
+    add(stage, compatibility.ok ? 'passed' : 'failed', compatibility.ok ? 'Candidate handlers cover all retained nonterminal Tasks' : 'Retain missing handler versions until the reported Tasks finish or expire');
+    stage = 'encryption_keys';
+    const registered = await client.query('SELECT key_id, key_fingerprint FROM gregale_mcp_task_crypto_keys WHERE namespace = $1', [settings.namespace]);
+    const known = new Map(registered.rows.map(row => [row.key_id, row.key_fingerprint]));
+    for (const [id, fingerprint] of cipher.fingerprints) {
+      if (!known.has(id) || !known.get(id).equals(fingerprint)) throw new Error('keys');
+    }
+    const required = await client.query(`SELECT DISTINCT ON (key_id) key_id, task_id::text, field, payload FROM (
+      SELECT task_id, encrypted.field, encrypted.payload,
+        CASE WHEN get_byte(encrypted.payload, 0) = 1 THEN 'legacy'
+        WHEN get_byte(encrypted.payload, 0) = 2 THEN convert_from(substring(encrypted.payload FROM 3 FOR get_byte(encrypted.payload, 1)), 'UTF8') ELSE '@invalid' END AS key_id
+      FROM gregale_mcp_tasks CROSS JOIN LATERAL (VALUES ('arguments', arguments_encrypted), ('result', result_encrypted), ('error', error_encrypted), ('input-state', input_state_encrypted)) AS encrypted(field, payload)
+      WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
+    ) AS encrypted ORDER BY key_id, task_id, field`, [settings.namespace]);
+    for (const row of required.rows) cipher.decrypt(row.payload, `gregale-mcp-task:v1:${settings.namespace}:${row.task_id}:${row.field}`);
+    add('encryption_keys', 'passed', 'Configured fingerprints match and retained payload key versions are readable');
+    }
+    await client.query('ROLLBACK');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+  if (role === 'runtime') {
+  stage = 'worker_inventory';
+  const metrics = await createMcpTaskQueueObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }).queueMetrics();
+  if (metrics.activeWorkers > 0) {
+    add('worker_inventory', 'passed', 'Live worker registrations are available');
+    add('handler_coverage', metrics.unsupportedHandlerTasks > 0 ? 'failed' : 'passed', metrics.unsupportedHandlerTasks > 0 ? 'Deploy compatible handler versions for pending work' : 'No currently eligible pending work lacks a live handler version');
+  } else {
+    add('worker_inventory', 'unknown', 'No live worker registration; start a worker to verify handler coverage');
+  }
+  add('rollout_consistency', 'passed', 'This process matches persisted key fingerprints; run preflight on every writer during a coordinated rollout');
+  }
+} catch {
+  const guidance = {
+    configuration: 'Check enabled Task configuration, selected role and its database, namespace and secret bindings',
+    database_schema_and_permissions: 'Check PostgreSQL connectivity, migrated schema version, namespace and requested role privileges',
+    task_admission: 'Check the admission registry, enforcement trigger and runtime registry permissions',
+    retained_handler_coverage: 'Check candidate handler registry and retained Task schema; do not retire a handler while coverage is unknown',
+    encryption_keys: 'Check the stable owner secret, registered key fingerprints and every retained payload key version',
+    worker_inventory: 'Check the worker registry schema and queue observer database access',
+  };
+  add(stage, 'failed', guidance[stage]);
+} finally {
+  await pool?.end().catch(() => {});
+}
+console.log(JSON.stringify(report));
+process.exitCode = report.ok ? 0 : 1;

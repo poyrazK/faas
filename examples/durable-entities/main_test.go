@@ -56,11 +56,16 @@ func TestHarnessRequiresRequestIdentityAndExplicitBucket(t *testing.T) {
 
 func TestHarnessStorageOperationsRequireOneExplicitMode(t *testing.T) {
 	for _, tc := range []struct {
-		request, cap, cursor, mode             string
-		cleanup, inventory, alarmStatus, valid bool
+		request, cap, cursor, mode                           string
+		cleanup, inventory, alarmStatus, outboxStatus, valid bool
+		outboxRetry                                          string
 	}{
 		{mode: "inventory", inventory: true, valid: true},
 		{mode: "alarm-status", alarmStatus: true, valid: true},
+		{mode: "outbox-status", outboxStatus: true, valid: true},
+		{mode: "outbox-retry", outboxRetry: "5a4f4c21-d228-4ca6-b53c-2910f5175c80", valid: true},
+		{outboxStatus: true, request: "one"}, {outboxStatus: true, outboxRetry: "invalid"}, {outboxRetry: "invalid"},
+		{outboxStatus: true, cursor: "invalid"}, {outboxStatus: true, inventory: true},
 		{alarmStatus: true, inventory: true}, {alarmStatus: true, request: "one"},
 		{alarmStatus: true, cap: "0"}, {alarmStatus: true, cursor: "invalid"},
 		{cap: "0", mode: "limit", valid: true},
@@ -69,7 +74,7 @@ func TestHarnessStorageOperationsRequireOneExplicitMode(t *testing.T) {
 		{request: "one", inventory: true}, {cleanup: true, inventory: true},
 		{inventory: true, cursor: "invalid"}, {cap: "100", request: "one"},
 	} {
-		mode, _, err := harnessMode(tc.request, tc.cleanup, tc.inventory, tc.alarmStatus, tc.cap, tc.cursor, nil)
+		mode, _, err := harnessMode(tc.request, tc.cleanup, tc.inventory, tc.alarmStatus, tc.outboxStatus, tc.outboxRetry, tc.cap, tc.cursor, nil)
 		if (err == nil) != tc.valid || tc.valid && mode != tc.mode {
 			t.Fatal(tc, mode, err)
 		}

@@ -1,0 +1,237 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "outbox-delivery",
+      "requests": [
+        {
+          "name": "Create order and event",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_order_once",
+          "body": {
+            "request_key": "3e515fa7-5aa7-49a2-9a45-d0529f66c253",
+            "order_total": 42
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Retry order creates no second event",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_order_once",
+          "body": {
+            "request_key": "3e515fa7-5aa7-49a2-9a45-d0529f66c253",
+            "order_total": 42
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Other subject sees no event",
+          "identity": "bob",
+          "method": "GET",
+          "path": "/rest/v1/outbox",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Application cannot claim work",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/claim_event",
+          "body": {
+            "claim_token": "7922e117-bda7-421d-a1da-72655eec52dc"
+          },
+          "expect": {
+            "status": 403
+          }
+        },
+        {
+          "name": "Worker claims event",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/claim_event",
+          "body": {
+            "claim_token": "7922e117-bda7-421d-a1da-72655eec52dc"
+          },
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "event": "/0/id"
+          }
+        },
+        {
+          "name": "Worker acknowledges event",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/finish_event",
+          "body": {
+            "event_id": "{{event}}",
+            "claim_token": "7922e117-bda7-421d-a1da-72655eec52dc",
+            "succeeded": true
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Completed event is not reclaimed",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/claim_event",
+          "body": {
+            "claim_token": "7922e117-bda7-421d-a1da-72655eec52dc"
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Create poison event",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_order_once",
+          "body": {
+            "request_key": "2b7e092c-bf32-4ef4-bda0-57c15e4a478b",
+            "order_total": 7
+          },
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "poison_order": "/0/id"
+          }
+        },
+        {
+          "name": "Configure one attempt",
+          "identity": "worker",
+          "method": "PATCH",
+          "path": "/rest/v1/outbox?order_id=eq.{{poison_order}}",
+          "body": {
+            "max_attempts": 1
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Claim poison event",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/claim_event",
+          "body": {
+            "claim_token": "6c71b4b7-642f-49aa-ae46-4a9f8ed2b623"
+          },
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "poison_event": "/0/id"
+          }
+        },
+        {
+          "name": "Exhaust poison budget",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/finish_event",
+          "body": {
+            "event_id": "{{poison_event}}",
+            "claim_token": "6c71b4b7-642f-49aa-ae46-4a9f8ed2b623",
+            "succeeded": false
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Queue reports dead letter",
+          "identity": "worker",
+          "method": "GET",
+          "path": "/rest/v1/outbox_health",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "pending": 0,
+                "leased": 0,
+                "delivered": 1,
+                "dead_lettered": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "App cannot replay",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/replay_event",
+          "body": {
+            "event_id": "{{poison_event}}",
+            "expected_generation": 0
+          },
+          "expect": {
+            "status": 403
+          }
+        },
+        {
+          "name": "Worker safely replays",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/replay_event?select=id,replay_generation",
+          "body": {
+            "event_id": "{{poison_event}}",
+            "expected_generation": 0
+          },
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{poison_event}}",
+                "replay_generation": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "Stale replay does nothing",
+          "identity": "worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/replay_event",
+          "body": {
+            "event_id": "{{poison_event}}",
+            "expected_generation": 0
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Queue reports replay pending",
+          "identity": "worker",
+          "method": "GET",
+          "path": "/rest/v1/outbox_health",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "pending": 1,
+                "leased": 0,
+                "delivered": 1,
+                "dead_lettered": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

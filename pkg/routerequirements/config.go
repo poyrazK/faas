@@ -100,9 +100,10 @@ func validateRoute(route Requirement) error {
 	}
 	if t := checks.Throttle; t != nil {
 		switch t.KeyBy {
-		case api.ThrottleKeyByNone, api.ThrottleKeyByAPIKey, api.ThrottleKeyByConsumerID, api.ThrottleKeyByJWTSubject:
+		case api.ThrottleKeyByNone, api.ThrottleKeyByAPIKey, api.ThrottleKeyByConsumerID, api.ThrottleKeyByJWTSubject,
+			api.ThrottleKeyByCountry, api.ThrottleKeyByIP:
 		default:
-			return errors.New("throttle.key_by must be none, api_key, consumer_id, or jwt_subject")
+			return errors.New("throttle.key_by must be none, api_key, consumer_id, jwt_subject, country, or ip")
 		}
 		if t.MaxRPS != nil && (*t.MaxRPS <= 0 || math.IsNaN(*t.MaxRPS) || math.IsInf(*t.MaxRPS, 0)) {
 			return errors.New("throttle.max_rps must be a finite positive value when set")

@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -252,5 +253,45 @@ func TestCmdWebhookMutations_HonorJSON(t *testing.T) {
 				t.Fatalf("not JSON: %v\n%s", err, stdout.String())
 			}
 		})
+	}
+}
+
+// The update usage line put the id before the flags, but Go's flag parser
+// stops at the first positional, so `webhooks update <id> --app x
+// --target-url y` printed usage on production-us rc.251. Every positional
+// webhooks subcommand accepts flags on either side of its ids.
+func TestCmdWebhooks_IDBeforeFlags(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got = append(got, r.Method+" "+r.URL.Path+" "+string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"` + webhookTestID + `"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	for _, tc := range []struct {
+		name string
+		run  func() int
+		want string
+	}{
+		{"update", func() int {
+			return cmdWebhooksUpdate([]string{webhookTestID, "--app", "demo", "--target-url", "https://example.com/hook"})
+		}, "PATCH /v1/apps/demo/webhooks/" + webhookTestID},
+		{"info", func() int { return cmdWebhookInfo([]string{webhookTestID, "--app", "demo"}) }, "GET /v1/apps/demo/webhooks/" + webhookTestID},
+		{"rm", func() int { return cmdWebhooksRm([]string{webhookTestID, "--app", "demo"}) }, "DELETE /v1/apps/demo/webhooks/" + webhookTestID},
+	} {
+		got = nil
+		if code := tc.run(); code != 0 {
+			t.Fatalf("%s with the id first = %d, want 0", tc.name, code)
+		}
+		if len(got) != 1 || !strings.HasPrefix(got[0], tc.want) {
+			t.Fatalf("%s requests = %q, want %s", tc.name, got, tc.want)
+		}
+		if tc.name == "update" && !strings.Contains(got[0], "https://example.com/hook") {
+			t.Fatalf("update dropped --target-url after the id: %q", got[0])
+		}
 	}
 }

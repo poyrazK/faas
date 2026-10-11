@@ -13,6 +13,10 @@ import (
 const appParkTransitionBatchMax = 32
 
 func (s *PgStore) BeginAppParkTransition(ctx context.Context, appID string, expected AppStatus) (AppParkTransition, bool, error) {
+	return s.BeginAppParkTransitionIfDeployment(ctx, appID, expected, "")
+}
+
+func (s *PgStore) BeginAppParkTransitionIfDeployment(ctx context.Context, appID string, expected AppStatus, deploymentID string) (AppParkTransition, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return AppParkTransition{}, false, fmt.Errorf("state: begin app park transition: %w", err)
@@ -32,6 +36,16 @@ func (s *PgStore) BeginAppParkTransition(ctx context.Context, appID string, expe
 	}
 	if err != nil {
 		return AppParkTransition{}, false, fmt.Errorf("state: read app park transition: %w", err)
+	}
+	if deploymentID != "" {
+		var latest string
+		err := tx.QueryRow(ctx, `select id::text from deployments where app_id=$1::uuid order by created_at desc limit 1`, appID).Scan(&latest)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && latest != deploymentID) {
+			return AppParkTransition{}, false, ErrConflict
+		}
+		if err != nil {
+			return AppParkTransition{}, false, err
+		}
 	}
 	if current == AppEvictedCold && transitionID != "" {
 		return AppParkTransition{ID: transitionID, AppID: appID}, false, nil

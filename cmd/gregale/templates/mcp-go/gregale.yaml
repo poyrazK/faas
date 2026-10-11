@@ -1,0 +1,4 @@
+hosting:
+  start: go run .
+  port: 8080
+  health: /healthz

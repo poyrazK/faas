@@ -36,3 +36,29 @@ func TestQualificationRetirementPreservesPriorTerminalOutcomes(t *testing.T) {
 		}
 	}
 }
+
+func TestQualificationRetirementDistinguishesAbsentNativeEffectsFromNativeRetirement(t *testing.T) {
+	store := NewMemStore()
+	frame := EnvironmentQualificationExecution{InstanceID: uuid.NewString(), AppID: uuid.NewString(), DeploymentID: uuid.NewString(), NodeID: uuid.NewString(), WakeID: uuid.NewString(), CleanupToken: uuid.NewString()}
+	store.instances[frame.InstanceID] = Instance{ID: frame.InstanceID, AppID: frame.AppID, DeploymentID: frame.DeploymentID, NodeID: frame.NodeID, WakeID: frame.WakeID, State: string(StateColdBooting)}
+	store.qualificationExecutions[frame.InstanceID] = EnvironmentQualificationExecutionStatus{Execution: frame, DispatchStarted: true}
+	proof := EnvironmentQualificationRetirement{Kind: QualificationNativeEffectsAbsent, ReceiptID: uuid.NewString(), KernelBootID: uuid.NewString(), ProcessesExited: true, ResourcesRemoved: true}
+	if err := store.RetireEnvironmentQualificationExecution(t.Context(), frame, proof); err != nil {
+		t.Fatalf("persist physical no-effects evidence: %v", err)
+	}
+	status, err := store.EnvironmentQualificationExecution(t.Context(), frame.InstanceID)
+	if err != nil || status.Retirement == nil || *status.Retirement != proof || status.RetiredAt == nil {
+		t.Fatalf("persisted retirement=%+v err=%v", status, err)
+	}
+	for name, changed := range map[string]EnvironmentQualificationRetirement{
+		"native_generation": {Kind: QualificationNativeEffectsAbsent, ReceiptID: uuid.NewString(), NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(), ProcessesExited: true, ResourcesRemoved: true},
+		"no_resource_proof": {Kind: QualificationNativeEffectsAbsent, ReceiptID: uuid.NewString(), KernelBootID: uuid.NewString(), ProcessesExited: true},
+		"bad_identity":      {Kind: QualificationNativeEffectsAbsent, ReceiptID: "not-a-uuid", KernelBootID: uuid.NewString(), ProcessesExited: true, ResourcesRemoved: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if qualificationRetirementValid(changed, true) {
+				t.Fatal("incomplete no-effects proof was accepted")
+			}
+		})
+	}
+}

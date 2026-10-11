@@ -24,7 +24,10 @@ func (m *MemStore) ReconcileEnvironmentGitOpsPreparation(_ context.Context, leas
 	}
 	candidates := []EnvironmentWorkloadCandidate{}
 	for _, input := range inputs {
-		dep := m.environmentCandidateLocked(candidateFrozenInputs(input))
+		dep, err := m.environmentCandidateLocked(candidateFrozenInputs(input))
+		if err != nil {
+			return graph, err
+		}
 		if dep.ID == "" {
 			return graph, ErrConflict
 		}

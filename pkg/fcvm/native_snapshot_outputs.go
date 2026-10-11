@@ -60,7 +60,7 @@ func (v *JailerVMM) stageNativeSnapshotOutput(ctx context.Context, lease Lease, 
 	if generation == "" || generation != permit.Incoming.NativeGeneration || daemonLock == nil {
 		return "", errors.New("native snapshot output: original daemon producer is required")
 	}
-	if _, err := daemonLock.Stat(); err != nil {
+	if err := r.checkDaemonOwnership(); err != nil {
 		return "", err
 	}
 	owner, err := r.journal.read(lease.Instance)

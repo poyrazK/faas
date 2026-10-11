@@ -107,3 +107,74 @@ func TestServiceProxyCanonicalAndLegacyFirewallScope(t *testing.T) {
 		}
 	}
 }
+
+func TestQualificationOnlyNetworkAdmitsOnlyCanonicalProxyAndDNS(t *testing.T) {
+	bridge := netip.MustParseAddr("10.100.0.1")
+	config := NewConfigWithBridge("qualification-1", "fc-qualification-1", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.7"), bridge)
+	config.QualificationOnly = true
+	config.ServiceProxyHTTPS = true
+	config.ServiceAddressCIDR = netip.MustParsePrefix("198.19.0.0/16")
+	config.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}
+	config.EgressPorts = []uint16{80, 443, 5432}
+	config.OperatorExceptions = []netip.Prefix{netip.MustParsePrefix("10.66.0.0/16")}
+	config.PrivateNetworkCIDRs = []netip.Prefix{netip.MustParsePrefix("192.168.201.0/24")}
+
+	commands := config.NftCommands()
+	joined := make([]string, len(commands))
+	for i, command := range commands {
+		joined[i] = strings.Join(command, " ")
+	}
+	for _, family := range []string{"ip", "ip6"} {
+		want := "add chain " + family + " faas forward { type filter hook forward priority filter ; policy drop ; }"
+		if !containsSequenceInCommands(commands, strings.Fields(want)) {
+			t.Fatalf("qualification %s forward chain is not drop-by-default", family)
+		}
+	}
+
+	wantProxy := []string{"iifname", "tap0", "ip", "daddr", bridge.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept"}
+	if !containsSequenceInCommands(commands, wantProxy) {
+		t.Fatalf("qualification proxy admission missing for port %d", ServiceProxyPort)
+	}
+	wantHTTPS := []string{"iifname", "tap0", "ip", "daddr", bridge.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept"}
+	if !containsSequenceInCommands(commands, wantHTTPS) {
+		t.Fatalf("configured qualification HTTPS proxy admission missing for port %d", ServiceProxyHTTPSPort)
+	}
+	config.ServiceProxyHTTPS = false
+	if containsSequenceInCommands(config.NftCommands(), wantHTTPS) {
+		t.Fatal("qualification HTTPS proxy admission ignored the private-CA opt-in")
+	}
+	config.ServiceProxyHTTPS = true
+	for _, protocol := range []string{"udp", "tcp"} {
+		want := []string{"iifname", "tap0", "ip", "daddr", bridge.String(), protocol, "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept"}
+		if !containsSequenceInCommands(commands, want) {
+			t.Fatalf("qualification DNS admission missing for %s", protocol)
+		}
+	}
+	for _, forbidden := range []string{
+		"tcp dport " + strconv.Itoa(LegacyServiceProxyPort) + " accept",
+		"ip daddr { 8.8.8.0/24 } tcp dport != 25 accept",
+		"ip daddr 198.19.0.0/16 meta l4proto tcp accept",
+		"ip daddr 192.168.201.0/24",
+		"ip saddr 10.66.0.0/16 accept",
+		"tcp dport != @egress_ports",
+	} {
+		for _, line := range joined {
+			if strings.Contains(line, forbidden) {
+				t.Fatalf("qualification network emitted forbidden policy %q in %q", forbidden, line)
+			}
+		}
+	}
+	for _, line := range joined {
+		if !strings.Contains(line, "add rule ") || !strings.Contains(line, " forward ") || !strings.HasSuffix(line, " accept") {
+			continue
+		}
+		if strings.Contains(line, "ct state established,related accept") ||
+			strings.Contains(line, "ip daddr "+bridge.String()+" tcp dport "+strconv.Itoa(ServiceProxyPort)+" accept") ||
+			strings.Contains(line, "ip daddr "+bridge.String()+" tcp dport "+strconv.Itoa(ServiceProxyHTTPSPort)+" accept") ||
+			strings.Contains(line, "ip daddr "+bridge.String()+" udp dport "+strconv.Itoa(ServiceDiscoveryDNSPort)+" accept") ||
+			strings.Contains(line, "ip daddr "+bridge.String()+" tcp dport "+strconv.Itoa(ServiceDiscoveryDNSPort)+" accept") {
+			continue
+		}
+		t.Fatalf("qualification network emitted an unscoped forward accept: %q", line)
+	}
+}

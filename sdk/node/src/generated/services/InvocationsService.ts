@@ -5,8 +5,18 @@
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { CancelPendingWorkRequest } from '../models/CancelPendingWorkRequest.js';
 import type { CancelPendingWorkResponse } from '../models/CancelPendingWorkResponse.js';
+import type { DurableEntityBackup } from '../models/DurableEntityBackup.js';
+import type { DurableEntityBackupPage } from '../models/DurableEntityBackupPage.js';
+import type { DurableEntityInspectResponse } from '../models/DurableEntityInspectResponse.js';
 import type { DurableEntityInvokeRequest } from '../models/DurableEntityInvokeRequest.js';
 import type { DurableEntityInvokeResponse } from '../models/DurableEntityInvokeResponse.js';
+import type { DurableEntityRestorePreview } from '../models/DurableEntityRestorePreview.js';
+import type { DurableEntityRestoreRequest } from '../models/DurableEntityRestoreRequest.js';
+import type { DurableEntityRestoreResponse } from '../models/DurableEntityRestoreResponse.js';
+import type { DurableEntityRestoreValidationResponse } from '../models/DurableEntityRestoreValidationResponse.js';
+import type { DurableEntityRetryRequest } from '../models/DurableEntityRetryRequest.js';
+import type { DurableEntityRetryResponse } from '../models/DurableEntityRetryResponse.js';
+import type { DurableEntityStateExport } from '../models/DurableEntityStateExport.js';
 import type { Invocation } from '../models/Invocation.js';
 import type { InvokeRequest } from '../models/InvokeRequest.js';
 import type { InvokeResponse } from '../models/InvokeResponse.js';
@@ -75,6 +85,522 @@ export class InvocationsService {
     });
   }
   /**
+   * Inspect one durable entity's state and recovery metadata.
+   * Account-owner read preview, requiring apps:read or admin, MFA where
+   * applicable, and the explicit durable entity app allowlist. Resolves the
+   * current immutable environment and same-account optional customer. Owner
+   * inspection permits suspended customers and plan downgrades for diagnosis;
+   * it does not authorize execution. Customer self-service tokens are excluded.
+   * Returns state version, alarm and pending-outbox recovery metadata only.
+   * No business data, receipts, payloads, credentials, claim tokens or bucket
+   * paths are exposed. Inspection acquires no ownership, writes no objects,
+   * repairs no indexes and runs no guest code. A missing entity returns 404
+   * without creating it; corrupt committed state fails closed with 503.
+   * Head delivery status is a separate, later observation of retained transport
+   * history. Unknown includes absent/pruned history or read failures and never
+   * proves a message was not accepted. An empty pending queue does not prove
+   * receiver completion. These observations are not atomic across stores.
+   * Inspection does not retry work. Use its recovery_revision for the separate
+   * owner-only retry endpoint. Responses are not cacheable.
+   *
+   * @returns DurableEntityInspectResponse Metadata-only entity and head delivery observations.
+   * @throws ApiError
+   */
+  public static inspectDurableEntity({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Entity namespace, bounded to 256 UTF-8 bytes.
+     */
+    namespace: string,
+    /**
+     * Logical entity key, bounded to 256 UTF-8 bytes.
+     */
+    key: string,
+    /**
+     * Current registered project environment; defaults to production.
+     */
+    environment?: string,
+    /**
+     * Optional customer owned by the authenticated account, including suspended customers.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<DurableEntityInspectResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/inspect',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Preview disabled, bucket unavailable, corrupt committed state or retryable reclamation race.`,
+        504: `Inspection deadline elapsed.`,
+      },
+    });
+  }
+  /**
+   * List retained backup metadata.
+   * This backup listing operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+   * applicable. Requires durable entity app enablement. Private, no-store.
+   * No ownership acquisition, guest execution or writes. Backup listing is
+   * bounded and metadata-only; backup reads contain sensitive application data.
+   * Restore preview reports observed versions, recognized schema envelopes and
+   * preserved pending work. Compatibility is always unverified; schema equality
+   * does not validate application data. Preview grants no restore authority.
+   *
+   * @returns DurableEntityBackupPage Backup listing observation. Observational result; subsequent restore still requires a fenced commit.
+   * @throws ApiError
+   */
+  public static listDurableEntityBackups({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Entity namespace for backup listing.
+     */
+    namespace: string,
+    /**
+     * Logical entity key for backup listing.
+     */
+    key: string,
+    /**
+     * Registered environment for backup listing; defaults to production.
+     */
+    environment?: string,
+    /**
+     * Optional account-owned customer scope for backup listing.
+     */
+    platformTenantId?: string,
+    /**
+     * Opaque continuation cursor from the previous backup page.
+     */
+    cursor?: string,
+  }): CancelablePromise<DurableEntityBackupPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/backups',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Backup listing observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
+        504: `Backup listing observation. Observation deadline elapsed. Retry the read.`,
+      },
+    });
+  }
+  /**
+   * Read one private application-state backup.
+   * This backup retrieval operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+   * applicable. Requires durable entity app enablement. Private, no-store.
+   * No ownership acquisition, guest execution or writes. Backup listing is
+   * bounded and metadata-only; backup reads contain sensitive application data.
+   * Restore preview reports observed versions, recognized schema envelopes and
+   * preserved pending work. Compatibility is always unverified; schema equality
+   * does not validate application data. Preview grants no restore authority.
+   *
+   * @returns DurableEntityBackup Backup retrieval observation. Observational result; subsequent restore still requires a fenced commit.
+   * @throws ApiError
+   */
+  public static getDurableEntityBackup({
+    slug,
+    namespace,
+    key,
+    backupId,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Entity namespace for backup retrieval.
+     */
+    namespace: string,
+    /**
+     * Logical entity key for backup retrieval.
+     */
+    key: string,
+    /**
+     * Identifier of the retained backup to retrieve.
+     */
+    backupId: string,
+    /**
+     * Registered environment for backup retrieval; defaults to production.
+     */
+    environment?: string,
+    /**
+     * Optional account-owned customer scope for backup retrieval.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<DurableEntityBackup> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/backups/get',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+        'backup_id': backupId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Backup retrieval observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
+        504: `Backup retrieval observation. Observation deadline elapsed. Retry the read.`,
+      },
+    });
+  }
+  /**
+   * Preview a restore without writes or execution.
+   * This restore preview operation provides an owner diagnostic preview requiring apps:read or admin and MFA where
+   * applicable. Requires durable entity app enablement. Private, no-store.
+   * No ownership acquisition, guest execution or writes. Backup listing is
+   * bounded and metadata-only; backup reads contain sensitive application data.
+   * Restore preview reports observed versions, recognized schema envelopes and
+   * preserved pending work. Compatibility is always unverified; schema equality
+   * does not validate application data. Preview grants no restore authority.
+   *
+   * @returns DurableEntityRestorePreview Restore preview observation. Observational result; subsequent restore still requires a fenced commit.
+   * @throws ApiError
+   */
+  public static previewDurableEntityRestore({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DurableEntityRestoreRequest,
+  }): CancelablePromise<DurableEntityRestorePreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/restore/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `Preview body exceeds the central invocation byte limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Restore preview observation. Observation raced with publication/deletion, preview is unavailable or storage is corrupt. Retry the read.`,
+        504: `Restore preview observation. Observation deadline elapsed. Retry the read.`,
+      },
+    });
+  }
+  /**
+   * Export committed application state from one durable entity.
+   * Owner-only preview requiring apps:read or admin and MFA where applicable.
+   * Resolves immutable account, app, environment and tenant identity. Requires
+   * app enablement. Diagnostic reads permit held/suspended scopes and plan
+   * downgrades. Performs no writes or guest invocation. Contains sensitive
+   * application JSON; responses are private, no-store. Excludes alarms,
+   * receipts, outbox and ownership. Checksum detects corruption, not authority.
+   *
+   * @returns DurableEntityStateExport One committed state export. No version-zero entity is exported.
+   * @throws ApiError
+   */
+  public static exportDurableEntity({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Entity namespace for state export.
+     */
+    namespace: string,
+    /**
+     * Logical entity key for state export.
+     */
+    key: string,
+    /**
+     * Registered environment for state export; defaults to production.
+     */
+    environment?: string,
+    /**
+     * Optional account-owned customer scope for state export.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<DurableEntityStateExport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/export',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `State export preview is unavailable, ownership is busy or storage failed. Retry the export read.`,
+        504: `State export deadline elapsed. Retry the export read.`,
+      },
+    });
+  }
+  /**
+   * Ask the live application deployment to validate exported state.
+   * Operator-gated preview requiring deploy:write or admin, MFA where applicable,
+   * app enablement, execution plan and active-tenant/account rules. Enqueues
+   * a pinned invocation to the distinct private validation path. The synchronous
+   * application validator must be pure and returns only a versioned boolean
+   * verdict. Gregale commits no state, alarm, outbox or request receipt here;
+   * invocation rows and normal execution resource use still occur. External
+   * application I/O is not independently disabled by the current runtime.
+   * Validate needs an existing committed entity and matching expected_version.
+   * Returned deployment_id identifies the checked deployment, not a permission
+   * token. Restore revalidates under its claim and rejects deployment drift;
+   * preview/validation does not reserve a version. Keep candidate data private.
+   *
+   * @returns DurableEntityRestoreValidationResponse Application verdict without entity publication; false rejects the candidate.
+   * @throws ApiError
+   */
+  public static validateDurableEntityRestore({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DurableEntityRestoreRequest,
+  }): CancelablePromise<DurableEntityRestoreValidationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/restore/validate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `validateDurableEntityRestore requires an eligible plan and an account without a billing or abuse hold.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Current state or selected deployment changed. Resolve the observation before starting a new operation.`,
+        413: `Validation request exceeds the central invocation byte limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        502: `Application validation failed or returned a malformed verdict.`,
+        503: `Application validation preview is disabled or storage/execution is unavailable.`,
+        504: `Validation deadline elapsed. No entity commit occurs for validation.`,
+      },
+    });
+  }
+  /**
+   * Restore exported application data with a fenced expected-version check.
+   * Owner-only mutation preview requiring deploy:write or admin and MFA where
+   * applicable. Applies app enablement, execution plan, account hold and active
+   * tenant rules. Export identity must exactly match resolved target scope.
+   * Requires an existing committed entity, positive expected_version and stable
+   * request_id. Commits only application data, preserving current receipts,
+   * alarms, outbox and delivery attempts. Advances business version once; invokes
+   * no guest unless application restore validation is enabled. With
+   * FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED=1, every new restore requires
+   * validation_deployment_id and a fresh pure validator verdict under the claim.
+   * The chosen deployment is resolved before and after validation; publication
+   * still uses the entity ownership/version CAS. Deployment routing and bucket
+   * publication are not one atomic transaction. Receipt replay skips validation.
+   * Receipt replay precedes expected-version comparison. Retry uncertain
+   * outcomes with the identical request body and ID. Check application schema
+   * compatibility before restoring. Audit is best effort after acknowledged
+   * success, not atomic with the object-store commit. Responses are private,
+   * no-store; request/response state must not be logged.
+   *
+   * @returns DurableEntityRestoreResponse Restore committed or an existing receipt was replayed.
+   * @throws ApiError
+   */
+  public static restoreDurableEntity({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DurableEntityRestoreRequest,
+  }): CancelablePromise<DurableEntityRestoreResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/restore',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `restoreDurableEntity requires an eligible plan and an account without a billing or abuse hold.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expected version is stale, request identity conflicts or storage budget is exceeded.`,
+        413: `Restore request exceeds the central invocation byte limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Preview unavailable, busy ownership, storage failure or uncertain outcome. Retry restore with identical request ID and body.`,
+        504: `Deadline elapsed. Retry restore with identical request ID and body.`,
+      },
+    });
+  }
+  /**
+   * Re-arm exactly one exhausted alarm or outgoing message.
+   * Account-owner mutation preview requiring deploy:write or admin, MFA where
+   * applicable, durable entity app enablement and the existing execution plan
+   * and active-customer rules. Account holds block recovery. Requires a fresh
+   * inspection's version and opaque recovery_revision plus alarm_at or head_id.
+   * The revision changes on every manifest write, including ownership and
+   * retry metadata changes. Only exhausted work on an unowned entity can be
+   * re-armed. A stale observation or non-exhausted target returns 409; an
+   * active owner returns 503. No missing entity is created.
+   * Recovery changes retry metadata only, preserving state, receipts, deadlines,
+   * message identities, payloads and durable transport acceptance. It does not
+   * invoke the guest, send a webhook or retry a terminal receiver delivery.
+   * Existing workers must be enabled separately. Responses are not cacheable.
+   * A repeated request after success returns 409. After an uncertain response,
+   * inspect again before deciding whether another recovery is needed.
+   *
+   * @returns DurableEntityRetryResponse Retry metadata was re-armed; execution or delivery is not confirmed.
+   * @throws ApiError
+   */
+  public static retryDurableEntity({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DurableEntityRetryRequest,
+  }): CancelablePromise<DurableEntityRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/retry',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `retryDurableEntity requires an eligible plan and an account without a billing or abuse hold.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Observation changed, target changed or work is not exhausted. Inspect again.`,
+        413: `Recovery request exceeds the central durable entity metadata size limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Preview unavailable, active owner, corrupt state or uncertain recovery outcome. Inspect before retrying.`,
+        504: `Recovery deadline elapsed. Inspect before retrying.`,
+      },
+    });
+  }
+  /**
    * Invoke an object-storage-backed entity in the operator preview.
    * Disabled unless the operator configures a private bucket and explicitly
    * enables this app. Account authentication, deploy-write scopes and MFA
@@ -132,8 +658,10 @@ export class InvocationsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        402: `invokeDurableEntity requires an eligible plan and an account without a billing or abuse hold.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.`,
         413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,

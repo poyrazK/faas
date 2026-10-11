@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugDependencyDeploymentComparison } from './DebugDependencyDeploymentComparison.js';
 import type { DebugDependencyImpactEdge } from './DebugDependencyImpactEdge.js';
 import type { DebugDependencyLatencyItem } from './DebugDependencyLatencyItem.js';
 /**
@@ -23,5 +24,6 @@ export type DebugDependencyLatencyResponse = {
   span_samples: number;
   dependencies: Array<DebugDependencyLatencyItem>;
   edges: Array<DebugDependencyImpactEdge>;
+  deployment_comparison?: DebugDependencyDeploymentComparison;
 };
 
