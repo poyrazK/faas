@@ -79,7 +79,7 @@ func (c *commitRecoveryCheckpoint) validate() error {
 	return nil
 }
 
-func (c *commitRecoveryCheckpoint) save(status api.CommitRecoveryStatusResult) error {
+func (c *commitRecoveryCheckpoint) save(status any) error {
 	if c.guard == nil || !c.guard.Locked() {
 		return errors.New("recovery checkpoint ownership is not held")
 	}

@@ -15,7 +15,7 @@ import (
 )
 
 func cmdEventsSubscriptionDeliveryHealth(args []string) int {
-	flags, positional := splitArgsForFlags(args, "watch", "alerts-json")
+	flags, positional := splitArgsForFlags(args, "watch", "alerts-json", "resume")
 	fs := newFlagSet("events subscription-delivery-health", flag.ContinueOnError)
 	window := fs.String("window", "5m", "observation window: 5m|15m|1h|6h|24h")
 	watchFlags := newDeliveryHealthWatchFlags(fs)
@@ -79,12 +79,16 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 
 type deliveryHealthWatchFlags struct {
 	watch, alertsJSON *bool
+	resume            *bool
+	checkpoint        *string
 	options           api.EventDeliveryHealthWatchOptions
 }
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f := &deliveryHealthWatchFlags{}
 	f.watch = fs.Bool("watch", false, "watch configured delivery health thresholds")
+	f.checkpoint = fs.String("checkpoint", "", "persist a bounded delivery health watch checkpoint")
+	f.resume = fs.Bool("resume", false, "resume the selected checkpoint with fresh evidence")
 	f.alertsJSON = fs.Bool("alerts-json", false, "emit local lifecycle alert JSON lines on stderr")
 	fs.DurationVar(&f.options.Interval, "interval", api.EventDeliveryHealthWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	fs.DurationVar(&f.options.Timeout, "timeout", api.EventDeliveryHealthWatchTimeoutDefault, "watch deadline (up to 24h)")
@@ -141,6 +145,9 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 			err = fmt.Errorf("--%s requires --watch", option.Name)
 		}
 	})
+	if *f.resume && *f.checkpoint == "" {
+		return fmt.Errorf("--resume requires --checkpoint")
+	}
 	return err
 }
 
@@ -149,7 +156,25 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 	defer stop()
 	options := f.options
 	options.Window = window
+	checkpoint, err := prepareDeliveryHealthCheckpoint(f, &options)
+	if err != nil {
+		return printErr("Cannot use delivery health checkpoint", err)
+	}
+	if checkpoint != nil {
+		defer func() { _ = checkpoint.close() }()
+	}
 	options.OnProgress = func(progress api.EventDeliveryHealthWatchResult) error {
+		if checkpoint != nil {
+			if progress.Checkpoint == nil {
+				return fmt.Errorf("missing delivery health checkpoint")
+			}
+			if err := api.ValidateEventDeliveryHealthCheckpoint(*progress.Checkpoint); err != nil {
+				return err
+			}
+			if err := checkpoint.save(progress.Checkpoint); err != nil {
+				return err
+			}
+		}
 		for _, alert := range progress.Alerts {
 			if *f.alertsJSON {
 				if err := json.NewEncoder(os.Stderr).Encode(alert); err != nil {
@@ -164,6 +189,11 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 		return nil
 	}
 	result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, sub, options)
+	if checkpoint != nil && result.Checkpoint != nil && result.StopReason != "validation_failure" && result.StopReason != "callback_failure" {
+		if saveErr := checkpoint.save(result.Checkpoint); saveErr != nil {
+			return printErr("Cannot save delivery health checkpoint", saveErr)
+		}
+	}
 	if jsonOutput {
 		if code := jsonOut(writeJSON(result)); code != 0 {
 			return code

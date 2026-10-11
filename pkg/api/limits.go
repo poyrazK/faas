@@ -9704,3 +9704,9 @@ const (
 	EventDeliveryHealthWatchThresholdMax          = 24 * time.Hour
 	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
 )
+
+// EventDeliveryHealthAlertQueueMax bounds pending notifications plus closing reservations.
+const EventDeliveryHealthAlertQueueMax = 1024
+
+// EventDeliveryHealthAlertSequenceMax keeps notification identities exactly representable.
+const EventDeliveryHealthAlertSequenceMax uint64 = 9007199254740991

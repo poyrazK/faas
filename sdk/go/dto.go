@@ -473,7 +473,7 @@ type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
 type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
 type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
 
-// EventDeliveryHealthWatchOptions configures invocation-local health alerts.
+// EventDeliveryHealthWatchOptions configures health alerts and optional checkpointing.
 type EventDeliveryHealthWatchOptions = api.EventDeliveryHealthWatchOptions
 type EventDeliveryHealthWatchResult = api.EventDeliveryHealthWatchResult
 type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
@@ -486,4 +486,18 @@ type EventConsumerWaitingReasons = api.EventConsumerWaitingReasons
 // EventPendingWaitingReasonCountsComplete verifies an exact known-reason partition.
 func EventPendingWaitingReasonCountsComplete(counts map[string]int64, pending int64) bool {
 	return api.EventPendingWaitingReasonCountsComplete(counts, pending)
+}
+
+// EventDeliveryHealthCheckpoint stores historical watch evidence and pending alerts.
+type EventDeliveryHealthCheckpoint = api.EventDeliveryHealthCheckpoint
+
+// EventDeliveryHealthAcknowledgement selects an exact pending notification.
+type EventDeliveryHealthAcknowledgement = api.EventDeliveryHealthAcknowledgement
+
+func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) error {
+	return api.ValidateEventDeliveryHealthCheckpoint(saved)
+}
+
+func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, acks []EventDeliveryHealthAcknowledgement) (EventDeliveryHealthCheckpoint, error) {
+	return api.AcknowledgeEventDeliveryHealthAlerts(saved, acks)
 }

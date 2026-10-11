@@ -1827,3 +1827,24 @@ gregale events subscription-delivery-health my-app SUBSCRIPTION_ID --watch \
 ```
 
 Both flags are repeatable for different known reason keys; duplicates within one flag kind are rejected. Count thresholds are inclusive. Duration thresholds measure consecutive fresh local observations with a nonzero reason count, requiring at least two observations; they do not track the same recipients. Missing, incomplete, stale or inconsistent aggregates cause confirmation loss rather than clearing an alert. Notifications remain invocation-local and are emitted once per transition on stderr. See ADR-964.
+
+To preserve delivery-health alerts across restarts, add `--checkpoint health-watch.json`. Resume with the same app, subscription, window and thresholds plus `--resume`:
+
+```sh
+gregale events subscription-delivery-health my-app SUBSCRIPTION_ID --watch \
+  --waiting-reason-count ordering_blocked=10 --checkpoint health-watch.json --alerts-json
+# After the first watch exits:
+gregale events subscription-delivery-health my-app SUBSCRIPTION_ID --watch \
+  --waiting-reason-count ordering_blocked=10 --checkpoint health-watch.json --resume --alerts-json
+```
+
+Saved incidents resume as unknown until fresh evidence confirms or clears them; qualifying evidence preserves their IDs. Duration measurements restart. The watch atomically persists progress before printing notifications. The queue reserves closing slots for active incidents, stops new openings when full, and never automatically acknowledges printed alerts. While the watch is stopped, inspect, replay or acknowledge its queue without logging in:
+
+```sh
+gregale events delivery-health-alerts --checkpoint health-watch.json
+gregale events delivery-health-alerts --checkpoint health-watch.json --replay
+# processed.json contains [{"incident_id":"SESSION-OPENING_SEQUENCE","sequence":TRANSITION_SEQUENCE}]
+gregale events delivery-health-alerts --checkpoint health-watch.json --ack-alerts processed.json
+```
+
+Replay emits historical JSON lines and leaves the queue unchanged. Acknowledge exact pending transitions only after processing them; duplicates, unknown pairs and previously removed pairs are rejected. Deduplicate externally by session and sequence. Watches and queue operations share an exclusive private sidecar lock; keep the `.lock` file in place. See ADR-965.

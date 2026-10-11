@@ -22,6 +22,8 @@ type EventDeliveryHealthWatchOptions struct {
 	// WaitingReasonCounts and WaitingReasonDurations select known pending reasons.
 	WaitingReasonCounts    map[string]int64
 	WaitingReasonDurations map[string]time.Duration
+	DurableAlerts          bool
+	Resume                 *EventDeliveryHealthCheckpoint
 	OnProgress             func(EventDeliveryHealthWatchResult) error
 }
 
@@ -39,14 +41,18 @@ type EventDeliveryHealthAlert struct {
 }
 
 type EventDeliveryHealthCondition struct {
-	Metric     string  `json:"metric"`
-	State      string  `json:"state"`
-	Value      float64 `json:"value"`
-	Threshold  float64 `json:"threshold"`
-	IncidentID string  `json:"incident_id,omitempty"`
+	Metric     string    `json:"metric"`
+	State      string    `json:"state"`
+	Value      float64   `json:"value"`
+	Threshold  float64   `json:"threshold"`
+	IncidentID string    `json:"incident_id,omitempty"`
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 type EventDeliveryHealthWatchResult struct {
+	Checkpoint     *EventDeliveryHealthCheckpoint `json:"checkpoint,omitempty"`
+	reserved       int
+	queueFull      bool
 	AppID          string                         `json:"app_id,omitempty"`
 	SubscriptionID string                         `json:"subscription_id"`
 	Session        string                         `json:"session"`
@@ -63,6 +69,7 @@ type deliveryHealthCondition struct {
 	first, localLast, observedAt time.Time
 	samples                      int
 	sustained                    bool
+	resuming                     bool
 }
 
 func (o EventDeliveryHealthWatchOptions) validate() error {
@@ -139,7 +146,8 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 }
 
 // WatchEventConsumerDeliveryHealth emits one local notification per confirmed
-// transition. Notifications are invocation-local, not a durable alert outbox.
+// transition. DurableAlerts exposes a bounded checkpoint outbox; callers must
+// persist progress before delivering notifications and acknowledge separately.
 func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
 	out := EventDeliveryHealthWatchResult{SubscriptionID: strings.ToLower(sub), StopReason: "validation_failure", Conditions: []EventDeliveryHealthCondition{}, Alerts: []EventDeliveryHealthAlert{}}
 	if err := o.validate(); err != nil {
@@ -154,9 +162,16 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 	}
 	out.Session, out.StopReason = hex.EncodeToString(namespace[:]), "running"
 	conditions := newDeliveryHealthConditions(o)
+	if o.DurableAlerts {
+		out.Checkpoint = &EventDeliveryHealthCheckpoint{Version: 1, App: app, SubscriptionID: out.SubscriptionID, Window: o.Window, Pending: []EventDeliveryHealthAlert{}}
+	}
+	if err := restoreDeliveryHealthCheckpoint(&out, conditions, app, o); err != nil {
+		out.StopReason = "validation_failure"
+		return out, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
-	appID := ""
+	appID := out.AppID
 	for {
 		out.Alerts = []EventDeliveryHealthAlert{}
 		health, err := c.GetEventConsumerDeliveryHealth(ctx, app, sub, o.Window)
@@ -192,9 +207,15 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 			updateDeliveryHealthCondition(&out, condition, value, binding && valid, observed, now, o.MaxAge)
 		}
 		collectDeliveryHealthConditions(&out, conditions)
+		if out.queueFull {
+			out.StopReason = "alert_outbox_full"
+		}
 		if err := deliveryHealthProgress(o, out); err != nil {
 			out.StopReason = "callback_failure"
 			return out, err
+		}
+		if out.queueFull {
+			return out, deliveryHealthQueueError(out)
 		}
 		timer := time.NewTimer(o.Interval)
 		select {
@@ -214,7 +235,14 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 func collectDeliveryHealthConditions(out *EventDeliveryHealthWatchResult, conditions []*deliveryHealthCondition) {
 	out.Conditions = make([]EventDeliveryHealthCondition, 0, len(conditions))
 	for _, condition := range conditions {
+		condition.ObservedAt = condition.observedAt
 		out.Conditions = append(out.Conditions, condition.EventDeliveryHealthCondition)
+	}
+	if out.Checkpoint != nil {
+		out.Checkpoint.AppID = out.AppID
+		out.Checkpoint.Session = out.Session
+		out.Checkpoint.Sequence = out.Sequence
+		out.Checkpoint.Conditions = append([]EventDeliveryHealthCondition{}, out.Conditions...)
 	}
 }
 
@@ -245,6 +273,7 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 		return
 	}
 	c.observedAt, c.localLast = observed, now
+	rawPositive := value > 0
 	if c.sustained {
 		if value > 0 {
 			if c.first.IsZero() {
@@ -260,7 +289,20 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 	}
 	c.Value = value
 	breached := value >= c.Threshold && (!c.sustained || c.samples >= 2)
+	if c.resuming {
+		if c.sustained && rawPositive && !breached {
+			c.State = "unknown"
+			return
+		}
+		c.State = "firing"
+		c.resuming = false
+	}
 	if breached && c.State != "firing" {
+		if !deliveryHealthCanOpen(out) {
+			c.State = "unknown"
+			return
+		}
+		out.reserved++
 		out.Sequence++
 		c.IncidentID = fmt.Sprintf("%s-%d", out.Session, out.Sequence)
 		c.State = "firing"
@@ -275,30 +317,40 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 }
 
 func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, reason string) {
-	if c.State == "firing" {
+	if c.State == "firing" || c.resuming {
 		out.Sequence++
 		appendDeliveryHealthAlert(out, c, now, "confirmation_lost", reason)
 	}
+	c.resuming = false
 	c.State, c.IncidentID, c.Value = "unknown", "", 0
-	c.first, c.localLast, c.observedAt, c.samples = time.Time{}, time.Time{}, time.Time{}, 0
+	c.first, c.localLast, c.samples = time.Time{}, time.Time{}, 0
 }
 
 func appendDeliveryHealthAlert(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, transition, reason string) {
-	out.Alerts = append(out.Alerts, EventDeliveryHealthAlert{AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold})
+	alert := EventDeliveryHealthAlert{AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold}
+	out.Alerts = append(out.Alerts, alert)
+	if out.Checkpoint != nil {
+		out.Checkpoint.Pending = append(out.Checkpoint.Pending, alert)
+	}
+	if transition != "opened" {
+		out.reserved--
+	}
 }
 
 const (
-	EventDeliveryHealthWatchIntervalMin           = 100 * time.Millisecond
-	EventDeliveryHealthWatchIntervalMax           = time.Minute
-	EventDeliveryHealthWatchIntervalDefault       = 5 * time.Second
-	EventDeliveryHealthWatchTimeoutDefault        = 2 * time.Minute
-	EventDeliveryHealthWatchTimeoutMax            = 24 * time.Hour
-	EventDeliveryHealthWatchAgeMin                = 100 * time.Millisecond
-	EventDeliveryHealthWatchAgeMax                = 24 * time.Hour
-	EventDeliveryHealthWatchAgeDefault            = 30 * time.Second
-	EventDeliveryHealthWatchThresholdMin          = 100 * time.Millisecond
-	EventDeliveryHealthWatchThresholdMax          = 24 * time.Hour
-	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
+	EventDeliveryHealthAlertQueueMax               = 1024
+	EventDeliveryHealthAlertSequenceMax     uint64 = 9007199254740991
+	EventDeliveryHealthWatchIntervalMin            = 100 * time.Millisecond
+	EventDeliveryHealthWatchIntervalMax            = time.Minute
+	EventDeliveryHealthWatchIntervalDefault        = 5 * time.Second
+	EventDeliveryHealthWatchTimeoutDefault         = 2 * time.Minute
+	EventDeliveryHealthWatchTimeoutMax             = 24 * time.Hour
+	EventDeliveryHealthWatchAgeMin                 = 100 * time.Millisecond
+	EventDeliveryHealthWatchAgeMax                 = 24 * time.Hour
+	EventDeliveryHealthWatchAgeDefault             = 30 * time.Second
+	EventDeliveryHealthWatchThresholdMin           = 100 * time.Millisecond
+	EventDeliveryHealthWatchThresholdMax           = 24 * time.Hour
+	EventDeliveryHealthWatchCountMax        int64  = 9007199254740991
 )
 
 const EventConsumerDeliveryHealthSampleMax = 50
