@@ -134,8 +134,8 @@ func TestRegistryCleanupRotatesEpochPreservesFencesAndReclaimsOnlyOldMetadata(t 
 	if c.Epoch != 1 {
 		t.Fatal(c)
 	}
-	if err := q.AdmitInvocation(t.Context(), fresh); !errors.Is(err, ErrRegistryCleanupPending) {
-		t.Fatal("admission escaped hold", err)
+	if err := q.AdmitInvocation(t.Context(), fresh); err != nil {
+		t.Fatal("current-epoch admission blocked", err)
 	}
 	if _, err := q.StartMigration(t.Context(), id, uuid.NewString(), "", 0); !errors.Is(err, ErrRegistryCleanupPending) {
 		t.Fatal("migration escaped hold", err)
@@ -143,8 +143,8 @@ func TestRegistryCleanupRotatesEpochPreservesFencesAndReclaimsOnlyOldMetadata(t 
 	if _, err := q.StepRegistryCleanup(t.Context(), id, c.OperationID, c.Revision, false); !errors.Is(err, durableentity.ErrBusy) {
 		t.Fatal("reader grace bypassed", err)
 	}
-	if preview, err := q.PreviewRetirement(t.Context(), fresh); err != nil || preview.Ready {
-		t.Fatal("retirement was ready during cleanup", preview, err)
+	if preview, err := q.PreviewRetirement(t.Context(), fresh); err != nil || !preview.Ready {
+		t.Fatal("retirement blocked during cleanup", preview, err)
 	}
 	original := *c
 	c = finishRegistryCleanup(t, q, id, c)
@@ -333,4 +333,146 @@ func TestRegistryCleanupStaleCutoverDoesNotDeleteOrLoseReservations(t *testing.T
 	if err != nil || usage.EntityReservations != 2 || usage.ReservedBytes != 2048 {
 		t.Fatal("cutover lost concurrent reservation", usage, err)
 	}
+}
+
+func TestRegistryCleanupCheckpointMergesConcurrentQuotaMutations(t *testing.T) {
+	q, id, b := registryCleanupFixture(t)
+	lease, err := q.AcquireConnection(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := startRegistryCleanup(t, q, id) // Existing connections need not drain.
+	if err = q.ReleaseConnection(t.Context(), id, lease); err != nil {
+		t.Fatal("release blocked during grace", err)
+	}
+	now := c.NotBefore
+	q.Now = func() time.Time { return now }
+	other := *q
+	other.RegistryCache = nil
+	fresh := id
+	fresh.Key = "new-during-collection"
+	var granted Grant
+	q.Store = &registryCleanupInterleaving{registryInterleavingStore: &registryInterleavingStore{ObjectStore: b, beforeRoot: func() {
+		if err := other.AdmitInvocation(t.Context(), fresh); err != nil {
+			t.Fatal(err)
+		}
+		scope, _ := scopeFor(id)
+		g := testGrant(fresh)
+		g.ID = scopeKey(scope) + "." + uuid.NewString()
+		g.ExpiresAt = now.Add(time.Minute)
+		granted, err = other.mint(t.Context(), g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease, err = other.AcquireConnection(t.Context(), fresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader := retirementReader{status: &durableentity.RetirementStatus{Request: durableentity.RetirementRequest{OperationID: uuid.NewString()}, Actor: "operator", At: now, Revision: 1, Phase: "complete", RetainedBytes: 128}}
+		if _, err := other.TrackRetirement(t.Context(), id, reader.status.Request.OperationID, reader); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := other.ReclaimRetirement(t.Context(), id, reader.status.Request.OperationID, reader); err != nil {
+			t.Fatal(err)
+		}
+	}}, CleanupStore: b}
+	c, err = q.StepRegistryCleanup(t.Context(), id, c.OperationID, c.Revision, false)
+	if err != nil || c.Revision != 2 {
+		t.Fatal("checkpoint did not merge admission conflict", c, err)
+	}
+	u, err := other.Inspect(t.Context(), fresh)
+	if err != nil || u.EntityReservations != 1 || u.ReservedBytes != 1152 || u.RecoveryBytes != 128 || u.Invocations != 1 || u.Grants != 1 || u.GrantsIssued != 1 || u.Connections != 1 {
+		t.Fatal("checkpoint lost concurrent quota state", u, err)
+	}
+	if err := other.AdmitInvocation(t.Context(), id); !errors.Is(err, durableentity.ErrRetired) {
+		t.Fatal("checkpoint lost retirement fence", err)
+	}
+	if err := other.revoke(t.Context(), granted.ID, id.AccountID, id.AppID); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.ReleaseConnection(t.Context(), fresh, lease); err != nil {
+		t.Fatal(err)
+	}
+	finishRegistryCleanup(t, q, id, c)
+	if _, err := other.Inspect(t.Context(), fresh); err != nil {
+		t.Fatal("cold reader lost live shards", err)
+	}
+}
+
+func TestRegistryCleanupLegacySchemaFiveRetainsHold(t *testing.T) {
+	q, id, _ := registryCleanupFixture(t)
+	c := startRegistryCleanup(t, q, id)
+	scope, _ := scopeFor(id)
+	key := scopeKey(scope)
+	r, version, err := q.read(t.Context(), key)
+	if err != nil || r.Schema != 6 {
+		t.Fatal(r.Schema, err)
+	}
+	r.Schema = 5 // A persisted cleanup created by the preceding release.
+	if err := q.commitRegistryCleanup(t.Context(), key, r, version); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.AdmitInvocation(t.Context(), id); !errors.Is(err, ErrRegistryCleanupPending) {
+		t.Fatal("legacy hold bypassed", err)
+	}
+	if preview, err := q.PreviewRetirement(t.Context(), id); err != nil || preview.Ready {
+		t.Fatal(preview, err)
+	}
+	finishRegistryCleanup(t, q, id, c)
+	if err := q.AdmitInvocation(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	startRegistryCleanup(t, q, id) // A later rotation upgrades to schema 6.
+	r, _, err = q.read(t.Context(), key)
+	if err != nil || r.Schema != 6 || registryCleanupHoldsWrites(r) {
+		t.Fatal(r.Schema, err)
+	}
+}
+
+type registryCleanupContentionStore struct {
+	*registryCleanupBucket
+	beforeRoot func()
+	attempts   int
+}
+
+func (s *registryCleanupContentionStore) Put(ctx context.Context, key string, body []byte, version string) (string, error) {
+	if strings.HasPrefix(key, "tenant-quotas/v1/") {
+		s.attempts++
+		s.beforeRoot()
+	}
+	return s.registryCleanupBucket.Put(ctx, key, body, version)
+}
+
+func TestRegistryCleanupContentionIsBoundedWithoutRepeatingDeletes(t *testing.T) {
+	q, id, b := registryCleanupFixture(t)
+	c := startRegistryCleanup(t, q, id)
+	now := c.NotBefore
+	q.Now = func() time.Time { return now }
+	other := *q
+	s := &registryCleanupContentionStore{registryCleanupBucket: b, beforeRoot: func() {
+		// A definite concurrent root update on every checkpoint attempt.
+		if err := other.ReleaseConnection(t.Context(), id, uuid.NewString()); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	q.Store = s
+	if _, err := q.StepRegistryCleanup(t.Context(), id, c.OperationID, c.Revision, false); !errors.Is(err, durableentity.ErrBusy) || s.attempts != 8 {
+		t.Fatal("unbounded or hidden contention", s.attempts, err)
+	}
+	seen := map[string]bool{}
+	for _, path := range b.deletes {
+		if seen[path] {
+			t.Fatal("repeated page deletion during CAS retries", path)
+		}
+		seen[path] = true
+	}
+	if len(seen) != 16 {
+		t.Fatal("page not collected", len(seen))
+	}
+	status, err := other.RegistryCleanupStatus(t.Context(), id)
+	if err != nil || status.Revision != c.Revision {
+		t.Fatal("busy checkpoint advanced", status, err)
+	}
+	q.Store = b
+	finishRegistryCleanup(t, q, id, status)
 }

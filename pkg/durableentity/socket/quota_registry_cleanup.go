@@ -32,6 +32,12 @@ type RegistryCleanup struct {
 func registryCleanupActive(r quotaRecord) bool {
 	return r.RegistryCleanup != nil && r.RegistryCleanup.Phase != "complete"
 }
+
+// Schema 5 retains its original admission hold until operators complete it.
+// Schema 6 fences older readers and permits current-epoch quota mutations.
+func registryCleanupHoldsWrites(r quotaRecord) bool {
+	return r.Schema < 6 && registryCleanupActive(r)
+}
 func registryEpochPrefix(scope string, epoch uint64) string {
 	return "tenant-registry/v2/" + scope + "/" + fmt.Sprintf("%020d", epoch) + "/"
 }
@@ -68,7 +74,7 @@ func (q *Quotas) RegistryCleanupStatus(ctx context.Context, id durableentity.ID)
 	return &copy, nil
 }
 
-// Start rotates every live reference before publishing the schema-5 write hold.
+// Start rotates every live reference before publishing schema 6.
 // Old writers' CAS versions are invalidated; their keys can never be live again.
 func (q *Quotas) StartRegistryCleanup(ctx context.Context, id durableentity.ID, operation, revision, actor string) (*RegistryCleanup, error) {
 	scope, err := scopeFor(id)
@@ -103,9 +109,6 @@ func (q *Quotas) StartRegistryCleanup(ctx context.Context, id durableentity.ID, 
 		return nil, ErrRegistryCleanupPending
 	}
 	prune(&r, q.now())
-	if len(r.Connections) != 0 {
-		return nil, durableentity.ErrBusy
-	}
 	if r.Registry.Epoch == math.MaxUint64 {
 		return nil, durableentity.ErrLimit
 	}
@@ -113,7 +116,7 @@ func (q *Quotas) StartRegistryCleanup(ctx context.Context, id durableentity.ID, 
 	root.Epoch++
 	root.Shards = nil
 	r.Registry = &root
-	r.Schema = 5
+	r.Schema = 6
 	now := q.now()
 	r.RegistryCleanup = &RegistryCleanup{OperationID: operation, SourceRevision: revision, Actor: actor, At: now, Revision: 1, Epoch: root.Epoch, Phase: "legacy_cleanup", NotBefore: now.Add(api.MaxDurableEntityLease + api.DurableEntityInvokeTimeout)}
 	if err = q.commitRegistryCleanup(ctx, key, r, v); err != nil {
@@ -196,6 +199,7 @@ func (q *Quotas) StepRegistryCleanup(ctx context.Context, id durableentity.ID, o
 	if c == nil || c.OperationID != operation || c.Revision != revision {
 		return nil, durableentity.ErrConflict
 	}
+	original := *c
 	if c.Phase == "complete" {
 		copy := *c
 		return &copy, nil
@@ -262,11 +266,35 @@ func (q *Quotas) StepRegistryCleanup(ctx context.Context, id durableentity.ID, o
 		}
 	}
 	c.Revision++
-	if err = q.commitRegistryCleanup(ctx, key, r, v); err != nil {
+	if err = q.commitRegistryCleanupCheckpoint(ctx, key, r, v, original); err != nil {
 		return nil, err
 	}
 	copy := *c
 	return &copy, nil
+}
+
+// A page is listed/deleted once. On definite root conflicts, merge only its
+// checkpoint into fresh quota state; never overwrite concurrent reservations,
+// counters, grants, connections or retirement credit. An advanced checkpoint
+// fences this worker, and unknown acknowledgements require status inspection.
+func (q *Quotas) commitRegistryCleanupCheckpoint(ctx context.Context, key string, r quotaRecord, version string, original RegistryCleanup) error {
+	next := *r.RegistryCleanup
+	for attempt := 0; attempt < 8; attempt++ {
+		err := q.commitRegistryCleanup(ctx, key, r, version)
+		if !errors.Is(err, durableentity.ErrConflict) {
+			return err
+		}
+		fresh, freshVersion, err := q.read(ctx, key)
+		if err != nil {
+			return err
+		}
+		if fresh.RegistryCleanup == nil || *fresh.RegistryCleanup != original || fresh.Registry.Epoch != original.Epoch || fresh.Schema != r.Schema {
+			return durableentity.ErrConflict
+		}
+		fresh.RegistryCleanup = &next
+		r, version = fresh, freshVersion
+	}
+	return durableentity.ErrBusy
 }
 
 // Probe private listing/deletion using only this process's unique probe key.

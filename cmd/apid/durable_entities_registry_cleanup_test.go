@@ -11,8 +11,9 @@ import (
 	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 )
 
-func TestDurableEntitySocketRegistryCleanupAuthorizationHoldAndResume(t *testing.T) {
+func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *testing.T) {
 	e, app, dispatch, q := entityQuotaFixture(t)
+	q.Limits.InvocationsPerMinute = 10
 	e.s.durableEntityQuotaMigrationEnabled = true
 	e.s.durableEntityQuotaPolicyEnabled = true
 	e.s.durableEntityRegistryEnabled = true
@@ -84,17 +85,24 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationHoldAndResume(t *testing
 	if r = e.do(t, "POST", path+"/start"+selectors, request, nil); r.Code != 200 {
 		t.Fatal("start replay", r.Code, r.Body.String())
 	}
-	if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("held"), nil); r.Code != 503 || dispatch.calls.Load() != 1 {
-		t.Fatal("held work dispatched", r.Code, r.Body.String())
+	if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("during-cleanup"), nil); r.Code != 200 || dispatch.calls.Load() != 2 {
+		t.Fatal("cleanup blocked dispatch", r.Code, r.Body.String())
 	}
 	step := map[string]any{"operation_id": result.Cleanup.OperationID, "expected_revision": result.Cleanup.Revision}
 	if r = e.do(t, "POST", path+"/step"+selectors, step, nil); r.Code != 409 {
 		t.Fatal("grace skipped", r.Code, r.Body.String())
 	}
 	now = result.Cleanup.NotBefore
+	dispatchedDuringCollection := false
 	for i := 0; result.Cleanup.Phase != "complete"; i++ {
 		if i > 100 {
 			t.Fatal("cleanup stuck")
+		}
+		if result.Cleanup.Phase == "epoch_cleanup" && !dispatchedDuringCollection {
+			if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("during-collection"), nil); r.Code != 200 || dispatch.calls.Load() != 3 {
+				t.Fatal("collection blocked dispatch", r.Code, r.Body.String())
+			}
+			dispatchedDuringCollection = true
 		}
 		step["expected_revision"] = result.Cleanup.Revision
 		r = e.do(t, "POST", path+"/step"+selectors, step, nil)
@@ -105,8 +113,11 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationHoldAndResume(t *testing
 	if result.Cleanup.DeletedObjects < 16 {
 		t.Fatal(result)
 	}
-	if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("after-cleanup"), nil); r.Code != 200 || dispatch.calls.Load() != 2 {
-		t.Fatal("admission did not resume", r.Code, r.Body.String())
+	if !dispatchedDuringCollection {
+		t.Fatal("collection phase not exercised")
+	}
+	if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("after-cleanup"), nil); r.Code != 200 || dispatch.calls.Load() != 4 {
+		t.Fatal("admission failed after cleanup", r.Code, r.Body.String())
 	}
 	e.s.durableEntityRegistryCleanupEnabled = false
 	if r = e.do(t, "GET", path+selectors, nil, nil); r.Code != 503 {
