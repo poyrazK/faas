@@ -391,3 +391,20 @@ func renderEnvContractDoc() string {
 	}
 	return b.String()
 }
+
+func TestEnvContractDurableObjectManagementRemainsOptIn(t *testing.T) {
+	// ADR-973..982: shipping the management code must not enable an
+	// unqualified durable-object feature through daemon environment defaults.
+	contract := EnvContractByName()
+	for _, suffix := range []string{
+		"BROWSER_SESSIONS_ENABLED", "QUOTA_MIGRATION_ENABLED", "QUOTA_POLICY_ENABLED",
+		"REGISTRY_CLEANUP_ENABLED", "REGISTRY_CLEANUP_WORKER_ENABLED", "REGISTRY_ENABLED",
+		"RETIREMENT_ENABLED", "SOCKETS_ENABLED", "TENANT_QUOTAS_ENABLED",
+	} {
+		name := "FAAS_DURABLE_ENTITY_" + suffix
+		v, ok := contract[name]
+		if !ok || v.Source != EnvSourceDefault || v.Default != "0" || v.Required || len(v.Owners) != 1 || v.Owners[0] != "apid" {
+			t.Errorf("%s must remain optional and disabled for apid: %+v", name, v)
+		}
+	}
+}

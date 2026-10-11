@@ -145,15 +145,28 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DURABLE_ENTITY_BACKEND` | apid | `default` |  |  | `` | ADR-712 configured private conditional-state backend ID; required only when the invocation preview is enabled; S3 ETags or native GCS generations |
 | `FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT` | apid | `default` |  |  | `` | ADR-712 immutable placement fingerprint for the selected backend; required only when the invocation preview is enabled |
 | `FAAS_DURABLE_ENTITY_BACKUPS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_BROWSER_SESSIONS_ENABLED` | apid | `default` |  | 0 | `` | ADR-972 scoped browser grants; requires sockets and the invocation preview; native acceptance pending |
 | `FAAS_DURABLE_ENTITY_BUCKET` | apid | `default` |  |  | `` | ADR-712 dedicated private platform bucket; required only when the invocation preview is enabled; never a customer-managed bucket |
 | `FAAS_DURABLE_ENTITY_HEALTH_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in checkpointed cleanup and inventory; requires the invocation preview and private listing/deletion |
 | `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` | apid | `default` |  |  | `int` | ADR-712 optional positive per-entity committed-byte cap; unset leaves new entities uncapped and preserves existing persisted caps; not a billing quota |
 | `FAAS_DURABLE_ENTITY_OUTBOX_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED` | apid | `default` |  | 0 | `` | ADR-974 fenced quota inventory migration; requires tenant quotas; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED` | apid | `default` |  | 0 | `` | ADR-975 audited quota policy management; requires quota migration; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED` | apid | `default` |  | 0 | `` | ADR-978 epoch-fenced registry cleanup; requires registry management; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED` | apid | `default` |  | 0 | `` | ADR-980 bounded continuation of explicitly authorized cleanup; requires cleanup management; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_REGISTRY_ENABLED` | apid | `default` |  | 0 | `` | ADR-977 immutable sharded registry management; requires quota policy management; native acceptance pending |
 | `FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_RESTORE_VALIDATOR_BUNDLES_FILE` | apid | `default` |  |  | `` | Legacy startup validator registry; unused with shared artifact storage. |
+| `FAAS_DURABLE_ENTITY_RETIREMENT_ENABLED` | apid | `default` |  | 0 | `` | ADR-976 permanently fenced retirement and verified quota credit; requires quota policy management; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_SOCKETS_ENABLED` | apid | `default` |  | 0 | `` | ADR-970 reconnectable service sessions; requires the invocation preview; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_TENANT_GRANTS_PER_MINUTE` | apid | `default` |  | 60 | `int` | ADR-973 optional tenant grant rate; accepts 1 through 256 |
+| `FAAS_DURABLE_ENTITY_TENANT_INVOCATIONS_PER_MINUTE` | apid | `default` |  | 120 | `int` | ADR-973 optional tenant invocation rate; accepts 1 through 10000 |
+| `FAAS_DURABLE_ENTITY_TENANT_MAX_CONNECTIONS` | apid | `default` |  | 8 | `int` | ADR-973 optional tenant connection cap; accepts 1 through 32 |
+| `FAAS_DURABLE_ENTITY_TENANT_MAX_RETAINED_BYTES` | apid | `default` |  | 16777216 | `int` | ADR-973 optional tenant committed-byte cap; at least the per-entity cap and at most 1 GiB |
+| `FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED` | apid | `default` |  | 0 | `` | ADR-973 bucket-backed tenant admission; requires the invocation preview and a positive per-entity cap; native acceptance pending |
 | `FAAS_DURABLE_ENTITY_VALIDATOR_ACCESS_KEY` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
 | `FAAS_DURABLE_ENTITY_VALIDATOR_ARTIFACTS_ENABLED` | apid, builderd, imaged, schedd, shared | `default` |  | 0 | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
 | `FAAS_DURABLE_ENTITY_VALIDATOR_BUCKET` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
