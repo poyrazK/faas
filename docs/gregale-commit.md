@@ -1794,3 +1794,25 @@ components remain independent reads; use the aggregate's timestamp when assessin
 freshness. Scope counters are available in the backlog consumer API as
 `capacity_consumer_waiting_recipients`, `capacity_app_waiting_recipients`, and
 `capacity_account_waiting_recipients`, with the backlog's existing filters.
+
+### Complete pending waiting-reason counts
+
+Subscription delivery health now includes optional `waiting_reasons` with `counts`,
+`pending_recipients`, `complete`, `coverage`, app/subscription IDs, `observed_at`, and
+`window_at` (the backlog acceptance cutoff). The CLI displays this aggregate in
+`events subscription-delivery-health`; JSON output retains the full dictionary.
+
+Counts cover every matching retained pending application recipient independently
+of the 50-event sample. They include pause and rate limiting, circuit restrictions,
+ordering, capacity scopes, retry backoff, receipt processing, and ready classification.
+All known reasons retain zero entries; scope-inapplicable reasons also remain zero.
+Each recipient contributes to one effective reason after the existing classification
+precedence. A complete dictionary sums exactly to its own pending total; do not
+compare it to an independently read routing total as if they were one snapshot.
+Ready does not prove target availability, routing admission, or handler success.
+
+Missing aggregates from older servers are unavailable, not zero. Use completeness,
+coverage, and observation time before concluding anything about the current backlog.
+The backlog consumer API also exposes `pending_waiting_reasons` for each matching
+consumer group, respecting its existing filters and excluding processing recipients.
+Existing capacity alerts continue to use their complete capacity aggregates.

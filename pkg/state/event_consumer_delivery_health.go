@@ -53,6 +53,12 @@ func getEventConsumerDeliveryHealth(ctx context.Context, store eventConsumerDeli
 		out.CapacityWaits.PendingRecipients = c.PendingRecipients
 		out.CapacityWaits.Consumer, out.CapacityWaits.App, out.CapacityWaits.Account = c.CapacityConsumerWaitingRecipients, c.CapacityAppWaitingRecipients, c.CapacityAccountWaitingRecipients
 	}
+	out.WaitingReasons = &api.EventConsumerWaitingReasons{AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: backlog.ObservedAt, WindowAt: backlog.WindowAt, Coverage: "all_pending_application_recipients", Complete: backlog.NextConsumer.AppID == "", Counts: api.NewEventPendingWaitingReasonCounts()}
+	if len(backlog.Consumers) == 1 {
+		c := backlog.Consumers[0]
+		out.WaitingReasons.PendingRecipients, out.WaitingReasons.Counts = c.PendingRecipients, c.PendingWaitingReasons
+	}
+	out.WaitingReasons.Complete = out.WaitingReasons.Complete && api.EventPendingWaitingReasonCountsComplete(out.WaitingReasons.Counts, out.WaitingReasons.PendingRecipients)
 	out.PendingSample = sample
 	out.ObservedAt = time.Now().UTC()
 	return out, nil

@@ -990,6 +990,7 @@ from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
+from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
 from .event_backlog_recipient import EventBacklogRecipient
 from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
 from .event_backlog_recipient_consumer_kind import EventBacklogRecipientConsumerKind
@@ -1011,6 +1012,9 @@ from .event_consumer_health_coverage import EventConsumerHealthCoverage
 from .event_consumer_pending_sample import EventConsumerPendingSample
 from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
 from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
+from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
+from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
@@ -4413,6 +4417,7 @@ __all__ = (
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
+    "EventBacklogConsumerPendingWaitingReasons",
     "EventBacklogRecipient",
     "EventBacklogRecipientCapacityScope",
     "EventBacklogRecipientConsumerKind",
@@ -4434,6 +4439,9 @@ __all__ = (
     "EventConsumerPendingSample",
     "EventConsumerPendingSampleCoverage",
     "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerWaitingReasons",
+    "EventConsumerWaitingReasonsCounts",
+    "EventConsumerWaitingReasonsCoverage",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",

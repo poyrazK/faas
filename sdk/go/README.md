@@ -900,3 +900,10 @@ Delivery health `CapacityWaits` exposes complete effective capacity-reason count
 by scope with independent freshness and subscription binding. Local capacity watches
 use these counts even when the pending event sample is truncated. Missing aggregates
 from older servers remain unknown rather than becoming zero counts.
+
+Delivery health `WaitingReasons` exposes the complete pending waiting-reason
+partition, including zero entries, its own pending total, completeness, coverage,
+observation time, and acceptance cutoff. `EventPendingWaitingReasonCountsComplete`
+checks that a dictionary has the known keys, nonnegative counts, and an exact sum.
+A nil aggregate from an older server means unavailable evidence. Backlog consumer
+`PendingWaitingReasons` counts matching pending recipients before pagination.

@@ -480,3 +480,10 @@ type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
 type EventDeliveryHealthAlert = api.EventDeliveryHealthAlert
 
 type EventConsumerCapacityWaits = api.EventConsumerCapacityWaits
+
+type EventConsumerWaitingReasons = api.EventConsumerWaitingReasons
+
+// EventPendingWaitingReasonCountsComplete verifies an exact known-reason partition.
+func EventPendingWaitingReasonCountsComplete(counts map[string]int64, pending int64) bool {
+	return api.EventPendingWaitingReasonCountsComplete(counts, pending)
+}

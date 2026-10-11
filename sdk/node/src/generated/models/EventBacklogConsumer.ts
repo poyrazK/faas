@@ -7,6 +7,10 @@
  */
 export type EventBacklogConsumer = {
   /**
+   * Exact mutually exclusive effective waiting-reason counts over matching pending recipients, including zero values for known reasons. Independent of recipient pagination.
+   */
+  pending_waiting_reasons?: Record<string, number>;
+  /**
    * Complete count with effective capacity_consumer waiting reason.
    */
   capacity_consumer_waiting_recipients?: number;

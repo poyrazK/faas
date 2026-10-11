@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
     from ..models.event_consumer_health import EventConsumerHealth
     from ..models.event_consumer_pending_sample import EventConsumerPendingSample
+    from ..models.event_consumer_waiting_reasons import EventConsumerWaitingReasons
 
 
 T = TypeVar("T", bound="EventConsumerDeliveryHealth")
@@ -38,6 +39,10 @@ class EventConsumerDeliveryHealth:
     pending_sample: EventConsumerPendingSample
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""
+    waiting_reasons: EventConsumerWaitingReasons | Unset = UNSET
+    """Complete mutually exclusive effective waiting reasons across retained pending application recipients in the
+    backlog snapshot. Counts sum to pending_recipients when complete, independently of recipient pagination. Missing
+    evidence from older servers is unavailable, not zero."""
     capacity_waits: EventConsumerCapacityWaits | Unset = UNSET
     """Complete counts of effective capacity waiting reasons among retained pending application recipients in one
     backlog snapshot. Independent of recipient pagination. Missing or incomplete evidence cannot clear capacity
@@ -54,6 +59,10 @@ class EventConsumerDeliveryHealth:
 
         pending_sample = self.pending_sample.to_dict()
 
+        waiting_reasons: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.waiting_reasons, Unset):
+            waiting_reasons = self.waiting_reasons.to_dict()
+
         capacity_waits: dict[str, Any] | Unset = UNSET
         if not isinstance(self.capacity_waits, Unset):
             capacity_waits = self.capacity_waits.to_dict()
@@ -69,6 +78,8 @@ class EventConsumerDeliveryHealth:
                 "pending_sample": pending_sample,
             }
         )
+        if waiting_reasons is not UNSET:
+            field_dict["waiting_reasons"] = waiting_reasons
         if capacity_waits is not UNSET:
             field_dict["capacity_waits"] = capacity_waits
 
@@ -80,6 +91,7 @@ class EventConsumerDeliveryHealth:
         from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
         from ..models.event_consumer_health import EventConsumerHealth
         from ..models.event_consumer_pending_sample import EventConsumerPendingSample
+        from ..models.event_consumer_waiting_reasons import EventConsumerWaitingReasons
 
         d = dict(src_dict)
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
@@ -91,6 +103,13 @@ class EventConsumerDeliveryHealth:
         execution = EventConsumerExecutionHealth.from_dict(d.pop("execution"))
 
         pending_sample = EventConsumerPendingSample.from_dict(d.pop("pending_sample"))
+
+        _waiting_reasons = d.pop("waiting_reasons", UNSET)
+        waiting_reasons: EventConsumerWaitingReasons | Unset
+        if isinstance(_waiting_reasons, Unset):
+            waiting_reasons = UNSET
+        else:
+            waiting_reasons = EventConsumerWaitingReasons.from_dict(_waiting_reasons)
 
         _capacity_waits = d.pop("capacity_waits", UNSET)
         capacity_waits: EventConsumerCapacityWaits | Unset
@@ -105,6 +124,7 @@ class EventConsumerDeliveryHealth:
             routing=routing,
             execution=execution,
             pending_sample=pending_sample,
+            waiting_reasons=waiting_reasons,
             capacity_waits=capacity_waits,
         )
 

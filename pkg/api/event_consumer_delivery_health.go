@@ -10,12 +10,62 @@ import (
 // EventConsumerDeliveryHealth combines independent routing, execution and
 // oldest-first pending reads. It is not a single database snapshot.
 type EventConsumerDeliveryHealth struct {
-	StartedAt     time.Time                    `json:"started_at"`
-	ObservedAt    time.Time                    `json:"observed_at"`
-	Routing       EventConsumerHealth          `json:"routing"`
-	Execution     EventConsumerExecutionHealth `json:"execution"`
-	CapacityWaits *EventConsumerCapacityWaits  `json:"capacity_waits,omitempty"`
-	PendingSample EventConsumerPendingSample   `json:"pending_sample"`
+	StartedAt      time.Time                    `json:"started_at"`
+	ObservedAt     time.Time                    `json:"observed_at"`
+	Routing        EventConsumerHealth          `json:"routing"`
+	Execution      EventConsumerExecutionHealth `json:"execution"`
+	WaitingReasons *EventConsumerWaitingReasons `json:"waiting_reasons,omitempty"`
+	CapacityWaits  *EventConsumerCapacityWaits  `json:"capacity_waits,omitempty"`
+	PendingSample  EventConsumerPendingSample   `json:"pending_sample"`
+}
+
+// EventConsumerWaitingReasons partitions the complete pending backlog by its
+// effective waiting reason, independently of the investigative sample.
+type EventConsumerWaitingReasons struct {
+	AppID             string           `json:"app_id"`
+	SubscriptionID    string           `json:"subscription_id"`
+	ObservedAt        time.Time        `json:"observed_at"`
+	WindowAt          time.Time        `json:"window_at"`
+	Coverage          string           `json:"coverage"`
+	Complete          bool             `json:"complete"`
+	PendingRecipients int64            `json:"pending_recipients"`
+	Counts            map[string]int64 `json:"counts"`
+}
+
+// NewEventPendingWaitingReasonCounts includes zero counts for each known reason.
+func NewEventPendingWaitingReasonCounts() map[string]int64 {
+	return map[string]int64{
+		"circuit_open":                  0,
+		"circuit_probe_wait":            0,
+		"circuit_recovery_rate_limited": 0,
+		"subscription_paused":           0,
+		"subscription_rate_limited":     0,
+		"ordering_blocked":              0,
+		"capacity_consumer":             0,
+		"capacity_app":                  0,
+		"capacity_account":              0,
+		"routing_in_progress":           0,
+		"receipt_processing":            0,
+		"retry_backoff":                 0,
+		"workflow_routing":              0,
+		"ready":                         0,
+	}
+}
+
+// EventPendingWaitingReasonCountsComplete checks a nonnegative exact partition.
+func EventPendingWaitingReasonCountsComplete(counts map[string]int64, pending int64) bool {
+	known := NewEventPendingWaitingReasonCounts()
+	if pending < 0 || len(counts) != len(known) {
+		return false
+	}
+	remaining := pending
+	for reason, count := range counts {
+		if _, ok := known[reason]; !ok || count < 0 || count > remaining {
+			return false
+		}
+		remaining -= count
+	}
+	return remaining == 0
 }
 
 // EventConsumerCapacityWaits counts effective capacity waiting reasons across

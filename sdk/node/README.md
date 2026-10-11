@@ -2485,3 +2485,9 @@ effective capacity-reason counts for consumer/app/account scope, a pending total
 explicit coverage/completeness, consumer binding, and a separate observation time.
 Counts cover all retained pending recipients independently of the bounded sample.
 A missing aggregate from an older server is unavailable evidence, not zero waits.
+
+Subscription delivery health `waiting_reasons` provides complete effective pending
+reason counts independently of the event sample, with its own pending total,
+completeness, coverage, observation time, and acceptance cutoff. Counts include zero
+entries and sum to that total when complete. Missing aggregates mean unavailable
+evidence. Backlog consumers also expose `pending_waiting_reasons` under their filters.

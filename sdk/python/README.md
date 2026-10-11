@@ -902,3 +902,9 @@ for consumer/app/account scope, a pending total, explicit coverage/completeness,
 consumer binding, and a separate observation time. Counts cover all retained pending
 recipients independently of the bounded sample. A missing aggregate from an older
 server is unavailable evidence, not zero waits.
+
+Delivery health `waiting_reasons` provides a complete effective pending-reason
+partition, including zero entries, with its own pending total, completeness,
+coverage, observation time, and acceptance cutoff. Missing aggregates from older
+servers are unavailable evidence, not zero. The backlog consumer model also
+exposes `pending_waiting_reasons` for matching pending recipients before pagination.

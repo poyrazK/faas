@@ -520,6 +520,7 @@ export type { EventConsumerDeliveryHealth } from './models/EventConsumerDelivery
 export type { EventConsumerExecutionHealth } from './models/EventConsumerExecutionHealth.js';
 export type { EventConsumerHealth } from './models/EventConsumerHealth.js';
 export type { EventConsumerPendingSample } from './models/EventConsumerPendingSample.js';
+export type { EventConsumerWaitingReasons } from './models/EventConsumerWaitingReasons.js';
 export type { EventDeliveryListResponse } from './models/EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './models/EventDeliveryResponse.js';
 export type { EventFanoutAttemptHistoryResponse } from './models/EventFanoutAttemptHistoryResponse.js';

@@ -189,6 +189,21 @@ SELECT b.app_id,b.subscription_id,b.consumer_kind,coalesce(a.slug,'')::text AS a
        count(*) FILTER (WHERE observation.reason='capacity_app')::bigint AS capacity_app_waiting_recipients,
        count(*) FILTER (WHERE observation.reason='capacity_account')::bigint AS capacity_account_waiting_recipients,
        count(*) FILTER (WHERE observation.reason='ordering_blocked')::bigint AS ordering_waiting_recipients,
+       jsonb_build_object(
+        'circuit_open', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='circuit_open'),
+        'circuit_probe_wait', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='circuit_probe_wait'),
+        'circuit_recovery_rate_limited', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='circuit_recovery_rate_limited'),
+        'subscription_paused', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='subscription_paused'),
+        'subscription_rate_limited', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='subscription_rate_limited'),
+        'ordering_blocked', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='ordering_blocked'),
+        'capacity_consumer', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='capacity_consumer'),
+        'capacity_app', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='capacity_app'),
+        'capacity_account', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='capacity_account'),
+        'routing_in_progress', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='routing_in_progress'),
+        'receipt_processing', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='receipt_processing'),
+        'retry_backoff', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='retry_backoff'),
+        'workflow_routing', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='workflow_routing'),
+        'ready', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='ready')) AS pending_waiting_reasons,
        min(b.accepted_at)::timestamptz AS oldest_accepted_at
 FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
 

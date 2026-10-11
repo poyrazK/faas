@@ -514,6 +514,7 @@ export type { EventConsumerDeliveryHealth } from './EventConsumerDeliveryHealth.
 export type { EventConsumerExecutionHealth } from './EventConsumerExecutionHealth.js';
 export type { EventConsumerHealth } from './EventConsumerHealth.js';
 export type { EventConsumerPendingSample } from './EventConsumerPendingSample.js';
+export type { EventConsumerWaitingReasons } from './EventConsumerWaitingReasons.js';
 export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
 export type { EventFanoutAttemptHistoryResponse } from './EventFanoutAttemptHistoryResponse.js';
