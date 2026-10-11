@@ -6,10 +6,10 @@
 // §4.9 envelopes: one request envelope per line in, one response envelope
 // per line out.
 //
-// This handler speaks the persistent protocol: the runner starts it once,
-// before the init snapshot, and sends every request to the same process.
-// Anything you set up in main() before the loop (clients, pools, caches) is
-// reused across requests. Older runners that start the handler once per
+// This handler speaks the persistent protocol: the runner starts it once per
+// instance (and again after a snapshot restore) and sends every request to
+// the same process. Anything you set up in main() before the loop (clients,
+// pools, caches) is reused across requests. Older runners that start the handler once per
 // request still work: they send one envelope and close stdin.
 //
 // Once the Go SDK is published, github.com/poyrazK/faas/sdk/go/function.Serve

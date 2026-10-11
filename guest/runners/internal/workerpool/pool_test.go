@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -143,6 +144,59 @@ func TestPoolWaitCancellationAndFailedStartReleaseSlot(t *testing.T) {
 		if p.live != 0 {
 			t.Fatalf("live=%d after failed start", p.live)
 		}
+	}
+}
+
+// ADR-687: after a snapshot restore no worker that was running at capture
+// may serve again; the next invocation must reach a fresh process.
+func TestRecycleReplacesWorkersStartedBeforeRestore(t *testing.T) {
+	marker := t.TempDir() + "/handler"
+	if err := os.WriteFile(marker, []byte("# "+protocolMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{
+		Executable:  os.Args[0],
+		Args:        []string{"-test.run=TestWorkerpoolHelperProcess", "--"},
+		Env:         append(os.Environ(), "GO_WANT_WORKERPOOL_HELPER=1"),
+		HandlerPath: marker,
+	}
+	invoke := func() testResponse {
+		t.Helper()
+		var got testResponse
+		if _, err := InvokeIfSupported(context.Background(), spec, testRequest{Value: "x"}, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := invoke()
+	if again := invoke(); again.PID != first.PID {
+		t.Fatalf("worker not reused before restore: %d then %d", first.PID, again.PID)
+	}
+	if closed := Recycle(); closed < 1 {
+		t.Fatalf("Recycle closed %d workers, want at least 1", closed)
+	}
+	after := invoke()
+	if after.PID == first.PID || after.Count != 1 {
+		t.Fatalf("after Recycle: pid %d count %d, want a fresh process (old pid %d)", after.PID, after.Count, first.PID)
+	}
+	if proc, err := os.FindProcess(first.PID); err == nil {
+		if err := proc.Signal(syscall.Signal(0)); err == nil {
+			t.Fatalf("pre-restore worker %d is still running", first.PID)
+		}
+	}
+}
+
+// A worker busy when Recycle runs is closed on release instead of reused.
+func TestRecycleClosesBusyWorkerOnRelease(t *testing.T) {
+	p := newPool(Spec{Executable: os.Args[0], Args: []string{"-test.run=TestWorkerpoolHelperProcess", "--"}, Env: append(os.Environ(), "GO_WANT_WORKERPOOL_HELPER=1")})
+	w, err := p.acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.recycle()
+	p.release(w, true)
+	if len(p.idle) != 0 || p.live != 0 {
+		t.Fatalf("stale busy worker kept: idle=%d live=%d", len(p.idle), p.live)
 	}
 }
 

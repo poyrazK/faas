@@ -90,10 +90,30 @@ func main() {
 	// init snapshot, so a restored VM skips process start and the
 	// handler's own setup on its first request.
 	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
-	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, handlerSpec(*handlerPath)); err != nil {
+	persistent, err := workerpool.PrewarmIfSupported(prewarmCtx, handlerSpec(*handlerPath))
+	if err != nil {
 		log.Printf("go124 runner: handler prewarm unavailable: %v", err)
 	}
 	cancelPrewarm()
+	if persistent {
+		// A restored handler would resume with the in-process random state
+		// it held at capture, shared with every sibling restored from the
+		// same snapshot (GHSA-24j2-p895-mwc9, ADR-687). Compiled handlers
+		// have no reseed preload, so on every resume the runner replaces
+		// them before the instance serves traffic; a Go process starts in
+		// milliseconds, and the replacement starts in the background.
+		internal.RegisterRestoreRecycle("go124", func() error {
+			workerpool.Recycle()
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if _, err := workerpool.PrewarmIfSupported(ctx, handlerSpec(*handlerPath)); err != nil {
+					log.Printf("go124 runner: handler restart after restore: %v", err)
+				}
+			}()
+			return nil
+		})
+	}
 
 	// Issue #667 / ADR-078 (PR 3): read the per-request tail
 	// primitive knobs from env vars stamped by imaged at build time.

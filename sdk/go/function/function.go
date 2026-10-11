@@ -14,9 +14,10 @@
 // unchanged.
 //
 // A binary built with Serve stays alive between requests: the runner starts it
-// once, before the init snapshot, and reuses it for later requests, so process
-// start and the program's own setup (clients, pools, caches) are paid once
-// instead of per request. Older runners that start the handler once per
+// once per instance and reuses it for later requests, so process start and the
+// program's own setup (clients, pools, caches) are paid once instead of per
+// request. After a snapshot restore the runner starts a fresh process, so no
+// random state is shared between restored instances. Older runners that start the handler once per
 // request remain supported: they send one envelope and close stdin, and Serve
 // answers it and returns.
 //

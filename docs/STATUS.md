@@ -332,9 +332,12 @@ The sampling/quota shapes are in `cmd/meterd` and
 contract per spec §4.9; `go124` apps deploy with a static binary
 emitted by Railpack's go plan; Go functions that speak the
 persistent protocol — the `function-go` template and
-`sdk/go/function.Serve` — are prewarmed into the init snapshot and
-reused, others keep the per-request subprocess model). Evidence
-2026-10-10 on `gregale-internal-test-1` (`TestWakePlatformBenchMetal`,
+`sdk/go/function.Serve` — are started before readiness and reused while
+the instance runs, and restarted on every snapshot restore so restored
+instances never share random state (ADR-687); others keep the
+per-request subprocess model). Evidence, measured before
+restart-on-restore, 2026-10-10 on `gregale-internal-test-1`
+(`TestWakePlatformBenchMetal`,
 real go124 runner in the guest, 4 interleaved runs × 15 wakes per
 variant): boot-completed→first-byte p50 93 → 54 ms and gateway
 proxy→first-byte p50 66 → 42 ms. Whole-wake latency on that node is

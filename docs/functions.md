@@ -11,7 +11,8 @@ gregale deploy --function --runtime python313 --handler handler.handler
 The current profiles include Node 22/24, Python 312/313, and Go 124. Handlers
 must return a bounded response. Node and Python handlers, and Go handlers that
 speak the [persistent protocol](runtimes/go124.md#persistent-handlers), stay
-loaded between requests and are captured warm in the init snapshot. For ordinary framework APIs, omit `--function`
+loaded between requests. Node and Python handlers are also captured warm in
+the init snapshot; a Go handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
 Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
