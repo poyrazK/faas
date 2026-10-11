@@ -1241,3 +1241,42 @@ and cannot alter polling inputs. Settled means acknowledged executions are
 terminal; it does not mean all deliveries succeeded.
 
 See [ADR-941](adr/941-watch-commit-recovery-status.md).
+
+
+### Checkpoint recovery monitoring
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --watch --timeout 10m \
+  --checkpoint recovery-checkpoint.json > recovery-final.json
+
+# Restart with the same source, plan and result.
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --resume recovery-checkpoint.json \
+  --watch --timeout 10m --checkpoint recovery-checkpoint.json \
+  > recovery-final.json
+~~~
+
+Checkpointing requires --watch. It saves the resumable status after every
+successful bounded pass and saves final partial evidence on read failure or
+interruption when available. The saved selection and comparison baseline
+continue through resume; unknown attempts remain unknown. A crash loses only
+progress since the last completed save.
+
+The CLI writes a private temporary file, syncs it, atomically renames it into
+place and syncs the directory on non-Windows systems. The encoded checkpoint
+uses the existing 64 MiB input limit. The directory must already exist.
+Symlink/nonregular destinations and aliases of the plan/apply result are
+rejected. The checkpoint can replace its own resume/refresh input after it is
+loaded. Keep stdout in a separate file: shell redirection occurs before the
+CLI can check paths. Use only one watch per checkpoint path.
+
+Saving failure stops monitoring with an explicit error and nonzero exit;
+final JSON still goes to stdout. The preceding checkpoint remains intact if
+replacement has not happened. A failure syncing the directory after rename
+means durability is uncertain and also stops the watch. Validation failures
+before meaningful observations do not overwrite an existing checkpoint.
+An abrupt kill can leave a private temporary file; resume only the named
+checkpoint. Files remain editable local observations, not signed evidence.
+
+See [ADR-942](adr/942-commit-recovery-watch-checkpoints.md).

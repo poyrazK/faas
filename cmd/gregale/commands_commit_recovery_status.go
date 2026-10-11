@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	planPath := fs.String("plan", "", "reviewed recovery plan JSON")
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
+	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
 	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
 	interval := fs.Duration("interval", api.CommitRecoveryWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	refreshPath := fs.String("refresh", "", "saved recovery status; reread selection and track changes")
@@ -25,7 +27,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax {
+	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -40,6 +42,14 @@ func cmdCommitRecoveryStatus(args []string) int {
 	}
 	if plan.Report.SourceID != positional[0] || result.SourceID != positional[0] {
 		return printErr("Recovery source mismatch", fmt.Errorf("use the original source UUID"))
+	}
+	var checkpoint *commitRecoveryCheckpoint
+	if *checkpointPath != "" {
+		var checkpointErr error
+		checkpoint, checkpointErr = newCommitRecoveryCheckpoint(*checkpointPath, *planPath, *resultPath)
+		if checkpointErr != nil {
+			return printErr("Cannot use recovery checkpoint", checkpointErr)
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -69,10 +79,19 @@ func cmdCommitRecoveryStatus(args []string) int {
 	} else if !*watch {
 		out, err = client.GetCommitRecoveryStatus(ctx, plan, result, *limit, *pages)
 	}
+	var checkpointErr error
+	progressCalled := false
 	if *watch {
 		last := ""
 		lastRows := map[string]string{}
 		progress := func(status api.CommitRecoveryStatusResult) {
+			progressCalled = true
+			if checkpoint != nil {
+				if checkpointErr = checkpoint.save(status); checkpointErr != nil {
+					cancel()
+					return
+				}
+			}
 			rows := make([]any, 0, len(status.Items))
 			for _, row := range status.Items {
 				fields := []any{row.Status, row.Reason, row.Generation, row.GenerationRelation, row.Attribution, row.ExecutionID, row.ExecutionState}
@@ -92,8 +111,26 @@ func cmdCommitRecoveryStatus(args []string) int {
 		}
 		out, err = client.WatchCommitRecoveryStatus(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress)
 	}
+	var validation *api.Problem
+	invalidSelection := errors.As(err, &validation) && validation.Code == api.CodeValidation
+	if checkpoint != nil && checkpointErr == nil && !invalidSelection {
+		meaningful := progressCalled
+		for _, row := range out.Items {
+			meaningful = meaningful || row.ObservedAt != nil || row.Status == "read_error"
+		}
+		if meaningful {
+			checkpointErr = checkpoint.save(out)
+		}
+	}
+	checkpointCode := 0
+	if checkpointErr != nil {
+		checkpointCode = printErr("Cannot save recovery checkpoint", checkpointErr)
+	}
 	if code := jsonOut(writeJSON(out)); code != 0 {
 		return code
+	}
+	if checkpointCode != 0 {
+		return checkpointCode
 	}
 	if err != nil {
 		return commitSubscriberWaitError(err)
