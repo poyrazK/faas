@@ -501,6 +501,9 @@ async def awatch_commit_recovery_status(
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
+    durable_alerts: bool = False,
+    alert_acknowledgements: list[dict[str, Any]] | None = None,
+    on_alert_acknowledgements: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Bounded polling; timeout/cancellation attaches the latest observations."""
     diagnostics = diagnostics or watch_diagnostics
@@ -518,6 +521,15 @@ async def awatch_commit_recovery_status(
     _validate_observation_age(max_diagnostic_age)
     if max_diagnostic_age > 0 and not diagnostics:
         raise ValueError("maximum diagnostic age requires diagnostics")
+    if (durable_alerts and stall_threshold == 0) or (
+        not durable_alerts and (alert_acknowledgements or on_alert_acknowledgements is not None)
+    ):
+        raise ValueError("durable alerts require stall detection; acknowledgements require durable alerts")
+    if alert_acknowledgements is not None and (
+        not isinstance(alert_acknowledgements, list) or len(alert_acknowledgements) > _ALERT_QUEUE_MAX
+    ):
+        raise ValueError("invalid alert acknowledgement bounds")
+    initial_acks = copy.deepcopy([] if alert_acknowledgements is None else alert_acknowledgements)
     if type(read_retries) is not int or not 0 <= read_retries <= 20:
         raise ValueError("invalid recovery watch read retry budget")
     if resume is not None and refresh is not None:
@@ -535,7 +547,16 @@ async def awatch_commit_recovery_status(
     reason, phase = "read_failure", "read"
     estimator = _DiagnosticEstimator()
     stalls = _StallTracker()
-    incidents = _IncidentTracker()
+    incidents = _IncidentTracker(durable_alerts)
+    alert_previous = previous
+    alerts_restored = False
+
+    def restore_alerts() -> None:
+        nonlocal alerts_restored
+        if not alerts_restored:
+            incidents.restore(alert_previous, out, initial_acks)
+            alerts_restored = True
+
     estimate_delay_ms = interval * 1000
 
     async def read_diagnostics(status: dict[str, Any]) -> dict[str, Any]:
@@ -588,6 +609,11 @@ async def awatch_commit_recovery_status(
                 if stall_threshold > 0
                 else {}
             ),
+            **(
+                {"alert_outbox": incidents.outbox(lifecycle["blocker_incidents"])}
+                if durable_alerts and alerts_restored
+                else {}
+            ),
             "stop_reason": stop_reason,
             "passes": passes,
             "retries_consumed": used_retries,
@@ -624,10 +650,13 @@ async def awatch_commit_recovery_status(
                         resume=previous if not refreshing else None,
                         refresh=previous if refreshing else None,
                     )
+                    restore_alerts()
                     if diagnostics:
                         out = await read_diagnostics(out)
                 except CommitRecoveryStatusError as error:
                     out = error.result
+                    if not _watch_validation_failure(error):
+                        restore_alerts()
                     if diagnostics and "diagnostics_progress" not in out:
                         out = _prepare_diagnostics(out, diagnostic_previous, max_diagnostic_age)
                         error.result = out
@@ -644,6 +673,11 @@ async def awatch_commit_recovery_status(
                 phase = "callback"
                 if on_progress is not None:
                     on_progress(copy.deepcopy(out))
+                if on_alert_acknowledgements is not None:
+                    incidents.acknowledge(on_alert_acknowledgements(copy.deepcopy(out)))
+                if incidents.queue_full:
+                    reason, phase = "alert_queue_full", "read"
+                    raise RuntimeError("alert queue full; acknowledge pending alerts and resume")
                 phase = "read"
                 if loop.time() >= deadline:
                     raise TimeoutError("watch deadline exceeded")
@@ -1514,29 +1548,105 @@ class _StallTracker:
 
 
 class _IncidentTracker:
-    def __init__(self) -> None:
+    def __init__(self, durable: bool = False) -> None:
+        self.durable = durable
+        self.queue_full = False
+        self.pending: list[dict[str, Any]] = []
         self.session = uuid4().hex
         self.sequence = 0
         self.active: dict[int, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
+
+    def can_open(self) -> bool:
+        if not self.durable:
+            return True
+        if self.queue_full:
+            return False
+        if (
+            len(self.pending) + len(self.active) + 2 > _ALERT_QUEUE_MAX
+            or self.sequence + len(self.active) + 2 > _ALERT_SEQUENCE_MAX
+        ):
+            self.queue_full = True
+            return False
+        return True
+
+    def acknowledge(self, acks: list[dict[str, Any]]) -> None:
+        if not isinstance(acks, list) or len(acks) > _ALERT_QUEUE_MAX or (not self.durable and acks):
+            raise ValueError("invalid alert acknowledgements")
+        known = {(e["incident_id"], e["sequence"]) for e in self.pending}
+        pending_sequences = {e["sequence"] for e in self.pending}
+        selected: set[tuple[str, int]] = set()
+        for ack in acks:
+            if (
+                not isinstance(ack, dict)
+                or not isinstance(ack.get("incident_id"), str)
+                or type(ack.get("sequence")) is not int
+            ):
+                raise ValueError("invalid alert acknowledgement")
+            key = ack["incident_id"], ack["sequence"]
+            opened = _alert_incident_sequence(ack["incident_id"], self.session)
+            already_removed = (
+                opened is not None
+                and opened <= ack["sequence"] <= self.sequence
+                and ack["sequence"] not in pending_sequences
+            )
+            if key in selected or (key not in known and not already_removed):
+                raise ValueError("acknowledgement does not match this alert stream")
+            selected.add(key)
+        self.pending = [e for e in self.pending if (e["incident_id"], e["sequence"]) not in selected]
+
+    def outbox(self, active: list[dict[str, Any]]) -> dict[str, Any]:
+        return dict(
+            version=1, session=self.session, sequence=self.sequence, pending=list(self.pending), active=list(active)
+        )
+
+    def restore(self, previous: dict[str, Any] | None, out: dict[str, Any], acks: list[dict[str, Any]]) -> None:
+        saved = previous.get("monitoring", {}).get("alert_outbox") if previous is not None else None
+        if saved is None:
+            self.acknowledge(acks)
+            return
+        if not self.durable:
+            raise ValueError("resuming pending alert state requires durable alerts")
+        if (
+            out["source_id"].lower() != previous["source_id"].lower()
+            or out.get("subscription_id", "").lower() != previous.get("subscription_id", "").lower()
+            or len(out["items"]) != len(previous["items"])
+            or any(
+                not row.get("selection")
+                or not old.get("selection")
+                or not _same_selection(row["selection"], old["selection"])
+                or not _same_json(row["attempt"], old["attempt"])
+                for row, old in zip(out["items"], previous["items"], strict=True)
+            )
+        ):
+            raise ValueError("saved alert selection mismatch")
+        normalized = _validate_alert_outbox(saved, out)
+        staged = _IncidentTracker(True)
+        staged.session, staged.sequence = normalized["session"], normalized["sequence"]
+        staged.pending = normalized["pending"]
+        staged.acknowledge(acks)
+        self.session, self.sequence, self.pending = normalized["session"], normalized["sequence"], staged.pending
+        for incident in normalized["active"]:
+            self.emit(incident, "confirmation_lost", "watch_resumed", None)
 
     def begin_pass(self) -> None:
         self.events = []
 
     def emit(self, incident: dict[str, Any], transition: str, reason: str, evidence: dict[str, Any] | None) -> None:
         self.sequence += 1
-        self.events.append(
-            dict(
-                sequence=self.sequence,
-                incident_id=incident["incident_id"],
-                transition=transition,
-                reason=reason,
-                at=datetime.now(UTC).isoformat(),
-                query=incident["query"],
-                waiting_reason=incident["waiting_reason"],
-                **({"evidence": evidence} if evidence is not None else {}),
-            )
+        event = dict(
+            sequence=self.sequence,
+            incident_id=incident["incident_id"],
+            transition=transition,
+            reason=reason,
+            at=datetime.now(UTC).isoformat(),
+            query=incident["query"],
+            waiting_reason=incident["waiting_reason"],
+            **({"evidence": evidence} if evidence is not None else {}),
         )
+        self.events.append(event)
+        if self.durable:
+            self.pending.append(event)
 
     @staticmethod
     def key(query: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -1595,6 +1705,8 @@ class _IncidentTracker:
                     active = None
             if blocker is not None and fresh:
                 if active is None:
+                    if not self.can_open():
+                        continue
                     incident = dict(
                         incident_id=self.session + "-" + str(self.sequence + 1),
                         query=query,
@@ -1614,3 +1726,182 @@ class _IncidentTracker:
             blocker_incidents=[dict(self.active[i]["incident"]) for i in sorted(self.active)],
             blocker_transitions=list(self.events),
         )
+
+
+_ALERT_QUEUE_MAX = 1024
+_ALERT_SEQUENCE_MAX = 9007199254740991
+
+
+def _alert_incident_sequence(value: Any, session: str) -> int | None:
+    if not isinstance(value, str) or not value.startswith(session + "-"):
+        return None
+    text = value[len(session) + 1 :]
+    if len(text) > 16 or re.fullmatch(r"[1-9][0-9]*", text) is None:
+        return None
+    number = int(text)
+    return number if number <= _ALERT_SEQUENCE_MAX else None
+
+
+def _valid_alert_time(value: Any) -> bool:
+    return isinstance(value, str) and _same_acceptance(value, value)
+
+
+def _validate_alert_outbox(saved: Any, out: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(saved, dict):
+        raise ValueError("invalid saved alert outbox")
+    pending = [] if saved.get("pending") is None else saved["pending"]
+    active = [] if saved.get("active") is None else saved["active"]
+    session, sequence = saved.get("session"), saved.get("sequence")
+    if (
+        type(saved.get("version")) is not int
+        or saved["version"] != 1
+        or not isinstance(session, str)
+        or re.fullmatch(r"[0-9a-f]{32}", session) is None
+        or type(sequence) is not int
+        or not 0 <= sequence <= _ALERT_SEQUENCE_MAX
+        or not isinstance(pending, list)
+        or not isinstance(active, list)
+        or len(pending) + len(active) > _ALERT_QUEUE_MAX
+        or len(active) > _ALERT_SEQUENCE_MAX - sequence
+    ):
+        raise ValueError("invalid saved alert outbox bounds")
+
+    def bound_query(query: Any) -> dict[str, Any]:
+        if (
+            not isinstance(query, dict)
+            or any(
+                not isinstance(query.get(k), str) or not query[k] or len(query[k].encode("utf-8")) > 256
+                for k in ("source", "id", "subscription_id")
+            )
+            or not _valid_alert_time(query.get("expected_accepted_at"))
+        ):
+            raise ValueError("invalid alert query")
+        row = next(
+            (
+                r
+                for r in out["items"]
+                if _diagnostic_target(r)
+                and r["selection"]["publication"]["source"] == query["source"]
+                and r["selection"]["publication"]["id"] == query["id"]
+                and r["attempt"]["subscription_id"].lower() == query["subscription_id"].lower()
+                and _same_acceptance(r["selection"]["publication"]["accepted_at"], query["expected_accepted_at"])
+            ),
+            None,
+        )
+        if row is None:
+            raise ValueError("saved alert query does not match selection")
+        return dict(
+            source=query["source"],
+            id=query["id"],
+            subscription_id=query["subscription_id"],
+            expected_accepted_at=row["selection"]["publication"]["accepted_at"],
+        )
+
+    lineage: dict[str, tuple[Any, ...]] = {}
+    closed: set[str] = set()
+    clean_pending, last = [], 0
+    for event in pending:
+        if not isinstance(event, dict):
+            raise ValueError("invalid saved pending alert")
+        opened = _alert_incident_sequence(event.get("incident_id"), session)
+        query = bound_query(event.get("query"))
+        evidence, seq = event.get("evidence"), event.get("sequence")
+        if (
+            opened is None
+            or type(seq) is not int
+            or not last < seq <= sequence
+            or opened > seq
+            or not _valid_alert_time(event.get("at"))
+            or event.get("waiting_reason") not in _PERSISTENT_BLOCKERS
+            or (evidence is not None and not _valid_diagnostic_observation(evidence, query))
+        ):
+            raise ValueError("invalid saved pending alert")
+        transition, reason = event.get("transition"), event.get("reason")
+        if transition == "opened":
+            valid = (
+                opened == seq
+                and reason == "persistent_blocker"
+                and evidence is not None
+                and evidence["status"] == "available"
+                and evidence["routing"]["waiting_reason"] == event["waiting_reason"]
+            )
+        elif transition == "resolved":
+            valid = (
+                reason == "routing_not_blocked"
+                and evidence is not None
+                and (
+                    evidence["status"] == "not_waiting"
+                    or evidence["routing"]["waiting_reason"] not in _PERSISTENT_BLOCKERS
+                )
+            )
+        else:
+            valid = transition == "confirmation_lost" and reason in (
+                "episode_reset",
+                "evidence_unavailable",
+                "sample_gap",
+                "selection_unavailable",
+                "watch_resumed",
+            )
+        if not valid:
+            raise ValueError("invalid alert transition")
+        identity = (
+            query["source"],
+            query["id"],
+            query["subscription_id"].lower(),
+            query["expected_accepted_at"],
+            event["waiting_reason"],
+        )
+        if event["incident_id"] in closed or (
+            event["incident_id"] in lineage and lineage[event["incident_id"]] != identity
+        ):
+            raise ValueError("inconsistent saved alert episode")
+        lineage[event["incident_id"]] = identity
+        if transition != "opened":
+            closed.add(event["incident_id"])
+        last = seq
+        clean_pending.append(
+            dict(
+                sequence=seq,
+                incident_id=event["incident_id"],
+                transition=transition,
+                reason=reason,
+                at=event["at"],
+                query=query,
+                waiting_reason=event["waiting_reason"],
+                **({"evidence": _clean_diagnostic_observation(evidence)} if evidence is not None else {}),
+            )
+        )
+    clean_active, ids, queries = [], set(), set()
+    for incident in active:
+        if not isinstance(incident, dict):
+            raise ValueError("invalid saved active alert")
+        opened = _alert_incident_sequence(incident.get("incident_id"), session)
+        query = bound_query(incident.get("query"))
+        key = query["source"], query["id"], query["subscription_id"].lower(), query["expected_accepted_at"]
+        if (
+            opened is None
+            or opened > sequence
+            or incident["incident_id"] in closed
+            or (
+                incident["incident_id"] in lineage
+                and lineage[incident["incident_id"]] != (*key, incident["waiting_reason"])
+            )
+            or incident["incident_id"] in ids
+            or key in queries
+            or not _valid_alert_time(incident.get("opened_at"))
+            or not _valid_alert_time(incident.get("last_observed_at"))
+            or incident.get("waiting_reason") not in _PERSISTENT_BLOCKERS
+        ):
+            raise ValueError("invalid saved active alert")
+        ids.add(incident["incident_id"])
+        queries.add(key)
+        clean_active.append(
+            dict(
+                incident_id=incident["incident_id"],
+                query=query,
+                waiting_reason=incident["waiting_reason"],
+                opened_at=incident["opened_at"],
+                last_observed_at=incident["last_observed_at"],
+            )
+        )
+    return dict(version=1, session=session, sequence=sequence, pending=clean_pending, active=clean_active)

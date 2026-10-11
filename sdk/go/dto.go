@@ -454,3 +454,6 @@ type CommitRecoveryPersistentBlocker = api.CommitRecoveryPersistentBlocker
 
 type CommitRecoveryBlockerIncident = api.CommitRecoveryBlockerIncident
 type CommitRecoveryBlockerTransition = api.CommitRecoveryBlockerTransition
+
+type CommitRecoveryAlertOutbox = api.CommitRecoveryAlertOutbox
+type CommitRecoveryAlertAcknowledgement = api.CommitRecoveryAlertAcknowledgement

@@ -40,6 +40,7 @@ type CommitRecoveryStatusChange struct {
 
 // CommitRecoveryMonitoring describes this watch invocation, not delivery success.
 type CommitRecoveryMonitoring struct {
+	AlertOutbox                    *CommitRecoveryAlertOutbox        `json:"alert_outbox,omitempty"`
 	BlockerIncidents               []CommitRecoveryBlockerIncident   `json:"blocker_incidents,omitempty"`
 	BlockerTransitions             []CommitRecoveryBlockerTransition `json:"blocker_transitions,omitempty"`
 	StallThresholdMS               int64                             `json:"stall_threshold_ms,omitempty"`

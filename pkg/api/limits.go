@@ -9682,3 +9682,7 @@ const CommitRecoveryDiagnosticAgeMax = CommitRecoveryWatchObservationAgeMax
 // Optional stall detection uses the diagnostic age duration bounds.
 const CommitRecoveryStallThresholdMin = CommitRecoveryDiagnosticAgeMin
 const CommitRecoveryStallThresholdMax = CommitRecoveryDiagnosticAgeMax
+
+// Durable alert queues reserve one terminal notification per active incident.
+const CommitRecoveryAlertQueueMax = 1024
+const CommitRecoveryAlertSequenceMax uint64 = 9007199254740991

@@ -41,6 +41,7 @@ export interface CommitRecoveryStatusItem {
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryMonitoring {
+ alert_outbox?: CommitRecoveryAlertOutbox;
  blocker_incidents?: CommitRecoveryBlockerIncident[]; blocker_transitions?: CommitRecoveryBlockerTransition[];
  stall_threshold_ms?: number; consumer_stalls?: CommitRecoveryConsumerStall[];
   diagnostic_estimate?: CommitRecoveryDiagnosticEstimate;
@@ -247,6 +248,8 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; stallThresholdMs?: number; watchDiagnostics?: boolean; diagnostics?: boolean; maxDiagnosticAgeMs?: number; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
   resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult;
   onProgress?: (status: CommitRecoveryStatusResult) => void;
+ durableAlerts?: boolean; alertAcknowledgements?: CommitRecoveryAlertAcknowledgement[];
+ onAlertAcknowledgements?: (status: CommitRecoveryStatusResult) => CommitRecoveryAlertAcknowledgement[];
 } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit, recipientPages, onProgress, signal } = options;
   const diagnostics = Boolean(options.diagnostics || options.watchDiagnostics);
@@ -257,6 +260,9 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   const stallThresholdMs = options.stallThresholdMs ?? 0;
   validateObservationAge(stallThresholdMs);
   if (stallThresholdMs > 0 && (!diagnostics || !(options.maxDiagnosticAgeMs! > 0))) throw new TypeError("stall threshold requires diagnostics and a positive diagnostic age limit");
+  if ((options.durableAlerts && !stallThresholdMs) || (!options.durableAlerts && ((options.alertAcknowledgements?.length ?? 0) > 0 || options.onAlertAcknowledgements))) throw new TypeError('durable alerts require stall detection; acknowledgements require durable alerts');
+  const initialAcks = structuredClone(options.alertAcknowledgements ?? []);
+  if(!Array.isArray(initialAcks) || initialAcks.length>commitRecoveryAlertQueueMax)throw new TypeError("invalid alert acknowledgement bounds");
   const readRetries = options.readRetries ?? 0;
   if (!Number.isInteger(readRetries) || readRetries < 0 || readRetries > 20) throw new TypeError('invalid recovery watch read retry budget');
   const intervalMs = options.intervalMs ?? 1000, timeoutMs = options.timeoutMs ?? 120000;
@@ -274,7 +280,10 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   let reason = 'read_failure', phase = 'read';
   const estimator = new DiagnosticEstimator();
   const stalls = new StallTracker();
-  const incidents = new IncidentTracker();
+  const incidents = new IncidentTracker(Boolean(options.durableAlerts));
+  const alertPrevious = previous;
+  let alertsRestored = false;
+  const restoreAlerts = () => {if (!alertsRestored) {incidents.restore(alertPrevious,out,initialAcks);alertsRestored=true;}};
   let estimateDelayMs = intervalMs;
   const readDiagnostics = async (readSignal: AbortSignal, strictReads = false): Promise<CommitRecoveryStatusResult> => {
     const diagnosticStarted = performance.now();
@@ -295,6 +304,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
     return {
       watch_mode: options.watchDiagnostics ? "diagnostic_coverage" : "recovery_settlement", diagnostic_coverage_complete: stop_reason === "diagnostic_coverage_complete" ? Boolean(out.diagnostics_progress?.complete && out.diagnostics_progress?.fresh_complete) : diagnosticCoverageComplete(out, options.maxDiagnosticAgeMs ?? 0),
       diagnostic_estimate: estimator.estimate(out, performance.now() - started, estimateDelayMs),
+      ...(options.durableAlerts && alertsRestored ? {alert_outbox: incidents.outbox(lifecycle.blocker_incidents)} : {}),
       ...(stallThresholdMs > 0 ? {stall_threshold_ms: stallThresholdMs, consumer_stalls: consumers, ...lifecycle} : {}),
       stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
       acknowledged_executions_terminal: commitRecoveryStatusSettled(out) && (!freshness || freshness.fresh === out.items.length),
@@ -313,10 +323,12 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
           timeoutMs: Math.max(1, timeoutMs - (performance.now() - started)), signal: controller.signal,
           ...(previous ? refresh ? { refresh: previous } : { resume: previous } : {}),
         });
+        restoreAlerts();
         if (diagnostics) out = await readDiagnostics(controller.signal, Boolean(options.watchDiagnostics));
       } catch (error) {
         if (!(error instanceof CommitRecoveryStatusError)) throw error;
         out = error.result;
+        if (!recoveryValidationFailure(error)) restoreAlerts();
         if (diagnostics && !out.diagnostics_progress) Object.assign(out, await readDiagnostics(AbortSignal.abort()));
         const retryAfter = recoveryReadRetry(error.cause);
         if (retryAfter === undefined || usedRetries >= readRetries || controller.signal.aborted) {
@@ -330,6 +342,8 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
       out.monitoring = summarize('running');
       phase = 'callback';
       onProgress?.(structuredClone(out));
+      if (options.onAlertAcknowledgements) incidents.acknowledge(options.onAlertAcknowledgements(structuredClone(out)));
+      if (incidents.queueFull) {reason = "alert_queue_full"; phase = "read"; throw new CommitRecoveryStatusError(out,new Error("alert queue full; acknowledge pending alerts and resume"));}
       phase = 'read';
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
       if (!failed && options.watchDiagnostics && diagnosticCoverageComplete(out, options.maxDiagnosticAgeMs ?? 0)) { out.monitoring = summarize('diagnostic_coverage_complete'); return out; }
@@ -739,13 +753,43 @@ function incidentRecipientKey(query: EventRecipientBlockerQuery): string {
  return JSON.stringify([query.source,query.id,query.subscription_id.toLowerCase(),query.expected_accepted_at]);
 }
 class IncidentTracker {
+ constructor(private durable = false) {}
+ queueFull = false;
+ private pending: CommitRecoveryBlockerTransition[] = [];
  private session = randomUUID().replaceAll('-','');
  private sequence = 0;
  private active = new Map<number,{incident: CommitRecoveryBlockerIncident; first: string}>();
  private events: CommitRecoveryBlockerTransition[] = [];
  beginPass(): void {this.events=[];}
+
+ private canOpen(): boolean {
+  if(!this.durable)return true;
+  if(this.queueFull)return false;
+  if(this.pending.length+this.active.size+2>commitRecoveryAlertQueueMax || this.sequence+this.active.size+2>commitRecoveryAlertSequenceMax){this.queueFull=true;return false;}
+  return true;
+ }
+ acknowledge(acks: CommitRecoveryAlertAcknowledgement[]): void {
+  if(!Array.isArray(acks) || acks.length>commitRecoveryAlertQueueMax || (!this.durable && acks.length))throw new TypeError('invalid alert acknowledgements');
+  const known=new Set(this.pending.map(e=>JSON.stringify([e.incident_id,e.sequence]))),pendingSequences=new Set(this.pending.map(e=>e.sequence)),selected=new Set<string>();
+  for(const ack of acks){const key=JSON.stringify([ack?.incident_id,ack?.sequence]),opened=alertIncidentSequence(ack?.incident_id,this.session),alreadyRemoved=opened!==undefined && Number.isSafeInteger(ack?.sequence) && opened<=ack.sequence && ack.sequence<=this.sequence && !pendingSequences.has(ack.sequence);if(selected.has(key) || (!known.has(key) && !alreadyRemoved))throw new TypeError('acknowledgement does not match this alert stream');selected.add(key);}
+  this.pending=this.pending.filter(e=>!selected.has(JSON.stringify([e.incident_id,e.sequence])));
+ }
+ outbox(active: CommitRecoveryBlockerIncident[]): CommitRecoveryAlertOutbox {
+  return {version:1,session:this.session,sequence:this.sequence,pending:[...this.pending],active:[...active]};
+ }
+ restore(previous: CommitRecoveryStatusResult | undefined, out: CommitRecoveryStatusResult, acks: CommitRecoveryAlertAcknowledgement[]): void {
+  const saved=previous?.monitoring?.alert_outbox;
+  if(!saved){this.acknowledge(acks);return;}
+  if(!this.durable)throw new TypeError('resuming pending alert state requires durable alerts');
+  if(out.source_id.toLowerCase()!==previous!.source_id.toLowerCase() || (out.subscription_id??'').toLowerCase()!==(previous!.subscription_id??'').toLowerCase() || out.items.length!==previous!.items.length || out.items.some((row,i)=>!row.selection || !previous!.items[i]?.selection || !sameSelection(row.selection,previous!.items[i]!.selection!) || canonical(row.attempt)!==canonical(previous!.items[i]!.attempt)))throw new TypeError('saved alert selection mismatch');
+  const normalized=validateAlertOutbox(saved,out);
+  const staged=new IncidentTracker(true);staged.session=normalized.session;staged.sequence=normalized.sequence;staged.pending=normalized.pending;staged.acknowledge(acks);
+  this.session=normalized.session;this.sequence=normalized.sequence;this.pending=staged.pending;
+  for(const incident of normalized.active)this.emit(incident,'confirmation_lost','watch_resumed');
+ }
  private emit(incident: CommitRecoveryBlockerIncident, transition: string, reason: string, evidence?: CommitRecoveryDiagnosticObservation): void {
-  this.events.push({sequence:++this.sequence,incident_id:incident.incident_id,transition,reason,at:new Date().toISOString(),query:incident.query,waiting_reason:incident.waiting_reason,...(evidence ? {evidence}: {})});
+  const event={sequence:++this.sequence,incident_id:incident.incident_id,transition,reason,at:new Date().toISOString(),query:incident.query,waiting_reason:incident.waiting_reason,...(evidence ? {evidence}: {})};
+  this.events.push(event); if(this.durable)this.pending.push(event);
  }
  summarize(out: CommitRecoveryStatusResult, consumers: CommitRecoveryConsumerStall[], age: number, threshold: number): {blocker_incidents: CommitRecoveryBlockerIncident[]; blocker_transitions: CommitRecoveryBlockerTransition[]} {
   if(!threshold)return {blocker_incidents:[],blocker_transitions:[]};
@@ -771,6 +815,7 @@ class IncidentTracker {
    }
    if(blocker && fresh){
     if(!active){
+     if(!this.canOpen())return;
      const incident={incident_id:this.session+'-'+(this.sequence+1),query,waiting_reason:blocker.waiting_reason,opened_at:new Date(now).toISOString(),last_observed_at:current!.observed_at};
      active={incident,first:blocker.first_observed_at};this.active.set(i,active);this.emit(incident,'opened','persistent_blocker',current);
     }
@@ -780,4 +825,49 @@ class IncidentTracker {
   for(const [i,active] of [...this.active.entries()].sort((a,b)=>a[0]-b[0])){if(!seen.has(i)){this.emit(active.incident,'confirmation_lost','selection_unavailable');this.active.delete(i);}}
   return {blocker_incidents:[...this.active.entries()].sort((a,b)=>a[0]-b[0]).map(([,a])=>({...a.incident})),blocker_transitions:[...this.events]};
  }
+}
+
+export interface CommitRecoveryAlertAcknowledgement {incident_id: string; sequence: number;}
+export interface CommitRecoveryAlertOutbox {version: number; session: string; sequence: number; pending: CommitRecoveryBlockerTransition[]; active: CommitRecoveryBlockerIncident[];}
+const commitRecoveryAlertQueueMax=1024;
+const commitRecoveryAlertSequenceMax=9007199254740991;
+function alertIncidentSequence(id: string, session: string): number | undefined {
+ if(typeof id!=='string' || !id.startsWith(session+'-'))return undefined;
+ const text=id.slice(session.length+1),value=Number(text);
+ return /^[1-9][0-9]*$/.test(text) && Number.isSafeInteger(value) && String(value)===text ? value:undefined;
+}
+function validAlertTime(value: string): boolean {return typeof value==='string' && sameAcceptance(value,value);}
+function validateAlertOutbox(saved: CommitRecoveryAlertOutbox,out: CommitRecoveryStatusResult): CommitRecoveryAlertOutbox {
+ const pending=saved.pending??[],active=saved.active??[];
+ if(saved.version!==1 || typeof saved.session!=='string' || !/^[0-9a-f]{32}$/.test(saved.session) || !Number.isSafeInteger(saved.sequence) || saved.sequence<0 || !Array.isArray(pending) || !Array.isArray(active) || pending.length+active.length>commitRecoveryAlertQueueMax || active.length>commitRecoveryAlertSequenceMax-saved.sequence)throw new TypeError('invalid saved alert outbox bounds');
+ const boundQuery=(query: EventRecipientBlockerQuery): EventRecipientBlockerQuery=>{
+  if(!query || ![query.source,query.id,query.subscription_id].every(v=>typeof v==='string' && v.length>0 && new TextEncoder().encode(v).length<=256) || !validAlertTime(query.expected_accepted_at))throw new TypeError('invalid alert query');
+  const row=out.items.find(r=>diagnosticTarget(r) && r.selection!.publication.source===query.source && r.selection!.publication.id===query.id && r.attempt.subscription_id.toLowerCase()===query.subscription_id.toLowerCase() && sameAcceptance(r.selection!.publication.accepted_at,query.expected_accepted_at));
+  if(!row)throw new TypeError('saved alert query does not match selection');
+  return {source:query.source,id:query.id,subscription_id:query.subscription_id,expected_accepted_at:row.selection!.publication.accepted_at};
+ };
+ let last=0;
+ const lineage=new Map<string,string>(),closed=new Set<string>();
+ const cleanPending=pending.map(event=>{
+  const opened=alertIncidentSequence(event.incident_id,saved.session),query=boundQuery(event.query);
+  if(!opened || !Number.isSafeInteger(event.sequence) || event.sequence<=last || opened>event.sequence || event.sequence>saved.sequence || !validAlertTime(event.at) || !persistentBlockerReasons.has(event.waiting_reason) || (event.evidence != null && !validDiagnosticObservation(event.evidence,query)))throw new TypeError('invalid saved pending alert');
+  const evidence=event.evidence;
+  const valid=event.transition==='opened' ? opened===event.sequence && event.reason==='persistent_blocker' && evidence?.status==='available' && evidence.routing!.waiting_reason===event.waiting_reason
+    :event.transition==='resolved' ? event.reason==='routing_not_blocked' && evidence && (evidence.status==='not_waiting' || !persistentBlockerReasons.has(evidence.routing!.waiting_reason))
+    :event.transition==='confirmation_lost' && ['episode_reset','evidence_unavailable','sample_gap','selection_unavailable','watch_resumed'].includes(event.reason);
+  if(!valid)throw new TypeError('invalid alert transition');
+  const identity=JSON.stringify([incidentRecipientKey(query),event.waiting_reason]);
+  if(closed.has(event.incident_id) || (lineage.has(event.incident_id) && lineage.get(event.incident_id)!==identity))throw new TypeError('inconsistent saved alert episode');
+  lineage.set(event.incident_id,identity);if(event.transition!=='opened')closed.add(event.incident_id);
+  last=event.sequence;
+  return {sequence:event.sequence,incident_id:event.incident_id,transition:event.transition,reason:event.reason,at:event.at,query,waiting_reason:event.waiting_reason,...(evidence ? {evidence:cleanDiagnosticObservation(evidence)}:{})};
+ });
+ const ids=new Set<string>(),queries=new Set<string>();
+ const cleanActive=active.map(incident=>{
+  const opened=alertIncidentSequence(incident.incident_id,saved.session),query=boundQuery(incident.query),key=incidentRecipientKey(query);
+  if(!opened || opened>saved.sequence || closed.has(incident.incident_id) || (lineage.has(incident.incident_id) && lineage.get(incident.incident_id)!==JSON.stringify([key,incident.waiting_reason])) || ids.has(incident.incident_id) || queries.has(key) || !validAlertTime(incident.opened_at) || !validAlertTime(incident.last_observed_at) || !persistentBlockerReasons.has(incident.waiting_reason))throw new TypeError('invalid saved active alert');
+  ids.add(incident.incident_id);queries.add(key);
+  return {incident_id:incident.incident_id,query,waiting_reason:incident.waiting_reason,opened_at:incident.opened_at,last_observed_at:incident.last_observed_at};
+ });
+ return {version:1,session:saved.session,sequence:saved.sequence,pending:cleanPending,active:cleanActive};
 }

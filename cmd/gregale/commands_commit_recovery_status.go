@@ -19,6 +19,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	planPath := fs.String("plan", "", "reviewed recovery plan JSON")
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
+	ackAlertsPath := fs.String("ack-alerts", "", "JSON array of exact incident_id/sequence acknowledgements (requires checkpoint and resume or refresh)")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
 	diagnostics := fs.Bool("diagnostics", false, "include bounded live delivery blocker diagnostics")
 	alertsJSON := fs.Bool("alerts-json", false, "emit watch blocker lifecycle alerts as JSON lines on stderr (requires stall-threshold)")
@@ -40,6 +41,9 @@ func cmdCommitRecoveryStatus(args []string) int {
 	if *watchDiagnostics {
 		*watch = true
 		*diagnostics = true
+	}
+	if *ackAlertsPath != "" && (*checkpointPath == "" || (*resumePath == "" && *refreshPath == "") || !*watch || *stallThreshold <= 0) {
+		return 1
 	}
 	if *alertsJSON && (!*watch || *stallThreshold <= 0) {
 		return 1
@@ -63,10 +67,23 @@ func cmdCommitRecoveryStatus(args []string) int {
 	if plan.Report.SourceID != positional[0] || result.SourceID != positional[0] {
 		return printErr("Recovery source mismatch", fmt.Errorf("use the original source UUID"))
 	}
+	var acknowledgements []api.CommitRecoveryAlertAcknowledgement
+	if *ackAlertsPath != "" {
+		if ackErr := readCommitRecoveryStatusFile(*ackAlertsPath, &acknowledgements); ackErr != nil {
+			return printErr("Cannot read alert acknowledgements", ackErr)
+		}
+		if len(acknowledgements) > api.CommitRecoveryAlertQueueMax {
+			return printErr("Too many alert acknowledgements", fmt.Errorf("maximum %d", api.CommitRecoveryAlertQueueMax))
+		}
+	}
 	var checkpoint *commitRecoveryCheckpoint
 	if *checkpointPath != "" {
 		var checkpointErr error
-		checkpoint, checkpointErr = newCommitRecoveryCheckpoint(*checkpointPath, *planPath, *resultPath)
+		protected := []string{*planPath, *resultPath}
+		if *ackAlertsPath != "" {
+			protected = append(protected, *ackAlertsPath)
+		}
+		checkpoint, checkpointErr = newCommitRecoveryCheckpoint(*checkpointPath, protected...)
 		if checkpointErr != nil {
 			return printErr("Cannot use recovery checkpoint", checkpointErr)
 		}
@@ -165,10 +182,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 			}
 			lastEstimateWarning = warning
 		}
-		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{StallThreshold: *stallThreshold, ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
-	}
-	if *watch {
-		printCommitRecoveryStallAlerts(out.Monitoring, &lastAlertSequence, *alertsJSON)
+		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{DurableAlerts: *checkpointPath != "" && *stallThreshold > 0, AlertAcknowledgements: acknowledgements, StallThreshold: *stallThreshold, ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
 	}
 	if !*watch && err == nil && *diagnostics {
 		if saved != nil && *resumePath != "" {
@@ -180,13 +194,16 @@ func cmdCommitRecoveryStatus(args []string) int {
 	var validation *api.Problem
 	invalidSelection := errors.As(err, &validation) && validation.Code == api.CodeValidation
 	if checkpoint != nil && checkpointErr == nil && !invalidSelection {
-		meaningful := progressCalled
+		meaningful := progressCalled || (out.Monitoring != nil && out.Monitoring.AlertOutbox != nil)
 		for _, row := range out.Items {
 			meaningful = meaningful || row.ObservedAt != nil || row.Status == "read_error"
 		}
 		if meaningful {
 			checkpointErr = checkpoint.save(out)
 		}
+	}
+	if *watch && checkpointErr == nil && !invalidSelection {
+		printCommitRecoveryStallAlerts(out.Monitoring, &lastAlertSequence, *alertsJSON)
 	}
 	checkpointCode := 0
 	if checkpointErr != nil {
@@ -285,7 +302,11 @@ func printCommitRecoveryStallAlerts(monitoring *api.CommitRecoveryMonitoring, se
 	if monitoring == nil {
 		return
 	}
-	for _, transition := range monitoring.BlockerTransitions {
+	transitions := monitoring.BlockerTransitions
+	if monitoring.AlertOutbox != nil {
+		transitions = monitoring.AlertOutbox.Pending
+	}
+	for _, transition := range transitions {
 		if transition.Sequence <= *seen {
 			continue
 		}

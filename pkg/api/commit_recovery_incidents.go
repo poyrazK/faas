@@ -37,10 +37,12 @@ type commitRecoveryActiveIncident struct {
 }
 
 type commitRecoveryIncidentTracker struct {
-	session  string
-	sequence uint64
-	active   map[int]*commitRecoveryActiveIncident
-	events   []CommitRecoveryBlockerTransition
+	durable, queueFull bool
+	pending            []CommitRecoveryBlockerTransition
+	session            string
+	sequence           uint64
+	active             map[int]*commitRecoveryActiveIncident
+	events             []CommitRecoveryBlockerTransition
 }
 
 func newCommitRecoveryIncidentTracker() *commitRecoveryIncidentTracker {
@@ -53,7 +55,11 @@ func (t *commitRecoveryIncidentTracker) beginPass() { t.events = nil }
 
 func (t *commitRecoveryIncidentTracker) emit(incident CommitRecoveryBlockerIncident, transition, reason string, evidence *CommitRecoveryDiagnosticObservation) {
 	t.sequence++
-	t.events = append(t.events, CommitRecoveryBlockerTransition{Sequence: t.sequence, IncidentID: incident.IncidentID, Transition: transition, Reason: reason, At: time.Now().UTC(), Query: incident.Query, WaitingReason: incident.WaitingReason, Evidence: evidence})
+	event := CommitRecoveryBlockerTransition{Sequence: t.sequence, IncidentID: incident.IncidentID, Transition: transition, Reason: reason, At: time.Now().UTC(), Query: incident.Query, WaitingReason: incident.WaitingReason, Evidence: evidence}
+	t.events = append(t.events, event)
+	if t.durable {
+		t.pending = append(t.pending, event)
+	}
 }
 
 func (t *commitRecoveryIncidentTracker) summarize(out CommitRecoveryStatusResult, consumers []CommitRecoveryConsumerStall, age, threshold time.Duration) ([]CommitRecoveryBlockerIncident, []CommitRecoveryBlockerTransition) {
@@ -103,6 +109,9 @@ func (t *commitRecoveryIncidentTracker) summarize(out CommitRecoveryStatusResult
 		}
 		if stalled && fresh {
 			if active == nil {
+				if !t.canOpen() {
+					continue
+				}
 				incident := CommitRecoveryBlockerIncident{IncidentID: t.session + "-" + strconv.FormatUint(t.sequence+1, 10), Query: query, WaitingReason: blocker.WaitingReason, OpenedAt: now, LastObservedAt: current.ObservedAt}
 				active = &commitRecoveryActiveIncident{incident: incident, first: blocker.FirstObservedAt}
 				t.active[i] = active

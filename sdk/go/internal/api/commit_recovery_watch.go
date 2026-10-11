@@ -19,12 +19,15 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 
 // CommitRecoveryWatchOptions controls optional retry and evidence-age policies.
 type CommitRecoveryWatchOptions struct {
-	StallThreshold    time.Duration
-	WatchDiagnostics  bool
-	MaxDiagnosticAge  time.Duration
-	Diagnostics       bool
-	ReadRetries       int
-	MaxObservationAge time.Duration
+	DurableAlerts           bool
+	AlertAcknowledgements   []CommitRecoveryAlertAcknowledgement
+	OnAlertAcknowledgements func(CommitRecoveryStatusResult) ([]CommitRecoveryAlertAcknowledgement, error)
+	StallThreshold          time.Duration
+	WatchDiagnostics        bool
+	MaxDiagnosticAge        time.Duration
+	Diagnostics             bool
+	ReadRetries             int
+	MaxObservationAge       time.Duration
 }
 
 // WatchCommitRecoveryStatusWithRetry permits a bounded total number of transient read retries.
@@ -44,6 +47,8 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	estimator := &commitRecoveryDiagnosticEstimator{}
 	stalls := &commitRecoveryStallTracker{}
 	incidents := newCommitRecoveryIncidentTracker()
+	incidents.durable = options.DurableAlerts
+	alertsRestored := false
 	estimateDelay := interval
 	summary := func(stopReason string) *CommitRecoveryMonitoring {
 		freshness, fresh := commitRecoveryFreshnessCounts(out, maxAge)
@@ -59,7 +64,11 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 		}
 		consumers := stalls.summarize(out, options.MaxDiagnosticAge, options.StallThreshold)
 		active, transitions := incidents.summarize(out, consumers, options.MaxDiagnosticAge, options.StallThreshold)
-		return &CommitRecoveryMonitoring{StallThresholdMS: options.StallThreshold.Milliseconds(), ConsumerStalls: consumers, BlockerIncidents: active, BlockerTransitions: transitions, DiagnosticEstimate: estimator.estimate(out, time.Since(started).Seconds()*1000, estimateDelay.Seconds()*1000), WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
+		outbox := incidents.outbox(active)
+		if !alertsRestored {
+			outbox = nil
+		}
+		return &CommitRecoveryMonitoring{AlertOutbox: outbox, StallThresholdMS: options.StallThreshold.Milliseconds(), ConsumerStalls: consumers, BlockerIncidents: active, BlockerTransitions: transitions, DiagnosticEstimate: estimator.estimate(out, time.Since(started).Seconds()*1000, estimateDelay.Seconds()*1000), WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
 	}
 	defer func() {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -68,7 +77,7 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 			reason = "cancelled"
 		} else {
 			var validation *Problem
-			if errors.As(err, &validation) && validation.Code == CodeValidation {
+			if errors.As(err, &validation) && validation.Code == CodeValidation && reason != "callback_failure" {
 				reason = "validation_failure"
 			}
 		}
@@ -86,12 +95,17 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	if options.StallThreshold < 0 || options.StallThreshold > CommitRecoveryStallThresholdMax || (options.StallThreshold > 0 && (options.StallThreshold < CommitRecoveryStallThresholdMin || !options.Diagnostics || options.MaxDiagnosticAge == 0)) {
 		return out, ErrValidation("stall threshold requires diagnostics and a positive diagnostic age limit (100ms-24h)")
 	}
+	if len(options.AlertAcknowledgements) > CommitRecoveryAlertQueueMax || (options.DurableAlerts && options.StallThreshold == 0) || (!options.DurableAlerts && (len(options.AlertAcknowledgements) > 0 || options.OnAlertAcknowledgements != nil)) {
+		return out, ErrValidation("durable alerts require stall detection; acknowledgements require durable alerts")
+	}
 	// Freeze caller-owned inputs across polling passes and progress callbacks.
 	saved, err := cloneCommitRecoveryWatchInputs(plan, applied, previous)
 	if err != nil {
 		return out, err
 	}
 	plan, applied, previous = saved.Plan, saved.Applied, saved.Previous
+	alertPrevious := previous
+	initialAcks := append([]CommitRecoveryAlertAcknowledgement{}, options.AlertAcknowledgements...)
 	diagnosticPrevious := previous
 	if refresh {
 		diagnosticPrevious = nil
@@ -109,6 +123,13 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 		incidents.beginPass()
 		passes++
 		out, err = c.getCommitRecoveryStatusWithAge(ctx, plan, applied, previous, refresh, limit, pages, maxAge)
+		var validation *Problem
+		if !alertsRestored && (!errors.As(err, &validation) || validation.Code != CodeValidation) && (err == nil || len(out.Items) > 0) {
+			if restoreErr := incidents.restore(alertPrevious, out, initialAcks); restoreErr != nil {
+				return out, restoreErr
+			}
+			alertsRestored = true
+		}
 		if options.Diagnostics && (err == nil || len(out.Items) > 0) {
 			diagnosticCtx := ctx
 			if err != nil {
@@ -156,6 +177,24 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 				return out, copyErr
 			}
 			progress(*snapshot.Previous)
+		}
+		if options.OnAlertAcknowledgements != nil {
+			snapshot, copyErr := cloneCommitRecoveryWatchInputs(plan, applied, &out)
+			if copyErr != nil {
+				return out, copyErr
+			}
+			acknowledgements, ackErr := options.OnAlertAcknowledgements(*snapshot.Previous)
+			if ackErr == nil {
+				ackErr = incidents.acknowledge(acknowledgements)
+			}
+			if ackErr != nil {
+				reason = "callback_failure"
+				return out, ackErr
+			}
+		}
+		if incidents.queueFull {
+			reason = "alert_queue_full"
+			return out, errors.New("alert queue full; acknowledge pending alerts and resume")
 		}
 		if ctx.Err() != nil {
 			return out, ctx.Err()
