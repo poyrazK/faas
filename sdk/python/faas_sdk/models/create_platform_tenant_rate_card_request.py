@@ -32,8 +32,8 @@ class CreatePlatformTenantRateCardRequest:
     """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975).
     Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."""
     effective_from: datetime.datetime | None | Unset = UNSET
-    """UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant
-    card has included units or tiers."""
+    """UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any
+    tenant card has included units or tiers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
