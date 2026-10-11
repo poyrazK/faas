@@ -42,6 +42,14 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/global-apps", read(s.listGlobalApps))
 	mux.HandleFunc("POST /v1/global-apps", write(s.createGlobalApp))
 	mux.HandleFunc("GET /v1/global-apps/{slug}", read(s.getGlobalApp))
+	mux.HandleFunc("PUT /v1/global-apps/{slug}/provisioning", write(s.requirePersonalGlobalTarget(s.putGlobalAppProvisioning)))
+	mux.HandleFunc("GET /v1/global-apps/{slug}/provisioning", read(s.getGlobalAppProvisioning))
+	provision := func(h accountHandler) http.HandlerFunc {
+		return s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin)(s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(h))))))
+	}
+	mux.HandleFunc("GET /v1/cell/account/binding", provision(s.cellAccountBinding))
+	mux.HandleFunc("PUT /v1/cells/{cell_id}/app-provisions/{provision_id}", provision(s.putCellAppProvision))
+	mux.HandleFunc("GET /v1/cells/{cell_id}/app-provisions/{provision_id}", provision(s.getCellAppProvision))
 	mux.HandleFunc("PUT /v1/global-apps/{slug}/runtime-consents/{consent_id}", write(s.requirePersonalGlobalTarget(s.putGlobalRuntimeConsent)))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/runtime-consents/{consent_id}", read(s.requirePersonalGlobalTarget(s.getGlobalRuntimeConsent)))
 	mux.HandleFunc("DELETE /v1/global-apps/{slug}/runtime-consents/{consent_id}", write(s.requirePersonalGlobalTarget(s.revokeGlobalRuntimeConsent)))

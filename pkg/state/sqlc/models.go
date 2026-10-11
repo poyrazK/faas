@@ -2913,6 +2913,19 @@ type GlobalApp struct {
 	DesiredRuntimeQuotaGeneration int64
 }
 
+type GlobalAppProvisioning struct {
+	GlobalAppID       pgtype.UUID
+	OwnerID           pgtype.UUID
+	Region            string
+	ProvisionID       pgtype.UUID
+	CellID            pgtype.UUID
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID pgtype.UUID
+	Request           []byte
+	Status            string
+}
+
 type GlobalAppTarget struct {
 	GlobalAppID       pgtype.UUID
 	OwnerID           pgtype.UUID
@@ -6063,6 +6076,18 @@ type RecentBuildClaim struct {
 	ClaimedAt pgtype.Timestamptz
 	BuildID   pgtype.UUID
 	OrgID     pgtype.UUID
+}
+
+type RegionalAppProvisionReceipt struct {
+	ProvisionID pgtype.UUID
+	GlobalAppID pgtype.UUID
+	CellID      pgtype.UUID
+	Region      string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	AppSlug     string
+	Request     []byte
+	CreatedAt   pgtype.Timestamptz
 }
 
 type RegionalImageReleaseHead struct {

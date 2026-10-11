@@ -48,6 +48,7 @@ const (
 	SnapshotMachineResponseMaxBytes             = 8192
 	RegionalMigrationLeaseTokenBytes            = 32 // ADR-756: existing 128-bit lowercase hex lease.
 	GlobalDirectoryRequestMaxBytes              = 4096
+	GlobalAppProvisionRequestMaxBytes           = 65536 // ADR-797: keys are request-only.
 	GlobalDirectoryProofMaxBytes                = 4096
 	GlobalDirectoryAPIOriginMaxBytes            = 2048
 	GlobalDirectoryOriginPortMax                = 65535

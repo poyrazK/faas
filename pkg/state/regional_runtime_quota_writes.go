@@ -7,7 +7,7 @@ import "strings"
 // journal mutation and reject creation/publication before changing durable work.
 func (m *MemStore) regionalQuotaFrozenLocked(appID string) bool {
 	_, exists := m.regionalRuntimeQuotaHeads[regionalQuotaCanonicalID(appID)]
-	return exists
+	return exists || m.regionalAppProvisionedLocked(regionalQuotaCanonicalID(appID))
 }
 
 func quotaInstanceWriteNeedsAdmission(old, next Instance) bool {

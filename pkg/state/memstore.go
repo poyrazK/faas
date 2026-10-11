@@ -138,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	regionalAppProvisions        map[string]RegionalAppProvision
 	deploymentDependencyGates    map[string]DeploymentDependencyGate
 	invocationAttemptHistory     map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID      int64

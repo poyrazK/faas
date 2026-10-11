@@ -1532,6 +1532,24 @@ func (q *Queries) AssertGlobalQuotaDeliveryClaim(ctx context.Context, db DBTX, a
 	return err
 }
 
+const attachGlobalAppProvisioning = `-- name: AttachGlobalAppProvisioning :execrows
+UPDATE global_app_provisioning SET status='attached' WHERE global_app_id=$1::uuid
+ AND provision_id=$2::uuid AND status IN ('planned','attached')
+`
+
+type AttachGlobalAppProvisioningParams struct {
+	GlobalAppID pgtype.UUID
+	ProvisionID pgtype.UUID
+}
+
+func (q *Queries) AttachGlobalAppProvisioning(ctx context.Context, db DBTX, arg AttachGlobalAppProvisioningParams) (int64, error) {
+	result, err := db.Exec(ctx, attachGlobalAppProvisioning, arg.GlobalAppID, arg.ProvisionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const attachGlobalAppTarget = `-- name: AttachGlobalAppTarget :one
 INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_org_id, regional_app_id, regional_app_slug)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::bigint,
@@ -18962,6 +18980,39 @@ func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertGlobalAppProvisioning = `-- name: InsertGlobalAppProvisioning :exec
+INSERT INTO global_app_provisioning(global_app_id,owner_id,region,provision_id,cell_id,cell_generation,api_base,regional_account_id,request)
+VALUES($1::uuid,$2::uuid,$3::text,$4::uuid,
+ $5::uuid,$6::bigint,$7::text,$8::uuid,$9::jsonb)
+`
+
+type InsertGlobalAppProvisioningParams struct {
+	GlobalAppID       pgtype.UUID
+	OwnerID           pgtype.UUID
+	Region            string
+	ProvisionID       pgtype.UUID
+	CellID            pgtype.UUID
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID pgtype.UUID
+	Request           []byte
+}
+
+func (q *Queries) InsertGlobalAppProvisioning(ctx context.Context, db DBTX, arg InsertGlobalAppProvisioningParams) error {
+	_, err := db.Exec(ctx, insertGlobalAppProvisioning,
+		arg.GlobalAppID,
+		arg.OwnerID,
+		arg.Region,
+		arg.ProvisionID,
+		arg.CellID,
+		arg.CellGeneration,
+		arg.ApiBase,
+		arg.RegionalAccountID,
+		arg.Request,
+	)
+	return err
+}
+
 const insertGlobalDelegation = `-- name: InsertGlobalDelegation :one
 INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_org_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
 VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::bigint,$8::text,$9::uuid,$10::uuid,$11::uuid,$12::text,$13::bytea,$14::bytea,$15::timestamptz) RETURNING id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status, regional_org_id
@@ -21468,6 +21519,39 @@ func (q *Queries) InsertPromotionFeatureFlags(ctx context.Context, db DBTX, arg 
 		arg.PreviousTargetSnapshot,
 		arg.SourceHash,
 		arg.PreviousTargetHash,
+	)
+	return err
+}
+
+const insertRegionalAppProvisionReceipt = `-- name: InsertRegionalAppProvisionReceipt :exec
+INSERT INTO regional_app_provision_receipts(provision_id,global_app_id,cell_id,region,account_id,app_id,app_slug,request,created_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,
+ $5::uuid,$6::uuid,$7::text,$8::jsonb,$9::timestamptz)
+`
+
+type InsertRegionalAppProvisionReceiptParams struct {
+	ProvisionID pgtype.UUID
+	GlobalAppID pgtype.UUID
+	CellID      pgtype.UUID
+	Region      string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	AppSlug     string
+	Request     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRegionalAppProvisionReceipt(ctx context.Context, db DBTX, arg InsertRegionalAppProvisionReceiptParams) error {
+	_, err := db.Exec(ctx, insertRegionalAppProvisionReceipt,
+		arg.ProvisionID,
+		arg.GlobalAppID,
+		arg.CellID,
+		arg.Region,
+		arg.AccountID,
+		arg.AppID,
+		arg.AppSlug,
+		arg.Request,
+		arg.CreatedAt,
 	)
 	return err
 }
@@ -28393,6 +28477,60 @@ func (q *Queries) ListGlobalAppIdentities(ctx context.Context, db DBTX, ownerID 
 			&i.Slug,
 			&i.RoutingPolicy,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGlobalAppProvisioning = `-- name: ListGlobalAppProvisioning :many
+SELECT p.provision_id::text AS provision_id,p.global_app_id::text AS global_app_id,p.cell_id::text AS cell_id,p.region,p.cell_generation,p.api_base,
+ p.regional_account_id::text AS regional_account_id,p.request,p.status
+FROM global_app_provisioning p JOIN global_apps a ON a.id=p.global_app_id AND a.owner_id=p.owner_id
+WHERE a.owner_id=$1::uuid AND a.slug=$2::text ORDER BY p.region
+`
+
+type ListGlobalAppProvisioningParams struct {
+	OwnerID pgtype.UUID
+	Slug    string
+}
+
+type ListGlobalAppProvisioningRow struct {
+	ProvisionID       string
+	GlobalAppID       string
+	CellID            string
+	Region            string
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID string
+	Request           []byte
+	Status            string
+}
+
+func (q *Queries) ListGlobalAppProvisioning(ctx context.Context, db DBTX, arg ListGlobalAppProvisioningParams) ([]ListGlobalAppProvisioningRow, error) {
+	rows, err := db.Query(ctx, listGlobalAppProvisioning, arg.OwnerID, arg.Slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalAppProvisioningRow{}
+	for rows.Next() {
+		var i ListGlobalAppProvisioningRow
+		if err := rows.Scan(
+			&i.ProvisionID,
+			&i.GlobalAppID,
+			&i.CellID,
+			&i.Region,
+			&i.CellGeneration,
+			&i.ApiBase,
+			&i.RegionalAccountID,
+			&i.Request,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -35576,6 +35714,18 @@ func (q *Queries) LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg 
 		arg.OrgID,
 	)
 	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRegionalProvisionAccount = `-- name: LockRegionalProvisionAccount :one
+SELECT id::text FROM accounts WHERE id=$1::uuid FOR UPDATE
+`
+
+// ADR-797: creation intent and immutable receipts use account/app locks.
+func (q *Queries) LockRegionalProvisionAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockRegionalProvisionAccount, accountID)
+	var id string
 	err := row.Scan(&id)
 	return id, err
 }
@@ -56326,6 +56476,52 @@ FROM workflow_runs r WHERE s.run_id=r.id AND r.id=$1 AND r.operation_id IS NULL 
 func (q *Queries) RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, recoverLegacyWorkflowSteps, runID)
 	return err
+}
+
+const regionalAppProvisionReceipt = `-- name: RegionalAppProvisionReceipt :one
+SELECT provision_id::text, global_app_id::text, cell_id::text, region, account_id::text,
+ app_id::text, app_slug, request, created_at
+FROM regional_app_provision_receipts WHERE provision_id=$1::uuid
+`
+
+type RegionalAppProvisionReceiptRow struct {
+	ProvisionID string
+	GlobalAppID string
+	CellID      string
+	Region      string
+	AccountID   string
+	AppID       string
+	AppSlug     string
+	Request     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) RegionalAppProvisionReceipt(ctx context.Context, db DBTX, provisionID pgtype.UUID) (RegionalAppProvisionReceiptRow, error) {
+	row := db.QueryRow(ctx, regionalAppProvisionReceipt, provisionID)
+	var i RegionalAppProvisionReceiptRow
+	err := row.Scan(
+		&i.ProvisionID,
+		&i.GlobalAppID,
+		&i.CellID,
+		&i.Region,
+		&i.AccountID,
+		&i.AppID,
+		&i.AppSlug,
+		&i.Request,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const regionalAppProvisioned = `-- name: RegionalAppProvisioned :one
+SELECT EXISTS(SELECT 1 FROM regional_app_provision_receipts WHERE app_id=$1::uuid)::boolean AS provisioned
+`
+
+func (q *Queries) RegionalAppProvisioned(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, regionalAppProvisioned, appID)
+	var provisioned bool
+	err := row.Scan(&provisioned)
+	return provisioned, err
 }
 
 const regionalImageReleaseHead = `-- name: RegionalImageReleaseHead :one

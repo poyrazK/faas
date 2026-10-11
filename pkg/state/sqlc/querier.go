@@ -103,6 +103,7 @@ type Querier interface {
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	AssertGlobalDirectoryScope(ctx context.Context, db DBTX) error
 	AssertGlobalQuotaDeliveryClaim(ctx context.Context, db DBTX, arg AssertGlobalQuotaDeliveryClaimParams) error
+	AttachGlobalAppProvisioning(ctx context.Context, db DBTX, arg AttachGlobalAppProvisioningParams) (int64, error)
 	AttachGlobalAppTarget(ctx context.Context, db DBTX, arg AttachGlobalAppTargetParams) (string, error)
 	AttachProjectEnvironmentCloneDeployment(ctx context.Context, db DBTX, arg AttachProjectEnvironmentCloneDeploymentParams) (int64, error)
 	AuthorizeBindingReleaseTraffic(ctx context.Context, db DBTX, fences []byte) (bool, error)
@@ -1019,6 +1020,7 @@ type Querier interface {
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
+	InsertGlobalAppProvisioning(ctx context.Context, db DBTX, arg InsertGlobalAppProvisioningParams) error
 	// ADR-736: immutable sealed authority and restart-safe recovery claims.
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
@@ -1078,6 +1080,7 @@ type Querier interface {
 	InsertProjectEnvironmentQueueConsumer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentQueueConsumerParams) error
 	InsertProjectEnvironmentQueueRuntimeSet(ctx context.Context, db DBTX, arg InsertProjectEnvironmentQueueRuntimeSetParams) error
 	InsertPromotionFeatureFlags(ctx context.Context, db DBTX, arg InsertPromotionFeatureFlagsParams) error
+	InsertRegionalAppProvisionReceipt(ctx context.Context, db DBTX, arg InsertRegionalAppProvisionReceiptParams) error
 	InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
 	// ADR-746: issuance is retained bookkeeping; no quota activation is implied.
@@ -1520,6 +1523,7 @@ type Querier interface {
 	// fully covers the 14-day beta cohort window.
 	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
 	ListGlobalAppIdentities(ctx context.Context, db DBTX, ownerID pgtype.UUID) ([]ListGlobalAppIdentitiesRow, error)
+	ListGlobalAppProvisioning(ctx context.Context, db DBTX, arg ListGlobalAppProvisioningParams) ([]ListGlobalAppProvisioningRow, error)
 	ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error)
 	ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error)
 	ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, arg ListGlobalImageReleaseTargetsParams) ([]ListGlobalImageReleaseTargetsRow, error)
@@ -1790,6 +1794,8 @@ type Querier interface {
 	LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX, arg LockPromotionFeatureFlagCustomerParams) (pgtype.UUID, error)
 	// ADR-732: a durable image-release receipt is committed with deployment intent.
 	LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error)
+	// ADR-797: creation intent and immutable receipts use account/app locks.
+	LockRegionalProvisionAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	// ADR-738: consent actor is separate from the pinned regional owner.
 	LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error)
 	// ADR-761: immutable original launch identity, independent of current rows.
@@ -2624,6 +2630,8 @@ type Querier interface {
 	RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error
 	RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) error
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	RegionalAppProvisionReceipt(ctx context.Context, db DBTX, provisionID pgtype.UUID) (RegionalAppProvisionReceiptRow, error)
+	RegionalAppProvisioned(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)

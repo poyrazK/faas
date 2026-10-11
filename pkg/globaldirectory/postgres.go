@@ -197,6 +197,10 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 }
 
 func (s *PgStore) attachTarget(ctx context.Context, accountID, actor, slug string, binding Binding) (Target, error) {
+	return s.attachTargetProvision(ctx, accountID, actor, slug, binding, "")
+}
+
+func (s *PgStore) attachTargetProvision(ctx context.Context, accountID, actor, slug string, binding Binding, provisionID string) (Target, error) {
 	queries := &sqlc.Queries{}
 	var out Target
 	err := s.transaction(ctx, "attach target", func(tx pgx.Tx) error {
@@ -208,6 +212,24 @@ func (s *PgStore) attachTarget(ctx context.Context, accountID, actor, slug strin
 		app, err := queries.LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
 		if err != nil {
 			return err
+		}
+		if provisionID != "" {
+			plans, err := s.listAppProvisioning(ctx, tx, accountID, slug)
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, p := range plans {
+				if p.ID == provisionID && p.Status != ProvisionCancelled && p.bindingMatches(binding) {
+					found = true
+				}
+			}
+			if !found {
+				return ErrConflict
+			}
+			if _, err := queries.AttachGlobalAppProvisioning(ctx, tx, sqlc.AttachGlobalAppProvisioningParams{GlobalAppID: idArg(app.GlobalAppID), ProvisionID: idArg(provisionID)}); err != nil {
+				return err
+			}
 		}
 		cell, err := queries.LockGlobalDirectoryCell(ctx, tx, sqlc.LockGlobalDirectoryCellParams{CellID: idArg(binding.CellID), Generation: binding.CellGeneration})
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && cell.Region != binding.Region {

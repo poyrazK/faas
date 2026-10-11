@@ -13,6 +13,7 @@ import (
 // MemoryStore is the same contract as PostgreSQL, with one critical section
 // covering registry generation, account mapping and target uniqueness.
 type MemoryStore struct {
+	provisions                 map[string]map[string]AppProvision
 	mu                         sync.Mutex
 	ingressGeneration          int64
 	ingressEnvelope            []byte
@@ -256,6 +257,10 @@ func (s *MemoryStore) detachTarget(app App, region string) error {
 		return ErrNotFound
 	}
 	s.retireDelegations(app.ID, region)
+	if p, ok := s.provisions[app.ID][region]; ok {
+		p.Status = ProvisionCancelled
+		s.provisions[app.ID][region] = p
+	}
 	delete(s.targets[app.ID], region)
 	return nil
 }

@@ -780,20 +780,18 @@ CREATE FUNCTION public.assert_regional_runtime_quota_open(app_arg uuid) RETURNS 
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    IF app_arg IS NULL THEN RETURN; END IF;
-    -- Admission must refresh its view after the journal lock. A fixed MVCC
-    -- snapshot could otherwise miss a quota head committed while it waited.
-    IF current_setting('transaction_isolation') <> 'read committed' THEN
-        RAISE EXCEPTION 'regional runtime admission requires read committed isolation'
-            USING ERRCODE='23514', CONSTRAINT='regional_runtime_quota_frozen';
-    END IF;
-    PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || app_arg::text, 0));
-    IF EXISTS (SELECT 1 FROM regional_runtime_quota_heads WHERE app_id=app_arg) THEN
-        RAISE EXCEPTION 'regional runtime quota admission is frozen'
-            USING ERRCODE='23514', CONSTRAINT='regional_runtime_quota_frozen';
-    END IF;
-END;
-$$;
+ IF app_arg IS NULL THEN RETURN; END IF;
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION 'regional runtime admission requires read committed isolation'
+   USING ERRCODE='23514',CONSTRAINT='regional_runtime_quota_frozen';
+ END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || app_arg::text,0));
+ IF EXISTS(SELECT 1 FROM regional_runtime_quota_heads WHERE app_id=app_arg) OR
+    EXISTS(SELECT 1 FROM regional_app_provision_receipts WHERE app_id=app_arg) THEN
+  RAISE EXCEPTION 'regional runtime quota admission is frozen'
+   USING ERRCODE='23514',CONSTRAINT='regional_runtime_quota_frozen';
+ END IF;
+END; $$;
 
 
 --
@@ -951,6 +949,19 @@ BEGIN
  SELECT id FROM apps WHERE id=target
  ON CONFLICT(app_id) DO UPDATE SET revision=app_binding_promotion_revisions.revision+1;
 END $$;
+
+
+--
+-- Name: cancel_detached_app_provisioning(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cancel_detached_app_provisioning() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ UPDATE global_app_provisioning SET status='cancelled' WHERE global_app_id=OLD.global_app_id AND region=OLD.region;
+ RETURN OLD;
+END; $$;
 
 
 --
@@ -6413,6 +6424,35 @@ END $$;
 
 
 --
+-- Name: guard_global_app_provisioning(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_global_app_provisioning() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP IN ('DELETE','TRUNCATE') THEN
+  RAISE EXCEPTION 'retain global app provisioning intent' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='INSERT' AND (NEW.status<>'planned' OR NOT EXISTS(
+  SELECT 1 FROM global_apps a JOIN global_directory_owners o ON o.id=a.owner_id
+  JOIN global_directory_cells c ON c.id=NEW.cell_id
+  WHERE a.id=NEW.global_app_id AND a.owner_id=NEW.owner_id AND o.account_id IS NOT NULL
+  AND c.region=NEW.region AND c.generation=NEW.cell_generation AND c.api_base=NEW.api_base AND c.enabled
+ )) THEN
+  RAISE EXCEPTION 'global app provisioning identity conflicts' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (ROW(NEW.global_app_id,NEW.owner_id,NEW.region,NEW.provision_id,NEW.cell_id,NEW.cell_generation,NEW.api_base,NEW.regional_account_id,NEW.request)
+  IS DISTINCT FROM ROW(OLD.global_app_id,OLD.owner_id,OLD.region,OLD.provision_id,OLD.cell_id,OLD.cell_generation,OLD.api_base,OLD.regional_account_id,OLD.request)
+  OR (OLD.status='cancelled' AND NEW.status<>'cancelled') OR (OLD.status='attached' AND NEW.status='planned')) THEN
+  RAISE EXCEPTION 'global app provisioning intent is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_global_ingress_publication(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7402,6 +7442,25 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_regional_app_provision_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_app_provision_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  RAISE EXCEPTION 'retain immutable regional app provisioning receipt' USING ERRCODE='23514';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM control_plane_cells WHERE id=NEW.cell_id AND compute_region=NEW.region) OR
+    NOT EXISTS(SELECT 1 FROM apps WHERE id=NEW.app_id AND account_id=NEW.account_id AND slug=NEW.app_slug AND compute_region=NEW.region) THEN
+  RAISE EXCEPTION 'regional app provisioning identity conflicts' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
 
 
 --
@@ -18113,6 +18172,31 @@ CREATE TABLE public.github_webhook_secrets (
 
 
 --
+-- Name: global_app_provisioning; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_app_provisioning (
+    global_app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    region text NOT NULL,
+    provision_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    cell_generation bigint NOT NULL,
+    api_base text NOT NULL,
+    regional_account_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    status text DEFAULT 'planned'::text NOT NULL,
+    CONSTRAINT global_app_provisioning_api_base_check CHECK ((api_base ~ '^https://[^/?#]+$'::text)),
+    CONSTRAINT global_app_provisioning_cell_generation_check CHECK ((cell_generation > 0)),
+    CONSTRAINT global_app_provisioning_provision_id_check CHECK ((provision_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_app_provisioning_region_check CHECK ((region ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)+$'::text)),
+    CONSTRAINT global_app_provisioning_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_app_provisioning_request_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 4096))),
+    CONSTRAINT global_app_provisioning_status_check CHECK ((status = ANY (ARRAY['planned'::text, 'attached'::text, 'cancelled'::text])))
+);
+
+
+--
 -- Name: global_app_targets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23540,6 +23624,31 @@ CREATE TABLE public.recent_build_claims (
 
 
 --
+-- Name: regional_app_provision_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_app_provision_receipts (
+    provision_id uuid NOT NULL,
+    global_app_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    region text NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    app_slug text NOT NULL,
+    request jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT regional_app_provision_receipts_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_provision_receipts_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_provision_receipts_app_slug_check CHECK ((app_slug ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
+    CONSTRAINT regional_app_provision_receipts_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_provision_receipts_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_provision_receipts_provision_id_check CHECK ((provision_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_provision_receipts_region_check CHECK ((region ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)+$'::text)),
+    CONSTRAINT regional_app_provision_receipts_request_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 4096)))
+);
+
+
+--
 -- Name: regional_image_release_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27974,6 +28083,22 @@ ALTER TABLE ONLY public.global_owner_cell_bindings
 
 
 --
+-- Name: global_app_provisioning global_app_provisioning_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_provisioning
+    ADD CONSTRAINT global_app_provisioning_pkey PRIMARY KEY (global_app_id, region);
+
+
+--
+-- Name: global_app_provisioning global_app_provisioning_provision_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_provisioning
+    ADD CONSTRAINT global_app_provisioning_provision_id_key UNIQUE (provision_id);
+
+
+--
 -- Name: global_app_targets global_app_targets_cell_id_regional_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30595,6 +30720,30 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.queue_bindings
     ADD CONSTRAINT queue_bindings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: regional_app_provision_receipts regional_app_provision_receipts_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_app_provision_receipts
+    ADD CONSTRAINT regional_app_provision_receipts_app_id_key UNIQUE (app_id);
+
+
+--
+-- Name: regional_app_provision_receipts regional_app_provision_receipts_global_app_id_cell_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_app_provision_receipts
+    ADD CONSTRAINT regional_app_provision_receipts_global_app_id_cell_id_key UNIQUE (global_app_id, cell_id);
+
+
+--
+-- Name: regional_app_provision_receipts regional_app_provision_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_app_provision_receipts
+    ADD CONSTRAINT regional_app_provision_receipts_pkey PRIMARY KEY (provision_id);
 
 
 --
@@ -38184,6 +38333,13 @@ CREATE TRIGGER builds_sbom_identity BEFORE UPDATE OF deployment_id ON public.bui
 
 
 --
+-- Name: global_app_targets cancel_detached_app_provision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER cancel_detached_app_provision AFTER DELETE ON public.global_app_targets FOR EACH ROW EXECUTE FUNCTION public.cancel_detached_app_provisioning();
+
+
+--
 -- Name: instances capture_environment_qualification_execution; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39056,6 +39212,20 @@ CREATE TRIGGER global_account_cell_bindings_guard BEFORE INSERT OR DELETE OR UPD
 --
 
 CREATE TRIGGER global_app_delegation_retirement BEFORE DELETE ON public.global_apps FOR EACH ROW EXECUTE FUNCTION public.retire_global_release_delegations();
+
+
+--
+-- Name: global_app_provisioning global_app_provision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_app_provision_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_app_provisioning FOR EACH ROW EXECUTE FUNCTION public.guard_global_app_provisioning();
+
+
+--
+-- Name: global_app_provisioning global_app_provision_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_app_provision_truncate_guard BEFORE TRUNCATE ON public.global_app_provisioning FOR EACH STATEMENT EXECUTE FUNCTION public.guard_global_app_provisioning();
 
 
 --
@@ -40659,6 +40829,20 @@ CREATE TRIGGER queue_replay_receipt_rearm AFTER UPDATE OF state ON public.invoca
 --
 
 CREATE TRIGGER queue_work_receipt_reconciliation AFTER UPDATE OF state ON public.invocations FOR EACH ROW WHEN (((old.state = 'pending'::text) AND (new.source = 'queue'::text) AND (new.state = ANY (ARRAY['superseded'::text, 'cancelled'::text, 'expired'::text])))) EXECUTE FUNCTION public.reconcile_queue_work_receipt();
+
+
+--
+-- Name: regional_app_provision_receipts regional_app_provision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_app_provision_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_app_provision_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_regional_app_provision_receipt();
+
+
+--
+-- Name: regional_app_provision_receipts regional_app_provision_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_app_provision_truncate_guard BEFORE TRUNCATE ON public.regional_app_provision_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.guard_regional_app_provision_receipt();
 
 
 --
@@ -44128,6 +44312,30 @@ ALTER TABLE ONLY public.github_installations
 
 ALTER TABLE ONLY public.global_owner_cell_bindings
     ADD CONSTRAINT global_account_cell_bindings_cell_id_fkey FOREIGN KEY (cell_id) REFERENCES public.global_directory_cells(id);
+
+
+--
+-- Name: global_app_provisioning global_app_provisioning_cell_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_provisioning
+    ADD CONSTRAINT global_app_provisioning_cell_id_fkey FOREIGN KEY (cell_id) REFERENCES public.global_directory_cells(id);
+
+
+--
+-- Name: global_app_provisioning global_app_provisioning_global_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_provisioning
+    ADD CONSTRAINT global_app_provisioning_global_app_id_fkey FOREIGN KEY (global_app_id) REFERENCES public.global_apps(id);
+
+
+--
+-- Name: global_app_provisioning global_app_provisioning_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_provisioning
+    ADD CONSTRAINT global_app_provisioning_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.global_directory_owners(id);
 
 
 --

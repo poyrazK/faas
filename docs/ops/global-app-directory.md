@@ -5,9 +5,10 @@ and `all_selected_regions` as its serving policy. This slice attaches existing
 regional apps and resolves their identities. ADR-784 adds an opt-in signed route
 consumer; ADR-793 renders the managed quota transport and directory-owned ingress
 publisher configuration. ADR-796 connects original native qualification capture
-through backing publication and durable completion. Regional serving eligibility
-remains gated by unfinished runtime admission. Regional provisioning, global
-authorization and billing, data/secret replication, and independent native KVM
+through backing publication and durable completion. ADR-797 adds personal
+regional app provisioning from one global request. Regional serving eligibility
+remains gated by unfinished runtime admission. Shared regional provisioning,
+global authorization and billing, data/secret replication, and independent native KVM
 capture/recovery acceptance remain required for the complete multi-region feature.
 
 ## Organization directory identities
@@ -76,7 +77,52 @@ increments the registry generation; an unchanged retry does not. Disabling
 a registry entry blocks new attachments and resolution, without changing or
 deleting regional workloads. Re-enabling requires ownership verification again.
 
-## Register and attach a customer's app
+## Regional app provisioning
+
+After creating a personal global app, provision its selected regional targets:
+
+```sh
+gregale global-app create global-shop
+gregale global-app provision global-shop --targets regions.json
+```
+
+The targets file names regional token environment variables, never token values:
+
+```json
+{
+  "targets": [
+    {"region":"eu-fsn","regional_account_id":"REGIONAL_ACCOUNT_UUID","regional_token_env":"FSN_REGIONAL_KEY","app":{"ram_mb":128}},
+    {"region":"eu-hel","regional_account_id":"OTHER_REGIONAL_ACCOUNT_UUID","regional_token_env":"HEL_REGIONAL_KEY","app":{"ram_mb":128}}
+  ]
+}
+```
+
+Set those environment variables through your credential manager. Omitted app
+slugs use the global app slug; each creation pins its own compute region. App
+settings use the normal create-app DTO and regional plan validation. Overflow
+node preferences are refused. The directory key authenticates the global
+request; each regional admin key proves that cell's exact personal account.
+
+`PUT /v1/global-apps/{slug}/provisioning` plans every requested target before
+dispatch. Its bounded request-only credentials never enter retained intent,
+receipts or output. A target is `planned`, `attached` or `cancelled`; partial
+results include a fixed diagnostic. Repeat the same command to recover after an
+uncertain response. `GET` on the same path reads retained states without keys.
+An attached target can then use the existing global image-release API.
+
+An original regional provisioning receipt survives app removal. Retrying never
+creates a replacement app or adopts an existing slug. Creation configuration,
+account and original cell endpoint are immutable. Registry generation changes
+require operator review and block automatic dispatch to the replacement origin.
+Detaching a provisioned target cancels the original intent; an old retry cannot
+reattach it. This cancellation leaves the regional app available for explicit
+regional administration. Provisioning does not publish serving eligibility or
+activate runtime quota. A provisioning receipt freezes resident instance/task
+admission immediately, before any quota stream is delivered; independent regional
+allowances cannot be used as a fallback. Shared organization provisioning remains gated on its
+regional billing and admission contract.
+
+## Attach an existing regional app
 
 Authenticate `gregale` to the directory API with the directory account's key.
 Create the global identity, then prove ownership of each existing regional app

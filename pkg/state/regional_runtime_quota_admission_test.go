@@ -1,5 +1,7 @@
 package state
 
+// adr: 797
+
 import (
 	"context"
 	"errors"
@@ -10,12 +12,17 @@ import (
 )
 
 type quotaAdmissionReader struct {
-	head RegionalRuntimeQuotaHead
-	err  error
+	head         RegionalRuntimeQuotaHead
+	err          error
+	managed      bool
+	provisionErr error
 }
 
 func (r quotaAdmissionReader) RegionalRuntimeQuotaHead(context.Context, string) (RegionalRuntimeQuotaHead, error) {
 	return r.head, r.err
+}
+func (r quotaAdmissionReader) RegionalAppProvisioned(context.Context, string) (bool, error) {
+	return r.managed, r.provisionErr
 }
 func TestRegionalRuntimeQuotaAdmissionFailClosed(t *testing.T) {
 	id := uuid.NewString()
@@ -27,6 +34,8 @@ func TestRegionalRuntimeQuotaAdmissionFailClosed(t *testing.T) {
 		want   error
 	}{
 		{"independent", quotaAdmissionReader{err: ErrNotFound}, nil},
+		{"provisioned-without-quota", quotaAdmissionReader{err: ErrNotFound, managed: true}, ErrRegionalRuntimeQuotaFrozen},
+		{"unknown-provisioning", quotaAdmissionReader{err: ErrNotFound, provisionErr: unavailable}, unavailable},
 		{"blocked", quotaAdmissionReader{head: head}, ErrRegionalRuntimeQuotaFrozen},
 		{"missing-store", nil, ErrRegionalRuntimeQuotaFrozen},
 		{"unknown", quotaAdmissionReader{err: unavailable}, unavailable},

@@ -11,8 +11,11 @@ import (
 )
 
 func cmdGlobalApp(args []string) int {
+	if len(args) > 0 && args[0] == "provision" {
+		return cmdGlobalAppProvision(args[1:])
+	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale global-app create|list|show|attach|detach|resolve|reserve-quota|show-quota|retire-quota|setup-runtime-consent|show-runtime-consent|revoke-runtime-consent|queue-quota-delivery|show-quota-delivery|retry-quota-delivery", "global-app")
+		PrintUsage(os.Stderr, "usage: gregale global-app create|list|show|provision|attach|detach|resolve|reserve-quota|show-quota|retire-quota|setup-runtime-consent|show-runtime-consent|revoke-runtime-consent|queue-quota-delivery|show-quota-delivery|retry-quota-delivery", "global-app")
 		return 1
 	}
 	if args[0] == "reserve-quota" || args[0] == "show-quota" || args[0] == "retire-quota" {

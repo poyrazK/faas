@@ -12628,6 +12628,38 @@ SELECT initialize_control_plane_cell(sqlc.arg(cell_id)::uuid, sqlc.arg(region)::
 -- name: GlobalDirectoryUnbound :one
 SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound;
 
+-- ADR-797: creation intent and immutable receipts use account/app locks.
+-- name: LockRegionalProvisionAccount :one
+SELECT id::text FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: RegionalAppProvisionReceipt :one
+SELECT provision_id::text, global_app_id::text, cell_id::text, region, account_id::text,
+ app_id::text, app_slug, request, created_at
+FROM regional_app_provision_receipts WHERE provision_id=sqlc.arg(provision_id)::uuid;
+
+-- name: RegionalAppProvisioned :one
+SELECT EXISTS(SELECT 1 FROM regional_app_provision_receipts WHERE app_id=sqlc.arg(app_id)::uuid)::boolean AS provisioned;
+
+-- name: InsertRegionalAppProvisionReceipt :exec
+INSERT INTO regional_app_provision_receipts(provision_id,global_app_id,cell_id,region,account_id,app_id,app_slug,request,created_at)
+VALUES(sqlc.arg(provision_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,
+ sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(app_slug)::text,sqlc.arg(request)::jsonb,sqlc.arg(created_at)::timestamptz);
+
+-- name: ListGlobalAppProvisioning :many
+SELECT p.provision_id::text AS provision_id,p.global_app_id::text AS global_app_id,p.cell_id::text AS cell_id,p.region,p.cell_generation,p.api_base,
+ p.regional_account_id::text AS regional_account_id,p.request,p.status
+FROM global_app_provisioning p JOIN global_apps a ON a.id=p.global_app_id AND a.owner_id=p.owner_id
+WHERE a.owner_id=sqlc.arg(owner_id)::uuid AND a.slug=sqlc.arg(slug)::text ORDER BY p.region;
+
+-- name: InsertGlobalAppProvisioning :exec
+INSERT INTO global_app_provisioning(global_app_id,owner_id,region,provision_id,cell_id,cell_generation,api_base,regional_account_id,request)
+VALUES(sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(region)::text,sqlc.arg(provision_id)::uuid,
+ sqlc.arg(cell_id)::uuid,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.arg(request)::jsonb);
+
+-- name: AttachGlobalAppProvisioning :execrows
+UPDATE global_app_provisioning SET status='attached' WHERE global_app_id=sqlc.arg(global_app_id)::uuid
+ AND provision_id=sqlc.arg(provision_id)::uuid AND status IN ('planned','attached');
+
 -- name: AssertGlobalDirectoryScope :exec
 SELECT assert_global_directory_scope();
 
