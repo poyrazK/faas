@@ -6128,6 +6128,18 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_environment_cleanups",
+    "columns": [
+      "cleaned_at",
+      "environment_id",
+      "manifest",
+      "manifest_sha256",
+      "operation_id",
+      "workload_cleanup_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_layer_pins",
     "columns": [
       "app_id",

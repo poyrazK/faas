@@ -248,6 +248,16 @@ func replayCheckpointWorkloadMaterializationTx(ctx context.Context, tx pgx.Tx, o
 	if err != nil {
 		return ProjectEnvironment{}, mapErr(err)
 	}
+	_, err = sqlc.New().ReadCloneEnvironmentCleanup(ctx, tx, mustPgUUID(op.ID))
+	if err == nil {
+		// The caller verifies the complete ownership/cleanup chain and exact
+		// absence before reconstructing the original native plan from this ID.
+		return ProjectEnvironment{ID: pgUUIDString(row.EnvironmentID)}, nil
+	}
+	if !errors.Is(mapErr(err), ErrNotFound) {
+		return ProjectEnvironment{}, mapErr(err)
+	}
+
 	env, err := sqlc.New().LockProjectEnvironmentCloneMaterializedEnvironment(ctx, tx, sqlc.LockProjectEnvironmentCloneMaterializedEnvironmentParams{ID: row.EnvironmentID, AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID), Slug: op.TargetEnvironment})
 	if err != nil {
 		return ProjectEnvironment{}, checkpointPgCompensationDependencyError(mapErr(err))

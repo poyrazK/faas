@@ -9582,3 +9582,45 @@ withdraw published releases or clear whole-stage compensation blockers. Remainin
 retirement protocols must also cover indirect and non-foreign-key references.
 Public full-stage admission remains gated; live provider qualification remains
 deferred.
+
+### Atomic unborrowed environment metadata cleanup
+
+The private leased environment cleanup requires completed native workload
+retirement, original configuration ownership, settings cleanup and workload
+catalogue cleanup. It locks the original environment before inventory and briefly holds SHARE writer locks on the
+known scope-only borrower tables through receipt verification. The worker lease
+bounds lock waits. It removes exactly that unprotected UUID/account/project/slug row. All 21 direct environment
+foreign-key borrowers must be absent. Retained deployments, scope-only queue and
+runtime references, external/GitOps owners, provider bindings, policies, approvals,
+promotions, cleanup jobs and other clone owners also block removal. Their own
+protocols must retire those rows; this transaction never cascades over them.
+The first supported path therefore covers materialized stages without retained
+target deployments. Deployed stages remain blocked pending deployment retirement.
+
+A new bounded receipt links the exact workload cleanup digest, original environment
+UUID, all eleven post-state table hashes and cleanup time. Receipt persistence and
+environment removal commit atomically; a write failure restores the environment.
+Original ownership, materialization, source captures and native/settings/workload
+journals remain retained. Historical secret-revocation tombstones, runtime-change
+markers and binding-policy history are retained evidence, not rows to cascade away.
+Compensated clone history without a direct environment ownership claim is also
+retained. Active clone operations and direct claims on the original UUID still
+block deletion. Abstract account/runtime configuration scope enums are not
+environment labels.
+
+Native terminal replay reconstructs the original environment identity from retained
+materialization only when an environment cleanup receipt exists. It then verifies
+the entire receipt chain, unchanged other ten table hashes, exact environment
+absence, time ordering and absence of new borrowers before accepting the original
+native plan. A replacement with either the old UUID or the old project/slug,
+repopulated settings, late scoped references, altered receipts or a missing witness
+blocks replay. Settings/workload cleanup retries continue to authenticate this same
+post-state and never redispatch native requests or rewrite original ownership.
+
+Migration downgrade refuses retained environment-cleanup evidence and keeps a
+restrictive link to the workload predecessor. Database inventory tests require
+review of new direct foreign keys and concrete environment/scope columns before
+extending deletion authority. Operational borrower retirement, deployment metadata
+retirement, published release withdrawal and whole-stage terminal compensation
+remain separate work. Public full-stage admission remains gated and live provider
+qualification remains deferred.

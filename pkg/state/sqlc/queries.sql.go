@@ -5321,6 +5321,89 @@ func (q *Queries) CloneConfigurationOwnershipScopeIsForeign(ctx context.Context,
 	return foreign_scope, err
 }
 
+const cloneEnvironmentCleanupHasReplacement = `-- name: CloneEnvironmentCleanupHasReplacement :one
+SELECT EXISTS(SELECT 1 FROM project_environments WHERE id=$1::uuid OR (project_id=$2::uuid AND slug=$3::text))::boolean
+`
+
+type CloneEnvironmentCleanupHasReplacementParams struct {
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	Environment   string
+}
+
+func (q *Queries) CloneEnvironmentCleanupHasReplacement(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasReplacementParams) (bool, error) {
+	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasReplacement, arg.EnvironmentID, arg.ProjectID, arg.Environment)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneEnvironmentCleanupHasScopeBorrowers = `-- name: CloneEnvironmentCleanupHasScopeBorrowers :one
+WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$3::uuid)
+SELECT
+ (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_webhooks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_openapi_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_rollback_operations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_route_policy_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM issue_ingest_tokens p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=$1::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_bindings p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_cutovers p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM object_buckets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_issues p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=$1::text)
+ OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=($2::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text))
+ OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=$2::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=$1::text))
+ OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=($2::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text))
+ OR EXISTS(SELECT 1 FROM instance_runtime_config_receipts p JOIN instances i ON i.id=p.instance_id WHERE i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM snapshot_runtime_config_receipts p JOIN snapshots s ON s.id=p.snapshot_id JOIN deployments d ON d.id=s.deployment_id WHERE d.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM github_deploy_branches p WHERE p.project_id=$3::uuid AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_cleanup_jobs p WHERE p.project_id=$3::uuid AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_promotions p WHERE p.project_id=$3::uuid AND (p.from_environment=$1::text OR p.to_environment=$1::text))
+ OR EXISTS(SELECT 1 FROM project_environment_approvals p WHERE p.account_id=$4::uuid AND p.project_slug=(SELECT slug FROM projects WHERE id=$3::uuid) AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM object_storage_s3_credentials p WHERE p.managed_app_id IN (SELECT id FROM scoped_apps) AND p.managed_scope=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_operations p WHERE p.project_id=$3::uuid AND p.id<>$5::uuid AND p.status<>'compensated' AND (p.source_environment=$1::text OR p.target_environment=$1::text))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=($2::uuid)::text AND p.operation_id<>$5::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=($2::uuid)::text AND p.operation_id<>$5::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=$3::uuid AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM app_envs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_secrets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_refs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_databases p WHERE p.environment_clone_operation_id=$5::uuid))::boolean AS blocked
+`
+
+type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
+	Environment   string
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	AccountID     pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+// Original clone journals and historical secret/runtime-change tombstones are
+// retained evidence. All other known operational references must close first.
+func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
+	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
+		arg.Environment,
+		arg.EnvironmentID,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+	)
+	var blocked bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
 const cloneManagedSecretWithdrawalHasExternalOwners = `-- name: CloneManagedSecretWithdrawalHasExternalOwners :one
 SELECT EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=$1::uuid)
  OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=$1::uuid)
@@ -9518,6 +9601,30 @@ type DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams struct {
 func (q *Queries) DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error {
 	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentRoutePolicies, arg.ProjectID, arg.Environment)
 	return err
+}
+
+const deleteCloneOwnedEnvironment = `-- name: DeleteCloneOwnedEnvironment :execrows
+DELETE FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 AND NOT protected
+`
+
+type DeleteCloneOwnedEnvironmentParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) DeleteCloneOwnedEnvironment(ctx context.Context, db DBTX, arg DeleteCloneOwnedEnvironmentParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneOwnedEnvironment,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Slug,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteCloneOwnedWorkloadHeads = `-- name: DeleteCloneOwnedWorkloadHeads :exec
@@ -19036,6 +19143,29 @@ func (q *Queries) InsertCloneConfigurationOwnership(ctx context.Context, db DBTX
 	_, err := db.Exec(ctx, insertCloneConfigurationOwnership,
 		arg.OperationID,
 		arg.EnvironmentID,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
+const insertCloneEnvironmentCleanup = `-- name: InsertCloneEnvironmentCleanup :exec
+INSERT INTO project_environment_clone_environment_cleanups(operation_id,environment_id,workload_cleanup_sha256,manifest,manifest_sha256) VALUES($1,$2,$3,$4,$5)
+`
+
+type InsertCloneEnvironmentCleanupParams struct {
+	OperationID           pgtype.UUID
+	EnvironmentID         pgtype.UUID
+	WorkloadCleanupSha256 string
+	Manifest              []byte
+	ManifestSha256        string
+}
+
+func (q *Queries) InsertCloneEnvironmentCleanup(ctx context.Context, db DBTX, arg InsertCloneEnvironmentCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneEnvironmentCleanup,
+		arg.OperationID,
+		arg.EnvironmentID,
+		arg.WorkloadCleanupSha256,
 		arg.Manifest,
 		arg.ManifestSha256,
 	)
@@ -32428,6 +32558,15 @@ func (q *Queries) LockCloneCheckpointUnusedReservationClock(ctx context.Context,
 	var generation int64
 	err := row.Scan(&generation)
 	return generation, err
+}
+
+const lockCloneEnvironmentCleanupScopeBorrowers = `-- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
+SELECT lock_clone_environment_cleanup_scope_borrowers()
+`
+
+func (q *Queries) LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneEnvironmentCleanupScopeBorrowers)
+	return err
 }
 
 const lockCloneWorkloadCleanupSpecs = `-- name: LockCloneWorkloadCleanupSpecs :many
@@ -49730,6 +49869,24 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 	var manifest []byte
 	err := row.Scan(&manifest)
 	return manifest, err
+}
+
+const readCloneEnvironmentCleanup = `-- name: ReadCloneEnvironmentCleanup :one
+SELECT operation_id, environment_id, workload_cleanup_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_environment_cleanups WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneEnvironmentCleanup, error) {
+	row := db.QueryRow(ctx, readCloneEnvironmentCleanup, operationID)
+	var i ProjectEnvironmentCloneEnvironmentCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadCleanupSha256,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CleanedAt,
+	)
+	return i, err
 }
 
 const readCloneEnvironmentMetadataBorrowers = `-- name: ReadCloneEnvironmentMetadataBorrowers :one

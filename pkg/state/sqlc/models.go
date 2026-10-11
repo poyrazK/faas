@@ -5334,6 +5334,15 @@ type ProjectEnvironmentCloneConfigurationOwnership struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneEnvironmentCleanup struct {
+	OperationID           pgtype.UUID
+	EnvironmentID         pgtype.UUID
+	WorkloadCleanupSha256 string
+	Manifest              []byte
+	ManifestSha256        string
+	CleanedAt             pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneLayerPin struct {
 	OperationID pgtype.UUID
 	AppID       pgtype.UUID

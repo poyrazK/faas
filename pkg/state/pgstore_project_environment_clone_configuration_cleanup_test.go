@@ -21,7 +21,12 @@ import (
 
 func configurationCleanupFixture(t *testing.T, owned bool, managed ...bool) (*state.PgStore, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, string) {
 	t.Helper()
-	s, pool, l := pgWorkloadRetirementFixture(t, "deployed")
+	return configurationCleanupFixtureForPhase(t, owned, "deployed", managed...)
+}
+
+func configurationCleanupFixtureForPhase(t *testing.T, owned bool, phase string, managed ...bool) (*state.PgStore, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, string) {
+	t.Helper()
+	s, pool, l := pgWorkloadRetirementFixture(t, phase)
 	var envID, appID string
 	if err := pool.QueryRow(t.Context(), "SELECT m.environment_id,w.app_id FROM project_environment_clone_materializations m JOIN project_environment_clone_workloads w USING(operation_id) WHERE m.operation_id=$1", l.Operation.ID).Scan(&envID, &appID); err != nil {
 		t.Fatal(err)

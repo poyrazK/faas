@@ -101,7 +101,7 @@ func verifyCloneWorkloadCleanupTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 		return mapErr(err)
 	}
 	manifest, err := cloneConfigurationOwnershipManifest(row.Manifest)
-	if err != nil || pgUUIDString(row.OperationID) != op.ID || row.ConfigurationCleanupSha256 != cloneConfigurationCleanupSHA(config) || cloneCheckpointSHA(manifest) != row.ManifestSha256 || !reflect.DeepEqual(manifest, current) || !row.CleanedAt.Valid || !checkpointObjectRetirementTime(row.CleanedAt.Time.UTC()) || row.CleanedAt.Time.After(time.Now()) || row.CleanedAt.Time.Before(config.CleanedAt.Time) {
+	if err != nil || pgUUIDString(row.OperationID) != op.ID || row.ConfigurationCleanupSha256 != cloneConfigurationCleanupSHA(config) || cloneCheckpointSHA(manifest) != row.ManifestSha256 || !row.CleanedAt.Valid || !checkpointObjectRetirementTime(row.CleanedAt.Time.UTC()) || row.CleanedAt.Time.After(time.Now()) || row.CleanedAt.Time.Before(config.CleanedAt.Time) {
 		return ErrConflict
 	}
 	expected := make(map[string]string, len(prior))
@@ -126,5 +126,5 @@ func verifyCloneWorkloadCleanupTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 	if borrowers.blocked() {
 		return ErrConflict
 	}
-	return nil
+	return verifyCloneEnvironmentCleanupTx(ctx, tx, op, row, manifest, current, native)
 }

@@ -58,29 +58,7 @@ func (s *PgStore) ProjectEnvironmentCloneEnvironmentBorrowersForLease(ctx contex
 		if err != nil {
 			return mapErr(err)
 		}
-		out = ProjectEnvironmentCloneEnvironmentBorrowers{OperationID: op.ID, EnvironmentID: native.Plan.EnvironmentID, OwnershipSHA256: ownership, NativePlanSHA256: cloneCheckpointSHA(native.Plan), NativeObservationSHA256: native.ObservationSHA256, OwnedDeployments: row.OwnedDeployments, ForeignDeployments: row.ForeignDeployments, References: map[string]int64{
-			"app_environment_secret_ref_suppressions": row.AppEnvironmentSecretRefSuppressions,
-			"app_environment_secret_refs":             row.AppEnvironmentSecretRefs,
-			"app_environment_workload_intents":        row.AppEnvironmentWorkloadIntents,
-			"custom_domains":                          row.CustomDomains,
-			"dev_bridge_sessions":                     row.DevBridgeSessions,
-			"environment_external_field_owners":       row.EnvironmentExternalFieldOwners,
-			"environment_git_sources":                 row.EnvironmentGitSources,
-			"environment_managed_fields":              row.EnvironmentManagedFields,
-			"environment_workload_graphs":             row.EnvironmentWorkloadGraphs,
-			"feature_flag_versions":                   row.FeatureFlagVersions,
-			"invocation_environment_queue_admissions": row.InvocationEnvironmentQueueAdmissions,
-			"invocation_work_environment_admissions":  row.InvocationWorkEnvironmentAdmissions,
-			"invocation_work_environment_domains":     row.InvocationWorkEnvironmentDomains,
-			"invocations":                             row.Invocations,
-			"project_environment_edge_policies":       row.ProjectEnvironmentEdgePolicies,
-			"project_environment_qualifications":      row.ProjectEnvironmentQualifications,
-			"project_environment_queue_runtime_sets":  row.ProjectEnvironmentQueueRuntimeSets,
-			"project_environment_route_policies":      row.ProjectEnvironmentRoutePolicies,
-			"project_environment_workload_specs":      row.ProjectEnvironmentWorkloadSpecs,
-			"project_release_sets":                    row.ProjectReleaseSets,
-			"runtime_environment_scaling_states":      row.RuntimeEnvironmentScalingStates,
-		}}
+		out = ProjectEnvironmentCloneEnvironmentBorrowers{OperationID: op.ID, EnvironmentID: native.Plan.EnvironmentID, OwnershipSHA256: ownership, NativePlanSHA256: cloneCheckpointSHA(native.Plan), NativeObservationSHA256: native.ObservationSHA256, OwnedDeployments: row.OwnedDeployments, ForeignDeployments: row.ForeignDeployments, References: cloneEnvironmentBorrowerCounts(row)}
 		// Native replay already verified each present receipt and its exact post-state.
 		if configErr == nil {
 			out.ConfigurationCleanupSHA256 = cloneConfigurationCleanupSHA(config)
@@ -101,4 +79,30 @@ func cloneWorkloadCleanupSHA(row sqlc.ProjectEnvironmentCloneWorkloadCleanup) st
 		OperationID, ConfigurationCleanupSHA256, ManifestSHA256 string
 		CleanedAt                                               time.Time
 	}{pgUUIDString(row.OperationID), row.ConfigurationCleanupSha256, row.ManifestSha256, row.CleanedAt.Time.UTC()})
+}
+
+func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowersRow) map[string]int64 {
+	return map[string]int64{
+		"app_environment_secret_ref_suppressions": row.AppEnvironmentSecretRefSuppressions,
+		"app_environment_secret_refs":             row.AppEnvironmentSecretRefs,
+		"app_environment_workload_intents":        row.AppEnvironmentWorkloadIntents,
+		"custom_domains":                          row.CustomDomains,
+		"dev_bridge_sessions":                     row.DevBridgeSessions,
+		"environment_external_field_owners":       row.EnvironmentExternalFieldOwners,
+		"environment_git_sources":                 row.EnvironmentGitSources,
+		"environment_managed_fields":              row.EnvironmentManagedFields,
+		"environment_workload_graphs":             row.EnvironmentWorkloadGraphs,
+		"feature_flag_versions":                   row.FeatureFlagVersions,
+		"invocation_environment_queue_admissions": row.InvocationEnvironmentQueueAdmissions,
+		"invocation_work_environment_admissions":  row.InvocationWorkEnvironmentAdmissions,
+		"invocation_work_environment_domains":     row.InvocationWorkEnvironmentDomains,
+		"invocations":                             row.Invocations,
+		"project_environment_edge_policies":       row.ProjectEnvironmentEdgePolicies,
+		"project_environment_qualifications":      row.ProjectEnvironmentQualifications,
+		"project_environment_queue_runtime_sets":  row.ProjectEnvironmentQueueRuntimeSets,
+		"project_environment_route_policies":      row.ProjectEnvironmentRoutePolicies,
+		"project_environment_workload_specs":      row.ProjectEnvironmentWorkloadSpecs,
+		"project_release_sets":                    row.ProjectReleaseSets,
+		"runtime_environment_scaling_states":      row.RuntimeEnvironmentScalingStates,
+	}
 }

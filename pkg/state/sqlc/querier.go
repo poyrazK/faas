@@ -226,6 +226,10 @@ type Querier interface {
 	CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
 	CloneConfigurationCleanupHasBorrowers(ctx context.Context, db DBTX, arg CloneConfigurationCleanupHasBorrowersParams) (pgtype.Bool, error)
 	CloneConfigurationOwnershipScopeIsForeign(ctx context.Context, db DBTX, arg CloneConfigurationOwnershipScopeIsForeignParams) (pgtype.Bool, error)
+	CloneEnvironmentCleanupHasReplacement(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasReplacementParams) (bool, error)
+	// Original clone journals and historical secret/runtime-change tombstones are
+	// retained evidence. All other known operational references must close first.
+	CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error)
 	CloneManagedSecretWithdrawalHasExternalOwners(ctx context.Context, db DBTX, environmentID pgtype.UUID) (pgtype.Bool, error)
 	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
 	CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
@@ -443,6 +447,7 @@ type Querier interface {
 	DeleteCloneConfigurationProjectEnvironmentConfigVersions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentConfigVersionsParams) error
 	DeleteCloneConfigurationProjectEnvironmentEdgePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentEdgePoliciesParams) error
 	DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error
+	DeleteCloneOwnedEnvironment(ctx context.Context, db DBTX, arg DeleteCloneOwnedEnvironmentParams) (int64, error)
 	DeleteCloneOwnedWorkloadHeads(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
 	DeleteCloneOwnedWorkloadPins(ctx context.Context, db DBTX, arg DeleteCloneOwnedWorkloadPinsParams) error
 	DeleteCloneOwnedWorkloadSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
@@ -946,6 +951,7 @@ type Querier interface {
 	InsertCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
 	InsertCloneConfigurationCleanup(ctx context.Context, db DBTX, arg InsertCloneConfigurationCleanupParams) error
 	InsertCloneConfigurationOwnership(ctx context.Context, db DBTX, arg InsertCloneConfigurationOwnershipParams) error
+	InsertCloneEnvironmentCleanup(ctx context.Context, db DBTX, arg InsertCloneEnvironmentCleanupParams) error
 	InsertCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, arg InsertCloneObjectSecretWithdrawalParams) error
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
@@ -1629,6 +1635,7 @@ type Querier interface {
 	LockCloneCheckpointObjectPublicationBucket(ctx context.Context, db DBTX, arg LockCloneCheckpointObjectPublicationBucketParams) (ObjectBucket, error)
 	LockCloneCheckpointObjectPublicationKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]pgtype.UUID, error)
 	LockCloneCheckpointUnusedReservationClock(ctx context.Context, db DBTX) (int64, error)
+	LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error
 	LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
@@ -2310,6 +2317,7 @@ type Querier interface {
 	ReadCloneConfigurationCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCleanup, error)
 	ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error)
 	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
+	ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneEnvironmentCleanup, error)
 	// Counts retained rows regardless of runtime status, TTL or tenant metadata.
 	// Scope-only invocation/scaling rows are included even without the target UUID.
 	ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db DBTX, arg ReadCloneEnvironmentMetadataBorrowersParams) (ReadCloneEnvironmentMetadataBorrowersRow, error)

@@ -15852,3 +15852,62 @@ SELECT
  (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)) AS runtime_environment_scaling_states,
  (SELECT count(*) FROM scoped_deployments d WHERE EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=sqlc.arg(operation_id)::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS owned_deployments,
  (SELECT count(*) FROM scoped_deployments d WHERE NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=sqlc.arg(operation_id)::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS foreign_deployments;
+
+-- name: ReadCloneEnvironmentCleanup :one
+SELECT * FROM project_environment_clone_environment_cleanups WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneEnvironmentCleanup :exec
+INSERT INTO project_environment_clone_environment_cleanups(operation_id,environment_id,workload_cleanup_sha256,manifest,manifest_sha256) VALUES($1,$2,$3,$4,$5);
+
+-- name: DeleteCloneOwnedEnvironment :execrows
+DELETE FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 AND NOT protected;
+
+-- name: CloneEnvironmentCleanupHasReplacement :one
+SELECT EXISTS(SELECT 1 FROM project_environments WHERE id=sqlc.arg(environment_id)::uuid OR (project_id=sqlc.arg(project_id)::uuid AND slug=sqlc.arg(environment)::text))::boolean;
+
+-- name: CloneEnvironmentCleanupHasScopeBorrowers :one
+-- Original clone journals and historical secret/runtime-change tombstones are
+-- retained evidence. All other known operational references must close first.
+WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=sqlc.arg(project_id)::uuid)
+SELECT
+ (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_webhooks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM deployment_openapi_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM deployment_rollback_operations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM deployment_route_policy_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment_slug=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM issue_ingest_tokens p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_bindings p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_cutovers p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM object_buckets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_issues p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
+ OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
+ OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
+ OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text))
+ OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=sqlc.arg(environment)::text))
+ OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text))
+ OR EXISTS(SELECT 1 FROM instance_runtime_config_receipts p JOIN instances i ON i.id=p.instance_id WHERE i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM snapshot_runtime_config_receipts p JOIN snapshots s ON s.id=p.snapshot_id JOIN deployments d ON d.id=s.deployment_id WHERE d.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM github_deploy_branches p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_cleanup_jobs p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_promotions p WHERE p.project_id=sqlc.arg(project_id)::uuid AND (p.from_environment=sqlc.arg(environment)::text OR p.to_environment=sqlc.arg(environment)::text))
+ OR EXISTS(SELECT 1 FROM project_environment_approvals p WHERE p.account_id=sqlc.arg(account_id)::uuid AND p.project_slug=(SELECT slug FROM projects WHERE id=sqlc.arg(project_id)::uuid) AND p.environment_slug=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM object_storage_s3_credentials p WHERE p.managed_app_id IN (SELECT id FROM scoped_apps) AND p.managed_scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_operations p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.id<>sqlc.arg(operation_id)::uuid AND p.status<>'compensated' AND (p.source_environment=sqlc.arg(environment)::text OR p.target_environment=sqlc.arg(environment)::text))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text AND p.operation_id<>sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text AND p.operation_id<>sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_envs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_secrets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_refs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_databases p WHERE p.environment_clone_operation_id=sqlc.arg(operation_id)::uuid))::boolean AS blocked;
+
+-- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
+SELECT lock_clone_environment_cleanup_scope_borrowers();
