@@ -579,6 +579,15 @@ func (c Config) NftCommands() [][]string {
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
+	if c.QualificationOnly && c.HostBridgeIP.IsValid() {
+		// The node-local readiness and smoke probes use the bridge address as
+		// their source. Admit only a published DNAT to this candidate's app;
+		// the qualification chain remains closed to other ingress.
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
+			"oifname", c.Tap, "ip", "saddr", c.HostBridgeIP.String(),
+			"ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(c.guestAppPort()),
+			"ct", "status", "dnat", "accept")
+	}
 
 	// ADR-201 §3: reject NEW connections to an upstream whose circuit is
 	// open. Deliberately placed AFTER the established/related accept — an
