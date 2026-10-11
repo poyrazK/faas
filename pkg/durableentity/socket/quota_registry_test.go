@@ -291,6 +291,10 @@ func TestQuotaRegistryMoreThan256PermanentReceiptsSurvivePolicyUpdate(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	migration, err = q.StartMigration(t.Context(), id, uuid.NewString(), migration.ID, migration.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
 	q.Limits.EntityBytes *= 2
 	p := QuotaPolicyRequest{OperationID: uuid.NewString(), ExpectedRevision: policy.Revision, ExpectedMigrationID: migration.ID, ExpectedMigrationRevision: migration.Revision, MigrationID: uuid.NewString(), Limits: q.Limits}
 	if _, err = q.ApplyPolicy(t.Context(), id, p, "operator"); err != nil {
