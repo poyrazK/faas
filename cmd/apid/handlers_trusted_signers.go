@@ -165,7 +165,10 @@ func (s *server) upsertTrustedSigner(w http.ResponseWriter, r *http.Request, acc
 	if rotated {
 		kind = "app.trusted_signer_rotated"
 	}
-	s.audit.Emit(r.Context(), kind, &app.ID, map[string]any{
+	// The subject is the owning account: the audit log is queried by
+	// account, so an app-ID subject hid these rows from the owner
+	// (hunt #9 H9-53). The app stays in data.
+	s.audit.Emit(r.Context(), kind, &acct.ID, map[string]any{
 		"app_id":    app.ID,
 		"signer":    name,
 		"key_bytes": len(pubKey),
@@ -248,7 +251,7 @@ func (s *server) deleteTrustedSigner(w http.ResponseWriter, r *http.Request, acc
 		"signer", name,
 		"account", acct.ID,
 	)
-	s.audit.Emit(r.Context(), "app.trusted_signer_removed", &app.ID, map[string]any{
+	s.audit.Emit(r.Context(), "app.trusted_signer_removed", &acct.ID, map[string]any{
 		"app_id": app.ID,
 		"signer": name,
 	})

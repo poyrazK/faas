@@ -509,7 +509,13 @@ func (h *Handler) emitSignatureAudit(ctx context.Context, kind string, app state
 		}
 		// "apid" preserves the existing events.actor attribution: apid
 		// remains the audit writer even though imaged owns the observation.
-		outboxID, enqueueErr := outbox.EnqueueAuditEvent(ctx, "apid", kind, &app.ID, data, dedupeKey)
+		// The subject is the owning account, which the audit log is
+		// queried by (hunt #9 H9-53); the app ID is in data.
+		subject := &app.AccountID
+		if app.AccountID == "" {
+			subject = nil
+		}
+		outboxID, enqueueErr := outbox.EnqueueAuditEvent(ctx, "apid", kind, subject, data, dedupeKey)
 		if enqueueErr == nil {
 			base.OutboxID = outboxID
 			payload, marshalErr := json.Marshal(base)

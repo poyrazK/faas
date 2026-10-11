@@ -374,6 +374,34 @@ func TestDeleteTrustedSigner_HappyPath(t *testing.T) {
 	}
 }
 
+// Hunt #9 H9-53: the signer audit rows used the app ID as their subject,
+// and the audit log is listed per account, so production-us owners never
+// saw app.trusted_signer_added / _removed for their own apps.
+func TestTrustedSignerAuditRowsBelongToTheAccount(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	requireSignedApp(t, e, "app-audit", false)
+	body := api.AddTrustedSignerRequest{PublicKeyPEM: base64.StdEncoding.EncodeToString(make([]byte, 64))}
+	if rec := e.do(t, "PUT", "/v1/apps/app-audit/trusted_signers/ci-bot", body, nil); rec.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.do(t, "DELETE", "/v1/apps/app-audit/trusted_signers/ci-bot", nil, nil); rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+		t.Fatalf("DELETE: %d %s", rec.Code, rec.Body)
+	}
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 50)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, ev := range events {
+		seen[ev.Kind] = true
+	}
+	for _, kind := range []string{"app.trusted_signer_added", "app.trusted_signer_removed"} {
+		if !seen[kind] {
+			t.Errorf("%s is not in the account's audit log (kinds seen: %v)", kind, seen)
+		}
+	}
+}
+
 // ptrBool is a tiny helper so the table can write ptrBool(true)
 // inline.
 func ptrBool(v bool) *bool {
