@@ -1703,9 +1703,9 @@ type ComputeNode struct {
 	LastRecoveryOutcome pgtype.Text
 	// vmmd-registered IPv4 address on the operator-managed regional overlay
 	OverlayIp             *netip.Addr
-	ServiceAddressReadyAt pgtype.Timestamptz
 	VmmdIncarnation       pgtype.UUID
 	VmmdAdmissionProtocol int16
+	ServiceAddressReadyAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -3862,11 +3862,11 @@ type Instance struct {
 	MigrationStartedAt                pgtype.Timestamptz
 	StartupCpuBoostUntil              pgtype.Timestamptz
 	ExclusiveCaptureBlocked           bool
+	ApplicationStandardBootToken      pgtype.UUID
+	ApplicationStandardPromotionToken pgtype.UUID
 	CapacityRamMb                     int64
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
-	ApplicationStandardBootToken      pgtype.UUID
-	ApplicationStandardPromotionToken pgtype.UUID
 }
 
 type InstanceApplicationStandardAdmission struct {
