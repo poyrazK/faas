@@ -4465,7 +4465,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
-	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly {
+	// Native recovery serializes host helpers and image staging under one
+	// owner. Starting network helpers alongside jail provisioning can leave a
+	// helper in flight when image staging checks the owner's retired effects.
+	// Complete the network before provisioning on native-owned VMs.
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
 		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
