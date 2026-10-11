@@ -21,6 +21,15 @@ func reaperEnvironmentKey(instance InstanceInfo) string {
 	return instance.AppID + "\x00scope:" + instance.Scope
 }
 
+// reaperDeploymentEnded reports a deployment that will never serve again
+// and has no runtime policy to resolve. Production-us hunt #9: a rollback
+// cancelled mid-flight left its target's running instance with no runtime
+// values, so every tick logged "policy unavailable", the reaper skipped it,
+// and it held the app's only concurrency slot for 36 minutes.
+func reaperDeploymentEnded(status state.DeploymentStatus) bool {
+	return status == state.DeployCancelled || status == state.DeployFailed
+}
+
 type reaperDeploymentPolicy struct {
 	app           state.App
 	deployment    state.Deployment
@@ -53,9 +62,14 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				}
 				if policy.err == nil {
 					policy.scope = normalizedDeploymentScope(policy.deployment.Scope)
+				}
+				// A cancelled or failed deployment has no runtime policy left to
+				// resolve; its instances only need retiring.
+				resolve := policy.err == nil && !reaperDeploymentEnded(policy.deployment.Status)
+				if resolve {
 					policy.app, policy.err = state.ResolveAppForDeployment(ctx, store, app, policy.deployment)
 				}
-				if policy.err == nil {
+				if resolve && policy.err == nil {
 					var owner state.RuntimeAppValuesSnapshot
 					owner, policy.err = store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, row.DeploymentID)
 					if policy.err == nil && (owner.AccountID != app.AccountID || owner.AppID != app.ID || owner.DeploymentID != row.DeploymentID || owner.Scope != policy.scope || api.ValidateScope(owner.Scope) != nil) {
@@ -63,7 +77,7 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 					}
 					policy.environmentID = owner.EnvironmentID
 				}
-				if policy.err == nil {
+				if resolve && policy.err == nil {
 					var scaling state.RuntimeScalingState
 					scaling, policy.err = l.engine.runtimeScalingStateForDeployment(ctx, policy.app, policy.deployment)
 					if policy.err == nil && scaling.EnvironmentID != policy.environmentID {
@@ -77,6 +91,10 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				}
 			}
 			row.Scope, row.EnvironmentID = policy.scope, policy.environmentID
+			if policy.err == nil && reaperDeploymentEnded(policy.deployment.Status) {
+				row.DeploymentEnded = true
+				continue
+			}
 			if policy.err != nil || policy.app.ID != row.AppID || policy.app.AccountID != app.AccountID {
 				row.PolicyUnavailable = true
 				continue

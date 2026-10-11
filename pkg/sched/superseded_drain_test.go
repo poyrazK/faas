@@ -136,3 +136,42 @@ func TestRunReaperKeepsLiveRevisionResident(t *testing.T) {
 		t.Fatalf("snapshots = %d, want 0", vmm.snapshots)
 	}
 }
+
+// TestRunReaperEvictsCancelledRollbackTarget reproduces production-us hunt #9:
+// a rollback moved a superseded revision that still had a hot instance back to
+// snapshotting, the stale-deployment reconciler cancelled it, and the instance
+// stayed running for 36 minutes. The reaper could not resolve a runtime policy
+// for the cancelled deployment, skipped the row every tick, and the instance
+// held the app's only concurrency slot so the live revision answered 429.
+func TestRunReaperEvictsCancelledRollbackTarget(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	oldDeploymentID, instanceID := supersedeHotRevision(t, store, e, app)
+	if _, err := store.PrepareDeploymentRollback(ctx, app.ID, oldDeploymentID); err != nil {
+		t.Fatalf("PrepareDeploymentRollback: %v", err)
+	}
+	if _, _, err := store.CancelDeploymentTx(ctx, oldDeploymentID, "system:stale-deployment-reconciler:snapshotting:80848s", state.CancelReasonSystem); err != nil {
+		t.Fatalf("CancelDeploymentTx: %v", err)
+	}
+	if got := instanceState(t, store, instanceID); got != string(state.StateRunning) {
+		t.Fatalf("precondition: cancelled revision instance = %q, want running", got)
+	}
+
+	// Inside the Free idle timeout: idleness alone keeps the instance.
+	now := time.Now().Add(time.Second)
+	loop := NewLoop(nil, e, testLog()).WithClock(func() time.Time { return now })
+	loop.runReaper(ctx)
+
+	if got := instanceState(t, store, instanceID); got == string(state.StateRunning) {
+		t.Fatalf("cancelled revision instance still running after reaper")
+	}
+	if vmm.snapshots != 0 {
+		t.Fatalf("snapshots = %d, want 0: nothing wakes a cancelled deployment", vmm.snapshots)
+	}
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake live revision after repair: %v", err)
+	}
+}
