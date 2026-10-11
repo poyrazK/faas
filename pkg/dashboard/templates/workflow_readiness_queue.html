@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; }
+    main { padding: 1rem 0; }
+    footer { font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.85rem; }
+    .good { background: #d1fae5; color: #065f46; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .pending { background: #fef3c7; color: #92400e; }
+    .neutral { background: #f3f4f6; color: #374151; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    .table-scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; text-align: left; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.65rem; vertical-align: top; }
+    caption { text-align: left; padding-bottom: 0.75rem; }
+    dl { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr; gap: 0.55rem 1rem; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+    label { display: flex; flex-direction: column; gap: 0.35rem; }
+    input, select, button { font: inherit; padding: 0.4rem; }
+    ol li { padding-bottom: 0.75rem; }
+    @media (max-width: 640px) { dl { grid-template-columns: 1fr; gap: 0.25rem; } dd { margin-bottom: 0.6rem; } }
+  </style>
+</head>
+<body>
+<header><h1>Transition readiness</h1><a href="{{.Data.ListURL}}?scope={{.Data.Options.Scope}}">Customer Operations</a></header>
+<main>
+<p>Declared requirements determine readiness. Reporting and verification advisories provide context. Your application supplies evidence and authorizes execution.</p>
+<form method="get" action="{{.Data.QueueURL}}">
+<label>Environment <input name="scope" value="{{.Data.Options.Scope}}" required></label>
+<label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}"></label>
+<label>Workflow <input name="workflow" value="{{.Data.Options.Workflow}}"></label>
+<label>Target Operation <input name="target_operation" value="{{.Data.Options.TargetOperation}}"></label>
+<label>Blocker or verification owner <input name="owner" value="{{.Data.Options.Owner}}"></label>
+<label><input type="checkbox" name="unassigned" value="true" {{if .Data.Options.Unassigned}}checked{{end}}>Unassigned blocker or verification</label>
+<label>Unmet requirement <input name="requirement" value="{{.Data.Options.Requirement}}" placeholder="e.g. dependency_unmet"></label>
+<label>Rows <input type="number" name="limit" min="1" max="100" value="{{.Data.Options.Limit}}"></label>
+<button type="submit">Filter</button>
+</form>
+<p>{{.Data.Result.SampledWorkflowCount}} workflows sampled of {{.Data.Result.MatchingWorkflowCount}} ongoing workflows. {{.Data.Result.EvaluatedTransitionCount}} of {{.Data.Result.DeclaredTransitionCount}} candidate transitions evaluated. Matching sample: {{.Data.Result.UnmetTransitionCount}} unmet, {{.Data.Result.ReadyTransitionCount}} ready.</p>
+{{if .Data.Result.WorkflowSampleTruncated}}<p>Workflow sample limited to the 100 most recently updated workflows. Narrow the customer or workflow filter to inspect more.</p>{{end}}
+{{if .Data.Result.TransitionSampleTruncated}}<p>Transition sample limited to 100 current-state edges per workflow.</p>{{end}}
+{{if .Data.Result.HasMore}}<p>More matching transitions exist in this sample. Narrow the filters or increase the row limit.</p>{{end}}
+{{if .Data.Result.ExcludedChangedWorkflowCount}}<p>{{.Data.Result.ExcludedChangedWorkflowCount}} workflows changed during evaluation and were excluded. Refresh to reevaluate.</p>{{end}}
+{{if .Data.Result.NoTransitionWorkflowCount}}<p>{{.Data.Result.NoTransitionWorkflowCount}} sampled workflows have no matching declared current-state transition.</p>{{end}}
+<p>Live evaluation: {{.Data.Result.SampledAt}} – {{.Data.Result.EvaluatedAt}}. Counts cover the evaluated sample; refresh before acting.</p>
+<table><thead><tr><th>Workflow</th><th>Transition</th><th>Readiness requirements</th><th>Owners and blockers</th><th>Reporting advisories</th><th>Evidence</th></tr></thead><tbody>
+{{range .Data.Items}}<tr>
+<td>{{.Entry.Workflow}} / {{.Entry.InstanceID}}<br>{{.Entry.Subject.Type}}: {{.Entry.Subject.ID}}<br>{{.Entry.PlatformTenantID}}</td>
+<td>{{.Entry.Transition.Operation}}<br>{{.Entry.Transition.From}} → {{.Entry.Transition.To}}</td>
+<td>{{if .Entry.Ready}}Ready against declared requirements{{else}}Unmet{{end}}{{range .Entry.Reasons}}<p>{{.}}</p>{{end}}{{range .Entry.MissingMilestones}}<p>Required milestone: {{.}}</p>{{end}}{{range .Entry.MissingDependencyWorkflows}}<p>Missing prerequisite workflow: {{.}}</p>{{end}}</td>
+<td>{{range .Entry.Owners}}<p>{{.}}</p>{{end}}{{if .Entry.Unassigned}}<p>Unassigned</p>{{end}}{{range .Entry.Blockers}}<p>{{.Code}}: {{.Description}} — {{.Owner}}<br>{{.NextAction}}</p>{{end}}</td>
+<td>{{range .Entry.Advisories}}<p>{{.}}</p>{{end}}<p>Reporting: {{.Entry.ReportingStatus}}; {{.Entry.MissingReportCount}} missing, {{.Entry.OverdueReportCount}} overdue</p><p>{{.Entry.PendingVerificationCount}} pending verification obligations</p>{{if .Entry.PendingVerificationsTruncated}}<p>Showing the first 16 obligations; owner filters include all retained pending obligations.</p>{{end}}{{range .Entry.PendingVerifications}}<p>{{.Resolution.Code}}: {{.Resolution.Description}}<br>Verification owner: {{if .Resolution.VerificationOwner}}{{.Resolution.VerificationOwner}}{{else}}unassigned{{end}}<br>Expected milestone: {{.Resolution.VerificationMilestoneName}} {{.Resolution.VerificationMilestoneID}}<br><a href="{{$.Data.ListURL}}/{{if .Resolution.VerificationOperationID}}{{.Resolution.VerificationOperationID}}{{else}}{{.ResolutionOperationID}}{{end}}?scope={{$.Data.Options.Scope}}">Verification Operation</a> · <a href="{{$.Data.ListURL}}/{{.ResolutionOperationID}}?scope={{$.Data.Options.Scope}}">Resolution report</a></p>{{end}}</td>
+<td><a href="{{.HistoryURL}}">Detailed readiness and supporting Operations</a><br><a href="{{.OperationURL}}">Current reporting Operation</a><br>Revision {{.Entry.StateRevision}}, contract {{.Entry.ContractVersion}}</td>
+</tr>{{else}}<tr><td colspan="6">No matching transitions in the evaluated sample.</td></tr>{{end}}
+</tbody></table></main></body></html>

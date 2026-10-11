@@ -28814,6 +28814,83 @@ func (q *Queries) ListCustomerOperationWorkflowProgressDefinitions(ctx context.C
 	return items, nil
 }
 
+const listCustomerOperationWorkflowReadinessCandidates = `-- name: ListCustomerOperationWorkflowReadinessCandidates :many
+WITH candidates AS (
+ SELECT s.account_id, s.app_id, s.platform_tenant_id, s.scope, s.subject_type, s.subject_id, s.workflow, s.instance_id, s.state, s.revision, s.operation_id, s.report_id, s.updated_at, config.terminal, config.sla_configured, config.sla_budget_seconds, config.sla_warning_percent, config.condition_steps,
+ jsonb_build_object('workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
+ 'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
+ 'terminal',config.terminal,'stale_after_seconds',config.stale_after_seconds,'occurred_at',r.occurred_at,'updated_at',s.updated_at,
+ 'blockers',r.blockers,'selected_paths',r.selected_paths,'change_reason',r.change_reason,'blocker_resolutions',r.blocker_resolutions,'depends_on',r.depends_on,
+ 'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'deadline_at',r.deadline_at,
+ 'blockers_only',r.blockers_only,'dependencies_only',r.dependencies_only,'outcome_only',r.outcome_only,'deadline_only',r.deadline_only,
+ 'evidence_milestones',r.evidence_milestones) AS current_state,
+ encode(sha256(convert_to(s.platform_tenant_id::text || chr(31) || s.subject_type || chr(31) || s.subject_id || chr(31) || s.workflow || chr(31) || s.instance_id,'UTF8')),'hex') AS cursor_key
+ FROM customer_operation_workflow_states s
+ JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id AND o.platform_tenant_id=s.platform_tenant_id
+ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s.account_id AND d.app_id=s.app_id AND d.scope=s.scope
+ JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
+ CROSS JOIN LATERAL (
+  SELECT COALESCE(jsonb_agg(step ORDER BY step->>'step'),'[]'::jsonb) AS condition_steps, COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
+  COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
+  COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint),0::bigint) AS sla_budget_seconds,
+  COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint),0::bigint) AS sla_warning_percent,
+  COALESCE(bool_or(COALESCE(step->'state_sla_budget_seconds','{}'::jsonb)<>'{}'::jsonb),false) AS sla_configured
+  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS mappings(step)
+  WHERE step->>'workflow'=s.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version
+ ) config
+ WHERE s.account_id=$2::uuid AND s.app_id=$3::uuid AND s.scope=$4::text
+ AND ($5::text='' OR s.platform_tenant_id::text=$5::text)
+ AND ($6::text='' OR s.workflow=$6::text)
+ AND s.updated_at<=$7::timestamptz AND r.created_at<=$7::timestamptz
+ AND (o.state IN ('accepted','running') OR o.expires_at>$8::timestamptz)
+
+ AND NOT config.terminal
+)
+SELECT jsonb_build_object('current',current_state,'tenant',platform_tenant_id,
+ 'subject',jsonb_build_object('type',subject_type,'id',subject_id),'cohort_total',count(*) OVER())::jsonb AS instance
+FROM candidates ORDER BY updated_at DESC,cursor_key DESC LIMIT $1::integer
+`
+
+type ListCustomerOperationWorkflowReadinessCandidatesParams struct {
+	CohortLimit  int32
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	TenantID     string
+	WorkflowName string
+	EvaluatedAt  pgtype.Timestamptz
+	Now          pgtype.Timestamptz
+}
+
+func (q *Queries) ListCustomerOperationWorkflowReadinessCandidates(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowReadinessCandidatesParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listCustomerOperationWorkflowReadinessCandidates,
+		arg.CohortLimit,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.TenantID,
+		arg.WorkflowName,
+		arg.EvaluatedAt,
+		arg.Now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var instance []byte
+		if err := rows.Scan(&instance); err != nil {
+			return nil, err
+		}
+		items = append(items, instance)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerOperationWorkflowStepDeclarations = `-- name: ListCustomerOperationWorkflowStepDeclarations :many
 SELECT d.name,declared.step::text,(dep.status='live' AND dep.traffic_percent>0) AS active
 FROM customer_operation_definitions d

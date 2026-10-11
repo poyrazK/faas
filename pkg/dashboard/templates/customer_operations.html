@@ -39,7 +39,7 @@
   </header>
   <main>
     <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.ListURL}}">Customer operations</a></p>
-    <p><a href="{{.Data.ListURL}}/attention?scope={{.Data.Scope}}">Workflow attention queue →</a> · <a href="{{.Data.ListURL}}/outcomes?scope={{.Data.Scope}}">Business outcomes →</a> · <a href="{{.Data.ListURL}}/performance?scope={{.Data.Scope}}">Workflow performance →</a></p>
+    <p><a href="{{.Data.ListURL}}/readiness?scope={{.Data.Scope}}">Transition readiness</a> · <a href="{{.Data.ListURL}}/attention?scope={{.Data.Scope}}">Workflow attention queue →</a> · <a href="{{.Data.ListURL}}/outcomes?scope={{.Data.Scope}}">Business outcomes →</a> · <a href="{{.Data.ListURL}}/performance?scope={{.Data.Scope}}">Workflow performance →</a></p>
     {{if .Data.Detail}}
     {{with .Data.Detail}}
     <h1>{{.Name}}</h1>

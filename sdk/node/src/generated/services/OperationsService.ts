@@ -48,6 +48,7 @@ import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkf
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
+import type { OperationWorkflowReadinessQueueResponse } from '../models/OperationWorkflowReadinessQueueResponse.js';
 import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
 import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
 import type { OperationWorkflowStateReport } from '../models/OperationWorkflowStateReport.js';
@@ -1642,6 +1643,88 @@ export class OperationsService {
     });
   }
   /**
+   * List account transition readiness across ongoing business workflows.
+   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+   * @returns OperationWorkflowReadinessQueueResponse Account transition readiness rows with explicit live sampling counts.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessQueue({
+    slug,
+    scope,
+    workflow,
+    targetOperation,
+    owner,
+    unassigned,
+    tenantId,
+    requirement,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Account readiness queue. Optional declared workflow name within the app and environment.
+     */
+    workflow?: string,
+    /**
+     * Account readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+     */
+    targetOperation?: string,
+    /**
+     * Account readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+     */
+    owner?: string,
+    /**
+     * Account readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
+     * Account readiness queue. Optional customer UUID within the authenticated account.
+     */
+    tenantId?: string,
+    /**
+     * Account readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+     */
+    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
+    /**
+     * Account readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/queue',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'owner': owner,
+        'unassigned': unassigned,
+        'tenant_id': tenantId,
+        'requirement': requirement,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Summarize all matching retained workflow attention.
    * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover all matching retained snapshots regardless of group pagination. Groups may overlap and should not be added together. Blocker statistics within code and target groups cover that code or target only. Ages derive from application-reported first_observed_at; missing ages are counted separately. Group cursors are separate from queue cursors. The summary grants no execution authority.
    * @returns OperationWorkflowAttentionSummary Totals over all matching workflows and one bounded page of groups ordered by value ascending.
@@ -1862,6 +1945,80 @@ export class OperationsService {
         'reason': reason,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List customer transition readiness across ongoing business workflows.
+   * Requires platform-tenant operations read scope. Customer ownership derives from authentication. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+   * @returns OperationWorkflowReadinessQueueResponse Customer transition readiness rows with explicit live sampling counts.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessQueue({
+    scope,
+    appId,
+    workflow,
+    targetOperation,
+    owner,
+    unassigned,
+    requirement,
+    limit = 20,
+  }: {
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Customer readiness queue. Explicit application UUID within the authenticated account.
+     */
+    appId: string,
+    /**
+     * Customer readiness queue. Optional declared workflow name within the app and environment.
+     */
+    workflow?: string,
+    /**
+     * Customer readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+     */
+    targetOperation?: string,
+    /**
+     * Customer readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+     */
+    owner?: string,
+    /**
+     * Customer readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
+     * Customer readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+     */
+    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
+    /**
+     * Customer readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/queue',
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'owner': owner,
+        'unassigned': unassigned,
+        'app_id': appId,
+        'requirement': requirement,
+        'limit': limit,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,

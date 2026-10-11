@@ -2711,3 +2711,45 @@ full verification/context slices are omitted from snapshot JSON; public evidence
 contains no tenant override. Dashboard guidance and evidence Operation links
 explain the findings without granting execution or authorization. No persistence,
 migrations, new limits, business evaluation or VM lifecycle changes are introduced.
+
+
+### Transition readiness queue across ongoing workflows
+
+`GET /v1/apps/{slug}/workflow-readiness/queue` (account read scope plus MFA)
+and `GET /v1/platform-tenant-self/workflow-readiness/queue` (customer Operations
+read scope) require an explicit environment and app. The customer endpoint derives
+ownership from authentication and rejects customer overrides. The dashboard at
+`/dashboard/apps/{slug}/customer-operations/readiness` links each transition to
+its workflow readiness detail and current reporting Operation.
+
+The queue samples up to `OperationWorkflowPerformanceCohortMax` (100) recently
+updated retained ongoing workflows, across workflow names unless filtered. The
+SQLC and memory readers sort by update time descending then the existing stable
+workflow identity digest descending. Within each unchanged sampled workflow,
+matching current-state edges sort by Operation/from/to and evaluate up to
+`OperationHistoryPageMax` (100), reusing one readiness-only milestone projection
+per workflow. Evaluation supplies no planned milestones, decisions, effects or
+invariants. Existing declared requirements alone determine Ready; current-state
+reporting and pending resolution verification remain advisories.
+
+`target_operation` filters before edge sampling. `owner`, `unassigned`, and
+`requirement` filter evaluated transitions before the row limit (default 20,
+maximum 100). Owners come from blockers or all retained pending verification
+obligations targeting that transition Operation, before proof previews. Reporting
+refresh owners are excluded. Unassigned requires an actual ownerless blocker or
+pending proof; a transition with no owner-bearing finding does not qualify.
+The bounded pending-proof preview exposes verification owners and expected milestone
+references with resolution and verification Operation links; preview truncation
+is explicit. Requirement accepts existing readiness reason codes and never advisory codes.
+Unmet rows precede ready rows while preserving source sample/edge order. Counts
+cover evaluated matching transitions before row truncation. Workflow sampling,
+edge sampling and row truncation are independent and explicit, including empty
+results and sampled workflows with no matching edge.
+
+This is a live bounded investigation view, not a cursor or cohort snapshot. The
+sample time and completion time are exposed, with per-row shared readiness
+clocks. Workflows whose current Operation/report/revision/contract changed between
+candidate selection and projection are excluded and counted. Refresh before
+acting; application authorization and execution remain application-owned. No
+new persistence, migrations, limits, business evaluator or VM lifecycle changes
+are introduced. Go, Node and Python SDKs expose the scoped queue contract.

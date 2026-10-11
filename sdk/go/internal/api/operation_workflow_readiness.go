@@ -74,3 +74,57 @@ type OperationWorkflowTransitionReporting struct {
 	Conditions             []OperationWorkflowConditionCoverageEntry `json:"conditions"`
 	ConditionsTruncated    bool                                      `json:"conditions_truncated"`
 }
+
+// Queue options select a bounded live sample, without supplying planned evidence.
+type OperationWorkflowReadinessQueueOptions struct {
+	AppID, Scope, TenantID, Workflow, TargetOperation, Owner, Requirement string
+	Unassigned                                                            bool
+	Limit                                                                 int
+}
+
+// Queue entries summarize one declared current-state transition. Detail remains in the workflow view.
+type OperationWorkflowReadinessQueueEntry struct {
+	PendingVerifications          []OperationWorkflowResolutionVerification `json:"pending_verifications,omitempty"`
+	PendingVerificationsTruncated bool                                      `json:"pending_verifications_truncated"`
+
+	PlatformTenantID           string                              `json:"platform_tenant_id,omitempty"`
+	Subject                    OperationSubject                    `json:"subject"`
+	Workflow                   string                              `json:"workflow"`
+	InstanceID                 string                              `json:"instance_id"`
+	OperationID                string                              `json:"operation_id"`
+	StateRevision              int64                               `json:"state_revision"`
+	ContractVersion            int                                 `json:"contract_version"`
+	Transition                 OperationWorkflowInstanceTransition `json:"transition"`
+	EvaluatedAt                time.Time                           `json:"evaluated_at"`
+	Ready                      bool                                `json:"ready"`
+	Reasons                    []string                            `json:"reasons"`
+	Advisories                 []string                            `json:"advisories"`
+	Owners                     []string                            `json:"owners"`
+	Unassigned                 bool                                `json:"unassigned"`
+	Blockers                   []OperationWorkflowBlocker          `json:"blockers"`
+	MissingMilestones          []string                            `json:"missing_milestones"`
+	MissingDependencyWorkflows []string                            `json:"missing_dependency_workflows"`
+	PendingVerificationCount   int64                               `json:"pending_verification_count"`
+	ReportingStatus            string                              `json:"reporting_status"`
+	MissingReportCount         int64                               `json:"missing_report_count"`
+	OverdueReportCount         int64                               `json:"overdue_report_count"`
+}
+
+// Counts describe the evaluated sample; this is not an account-wide backlog or execution grant.
+type OperationWorkflowReadinessQueueResponse struct {
+	Items                        []OperationWorkflowReadinessQueueEntry `json:"items"`
+	SampledAt                    time.Time                              `json:"sampled_at"`
+	EvaluatedAt                  time.Time                              `json:"evaluated_at"`
+	MatchingWorkflowCount        int64                                  `json:"matching_workflow_count"`
+	SampledWorkflowCount         int64                                  `json:"sampled_workflow_count"`
+	ExcludedChangedWorkflowCount int64                                  `json:"excluded_changed_workflow_count"`
+	NoTransitionWorkflowCount    int64                                  `json:"no_transition_workflow_count"`
+	DeclaredTransitionCount      int64                                  `json:"declared_transition_count"`
+	EvaluatedTransitionCount     int64                                  `json:"evaluated_transition_count"`
+	MatchingTransitionCount      int64                                  `json:"matching_transition_count"`
+	ReadyTransitionCount         int64                                  `json:"ready_transition_count"`
+	UnmetTransitionCount         int64                                  `json:"unmet_transition_count"`
+	WorkflowSampleTruncated      bool                                   `json:"workflow_sample_truncated"`
+	TransitionSampleTruncated    bool                                   `json:"transition_sample_truncated"`
+	HasMore                      bool                                   `json:"has_more"`
+}

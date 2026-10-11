@@ -324,6 +324,7 @@ func init() {
 var dtoExclude = map[string]bool{
 	"EventRetentionQuery": true, // client-only retention query options; route parameters are the wire contract
 	// Workflow list options encode URL query parameters, not JSON request bodies.
+	"OperationWorkflowReadinessQueueOptions":      true, // Go query builder; parameters are described on each queue route.
 	"OperationWorkflowAttentionOptions":           true,
 	"OperationWorkflowAttentionSummaryOptions":    true,
 	"OperationWorkflowOutcomeOptions":             true,

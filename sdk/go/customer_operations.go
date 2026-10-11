@@ -85,6 +85,9 @@ type OperationWorkflowRetainedMilestoneInvalidation = api.OperationWorkflowRetai
 
 type (
 	OperationWorkflowDependency                   = api.OperationWorkflowDependency
+	OperationWorkflowReadinessQueueOptions        = api.OperationWorkflowReadinessQueueOptions
+	OperationWorkflowReadinessQueueEntry          = api.OperationWorkflowReadinessQueueEntry
+	OperationWorkflowReadinessQueueResponse       = api.OperationWorkflowReadinessQueueResponse
 	OperationWorkflowReadinessRequest             = api.OperationWorkflowReadinessRequest
 	OperationWorkflowRetainedMilestoneRequirement = api.OperationWorkflowRetainedMilestoneRequirement
 	OperationWorkflowRetainedMilestone            = api.OperationWorkflowRetainedMilestone

@@ -8830,6 +8830,54 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/workflow-readiness/queue:
+    get:
+      tags: [operations]
+      operationId: listAccountWorkflowReadinessQueue
+      summary: List account transition readiness across ongoing business workflows.
+      description: Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        description: Account readiness queue. Optional declared workflow name within the app and environment.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: target_operation
+        description: Account readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: owner
+        in: query
+        description: Account readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: Account readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+        schema: {type: boolean}
+      - name: tenant_id
+        in: query
+        description: Account readiness queue. Optional customer UUID within the authenticated account.
+        schema: {type: string, format: uuid}
+      - name: requirement
+        in: query
+        description: Account readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+        schema: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required, retained_milestone_invalidated, retained_milestone_expired, retained_milestone_group_unmet, path_selection_invalid]}
+      - name: limit
+        in: query
+        description: Account readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Account transition readiness rows with explicit live sampling counts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowReadinessQueueResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/workflow-attention/summary:
     get:
       tags: [operations]
@@ -8954,6 +9002,54 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowAttentionResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/workflow-readiness/queue:
+    get:
+      tags: [operations]
+      operationId: listPlatformTenantSelfWorkflowReadinessQueue
+      summary: List customer transition readiness across ongoing business workflows.
+      description: Requires platform-tenant operations read scope. Customer ownership derives from authentication. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - name: workflow
+        description: Customer readiness queue. Optional declared workflow name within the app and environment.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: target_operation
+        description: Customer readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: owner
+        in: query
+        description: Customer readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: unassigned
+        in: query
+        description: Customer readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+        schema: {type: boolean}
+      - name: app_id
+        in: query
+        required: true
+        description: Customer readiness queue. Explicit application UUID within the authenticated account.
+        schema: {type: string, format: uuid}
+      - name: requirement
+        in: query
+        description: Customer readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+        schema: {type: string, enum: [state_unknown, terminal, transition_undeclared, from_state_mismatch, revision_mismatch, contract_version_mismatch, application_blocked, dependency_unmet, milestone_required, policy_evidence_required, dependency_required, invariant_evidence_required, effect_evidence_required, retained_milestone_required, retained_milestone_invalidated, retained_milestone_expired, retained_milestone_group_unmet, path_selection_invalid]}
+      - name: limit
+        in: query
+        description: Customer readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Customer transition readiness rows with explicit live sampling counts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowReadinessQueueResponse'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -73092,6 +73188,55 @@ components:
           items: {$ref: '#/components/schemas/OperationWorkflowConditionCoverageEntry'}
         conditions_truncated: {type: boolean}
 
+
+    OperationWorkflowReadinessQueueEntry:
+      type: object
+      description: One declared current-state transition evaluated without planned evidence; reporting is advisory.
+      required: [subject, workflow, instance_id, operation_id, state_revision, contract_version, transition, evaluated_at, ready, reasons, advisories, owners, unassigned, blockers, missing_milestones, missing_dependency_workflows, pending_verifications_truncated, pending_verification_count, reporting_status, missing_report_count, overdue_report_count]
+      properties:
+        platform_tenant_id: {type: string, format: uuid, description: 'Customer identity present only on the account surface.'}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        workflow: {type: string, description: Declared workflow name.}
+        instance_id: {type: string, description: Application workflow instance identifier.}
+        operation_id: {type: string, format: uuid, description: Current reporting Operation identifier.}
+        state_revision: {type: integer, format: int64, description: Evaluated current state revision.}
+        contract_version: {type: integer, description: Evaluated pinned workflow contract version.}
+        transition: {$ref: '#/components/schemas/OperationWorkflowInstanceTransition'}
+        evaluated_at: {type: string, format: date-time, description: Shared reporting and retained-evidence evaluation time for this workflow.}
+        ready: {type: boolean, description: Whether declared requirements are met without planned evidence.}
+        reasons: {type: array, items: {type: string}, description: Unmet declared requirement codes.}
+        advisories: {type: array, items: {type: string}, description: Reporting or verification context that does not change readiness.}
+        owners: {type: array, items: {type: string}, description: Sorted unique blocker and pending verification owners for the target Operation.}
+        unassigned: {type: boolean, description: Whether a matching blocker or pending verification has no owner.}
+        blockers: {type: array, items: {$ref: '#/components/schemas/OperationWorkflowBlocker'}, description: Application-reported blockers for this transition Operation.}
+        missing_milestones: {type: array, items: {type: string}, description: Required planned milestone names absent from the empty plan.}
+        missing_dependency_workflows: {type: array, items: {type: string}, description: Declared prerequisite workflows without a reported dependency reference.}
+        pending_verifications: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowResolutionVerification'}, description: Canonical preview of pending evidence obligations for this transition Operation.}
+        pending_verifications_truncated: {type: boolean, description: More pending evidence obligations exist than the queue preview contains.}
+        pending_verification_count: {type: integer, format: int64, description: Exact pending obligation count before previews.}
+        reporting_status: {type: string, description: Current-state reporting coverage status; unknown coverage does not invent missing evidence.}
+        missing_report_count: {type: integer, format: int64, description: Known missing condition reports when reporting coverage is comparable.}
+        overdue_report_count: {type: integer, format: int64, description: Known overdue condition reports when reporting coverage is comparable.}
+    OperationWorkflowReadinessQueueResponse:
+      type: object
+      description: Bounded live readiness queue; counts describe the evaluated sample and filters.
+      required: [items, sampled_at, evaluated_at, matching_workflow_count, sampled_workflow_count, excluded_changed_workflow_count, no_transition_workflow_count, declared_transition_count, evaluated_transition_count, matching_transition_count, ready_transition_count, unmet_transition_count, workflow_sample_truncated, transition_sample_truncated, has_more]
+      properties:
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowReadinessQueueEntry'}, description: Matching transitions with unmet rows first.}
+        sampled_at: {type: string, format: date-time, description: Time used to select recently updated ongoing workflows.}
+        evaluated_at: {type: string, format: date-time, description: Time evaluation completed; reads are live rather than atomic.}
+        matching_workflow_count: {type: integer, format: int64, description: Retained ongoing workflows matching app customer and workflow selectors before sampling.}
+        sampled_workflow_count: {type: integer, format: int64, description: Ongoing workflows selected up to the workflow cap.}
+        excluded_changed_workflow_count: {type: integer, format: int64, description: Sampled workflows excluded after their current report or contract changed.}
+        no_transition_workflow_count: {type: integer, format: int64, description: Unchanged sampled workflows without a matching current-state edge.}
+        declared_transition_count: {type: integer, format: int64, description: Matching current-state edges before per-workflow edge sampling.}
+        evaluated_transition_count: {type: integer, format: int64, description: Current-state edges evaluated before owner and requirement filtering.}
+        matching_transition_count: {type: integer, format: int64, description: Evaluated transitions matching filters before the row limit.}
+        ready_transition_count: {type: integer, format: int64, description: Matching evaluated transitions with all declared requirements met.}
+        unmet_transition_count: {type: integer, format: int64, description: Matching evaluated transitions with unmet declared requirements.}
+        workflow_sample_truncated: {type: boolean, description: More matching ongoing workflows exist than were sampled.}
+        transition_sample_truncated: {type: boolean, description: At least one workflow has more matching edges than the per-workflow cap.}
+        has_more: {type: boolean, description: More matching evaluated rows exist than the response row limit.}
 
   responses:
     OperationConflict:

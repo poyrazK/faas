@@ -1522,6 +1522,7 @@ from .list_account_workflow_performance_instances_condition_result import (
 from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
 from .list_account_workflow_performance_instances_gap_status import ListAccountWorkflowPerformanceInstancesGapStatus
 from .list_account_workflow_performance_instances_kind import ListAccountWorkflowPerformanceInstancesKind
+from .list_account_workflow_readiness_queue_requirement import ListAccountWorkflowReadinessQueueRequirement
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1579,6 +1580,9 @@ from .list_platform_tenant_self_workflow_performance_instances_gap_status import
 )
 from .list_platform_tenant_self_workflow_performance_instances_kind import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
+)
+from .list_platform_tenant_self_workflow_readiness_queue_requirement import (
+    ListPlatformTenantSelfWorkflowReadinessQueueRequirement,
 )
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
@@ -2198,6 +2202,8 @@ from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequis
 from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
 from .operation_workflow_prerequisite_recovery_steps_item import OperationWorkflowPrerequisiteRecoveryStepsItem
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
+from .operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
+from .operation_workflow_readiness_queue_response import OperationWorkflowReadinessQueueResponse
 from .operation_workflow_readiness_request import OperationWorkflowReadinessRequest
 from .operation_workflow_readiness_response import OperationWorkflowReadinessResponse
 from .operation_workflow_reconciliation import OperationWorkflowReconciliation
@@ -5091,6 +5097,7 @@ __all__ = (
     "ListAccountWorkflowPerformanceInstancesDimension",
     "ListAccountWorkflowPerformanceInstancesGapStatus",
     "ListAccountWorkflowPerformanceInstancesKind",
+    "ListAccountWorkflowReadinessQueueRequirement",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -5135,6 +5142,7 @@ __all__ = (
     "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesKind",
+    "ListPlatformTenantSelfWorkflowReadinessQueueRequirement",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
@@ -5709,6 +5717,8 @@ __all__ = (
     "OperationWorkflowPrerequisiteRecoveryReason",
     "OperationWorkflowPrerequisiteRecoveryStepsItem",
     "OperationWorkflowReadinessOverview",
+    "OperationWorkflowReadinessQueueEntry",
+    "OperationWorkflowReadinessQueueResponse",
     "OperationWorkflowReadinessRequest",
     "OperationWorkflowReadinessResponse",
     "OperationWorkflowReconciliation",

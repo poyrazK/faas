@@ -269,6 +269,18 @@ export class GregaleOperationClient {
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
     return this.request('/v1/platform-tenant-self/workflow-actions/preview', 'POST', body, undefined, signal);
   }
+
+  workflowReadinessQueue(options: OperationWorkflowReadinessQueueOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessQueueResponse> {
+    if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (options.owner !== undefined && options.unassigned) throw new Error('Owner and unassigned are mutually exclusive');
+    const query = milestonePageQuery(options);
+    query.set('app_id', options.appID); query.set('scope', options.scope);
+    for (const [key, value] of Object.entries({ workflow: options.workflow, target_operation: options.targetOperation, owner: options.owner, requirement: options.requirement })) {
+      if (value !== undefined) query.set(key, value);
+    }
+    if (options.unassigned) query.set('unassigned', 'true');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/queue?' + query, 'GET', undefined, undefined, signal);
+  }
   workflowReadiness(body: OperationWorkflowReadinessRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -582,4 +594,20 @@ export interface OperationWorkflowTransitionReporting {
  status: 'compared'|'unconfigured'|'terminal'|'definition_unavailable'|'incomplete'|'limit'|'ambiguous';
  expected_condition_count: number; reported_condition_count: number; missing_condition_count: number; overdue_condition_count: number;
  conditions: OperationWorkflowConditionCoverageEntry[]; conditions_truncated: boolean;
+}
+
+/** Live sample; empty planned evidence and declared requirements determine readiness. */
+export interface OperationWorkflowReadinessQueueOptions { appID: string; scope: string; workflow?: string; targetOperation?: string; owner?: string; unassigned?: boolean; requirement?: string; limit?: number }
+export interface OperationWorkflowReadinessQueueEntry {
+ platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; operation_id: string; state_revision: number; contract_version: number;
+ transition: OperationWorkflowInstanceTransition; evaluated_at: string; ready: boolean; reasons: string[]; advisories: string[]; owners: string[]; unassigned: boolean;
+ blockers: OperationWorkflowBlocker[]; missing_milestones: string[]; missing_dependency_workflows: string[]; pending_verification_count: number;
+ pending_verifications?: OperationWorkflowResolutionVerification[]; pending_verifications_truncated: boolean;
+ reporting_status: string; missing_report_count: number; overdue_report_count: number;
+}
+export interface OperationWorkflowReadinessQueueResponse {
+ items: OperationWorkflowReadinessQueueEntry[]; sampled_at: string; evaluated_at: string;
+ matching_workflow_count: number; sampled_workflow_count: number; excluded_changed_workflow_count: number; no_transition_workflow_count: number;
+ declared_transition_count: number; evaluated_transition_count: number; matching_transition_count: number; ready_transition_count: number; unmet_transition_count: number;
+ workflow_sample_truncated: boolean; transition_sample_truncated: boolean; has_more: boolean;
 }
