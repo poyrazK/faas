@@ -153,8 +153,10 @@ func TestMetalNativeWritableImageRecovery(t *testing.T) {
 		if err := errors.Join(readErr, statErr, file.Close()); err != nil {
 			t.Fatal(err)
 		}
-		if string(body) != "original-native-layer" || stat.Nlink != 0 {
-			t.Fatalf("retained clone was redirected or named: %q links=%d", body, stat.Nlink)
+		// Producer death bypassed preparation.Close: the durable epoch owns
+		// the temporary link until original-owner retirement removes it.
+		if string(body) != "original-native-layer" || stat.Nlink != 1 {
+			t.Fatalf("retained clone was redirected or gained another alias: %q links=%d", body, stat.Nlink)
 		}
 	}
 	identity, metadata, err := nativeImageFileMetadata(input)

@@ -750,6 +750,35 @@ func (s stubCountryReader) Lookup(net.IP) (string, bool, error) {
 	return s.country, s.found, s.err
 }
 
+// adr: 104 — key_by=ip buckets per trusted client address. IPv6 clients share
+// their /64 so rotating the interface identifier cannot mint fresh buckets,
+// and a forged or multi-hop X-Forwarded-For is refused, never trusted.
+func TestResolveThrottleDimension_IP(t *testing.T) {
+	h := &Handler{}
+	rule := &EdgeRuleThrottleResolved{KeyBy: api.ThrottleKeyByIP}
+	for _, tc := range []struct {
+		xff, want string
+	}{
+		{"203.0.113.10", "203.0.113.10"},
+		{"::ffff:203.0.113.10", "203.0.113.10"},
+		{"2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"},
+		{"2001:db8:1:2:bbbb::7", "2001:db8:1:2::/64"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+		req.Header.Set("X-Forwarded-For", tc.xff)
+		value, ok, unavailable := h.resolveThrottleDimension(req, rule)
+		if value != tc.want || !ok || unavailable != "" {
+			t.Errorf("ip dimension for %s = (%q, %v, %q), want (%q, true, empty)", tc.xff, value, ok, unavailable, tc.want)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Add("X-Forwarded-For", "203.0.113.10")
+	req.Header.Add("X-Forwarded-For", "198.51.100.4")
+	if _, _, unavailable := h.resolveThrottleDimension(req, rule); unavailable != "caller_ip_untrusted" {
+		t.Fatalf("multi-hop XFF unavailable reason = %q, want caller_ip_untrusted", unavailable)
+	}
+}
+
 func TestResolveThrottleDimension_CountryAndJWTClaim(t *testing.T) {
 	h := (&Handler{}).WithGeoReader(stubCountryReader{country: "tr", found: true})
 	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
@@ -1238,6 +1267,22 @@ func TestHostname(t *testing.T) {
 func TestMetricsSpec12(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	h.SetWakeGateHook()
+	var firstByteLatency time.Duration
+	h.proxyFor = func(addr string, cap int64) http.Handler {
+		proxy := defaultProxy(addr, cap)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start, ok := StartTimeFromContext(r.Context())
+			if !ok {
+				t.Fatal("request start timestamp missing")
+			}
+			proxy.ServeHTTP(w, r)
+			firstByteAt, ok := FirstByteFrom(r)
+			if !ok {
+				t.Fatal("production proxy did not record the first upstream byte")
+			}
+			firstByteLatency = firstByteAt.Sub(start)
+		})
+	}
 
 	// Cold path: +requests_total{200} +cold_wake_total +wake_latency_count.
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
@@ -1252,8 +1297,13 @@ func TestMetricsSpec12(t *testing.T) {
 	if got := histogramObservationCount(t, h.metrics.wakeLatency); got != 1 {
 		t.Errorf("wake_latency _count = %v, want 1 (one observation)", got)
 	}
-	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got > 100*time.Millisecond {
-		t.Errorf("wake_latency observation = %v, want (0, 100ms] for localhost stub", got)
+	if firstByteLatency <= 0 {
+		t.Fatalf("first upstream byte latency = %v, want > 0", firstByteLatency)
+	}
+	// The metric includes real scheduler/transport delay, even on localhost.
+	// One nanosecond allows conversion through the histogram's float seconds.
+	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got-firstByteLatency < -time.Nanosecond || got-firstByteLatency > time.Nanosecond {
+		t.Errorf("wake_latency observation = %v, want first-byte latency %v", got, firstByteLatency)
 	}
 
 	// Unknown host: +requests_total{404}.
@@ -1317,8 +1367,9 @@ func histogramMeanObservation(t *testing.T, h prometheus.Histogram) time.Duratio
 // histogram must reflect the time to first upstream response byte, not the
 // time to drain the full upstream body. We construct an upstream that
 // flushes headers immediately, then sleeps 100ms before writing the body,
-// and assert the observed wake latency is well under what a full-body
-// measurement would have produced.
+// and compare the histogram with the actual first-byte timestamp captured
+// by the production proxy. Runner scheduling can delay even localhost
+// headers beyond 100ms; that delay still belongs in the wake measurement.
 func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 	const bodyGap = 100 * time.Millisecond
 
@@ -1339,6 +1390,24 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 		upstream: upstream.Listener.Addr().String(),
 	}
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	var firstByteLatency time.Duration
+	var firstByteAt, bodyFinishedAt time.Time
+	h.proxyFor = func(addr string, cap int64) http.Handler {
+		proxy := defaultProxy(addr, cap)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start, ok := StartTimeFromContext(r.Context())
+			if !ok {
+				t.Fatal("request start timestamp missing")
+			}
+			proxy.ServeHTTP(w, r)
+			bodyFinishedAt = time.Now()
+			firstByteAt, ok = FirstByteFrom(r)
+			if !ok {
+				t.Fatal("production proxy did not record the first upstream byte")
+			}
+			firstByteLatency = firstByteAt.Sub(start)
+		})
+	}
 
 	req := httptest.NewRequest("GET", "http://firstbyte.apps.dom/", nil)
 	rec := httptest.NewRecorder()
@@ -1347,16 +1416,21 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	// First-byte observation must be much shorter than the body gap would
-	// suggest for a full-body measurement. We allow generous slack for
-	// localhost jitter and Go scheduler stalls, but a full-body measurement
-	// would land >= bodyGap.
+	if rec.Body.String() != "body-after-delay" {
+		t.Fatalf("body = %q, want the complete delayed upstream body", rec.Body.String())
+	}
+	if !firstByteAt.Before(bodyFinishedAt) {
+		t.Fatal("first-byte timestamp did not precede completion of the delayed body")
+	}
+	// Match the real proxy timestamp rather than an absolute localhost SLO.
+	// One nanosecond permits the histogram's float-seconds conversion; a
+	// full-body or fallback observation includes the delayed body and fails.
 	got := histogramMeanObservation(t, h.metrics.wakeLatency)
 	if got == 0 {
 		t.Fatal("wake_latency observation missing")
 	}
-	if got >= bodyGap {
-		t.Errorf("wake_latency observation = %v, want < %v (first-byte, not full body)", got, bodyGap)
+	if delta := got - firstByteLatency; delta < -time.Nanosecond || delta > time.Nanosecond {
+		t.Errorf("wake_latency observation = %v, want first-byte latency %v", got, firstByteLatency)
 	}
 	// Sanity: the observation should not be so small as to suggest the
 	// trace fired before wakeStart (negative durations would be < 0; the
@@ -2418,6 +2492,41 @@ func TestApplyEdgeRuleJWT_VerifierError_EmitsApplyError(t *testing.T) {
 	}
 	if !strings.Contains(body, `gateway_edge_rule_match_total{kind="jwt",outcome="failed"} 1`) {
 		t.Errorf("match_total{jwt,failed} != 1; body:\n%s", body)
+	}
+}
+
+// adr: 091 — when the IdP's signing keys cannot be fetched the token was
+// never judged, so the gate answers 503 (retryable dependency outage), not
+// 401 (which tells the client its credential is bad).
+func TestApplyEdgeRuleJWT_KeysUnavailable_Returns503(t *testing.T) {
+	b := &fakeBackend{
+		app:      App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		host:     "j.example.com",
+		upstream: "127.0.0.1:0",
+		running:  true,
+	}
+	b.targets = append(b.targets, Target{NodeID: b.upstream, InstanceID: "i-fake"})
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.SetWakeGateHook()
+	h.WithEdgeRules(stubEdgeRuleMatcher{jwt: &EdgeRuleJWTResolved{
+		ID: "rule-jwt", AccountID: "acct-1", AppID: "app-1",
+		Issuer: "https://idp.example.com", JWKSURL: "https://idp.example.com/.well-known/jwks.json",
+		Algorithms: []string{"RS256"},
+	}}, nil, nil)
+	h.WithJWTVerifier(&countingJWTVerifier{onVerify: func(context.Context, string, *EdgeRuleJWTResolved) (*JWTClaims, error) {
+		return nil, fmt.Errorf("%w: idp down", ErrJWTKeysUnavailable)
+	}})
+
+	req := httptest.NewRequest("GET", "http://j.example.com/", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rec.Code = %d; want 503 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q; a dependency outage must not challenge the credential", got)
 	}
 }
 

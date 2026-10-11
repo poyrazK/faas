@@ -30,15 +30,27 @@ service Vmmd {
   // Generic boot/destroy never substitutes for either operation. Host journal
   // ownership must be configured before creation or retirement is available.
   rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);
+  rpc RestoreEnvironmentQualification(RestoreEnvironmentQualificationRequest) returns (RestoreEnvironmentQualificationResponse);
   rpc RetireEnvironmentQualification(RetireEnvironmentQualificationRequest) returns (RetireEnvironmentQualificationResponse);
   // Captures the original VM in a vmmd-chosen immutable namespace. This
   // acknowledges capture only, never smoke/restore or graph qualification.
   rpc CaptureEnvironmentQualification(CaptureEnvironmentQualificationRequest) returns (CaptureEnvironmentQualificationResponse);
+  // Artifact retirement is authorized only after the original capture and a
+  // distinct restore have both retired and schedd has persisted smoke success.
+  rpc RetireEnvironmentQualificationArtifacts(RetireEnvironmentQualificationArtifactsRequest) returns (RetireEnvironmentQualificationArtifactsResponse);
 
   // JobColdBoot starts a non-listening job-task VM. Jobs own their image,
   // command, environment, and timeout, so they use a dedicated flat wire
   // shape instead of AppSpec and never enter the snapshot/readiness path.
   rpc JobColdBoot(JobColdBootRequest) returns (JobColdBootResponse);
+  // JobColdBootHeld is the fail-closed variant used when the scheduler must
+  // publish runtime identity and scoped service-proxy policy before user code
+  // can run. A separate RPC makes old vmmd nodes reject the request instead
+  // of silently ignoring a new request field and starting the command early.
+  rpc JobColdBootHeld(JobColdBootRequest) returns (JobColdBootResponse);
+  // ReleaseJobStart opens one held job's start gate. Repeated calls are
+  // idempotent so a lost acknowledgement cannot strand or duplicate a task.
+  rpc ReleaseJobStart(ReleaseJobStartRequest) returns (ReleaseJobStartResponse);
 
   // ExecuteExecution sends exactly one caller payload to an already restored
   // disposable execution VM. Restore/cold-boot is intentionally a separate
@@ -999,6 +1011,10 @@ message EnvironmentQualificationExecution {
   int32 ram_mb = 18;
   EnvironmentQualificationArtifact artifact = 19;
   string cleanup_token = 20;
+  // Present only on the distinct restore RPC. It binds this target to the
+  // original, separately retired capture attempt; ordinary create/capture
+  // must reject it rather than silently discarding restore authority.
+  string capture_instance_id = 21;
 }
 
 message EnvironmentQualificationArtifact {
@@ -1061,11 +1077,37 @@ message EnvironmentQualificationSnapshot {
   int64 mem_bytes = 9;
   int64 vmstate_bytes = 10;
   int64 stored_bytes = 11;
+  string fc_version = 12;
 }
 
 message CaptureEnvironmentQualificationResponse {
   EnvironmentQualificationExecution execution = 1;
   EnvironmentQualificationSnapshot snapshot = 2;
+}
+
+message EnvironmentQualificationSmokeReceipt {
+  string request_id = 1;
+  int64 attempt = 2;
+  string graph_id = 3;
+  string capture_instance_id = 4;
+  string instance_id = 5;
+  string resource = 6;
+  string policy_id = 7;
+  string policy_sha256 = 8;
+  string result_sha256 = 9;
+  int64 recorded_at_unix_millis = 10;
+}
+
+message RetireEnvironmentQualificationArtifactsRequest {
+  EnvironmentQualificationExecution capture_execution = 1;
+  EnvironmentQualificationExecution restore_execution = 2;
+  EnvironmentQualificationSmokeReceipt smoke_receipt = 3;
+  string capture_id = 4;
+}
+
+message RetireEnvironmentQualificationArtifactsResponse {
+  string capture_id = 1;
+  bool retired = 2;
 }
 
 message CreateColdBootRequest {
@@ -1107,11 +1149,36 @@ message JobColdBootRequest {
   int32 mem_size_mib = 13;
   int32 task_timeout_sec = 14;
   string lease_token = 15;
+  // Present only for an isolated GitOps job qualification attempt. Generic
+  // customer job dispatch leaves this absent and retains its ordinary path.
+  EnvironmentQualificationExecution qualification_execution = 16;
+  // Selected job secret ciphertext. vmmd unseals these entries on the host
+  // and stages them into this task's private writable layer before boot.
+  // Plaintext is never carried through schedd or this RPC.
+  repeated SealedSecret sealed_env = 17;
 }
 
 message JobColdBootResponse {
   string instance = 1;
   string node_id = 2;
+  // Runtime network identity lets schedd publish a job task as live only
+  // after its host-side source address is recorded. This is required for
+  // per-request service-proxy attribution of managed scheduled Jobs.
+  string netns = 3;
+  string host_ip = 4;
+  int32 guest_uid = 5;
+  // Echoes the distinct held-start RPC contract. The caller validates this
+  // before it publishes the instance as runnable.
+  bool start_held = 6;
+}
+
+message ReleaseJobStartRequest {
+  string instance = 1;
+}
+
+message ReleaseJobStartResponse {
+  string instance = 1;
+  bool released = 2;
 }
 
 message WaitJobExitRequest {
@@ -2464,4 +2531,19 @@ message ForwardUDPResponse {
     ForwardUDPResponseInit init = 1;
     bytes datagram = 2;
   }
+}
+
+// Restore consumes the exact native capture identified by execution and may
+// never fall back to cold boot. vmmd must fail closed when its dedicated
+// qualification restore producer is unavailable.
+message RestoreEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+}
+
+message RestoreEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  WakeResponse wake = 2;
 }

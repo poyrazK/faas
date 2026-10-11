@@ -86,21 +86,22 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
 	}
 	return fcvm.JobBootRequest{
-		Instance:       req.GetInstance(),
-		AccountID:      req.GetAccountId(),
-		NodeID:         req.GetNodeId(),
-		Plan:           plan,
-		RunID:          req.GetRunId(),
-		TaskIndex:      int(req.GetTaskIndex()),
-		ImageRef:       req.GetImageRef(),
-		KernelKey:      req.GetKernelKey(),
-		BaseKey:        req.GetBaseKey(),
-		Command:        append([]string(nil), req.GetCommand()...),
-		Env:            cloneStringMap(req.GetEnv()),
-		VcpuCount:      int(req.GetVcpuCount()),
-		MemSizeMiB:     int(req.GetMemSizeMib()),
-		TaskTimeoutSec: int(req.GetTaskTimeoutSec()),
-		LeaseToken:     req.GetLeaseToken(),
+		Instance:         req.GetInstance(),
+		AccountID:        req.GetAccountId(),
+		NodeID:           req.GetNodeId(),
+		Plan:             plan,
+		RunID:            req.GetRunId(),
+		TaskIndex:        int(req.GetTaskIndex()),
+		ImageRef:         req.GetImageRef(),
+		KernelKey:        req.GetKernelKey(),
+		BaseKey:          req.GetBaseKey(),
+		Command:          append([]string(nil), req.GetCommand()...),
+		Env:              cloneStringMap(req.GetEnv()),
+		SealedEnvEntries: sealedFromProto(req.GetSealedEnv()),
+		VcpuCount:        int(req.GetVcpuCount()),
+		MemSizeMiB:       int(req.GetMemSizeMib()),
+		TaskTimeoutSec:   int(req.GetTaskTimeoutSec()),
+		LeaseToken:       req.GetLeaseToken(),
 	}, nil
 }
 

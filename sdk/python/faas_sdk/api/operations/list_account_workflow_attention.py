@@ -10,8 +10,14 @@ from ...client import AuthenticatedClient, Client
 from ...models.list_account_workflow_attention_dependency_status import (
     ListAccountWorkflowAttentionDependencyStatus,
 )
+from ...models.list_account_workflow_attention_priority import (
+    ListAccountWorkflowAttentionPriority,
+)
 from ...models.list_account_workflow_attention_reason import (
     ListAccountWorkflowAttentionReason,
+)
+from ...models.list_account_workflow_attention_sort import (
+    ListAccountWorkflowAttentionSort,
 )
 from ...models.operation_workflow_attention_response import OperationWorkflowAttentionResponse
 from ...models.problem import Problem
@@ -26,6 +32,10 @@ def _get_kwargs(
     target_operation: str | Unset = UNSET,
     dependency_status: ListAccountWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: ListAccountWorkflowAttentionPriority | Unset = UNSET,
+    sort: ListAccountWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: ListAccountWorkflowAttentionReason | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
@@ -48,6 +58,22 @@ def _get_kwargs(
     params["dependency_status"] = json_dependency_status
 
     params["required_outcome_code"] = required_outcome_code
+
+    json_priority: str | Unset = UNSET
+    if not isinstance(priority, Unset):
+        json_priority = priority
+
+    params["priority"] = json_priority
+
+    json_sort: str | Unset = UNSET
+    if not isinstance(sort, Unset):
+        json_sort = sort
+
+    params["sort"] = json_sort
+
+    params["owner"] = owner
+
+    params["unassigned"] = unassigned
 
     params["blocker_code"] = blocker_code
 
@@ -138,6 +164,10 @@ def sync_detailed(
     target_operation: str | Unset = UNSET,
     dependency_status: ListAccountWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: ListAccountWorkflowAttentionPriority | Unset = UNSET,
+    sort: ListAccountWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: ListAccountWorkflowAttentionReason | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
@@ -160,6 +190,10 @@ def sync_detailed(
         target_operation (str | Unset):
         dependency_status (ListAccountWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (ListAccountWorkflowAttentionPriority | Unset):
+        sort (ListAccountWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (ListAccountWorkflowAttentionReason | Unset):
         tenant_id (UUID | Unset):
@@ -181,6 +215,10 @@ def sync_detailed(
         target_operation=target_operation,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
+        priority=priority,
+        sort=sort,
+        owner=owner,
+        unassigned=unassigned,
         blocker_code=blocker_code,
         reason=reason,
         tenant_id=tenant_id,
@@ -204,6 +242,10 @@ def sync(
     target_operation: str | Unset = UNSET,
     dependency_status: ListAccountWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: ListAccountWorkflowAttentionPriority | Unset = UNSET,
+    sort: ListAccountWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: ListAccountWorkflowAttentionReason | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
@@ -226,6 +268,10 @@ def sync(
         target_operation (str | Unset):
         dependency_status (ListAccountWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (ListAccountWorkflowAttentionPriority | Unset):
+        sort (ListAccountWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (ListAccountWorkflowAttentionReason | Unset):
         tenant_id (UUID | Unset):
@@ -248,6 +294,10 @@ def sync(
         target_operation=target_operation,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
+        priority=priority,
+        sort=sort,
+        owner=owner,
+        unassigned=unassigned,
         blocker_code=blocker_code,
         reason=reason,
         tenant_id=tenant_id,
@@ -265,6 +315,10 @@ async def asyncio_detailed(
     target_operation: str | Unset = UNSET,
     dependency_status: ListAccountWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: ListAccountWorkflowAttentionPriority | Unset = UNSET,
+    sort: ListAccountWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: ListAccountWorkflowAttentionReason | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
@@ -287,6 +341,10 @@ async def asyncio_detailed(
         target_operation (str | Unset):
         dependency_status (ListAccountWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (ListAccountWorkflowAttentionPriority | Unset):
+        sort (ListAccountWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (ListAccountWorkflowAttentionReason | Unset):
         tenant_id (UUID | Unset):
@@ -308,6 +366,10 @@ async def asyncio_detailed(
         target_operation=target_operation,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
+        priority=priority,
+        sort=sort,
+        owner=owner,
+        unassigned=unassigned,
         blocker_code=blocker_code,
         reason=reason,
         tenant_id=tenant_id,
@@ -329,6 +391,10 @@ async def asyncio(
     target_operation: str | Unset = UNSET,
     dependency_status: ListAccountWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: ListAccountWorkflowAttentionPriority | Unset = UNSET,
+    sort: ListAccountWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: ListAccountWorkflowAttentionReason | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
@@ -351,6 +417,10 @@ async def asyncio(
         target_operation (str | Unset):
         dependency_status (ListAccountWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (ListAccountWorkflowAttentionPriority | Unset):
+        sort (ListAccountWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (ListAccountWorkflowAttentionReason | Unset):
         tenant_id (UUID | Unset):
@@ -374,6 +444,10 @@ async def asyncio(
             target_operation=target_operation,
             dependency_status=dependency_status,
             required_outcome_code=required_outcome_code,
+            priority=priority,
+            sort=sort,
+            owner=owner,
+            unassigned=unassigned,
             blocker_code=blocker_code,
             reason=reason,
             tenant_id=tenant_id,

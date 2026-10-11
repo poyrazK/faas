@@ -23,6 +23,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			WithHint("Retry in a moment; if it continues, contact support."))
 		return
 	}
+	_, capabilities.ConditionalParking = s.store.(state.ConditionalAppParkTransitionStore)
 	// Entitlement is only one half of availability. A capability must also be
 	// backed by a runtime that is enabled and configured on this control plane;
 	// otherwise clients would advertise a feature whose first request returns

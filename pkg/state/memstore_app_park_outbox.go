@@ -16,12 +16,28 @@ type memAppParkTransition struct {
 	SupersededAt *time.Time
 }
 
-func (m *MemStore) BeginAppParkTransition(_ context.Context, appID string, expected AppStatus) (AppParkTransition, bool, error) {
+func (m *MemStore) BeginAppParkTransition(ctx context.Context, appID string, expected AppStatus) (AppParkTransition, bool, error) {
+	return m.BeginAppParkTransitionIfDeployment(ctx, appID, expected, "")
+}
+
+func (m *MemStore) BeginAppParkTransitionIfDeployment(_ context.Context, appID string, expected AppStatus, deploymentID string) (AppParkTransition, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[appID]
 	if !ok {
 		return AppParkTransition{}, false, ErrNotFound
+	}
+	if deploymentID != "" {
+		var latest Deployment
+		found := false
+		for _, d := range m.deployments {
+			if d.AppID == appID && (!found || d.CreatedAt.After(latest.CreatedAt)) {
+				latest, found = d, true
+			}
+		}
+		if !found || latest.ID != deploymentID {
+			return AppParkTransition{}, false, ErrConflict
+		}
 	}
 	if app.Status == AppEvictedCold {
 		if id := m.appParkTransitionByApp[appID]; id != "" {

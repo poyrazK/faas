@@ -59,6 +59,7 @@
     {"path": "sidecars", "source": "docs/sidecars.md"},
     {"path": "static-egress-ip", "source": "docs/static-egress-ip.md"},
     {"path": "storage", "source": "docs/storage.md"},
+    {"path": "tracing", "source": "docs/tracing.md"},
     {"path": ".well-known/security.txt", "external": true},
     {"path": "security/pgp.asc", "external": true},
     {"path": "security/pgp.txt", "external": true},

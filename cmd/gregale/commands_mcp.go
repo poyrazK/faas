@@ -45,7 +45,16 @@ func cmdMCP(args []string) int {
 		return cmdMCPResourceWatch(args[1:])
 	case "complete":
 		return cmdMCPComplete(args[1:])
-	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
+	case "doctor":
+		for i, arg := range args[1:] {
+			if arg == "--hosting" {
+				flags := append([]string{}, args[1:i+1]...)
+				flags = append(flags, args[i+2:]...)
+				return cmdMCPTasksReport(flags, true)
+			}
+		}
+		return cmdMCPRemote("doctor", args[1:])
+	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
@@ -55,13 +64,17 @@ func cmdMCP(args []string) int {
 func cmdMCPInit(args []string) int {
 	fs := newFlagSet("mcp-init", flag.ContinueOnError)
 	dir := fs.String("path", "", "empty destination directory")
+	language := fs.String("language", "node", "starter language: node, go, or python")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *dir == "" {
 		return printErr("MCP init", errors.New("--path is required"))
 	}
-	return cmdInit([]string{"--template", "mcp-node", "--path", *dir})
+	if *language != "node" && *language != "go" && *language != "python" {
+		return printErr("MCP init", errors.New("--language must be node, go, or python"))
+	}
+	return cmdInit([]string{"--template", "mcp-" + *language, "--path", *dir})
 }
 
 func mcpToken(env string) (string, error) {
@@ -623,8 +636,12 @@ func runMCPDeploy(o mcpDeployOptions) int {
 }
 
 func quietMCPDeploy(args []string, execution deployExecution) int {
+	return quietMCPDeployContext(context.Background(), args, execution)
+}
+
+func quietMCPDeployContext(ctx context.Context, args []string, execution deployExecution) int {
 	old := osStdout
 	osStdout = io.Discard
 	defer func() { osStdout = old }()
-	return cmdDeployTarballToExisting(context.Background(), args, false, execution)
+	return cmdDeployTarballToExisting(ctx, args, false, execution)
 }

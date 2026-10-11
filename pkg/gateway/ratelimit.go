@@ -316,7 +316,11 @@ func (l *Limiter) allowWithConsumerKeyLocal(ruleKey, consumerID string, rps, bur
 
 	_, alreadyTracked := consumers[consumerID]
 	bucketKey := consumerKey
-	if !alreadyTracked && len(consumers) >= cap {
+	if !alreadyTracked && len(consumers) >= cap && l.reclaimIdleConsumerLocked(ruleKey, consumers, now) {
+		// A tracked consumer had refilled to its ceiling, so forgetting it
+		// is lossless; the new consumer takes its slot.
+		consumers[consumerID] = struct{}{}
+	} else if !alreadyTracked && len(consumers) >= cap {
 		// Over-cap collapse: every new consumer routes through
 		// the __other__ bucket. The collapse bucket is pinned
 		// non-evictable — see bucket.pinned doc.
@@ -329,6 +333,41 @@ func (l *Limiter) allowWithConsumerKeyLocal(ruleKey, consumerID string, rps, bur
 	}
 
 	return bucketKey, l.allowTokenKeyedLocked(bucketKey, rps, burst, otherKey, now)
+}
+
+// reclaimIdleConsumerLocked frees one per-rule consumer slot whose bucket has
+// refilled to its ceiling (or was already evicted, which only ever happens to
+// full buckets). Such a consumer's next request would see a full bucket
+// anyway, so dropping it loses no rate-limit state — the same invariant
+// evictOneLocked applies to buckets. Without it the consumer set only grew:
+// after cap distinct clients ever, every new client shared the __other__
+// bucket for the life of the process, so one client could drain it and
+// throttle all newcomers. The scan samples at most LimiterEvictScan entries
+// so an over-cap request stays O(1) under l.mu; when every sampled consumer
+// is mid-drain the cap is genuinely saturated and __other__ applies.
+func (l *Limiter) reclaimIdleConsumerLocked(ruleKey string, consumers map[string]struct{}, now time.Time) bool {
+	scanned := 0
+	for id := range consumers {
+		if scanned >= LimiterEvictScan {
+			return false
+		}
+		scanned++
+		key := ruleKey + "\x00" + id
+		b := l.buckets[key]
+		if b != nil && (b.pinned || !bucketFull(b, now)) {
+			continue
+		}
+		delete(consumers, id)
+		if b != nil {
+			if el := l.elems[key]; el != nil {
+				l.removeElementLocked(el)
+			} else {
+				delete(l.buckets, key)
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // ConsumerIsTracked reports whether consumerID has its own bucket

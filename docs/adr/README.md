@@ -62,25 +62,27 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
 | 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
 | 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
-| 792 | [Continuous CPU profiling across guest lifetimes](819-continuous-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 793 | [Route-associated CPU profiling](820-route-associated-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 794 | [Advisory route CPU regression checks](821-advisory-route-cpu-regression-checks.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 795 | [Route attribution quality reporting](822-route-attribution-quality.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 796 | [Per-route request labeling consistency](823-per-route-request-label-consistency.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 797 | [Native profiling restore qualification](824-native-profile-restore-qualification.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 798 | [Advisory route profiling notifications](825-advisory-profile-route-notifications.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
-| 843 | [App consumer statement revisions and unbilled platform failures](843-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
-| 844 | [Monthly included units on app consumer rate cards](844-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
-| 845 | [Graduated tiers on app consumer rate cards](845-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
-| 846 | [Route weights on app consumer rate cards](846-api-consumer-route-weights.md) | accepted | Requests on weighted routes count as N units; gateway labels consumer routes and apid keeps route-level minutes |
-| 847 | [Named consumer plans](847-api-consumer-plans.md) | accepted | Plans bundle per-minute and monthly limits with their own price history; minute-effective assignments; gateway admission counters |
-| 848 | [Consumer usage completeness check](848-api-consumer-usage-completeness.md) | accepted | Read-only hourly comparison of billed successful requests with request telemetry; lower-bound gaps; CLI warning after draft or finalize |
+| 819 | [Continuous CPU profiling across guest lifetimes](819-continuous-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 820 | [Route-associated CPU profiling](820-route-associated-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 821 | [Advisory route CPU regression checks](821-advisory-route-cpu-regression-checks.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 822 | [Route attribution quality reporting](822-route-attribution-quality.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 823 | [Per-route request labeling consistency](823-per-route-request-label-consistency.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 824 | [Native profiling restore qualification](824-native-profile-restore-qualification.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 825 | [Advisory route profiling notifications](825-advisory-profile-route-notifications.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 826 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 827 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 828 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 949 | [App consumer statement revisions and unbilled platform failures](949-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
+| 950 | [Monthly included units on app consumer rate cards](950-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
+| 951 | [Graduated tiers on app consumer rate cards](951-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
+| 952 | [Route weights on app consumer rate cards](952-api-consumer-route-weights.md) | accepted | Requests on weighted routes count as N units; gateway labels consumer routes and apid keeps route-level minutes |
+| 953 | [Named consumer plans](953-api-consumer-plans.md) | accepted | Plans bundle per-minute and monthly limits with their own price history; minute-effective assignments; gateway admission counters |
+| 954 | [Consumer usage completeness check](954-api-consumer-usage-completeness.md) | accepted | Read-only hourly comparison of billed successful requests with request telemetry; lower-bound gaps; CLI warning after draft or finalize |
+| 958 | [Zero-config in-guest tracing for the debugger](958-zero-config-guest-tracing.md) | accepted for internal implementation; native acceptance pending | Opt-in OTLP bridge in guest-init, preloaded Node/Python auto-instrumentation, and a vmmd-brokered, apid-parsed path into request telemetry spans |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
+| 967 | [Retire dead same-boot instance records after verified absence](967-same-boot-dead-instance-record-retirement.md) | accepted | vmmd startup retires instance records whose process is gone and whose kernel resources are verifiably absent, freeing quarantined slots and identity-verified temporary files (amends ADR-472, extends ADR-478) |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
@@ -716,6 +718,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
 
+- [ADR-955: GCS conditional PUT capabilities](955-gcs-conditional-put-capabilities.md)
 - [ADR-911: Bounded batch event publication](911-batch-event-publication.md)
 
 - [ADR-912: Event retention health and expiry warnings](912-event-retention-health.md)
@@ -725,7 +728,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
 - [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
-- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -741,5 +744,41 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
 
+- [ADR-933: Durable entity outbox relay and transport acceptance](933-durable-entity-outbox-relay.md)
+
+- [ADR-934: Gated durable entity guest outbox protocol](934-durable-entity-guest-outbox-protocol.md)
+
+- [ADR-935: Account-scoped durable entity inspection](935-durable-entity-owner-inspection.md)
+
+- [ADR-936: Owner recovery for exhausted durable entity work](936-durable-entity-exhausted-work-recovery.md)
+
+- [ADR-937: Bounded durable entity operational health](937-durable-entity-operational-health.md)
+
+- [ADR-938: Typed durable entity SDK handles and guest transitions](938-typed-durable-entity-sdk.md)
+
+- [ADR-939: Durable entity application-state schema migrations](939-durable-entity-application-schema-migrations.md)
+
+- [ADR-940: Durable entity application-state export and restore](940-durable-entity-state-export-restore.md)
+
+- [ADR-941: Durable entity owner state recovery API](941-durable-entity-owner-state-recovery-api.md)
+
+- [ADR-942: Scheduled durable entity backups and restore preview](942-durable-entity-scheduled-backups-and-restore-preview.md)
+
+- [ADR-943: Application-validated durable entity restore](943-durable-entity-application-validated-restore.md)
+
+- [ADR-519: application-reported workflow blocker ownership](519-workflow-blocker-ownership.md) — public responsibility, next-action guidance, and resolution attribution
+
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
+
+- [ADR-944: Isolated durable entity restore validation](944-durable-entity-isolated-restore-validation.md)
+
+- [ADR-945: Durable entity operation observability](945-durable-entity-operation-observability.md)
+
+- [ADR-946: Durable entity validator release tooling](946-durable-entity-validator-release-tooling.md)
+
+- [ADR-947: Shared durable entity validator artifacts](947-shared-durable-entity-validator-artifacts.md)
+
+- [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
+
+- [ADR-967: Scenario TCP fault injection](967-scenario-tcp-fault-injection.md)

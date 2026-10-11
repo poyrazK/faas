@@ -270,7 +270,7 @@ func docsURLForTemplate(name string) string {
 		return secretsDocsURL
 	case "data-api", "data-api-starter":
 		return "https://gregale.dev/docs/data-api"
-	case "mcp-node":
+	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
 		return "https://gregale.dev/docs/operations"
@@ -394,7 +394,11 @@ func nextStepsFor(tpl string) []string {
 			"Customer admission remains closed by default; the starter does not enable it.",
 		}
 	case "mcp-node":
-		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
+		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
+	case "mcp-go":
+		return []string{"cd <dest> && go test ./...", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp deploy --path <dest> --name <slug>"}
+	case "mcp-python":
+		return []string{"cd <dest> && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt", "python -m unittest", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp deploy --path <dest> --name <slug>"}
 	case "customer-platform":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",

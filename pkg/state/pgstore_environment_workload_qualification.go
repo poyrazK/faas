@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -160,13 +161,26 @@ func (s *PgStore) claimEnvironmentWorkloadQualification(ctx context.Context, id,
 	if err != nil {
 		return EnvironmentWorkloadQualificationRequest{}, err
 	}
+	claimedRequest := qualificationRequestFromSQL(current)
+	if claimedRequest.ExecutionMode == api.ExecutionModeJob || len(claimedRequest.FrozenInputs.ServiceBindings) != 0 {
+		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+	}
 	q, token := sqlc.New(), uuid.NewString()
+	if current.Attempt > 0 {
+		if _, err := q.EnvironmentQualificationSmokeReceipt(ctx, tx, sqlc.EnvironmentQualificationSmokeReceiptParams{
+			RequestID: current.ID, Attempt: current.Attempt,
+		}); err == nil {
+			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
+		}
+	}
 	if nodeID != "" {
 		app, err := q.EnvironmentWorkloadQualificationAppOwner(ctx, tx, current.AppID)
 		if err != nil {
 			return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
 		}
-		if current.ExecutionMode == "job" || (app.Status != string(AppActive) && app.Status != string(AppEvictedCold)) ||
+		if current.ExecutionMode == "job" || current.ExecutionMode == "worker" || (app.Status != string(AppActive) && app.Status != string(AppEvictedCold)) ||
 			(app.NodeID.Valid && app.NodeID != mustPgUUID(nodeID)) {
 			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 		}
@@ -187,6 +201,110 @@ func (s *PgStore) claimEnvironmentWorkloadQualification(ctx context.Context, id,
 		return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
 	}
 	return qualificationRequestFromSQL(row), mapErr(tx.Commit(ctx))
+}
+
+// Claim an entire service-binding cohort under one transaction. If any member
+// is stale, owned by another node, unsupported or still has an active attempt,
+// no sibling lease or instance identity is issued.
+func (s *PgStore) ClaimEnvironmentWorkloadQualificationGraphForNode(ctx context.Context, graphID, nodeID, workerID string, duration time.Duration) ([]EnvironmentWorkloadQualificationRequest, error) {
+	if !qualificationClaimArgumentsValid(graphID, workerID, duration) || !qualificationRecoveryUUIDValid(nodeID) {
+		return nil, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	graphUUID := mustPgUUID(graphID)
+	rows, err := q.EnvironmentWorkloadQualificationsByGraph(ctx, tx, graphUUID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if len(rows) == 0 {
+		return nil, ErrConflict
+	}
+	if _, err := s.qualificationCurrentTx(ctx, tx, pgUUIDString(rows[0].ID)); err != nil {
+		return nil, err
+	}
+	graphRow, err := q.EnvironmentWorkloadGraphByIDForUpdate(ctx, tx, graphUUID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	graph := workloadGraphFromSQL(graphRow)
+	expected, completeSmokeReceipts := 0, true
+	for _, member := range graph.Members {
+		if member.CandidateDeploymentID != "" {
+			expected++
+		}
+	}
+	if expected == 0 || len(rows) != expected {
+		return nil, ErrConflict
+	}
+	for _, row := range rows {
+		current, err := s.qualificationCurrentTx(ctx, tx, pgUUIDString(row.ID))
+		if err != nil {
+			return nil, err
+		}
+		request := qualificationRequestFromSQL(current)
+		if request.Phase != "queued" && (request.Phase != "claimed" || request.LeaseUntil == nil || time.Now().Before(*request.LeaseUntil)) {
+			return nil, ErrConflict
+		}
+		if !qualificationGraphSmokePolicyValid(request) {
+			return nil, ErrConflict
+		}
+		if request.ExecutionMode == api.ExecutionModeJob && !qualificationGraphJobQueueBindingsSupported(graph, request.Resource) {
+			return nil, ErrConflict
+		}
+		if request.ExecutionMode == api.ExecutionModeJob {
+			if _, err := q.EnvironmentQualificationJobSmokeReceipt(ctx, tx, sqlc.EnvironmentQualificationJobSmokeReceiptParams{
+				RequestID: current.ID, Attempt: current.Attempt,
+			}); errors.Is(err, pgx.ErrNoRows) {
+				completeSmokeReceipts = false
+			} else if err != nil {
+				return nil, mapErr(err)
+			}
+		} else {
+			if _, err := q.EnvironmentQualificationSmokeReceipt(ctx, tx, sqlc.EnvironmentQualificationSmokeReceiptParams{
+				RequestID: current.ID, Attempt: current.Attempt,
+			}); errors.Is(err, pgx.ErrNoRows) {
+				completeSmokeReceipts = false
+			} else if err != nil {
+				return nil, mapErr(err)
+			}
+		}
+		app, err := q.EnvironmentWorkloadQualificationAppOwner(ctx, tx, current.AppID)
+		if err != nil {
+			return nil, mapErr(err)
+		}
+		if (app.Status != string(AppActive) && app.Status != string(AppEvictedCold)) ||
+			(app.NodeID.Valid && app.NodeID != mustPgUUID(nodeID)) || (app.AppProtocol != "" && app.AppProtocol != api.AppProtocolHTTP1) {
+			return nil, ErrConflict
+		}
+	}
+	if completeSmokeReceipts {
+		return nil, ErrConflict
+	}
+	claimed := make([]EnvironmentWorkloadQualificationRequest, 0, len(rows))
+	for _, row := range rows {
+		token, instanceID := uuid.NewString(), uuid.NewString()
+		if _, err := q.SetEnvironmentWorkloadQualificationContext(ctx, tx, token); err != nil {
+			return nil, mapErr(err)
+		}
+		updated, err := q.ClaimEnvironmentWorkloadQualification(ctx, tx, sqlc.ClaimEnvironmentWorkloadQualificationParams{
+			ID: row.ID, WorkerID: workerID, Token: token, DurationUs: duration.Microseconds(), InstanceID: mustPgUUID(instanceID)})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrConflict
+			}
+			return nil, mapErr(err)
+		}
+		claimed = append(claimed, qualificationRequestFromSQL(updated))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapErr(err)
+	}
+	return claimed, nil
 }
 
 func (s *PgStore) ValidateEnvironmentWorkloadQualification(ctx context.Context, claimed EnvironmentWorkloadQualificationRequest) error {

@@ -7,7 +7,9 @@ import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ProfilingConfig } from './ProfilingConfig.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
@@ -15,6 +17,7 @@ import type { WorkloadPort } from './WorkloadPort.js';
  */
 export type AppManifest = {
   profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
   entrypoint: Array<string>;
   env?: Record<string, string>;
   /**
@@ -23,6 +26,10 @@ export type AppManifest = {
   env_secrets?: Record<string, string>;
   working_dir?: string | null;
   port?: number | null;
+  /**
+   * Scheme for canonical service binding URLs. Omitted manifests retain the legacy HTTP behavior.
+   */
+  service_binding_transport?: ServiceBindingTransport;
   /**
    * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery (ADR-165, ADR-176).
    */

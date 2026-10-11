@@ -52,6 +52,31 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 	if err := json.Unmarshal(installed.Body.Bytes(), &chaosReceipt); err != nil || chaosReceipt.RulesInstalled != 1 || chaosReceipt.ExpiresAt.IsZero() {
 		t.Fatalf("chaos receipt = (%+v, %v)", chaosReceipt, err)
 	}
+	for _, rule := range []api.ScenarioTestChaosRule{
+		{Kind: chaos.KindTCPLatency, LatencyMS: 250},
+		{Kind: chaos.KindTCPBandwidth, RateKiBPerSecond: 64, Direction: chaos.DirectionDownstream},
+		{Kind: chaos.KindTCPTimeout},
+		{Kind: chaos.KindTCPReset, ResetAfterMS: 50},
+	} {
+		rule.From, rule.To, rule.Port, rule.Percent = "api", "worker", 6379, 100
+		rec := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{DurationMS: 1000, Rules: []api.ScenarioTestChaosRule{rule}}, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("TCP plan %s: %d %s", rule.Kind, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, rule := range []api.ScenarioTestChaosRule{
+		{Kind: chaos.KindTCPBandwidth, RateKiBPerSecond: -1, Port: 6379},
+		{Kind: chaos.KindTCPTimeout, Port: 443},
+		{Kind: chaos.KindTCPReset, Port: 6379, Direction: "upstream"},
+		{Kind: chaos.KindTCPLatency, Port: 6379, LatencyMS: 30001},
+	} {
+		rule.To, rule.Percent = "worker", 100
+		rec := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{DurationMS: 1000, Rules: []api.ScenarioTestChaosRule{rule}}, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid TCP plan accepted: %d %s", rec.Code, rec.Body.String())
+		}
+	}
 	invalidPlan := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{
 		DurationMS: 30_000,
 		Rules:      []api.ScenarioTestChaosRule{{From: "api", To: "production", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503}},

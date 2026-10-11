@@ -54,35 +54,41 @@ type CustomerOperationTransitionReadiness struct {
 }
 
 type CustomerOperationWorkflow struct {
-	Readiness                       *api.OperationWorkflowReadinessOverview
-	ReadinessItems                  []CustomerOperationTransitionReadiness
-	DependencyTrace                 *api.OperationWorkflowDependencyTrace
-	DependencyFindings              []CustomerOperationDependencyFinding
-	DependencyImpact                *api.OperationWorkflowDependencyImpact
-	DependentWorkflows              []CustomerOperationDependentWorkflow
-	RelatedWorkflows                []CustomerOperationWorkflowRelation
-	OutcomeCode, OutcomeDescription string
-	Decision                        *api.OperationWorkflowDecision
-	Name                            string
-	Title                           string
-	InstanceID                      string
-	DeadlineAt                      string
-	Overdue                         bool
-	OverdueSeconds                  int64
-	State                           string
-	Terminal                        bool
-	Stale                           bool
-	StateOccurredAt                 string
-	StateStaleAfter                 string
-	StateUpdatedAt                  string
-	StateRevision                   int64
-	HistoryURL                      string
-	Selected                        bool
-	StateHistory                    []CustomerOperationWorkflowStateHistory
-	Steps                           []CustomerOperationWorkflowStep
+	SLA                                                    *api.OperationWorkflowStateSLA
+	Bottlenecks                                            *api.OperationWorkflowBottlenecks
+	ResolutionVerifications                                []api.OperationWorkflowResolutionVerification
+	AwaitingVerificationCount, ResolutionVerificationCount int64
+	Readiness                                              *api.OperationWorkflowReadinessOverview
+	ReadinessItems                                         []CustomerOperationTransitionReadiness
+	DependencyTrace                                        *api.OperationWorkflowDependencyTrace
+	DependencyFindings                                     []CustomerOperationDependencyFinding
+	DependencyImpact                                       *api.OperationWorkflowDependencyImpact
+	DependentWorkflows                                     []CustomerOperationDependentWorkflow
+	RelatedWorkflows                                       []CustomerOperationWorkflowRelation
+	OutcomeCode, OutcomeDescription                        string
+	Decision                                               *api.OperationWorkflowDecision
+	Name                                                   string
+	Title                                                  string
+	InstanceID                                             string
+	DeadlineAt                                             string
+	Overdue                                                bool
+	OverdueSeconds                                         int64
+	State                                                  string
+	Terminal                                               bool
+	Stale                                                  bool
+	StateOccurredAt                                        string
+	StateStaleAfter                                        string
+	StateUpdatedAt                                         string
+	StateRevision                                          int64
+	HistoryURL                                             string
+	Selected                                               bool
+	StateHistory                                           []CustomerOperationWorkflowStateHistory
+	Steps                                                  []CustomerOperationWorkflowStep
 }
 
 type CustomerOperationWorkflowStateHistory struct {
+	ResolutionVerifications         []api.OperationWorkflowResolutionVerification
+	Blockers                        []api.OperationWorkflowBlocker
 	DependenciesOnly                bool
 	DependsOn                       []api.OperationWorkflowDependency
 	OutcomeCode, OutcomeDescription string

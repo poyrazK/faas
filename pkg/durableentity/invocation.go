@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -20,6 +21,25 @@ type HandlerRequest struct {
 	Payload         json.RawMessage `json:"payload"`
 	State           View            `json:"state"`
 	DeploymentID    string          `json:"deployment_id"`
+	Limits          *HandlerLimits  `json:"limits,omitempty"` // Protocol v2 only.
+}
+
+// HandlerLimits advertise central bounds, not pending queue contents or capacity.
+// The engine still checks the complete queue and snapshot before any upload.
+type HandlerLimits struct {
+	TransitionBytes    int `json:"transition_bytes"`
+	IdentityBytes      int `json:"identity_bytes"`
+	OutboxMessages     int `json:"outbox_messages"`
+	OutboxPayloadBytes int `json:"outbox_payload_bytes"`
+	OutboxBytes        int `json:"outbox_bytes"`
+}
+
+func OutboxHandlerLimits() *HandlerLimits {
+	return &HandlerLimits{
+		TransitionBytes: api.MaxDurableEntitySnapshotBytes, IdentityBytes: api.MaxDurableEntityIdentityBytes,
+		OutboxMessages: api.MaxDurableEntityOutboxPerTransition, OutboxPayloadBytes: api.MaxDurableEntityOutboxPayloadBytes,
+		OutboxBytes: api.MaxDurableEntityOutboxBytes,
+	}
 }
 
 // Invoke owns an entity for one synchronous call. Local calls wait without
@@ -60,18 +80,43 @@ func (m *Manager) invoke(ctx context.Context, id ID, owner string, request Reque
 }
 
 func DecodeTransition(body []byte) (Transition, error) {
+	return DecodeTransitionForProtocol(body, api.DurableEntityProtocolVersion)
+}
+
+// DecodeTransitionForProtocol uses the version selected by the platform. A guest
+// cannot upgrade itself; v1 rejects even an empty or null outbox field.
+func DecodeTransitionForProtocol(body []byte, protocol int) (Transition, error) {
+	if protocol != api.DurableEntityProtocolVersion && protocol != api.DurableEntityOutboxProtocolVersion {
+		return Transition{}, ErrInvalid
+	}
 	if len(body) > api.MaxDurableEntitySnapshotBytes {
 		return Transition{}, exceeded("transition_bytes", api.MaxDurableEntitySnapshotBytes, len(body))
 	}
 	var transition Transition
+	var outgoing struct {
+		Data    json.RawMessage `json:"data"`
+		Result  json.RawMessage `json:"result"`
+		AlarmAt *time.Time      `json:"alarm_at,omitempty"`
+		Outbox  []OutboxIntent  `json:"outbox,omitempty"`
+	}
+	var target any = &transition
+	if protocol == api.DurableEntityOutboxProtocolVersion {
+		target = &outgoing
+	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&transition); err != nil {
+	if err := dec.Decode(target); err != nil {
 		return Transition{}, fmt.Errorf("decode entity transition: %w", ErrInvalid)
+	}
+	if protocol == api.DurableEntityOutboxProtocolVersion {
+		transition = Transition{Data: outgoing.Data, Result: outgoing.Result, AlarmAt: outgoing.AlarmAt, Outbox: outgoing.Outbox}
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF || !json.Valid(transition.Data) || !json.Valid(transition.Result) || !validAlarm(transition.AlarmAt) {
 		return Transition{}, ErrInvalid
+	}
+	if err := ValidateOutboxIntents(transition.Outbox); err != nil {
+		return Transition{}, err
 	}
 	return transition, nil
 }

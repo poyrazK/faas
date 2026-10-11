@@ -40,6 +40,68 @@ func preparedQualificationFixture(t *testing.T, basic gitOpsTestStore) (state.En
 	return lease, plan, requests
 }
 
+// Individual dispatch pagination and ownership tests need more than one
+// request-mode member. The regular workload graph fixture contains a worker,
+// which is intentionally dispatched only through atomic graph claims.
+func preparedRequestModeQualificationFixture(t *testing.T, basic gitOpsTestStore) (state.EnvironmentGitOpsLease, []state.EnvironmentWorkloadQualificationRequest) {
+	t.Helper()
+	store, source, desired, _, _, _ := workloadIntentFixture(t, basic, "enforce")
+	apiWorkload := desired.Definition.Workloads["api"]
+	apiWorkload.Runtime = json.RawMessage(`{"port":8080,"healthz":"/readyz"}`)
+	desired.Definition.Workloads["api"] = apiWorkload
+
+	catalog, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
+		Slug: "shop-catalog", WorkloadName: "catalog", Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 1,
+		Manifest: state.AppManifest{Port: 8081, RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: catalog.ID, Scope: "production", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, ImageDigest: "registry.example/catalog@sha256:" + strings.Repeat("c", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	desired.Definition.Workloads["catalog"] = api.EnvironmentWorkload{App: catalog.Slug,
+		Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/catalog@sha256:" + strings.Repeat("d", 64)},
+		Runtime: json.RawMessage(`{"port":8081,"healthz":"/readyz"}`)}
+	desired, err = environmentsync.Compile(desired.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, strings.Repeat("b", 40)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adoptWorkloadIntent(t, store, source)
+	lease, err := store.ClaimEnvironmentGitOps(t.Context(), "request-mode-preparer", time.Now(), 3*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, claimedIntentPlan(t, store, lease, desired)); err != nil {
+		t.Fatal(err)
+	}
+	plan := claimedIntentPlan(t, store, lease, desired)
+	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("request-mode candidates: %+v %v", candidates, err)
+	}
+	for _, candidate := range candidates {
+		if err := basic.SetDeploymentRootfs(t.Context(), candidate.DeploymentID, "/reviewed.ext4", "reviewed-"+candidate.Resource, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := basic.UpdateDeploymentStatus(t.Context(), candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan); err != nil || graph.Phase != "prepared" {
+		t.Fatalf("request-mode graph: %+v %v", graph, err)
+	}
+	requests, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(t.Context(), lease, plan)
+	if err != nil || len(requests) != 2 {
+		t.Fatalf("request-mode qualification cohort: %d %v", len(requests), err)
+	}
+	return lease, requests
+}
+
 func TestEnvironmentGitOpsQualificationRequiresPreparedCohort(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
 		lease, plan, _ := workloadGraphFixture(t, basic)

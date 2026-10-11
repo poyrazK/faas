@@ -1063,6 +1063,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
+		return
+	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1529,7 +1533,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		return
 	}
-	if req.BeforeCheckpoint != nil || req.Profiling != nil {
+	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
 		// baked manifest does not match this update.
@@ -2428,6 +2432,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
+	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, target); problem != nil {
+		return state.Deployment{}, problem
+	}
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -2535,9 +2542,44 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }
 
-// parkApp marks the app evicted_cold; schedd reacts and tears down live
-// instances.
+// parkAppIfDeployment requires an atomic deployment comparison before parking.
+func (s *server) parkAppIfDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.parkAppWithGuard(w, r, acct, true)
+}
+
+// parkApp marks the app evicted_cold; schedd tears down live instances.
 func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.parkAppWithGuard(w, r, acct, false)
+}
+
+func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct state.Account, required bool) {
+	var input struct {
+		ExpectedDeploymentID string `json:"expected_deployment_id"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		api.WriteProblem(w, api.ErrValidation("invalid park request"))
+		return
+	}
+	if required && input.ExpectedDeploymentID == "" {
+		api.WriteProblem(w, api.ErrValidation("expected_deployment_id is required"))
+		return
+	}
+	if required {
+		var extra any
+		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+			api.WriteProblem(w, api.ErrValidation("invalid park request"))
+			return
+		}
+	}
+	if input.ExpectedDeploymentID != "" {
+		if _, err := uuid.Parse(input.ExpectedDeploymentID); err != nil {
+			api.WriteProblem(w, api.ErrValidation("expected_deployment_id must be a UUID"))
+			return
+		}
+	}
+
 	fresh := false
 	if raw := r.URL.Query().Get("fresh"); raw != "" {
 		parsed, err := strconv.ParseBool(raw)
@@ -2566,11 +2608,23 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		parkTransition state.AppParkTransition
 		durablePark    state.AppParkTransitionStore
 	)
-	if transitionStore, ok := s.store.(state.AppParkTransitionStore); ok {
+	if input.ExpectedDeploymentID != "" {
+		conditional, ok := s.store.(state.ConditionalAppParkTransitionStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("conditional parking is unavailable"))
+			return
+		}
+		durablePark = conditional
+		parkTransition, claimed, err = conditional.BeginAppParkTransitionIfDeployment(r.Context(), app.ID, app.Status, input.ExpectedDeploymentID)
+	} else if transitionStore, ok := s.store.(state.AppParkTransitionStore); ok {
 		durablePark = transitionStore
 		parkTransition, claimed, err = transitionStore.BeginAppParkTransition(r.Context(), app.ID, app.Status)
 	} else {
 		claimed, err = transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	}
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Deployment changed", "expected deployment is no longer the latest app deployment"))
+		return
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
@@ -5995,6 +6049,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
 	resp := s.deploymentResponse(d, app)
+	resp.DurableEntityValidator = s.deploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
 	}

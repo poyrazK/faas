@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_bottlenecks import OperationWorkflowBottlenecks
     from ..models.operation_workflow_decision import OperationWorkflowDecision
     from ..models.operation_workflow_dependency_impact import OperationWorkflowDependencyImpact
     from ..models.operation_workflow_dependency_trace import OperationWorkflowDependencyTrace
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_instance_transition import OperationWorkflowInstanceTransition
     from ..models.operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
     from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+    from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
     from ..models.operation_workflow_state import OperationWorkflowState
     from ..models.operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 
@@ -39,6 +41,15 @@ class OperationWorkflowInstanceSnapshot:
     transitions: list[OperationWorkflowStateHistoryEntry]
     has_more: bool
     """True when either milestone or transition-history cursor has more pages."""
+    bottlenecks: OperationWorkflowBottlenecks | Unset = UNSET
+    """Observed durations for one retained workflow instance. State/blocker intervals use application occurrence
+    time. Verification waits use platform publication time. Gaps are excluded and incomplete histories are marked.
+    Groups are sorted by observed duration and bounded independently of exact window totals."""
+    resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+    """Selected instance proof preview with pending obligations first; exact counts include all distinct retained
+    claims."""
+    awaiting_verification_count: int | Unset = UNSET
+    resolution_verification_count: int | Unset = UNSET
     readiness: OperationWorkflowReadinessOverview | Unset = UNSET
     """At most 100 current-state declared edges evaluated without planned milestones. Counts cover all declared
     current-state edges; history cursors do not paginate this overview."""
@@ -79,6 +90,21 @@ class OperationWorkflowInstanceSnapshot:
             transitions.append(transitions_item)
 
         has_more = self.has_more
+
+        bottlenecks: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bottlenecks, Unset):
+            bottlenecks = self.bottlenecks.to_dict()
+
+        resolution_verifications: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.resolution_verifications, Unset):
+            resolution_verifications = []
+            for resolution_verifications_item_data in self.resolution_verifications:
+                resolution_verifications_item = resolution_verifications_item_data.to_dict()
+                resolution_verifications.append(resolution_verifications_item)
+
+        awaiting_verification_count = self.awaiting_verification_count
+
+        resolution_verification_count = self.resolution_verification_count
 
         readiness: dict[str, Any] | Unset = UNSET
         if not isinstance(self.readiness, Unset):
@@ -130,6 +156,14 @@ class OperationWorkflowInstanceSnapshot:
                 "has_more": has_more,
             }
         )
+        if bottlenecks is not UNSET:
+            field_dict["bottlenecks"] = bottlenecks
+        if resolution_verifications is not UNSET:
+            field_dict["resolution_verifications"] = resolution_verifications
+        if awaiting_verification_count is not UNSET:
+            field_dict["awaiting_verification_count"] = awaiting_verification_count
+        if resolution_verification_count is not UNSET:
+            field_dict["resolution_verification_count"] = resolution_verification_count
         if readiness is not UNSET:
             field_dict["readiness"] = readiness
         if dependency_trace is not UNSET:
@@ -153,6 +187,7 @@ class OperationWorkflowInstanceSnapshot:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_bottlenecks import OperationWorkflowBottlenecks
         from ..models.operation_workflow_decision import OperationWorkflowDecision
         from ..models.operation_workflow_dependency_impact import OperationWorkflowDependencyImpact
         from ..models.operation_workflow_dependency_trace import OperationWorkflowDependencyTrace
@@ -160,6 +195,7 @@ class OperationWorkflowInstanceSnapshot:
         from ..models.operation_workflow_instance_transition import OperationWorkflowInstanceTransition
         from ..models.operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
         from ..models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+        from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
         from ..models.operation_workflow_state import OperationWorkflowState
         from ..models.operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 
@@ -185,6 +221,28 @@ class OperationWorkflowInstanceSnapshot:
             transitions.append(transitions_item)
 
         has_more = d.pop("has_more")
+
+        _bottlenecks = d.pop("bottlenecks", UNSET)
+        bottlenecks: OperationWorkflowBottlenecks | Unset
+        if isinstance(_bottlenecks, Unset):
+            bottlenecks = UNSET
+        else:
+            bottlenecks = OperationWorkflowBottlenecks.from_dict(_bottlenecks)
+
+        _resolution_verifications = d.pop("resolution_verifications", UNSET)
+        resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+        if _resolution_verifications is not UNSET:
+            resolution_verifications = []
+            for resolution_verifications_item_data in _resolution_verifications:
+                resolution_verifications_item = OperationWorkflowResolutionVerification.from_dict(
+                    resolution_verifications_item_data
+                )
+
+                resolution_verifications.append(resolution_verifications_item)
+
+        awaiting_verification_count = d.pop("awaiting_verification_count", UNSET)
+
+        resolution_verification_count = d.pop("resolution_verification_count", UNSET)
 
         _readiness = d.pop("readiness", UNSET)
         readiness: OperationWorkflowReadinessOverview | Unset
@@ -250,6 +308,10 @@ class OperationWorkflowInstanceSnapshot:
             steps=steps,
             transitions=transitions,
             has_more=has_more,
+            bottlenecks=bottlenecks,
+            resolution_verifications=resolution_verifications,
+            awaiting_verification_count=awaiting_verification_count,
+            resolution_verification_count=resolution_verification_count,
             readiness=readiness,
             dependency_trace=dependency_trace,
             dependency_impact=dependency_impact,

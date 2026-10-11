@@ -25,6 +25,8 @@ func (s *server) operationStore(w http.ResponseWriter) (state.OperationStore, bo
 
 func writeOperationError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, state.ErrWorkflowPerformanceCohortChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "workflow_performance_cohort_changed", "Workflow performance changed", "refresh the performance summary before opening its contributors"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Operation not found", "the operation or definition is unavailable"))
 	case errors.Is(err, state.ErrOperationRecoveryReceiptUnavailable):

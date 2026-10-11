@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -12,10 +13,11 @@ T = TypeVar("T", bound="InjectScenarioTestChaosResponse")
 
 @_attrs_define
 class InjectScenarioTestChaosResponse:
-    """Receipt confirming the number of rules installed and the automatic expiry time."""
+    """Receipt confirming the plan generation, number of rules installed, and automatic expiry time."""
 
     expires_at: datetime.datetime
     rules_installed: int
+    generation: UUID
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -23,12 +25,15 @@ class InjectScenarioTestChaosResponse:
 
         rules_installed = self.rules_installed
 
+        generation = str(self.generation)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "expires_at": expires_at,
                 "rules_installed": rules_installed,
+                "generation": generation,
             }
         )
 
@@ -41,9 +46,12 @@ class InjectScenarioTestChaosResponse:
 
         rules_installed = d.pop("rules_installed")
 
+        generation = UUID(d.pop("generation"))
+
         inject_scenario_test_chaos_response = cls(
             expires_at=expires_at,
             rules_installed=rules_installed,
+            generation=generation,
         )
 
         inject_scenario_test_chaos_response.additional_properties = d

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // VsockJobExitPort is the AF_VSOCK port the job supervisor dials
@@ -45,9 +46,14 @@ const VsockJobExitMsgType uint32 = 4
 const (
 	VsockJobControlPort     uint32 = 1028
 	VsockJobCancelMsgType   uint32 = 5
+	VsockJobStartMsgType    uint32 = 6
 	VsockJobControlAckOK    byte   = 0
 	VsockJobControlAckError byte   = 1
 )
+
+// JobStartGateTimeout bounds how long a cold-booted job may wait for the
+// scheduler to publish its runtime identity and explicitly release execution.
+const JobStartGateTimeout = 90 * time.Second
 
 // VsockJobExitMaxBody caps the JSON body at 8 KiB. The exit
 // envelope is tiny (exit_code + error_class + signal + lease_token
@@ -78,6 +84,7 @@ type JobManifest struct {
 	Command             []string          `json:"command,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`
 	TaskTimeoutSec      int               `json:"task_timeout_s,omitempty"`
+	StartHeld           bool              `json:"start_held,omitempty"`
 	VsockJobExitPort    int               `json:"vsock_job_exit_port,omitempty"`
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
 }
@@ -171,26 +178,28 @@ var jobEnvBaseline = map[string]string{ //nolint:unused // consumed by the Linux
 	"FAAS_RUNTIME_KIND": "job",
 }
 
-// buildEnvForJob merges os.Environ() with m.Env, then overlays
-// the baseline (FAAS_JOB=1, FAAS_RUNTIME_KIND=job) so the customer's
-// command can introspect "I'm running inside a job VM" without
-// trusting the customer-supplied env. The customer's m.Env entries
-// win on conflict with systemEnv (so FAAS_RUNTIME_KIND can be
-// overridden if the customer really wants), but the baseline
-// always wins on conflict with m.Env (so a malicious env can't
-// unset FAAS_JOB).
+// buildEnvForJob merges os.Environ() with m.Env and selected secrets.
+// Secrets take precedence over customer env, while the platform identity
+// baseline always takes precedence over both.
 //
 // Returns the merged map converted to the []string form
 // syscall.Exec wants (KEY=VAL pairs, no shell quoting needed
 // because exec.Command takes the argv directly).
 func buildEnvForJob(m JobManifest) []string { //nolint:unused // called by the Linux guest supervisor.
-	merged := make(map[string]string, len(os.Environ())+len(m.Env)+len(jobEnvBaseline))
+	return buildEnvForJobWithSecrets(m, nil)
+}
+
+func buildEnvForJobWithSecrets(m JobManifest, secrets map[string]string) []string {
+	merged := make(map[string]string, len(os.Environ())+len(m.Env)+len(secrets)+len(jobEnvBaseline))
 	for _, kv := range os.Environ() {
 		if eq := strings.IndexByte(kv, '='); eq > 0 {
 			merged[kv[:eq]] = kv[eq+1:]
 		}
 	}
 	for k, v := range m.Env {
+		merged[k] = v
+	}
+	for k, v := range secrets {
 		merged[k] = v
 	}
 	// Build a merged slice preserving the contract: FAAS_JOB ⊕

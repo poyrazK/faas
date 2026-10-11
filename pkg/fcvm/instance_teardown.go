@@ -126,6 +126,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.processGenerations, lease.Instance)
 	delete(m.waking, lease.Instance)
 	delete(m.live, lease.Instance)
+	delete(m.qualificationInstances, lease.Instance)
 	delete(m.cidToID, GuestVsockCID(lease.Slot))
 	delete(m.exportDirs, lease.Instance)
 	m.mu.Unlock()
@@ -277,6 +278,9 @@ func (m *Manager) teardownIdentity(instance string) *Instance {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if inst := m.live[instance]; inst != nil {
+		return inst
+	}
+	if inst := m.qualificationInstances[instance]; inst != nil {
 		return inst
 	}
 	if retained := m.pendingCleanup[instance]; retained != nil {

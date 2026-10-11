@@ -19,7 +19,7 @@ func operationWorkflowAttentionOptions(r *http.Request, operator bool, appID str
 			return opts, state.ErrInvalidArgument
 		}
 		switch key {
-		case "scope", "workflow", "target_operation", "reason", "limit", "cursor", "blocker_code", "dependency_status", "required_outcome_code":
+		case "scope", "workflow", "target_operation", "reason", "limit", "cursor", "blocker_code", "dependency_status", "required_outcome_code", "owner", "unassigned", "priority", "sort":
 		case "app_id":
 			if operator {
 				return opts, state.ErrInvalidArgument
@@ -36,6 +36,14 @@ func operationWorkflowAttentionOptions(r *http.Request, operator bool, appID str
 	}
 	opts.Scope, opts.Workflow, opts.TargetOperation, opts.Reason, opts.Cursor = query.Get("scope"), query.Get("workflow"), query.Get("target_operation"), query.Get("reason"), query.Get("cursor")
 	opts.BlockerCode = query.Get("blocker_code")
+	opts.Owner = query.Get("owner")
+	opts.Priority, opts.Sort = query.Get("priority"), query.Get("sort")
+	if query.Has("unassigned") {
+		if query.Get("unassigned") != "true" && query.Get("unassigned") != "false" {
+			return opts, state.ErrInvalidArgument
+		}
+		opts.Unassigned = query.Get("unassigned") == "true"
+	}
 	opts.DependencyStatus, opts.RequiredOutcomeCode = query.Get("dependency_status"), query.Get("required_outcome_code")
 	if query.Has("limit") {
 		opts.Limit, err = strconv.Atoi(query.Get("limit"))

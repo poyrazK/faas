@@ -50,6 +50,10 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
+	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, predecessor); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if state.IsServiceRollout(candidate) {
 		s.requestPinnedServiceAbort(w, r, acct, app, candidate, predecessor, req.Reason)
 		return

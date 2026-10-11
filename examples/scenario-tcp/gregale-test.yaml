@@ -1,0 +1,132 @@
+version: 1
+suites:
+  resilience:
+    scenarios:
+      - {scenario: tcp-bandwidth, engine: real-vm, profile: warm}
+      - {scenario: tcp-timeout, engine: real-vm, profile: warm}
+      - {scenario: tcp-reset, engine: real-vm, profile: warm}
+      - {scenario: tcp-staged-recovery, engine: real-vm, profile: warm}
+scenarios:
+  tcp-bandwidth:
+    project: tcp-bandwidth-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      TCP_HOST: ${service.cache.host}
+      TCP_PORT: ${service.cache.port}
+    services:
+      cache:
+        fixture: tcp-echo
+        tcp_ports: [6379]
+    chaos:
+      duration: 8s
+      rules:
+        - to: cache
+          kind: tcp_bandwidth
+          port: 6379
+          direction: downstream
+          percent: 100
+          rate_kib_per_second: 16
+    command: [node, test/resilience.mjs, bandwidth]
+  tcp-timeout:
+    project: tcp-timeout-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      TCP_HOST: ${service.cache.host}
+      TCP_PORT: ${service.cache.port}
+    services:
+      cache:
+        fixture: tcp-echo
+        tcp_ports: [6379]
+    chaos:
+      duration: 8s
+      rules:
+        - to: cache
+          kind: tcp_timeout
+          port: 6379
+          direction: downstream
+          percent: 100
+    command: [node, test/resilience.mjs, timeout]
+  tcp-reset:
+    project: tcp-reset-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      TCP_HOST: ${service.cache.host}
+      TCP_PORT: ${service.cache.port}
+    services:
+      cache:
+        fixture: tcp-echo
+        tcp_ports: [6379]
+    chaos:
+      duration: 8s
+      rules:
+        - to: cache
+          kind: tcp_reset
+          port: 6379
+          direction: both
+          percent: 100
+    command: [node, test/resilience.mjs, reset]
+  tcp-staged-recovery:
+    project: staged-tcp-recovery-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      TCP_HOST: ${service.cache.host}
+      TCP_PORT: ${service.cache.port}
+    services:
+      cache:
+        fixture: tcp-echo
+        tcp_ports: [6379]
+    steps:
+      - name: baseline
+        requests:
+          - {name: baseline-probe, method: GET, path: /pool/probe, expect: {status: 200}}
+        load:
+          vus: 1
+          iterations: 5
+          thresholds: {p95: 500ms, p99: 1s, error_rate: 0, success_rate: 1, min_samples: 5}
+      - name: slow-dependency
+        chaos:
+          duration: 1m
+          rules:
+            - to: cache
+              kind: tcp_latency
+              port: 6379
+              direction: downstream
+              percent: 100
+              latency: 250ms
+              min_matches: 1
+        command: [node, test/staged-resilience.mjs, slow-dependency]
+        requests:
+          - {name: fault-probe, method: GET, path: /pool/probe, expect: {status: 200}}
+        load:
+          vus: 1
+          iterations: 5
+          thresholds: {p95: 1s, p99: 1500ms, error_rate: 0, success_rate: 1, min_samples: 5}
+      - name: clear-fault
+        clear_chaos: true
+      - name: recovery
+        requests:
+          - {name: recovery-probe, method: GET, path: /pool/probe, expect: {status: 200}}
+        load:
+          vus: 1
+          iterations: 5
+          thresholds: {p95: 500ms, p99: 1s, error_rate: 0, success_rate: 1, min_samples: 5}
+          relative:
+            compare_to: baseline
+            p95_increase_percent: 20
+            success_rate_drop: 0.01
+            min_samples: 5
+            steps:
+              dependency:
+                baseline_step: baseline-probe
+                current_step: recovery-probe
+                p95_increase_percent: 20
+                success_rate_drop: 0.01
+                min_samples: 5
+            retry_until_passes:
+              timeout: 10s
+              interval: 250ms
+              consecutive_passes: 3

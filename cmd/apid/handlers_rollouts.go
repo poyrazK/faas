@@ -108,7 +108,7 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
 		return
 	}
-	if api.ApiContractDiffEnabled() && (req.Action == "promote" || req.Action == "advance") {
+	if (api.ApiContractDiffEnabled() || s.durableEntityValidatorReleaseGateEnabled) && (req.Action == "promote" || req.Action == "advance") {
 		rows, readErr := s.store.LiveDeployments(r.Context(), app.ID)
 		if readErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not read rollout contract target"))

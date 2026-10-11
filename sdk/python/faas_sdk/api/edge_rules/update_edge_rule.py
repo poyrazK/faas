@@ -9,15 +9,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.edge_rule_response import EdgeRuleResponse
 from ...models.problem import Problem
 from ...models.update_edge_rule_request import UpdateEdgeRuleRequest
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
     *,
     body: UpdateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(if_match, Unset):
+        headers["If-Match"] = if_match
 
     _kwargs: dict[str, Any] = {
         "method": "patch",
@@ -57,6 +60,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 412:
+        response_412 = Problem.from_dict(response.json())
+
+        return response_412
+
     if response.status_code == 422:
         response_422 = Problem.from_dict(response.json())
 
@@ -89,6 +97,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> Response[EdgeRuleResponse | Problem]:
     """Partial-update an edge rule.
 
@@ -99,6 +108,7 @@ def sync_detailed(
 
     Args:
         id (str):
+        if_match (str | Unset):
         body (UpdateEdgeRuleRequest): Partial update — every field optional. Kind is not
             patchable.
 
@@ -113,6 +123,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         id=id,
         body=body,
+        if_match=if_match,
     )
 
     response = client.get_httpx_client().request(
@@ -127,6 +138,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> EdgeRuleResponse | Problem | None:
     """Partial-update an edge rule.
 
@@ -137,6 +149,7 @@ def sync(
 
     Args:
         id (str):
+        if_match (str | Unset):
         body (UpdateEdgeRuleRequest): Partial update — every field optional. Kind is not
             patchable.
 
@@ -152,6 +165,7 @@ def sync(
         id=id,
         client=client,
         body=body,
+        if_match=if_match,
     ).parsed
 
 
@@ -160,6 +174,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> Response[EdgeRuleResponse | Problem]:
     """Partial-update an edge rule.
 
@@ -170,6 +185,7 @@ async def asyncio_detailed(
 
     Args:
         id (str):
+        if_match (str | Unset):
         body (UpdateEdgeRuleRequest): Partial update — every field optional. Kind is not
             patchable.
 
@@ -184,6 +200,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         id=id,
         body=body,
+        if_match=if_match,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -196,6 +213,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateEdgeRuleRequest,
+    if_match: str | Unset = UNSET,
 ) -> EdgeRuleResponse | Problem | None:
     """Partial-update an edge rule.
 
@@ -206,6 +224,7 @@ async def asyncio(
 
     Args:
         id (str):
+        if_match (str | Unset):
         body (UpdateEdgeRuleRequest): Partial update — every field optional. Kind is not
             patchable.
 
@@ -222,5 +241,6 @@ async def asyncio(
             id=id,
             client=client,
             body=body,
+            if_match=if_match,
         )
     ).parsed

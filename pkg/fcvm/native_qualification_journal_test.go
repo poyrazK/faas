@@ -33,6 +33,41 @@ func nativeQualificationFixture(t *testing.T) (*nativeQualificationJournal, stat
 	return j, frame, ctx
 }
 
+func TestNativeQualificationCaptureJournalRetainsV2ShapeAndRejectsRestore(t *testing.T) {
+	j, frame, ctx := nativeQualificationFixture(t)
+	record, err := j.claim(ctx, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(record)
+	if err != nil || strings.Contains(string(data), "capture_instance_id") {
+		t.Fatal("capture v2 wire shape changed", err)
+	}
+	var original nativeQualificationRecord
+	if err := json.Unmarshal(data, &original); err != nil || original.Execution != frame {
+		t.Fatal("original capture journal no longer decodes", err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		t.Fatal(err)
+	}
+	frame.CaptureInstanceID = uuid.NewString()
+	object["execution"], err = json.Marshal(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &original); err == nil {
+		t.Fatal("capture journal admitted restore authority")
+	}
+	if _, err := j.claim(ctx, frame); err == nil {
+		t.Fatal("capture protocol claimed restore authority")
+	}
+}
+
 func TestNativeQualificationRetireBeforeCreateRetainsExactTombstone(t *testing.T) {
 	j, frame, ctx := nativeQualificationFixture(t)
 	revoked, err := j.revoke(t.Context(), frame)

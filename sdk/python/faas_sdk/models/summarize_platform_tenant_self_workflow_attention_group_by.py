@@ -1,7 +1,7 @@
 from typing import Literal
 
 SummarizePlatformTenantSelfWorkflowAttentionGroupBy = Literal[
-    "blocker_code", "dependency_status", "required_outcome_code", "target_operation", "workflow"
+    "blocker_code", "dependency_status", "owner", "required_outcome_code", "target_operation", "workflow"
 ]
 
 SUMMARIZE_PLATFORM_TENANT_SELF_WORKFLOW_ATTENTION_GROUP_BY_VALUES: set[
@@ -9,6 +9,7 @@ SUMMARIZE_PLATFORM_TENANT_SELF_WORKFLOW_ATTENTION_GROUP_BY_VALUES: set[
 ] = {
     "blocker_code",
     "dependency_status",
+    "owner",
     "required_outcome_code",
     "target_operation",
     "workflow",

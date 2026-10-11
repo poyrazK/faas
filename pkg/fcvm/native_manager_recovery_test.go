@@ -15,14 +15,16 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Boots use the ordinary orchestration fake. Native retirement, admission and
 // resource acknowledgement run the production lifecycle against fake /proc.
 type recoveryVMMFixture struct {
 	*fakeVMM
-	jailer  *JailerVMM
-	command func(context.Context, []string, []byte) ([]byte, error)
+	jailer               *JailerVMM
+	command              func(context.Context, []string, []byte) ([]byte, error)
+	restoreQualification func(context.Context, state.EnvironmentQualificationExecution, Lease, WakeRequest, [2]string, string, string) error
 }
 
 type nativeOwnershipRunner struct {
@@ -87,6 +89,34 @@ func TestNativeManagerJournalWriteFailureCannotReleaseUnattestedOwnership(t *tes
 	}
 }
 
+type nativeArtifactRecoveryTestVMM struct {
+	*fakeVMM
+	results []error
+	calls   int
+}
+
+func (v *nativeArtifactRecoveryTestVMM) RecoverNativeQualificationArtifactRetirements(context.Context) error {
+	v.calls++
+	result := v.results[0]
+	v.results = v.results[1:]
+	return result
+}
+
+func TestManagerRetriesOnlyThroughArtifactRecoveryCapability(t *testing.T) {
+	cause := errors.New("conditional GCS delete unavailable")
+	vmm := &nativeArtifactRecoveryTestVMM{fakeVMM: &fakeVMM{}, results: []error{cause, nil}}
+	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.7.0", nil, nil)
+	if err := m.RecoverNativeQualificationArtifactRetirements(t.Context()); !errors.Is(err, cause) {
+		t.Fatalf("first artifact retry error = %v", err)
+	}
+	if err := m.RecoverNativeQualificationArtifactRetirements(t.Context()); err != nil {
+		t.Fatalf("later artifact retry did not recover: %v", err)
+	}
+	if vmm.calls != 2 {
+		t.Fatalf("artifact recovery calls = %d, want one attempt per invocation", vmm.calls)
+	}
+}
+
 func (v *recoveryVMMFixture) nativeRecoveryRuntime() *nativeProcessRecoveryRuntime {
 	return v.jailer.nativeRecoveryRuntime()
 }
@@ -98,6 +128,16 @@ func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) er
 }
 func (v *recoveryVMMFixture) confirmNativeCleanup(ctx context.Context, l Lease, nc netns.Config) error {
 	return v.jailer.confirmNativeCleanup(ctx, l, nc)
+}
+func (v *recoveryVMMFixture) RestoreNativeQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion, serviceDiscoveryIP string) error {
+	if v.restoreQualification != nil {
+		return v.restoreQualification(ctx, frame, lease, req, candidates, fcVersion, serviceDiscoveryIP)
+	}
+	restore, ok := any(v.jailer).(nativeQualificationRestoreVMM)
+	if !ok {
+		return errors.New("fixture: native qualification restore is unavailable")
+	}
+	return restore.RestoreNativeQualification(ctx, frame, lease, req, candidates, fcVersion, serviceDiscoveryIP)
 }
 
 // Models scope fencing and dispatch only; physical process/group proofs are

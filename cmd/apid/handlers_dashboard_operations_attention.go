@@ -23,7 +23,7 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 		writeOperationError(w, state.ErrInvalidArgument)
 		return
 	}
-	for _, key := range []string{"tenant_id", "workflow", "target_operation", "reason", "blocker_code", "dependency_status", "required_outcome_code"} {
+	for _, key := range []string{"tenant_id", "workflow", "target_operation", "reason", "blocker_code", "dependency_status", "required_outcome_code", "owner", "priority", "sort"} {
 		if values := query[key]; len(values) == 1 && values[0] == "" {
 			query.Del(key)
 		}
@@ -66,7 +66,7 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 	if opts.Limit == 0 {
 		opts.Limit = api.OperationHistoryPageDefault
 	}
-	data := dashboard.WorkflowAttentionData{AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, TargetOperation: opts.TargetOperation, Reason: opts.Reason, Limit: opts.Limit, EvaluatedAt: dashboardJobsTime(result.EvaluatedAt), ListURL: dashboardCustomerOperationsURL(app.Slug), QueueURL: dashboardCustomerOperationsURL(app.Slug) + "/attention"}
+	data := dashboard.WorkflowAttentionData{Priority: opts.Priority, Sort: opts.Sort, Owner: opts.Owner, Unassigned: opts.Unassigned, AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, TargetOperation: opts.TargetOperation, Reason: opts.Reason, Limit: opts.Limit, EvaluatedAt: dashboardJobsTime(result.EvaluatedAt), ListURL: dashboardCustomerOperationsURL(app.Slug), QueueURL: dashboardCustomerOperationsURL(app.Slug) + "/attention"}
 	summaryStore, ok := s.store.(state.OperationWorkflowAttentionSummaryStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("workflow summaries unavailable"))
@@ -90,8 +90,18 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 		}
 		link.Del("cursor")
 		link.Set("group_by", groupBy)
-		selector := map[string]string{"workflow": "workflow", "customer": "tenant_id", "blocker_code": "blocker_code", "target_operation": "target_operation", "dependency_status": "dependency_status", "required_outcome_code": "required_outcome_code"}[groupBy]
-		link.Set(selector, group.Value)
+		selector := map[string]string{"owner": "owner", "workflow": "workflow", "customer": "tenant_id", "blocker_code": "blocker_code", "target_operation": "target_operation", "dependency_status": "dependency_status", "required_outcome_code": "required_outcome_code"}[groupBy]
+		if groupBy == "owner" {
+			link.Del("owner")
+			link.Del("unassigned")
+			if group.Value == "" {
+				link.Set("unassigned", "true")
+			} else {
+				link.Set("owner", group.Value)
+			}
+		} else {
+			link.Set(selector, group.Value)
+		}
 		data.SummaryGroups = append(data.SummaryGroups, dashboard.WorkflowAttentionSummaryGroup{Group: group, URL: data.QueueURL + "?" + link.Encode()})
 	}
 	query.Set("group_by", groupBy)

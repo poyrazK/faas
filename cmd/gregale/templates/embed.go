@@ -11,10 +11,10 @@
 //
 // Note on Go templates: the templates ship WITHOUT a go.mod because Go's
 // //go:embed refuses to descend into a directory that contains one —
-// it treats the file as a module boundary. Materialize writes one for the
-// hello-go app because it is also the local app-shape marker. function-go must
-// remain marker-free so a later zero-config deploy sees handler.go as a
-// function; the CLI adds its module file only to the upload archive.
+// it treats the file as a module boundary. Materialize writes one for HTTP
+// apps (hello-go and mcp-go). function-go must remain marker-free so a later
+// zero-config deploy sees handler.go as a function; the CLI adds its module
+// file only to the upload archive.
 package templates
 
 import (
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -71,6 +71,8 @@ var Names = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-go",
+	"mcp-python",
 	"customer-operation-export",
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",
@@ -95,6 +97,56 @@ var generatedDotfiles = map[string]map[string]string{
 			"# only), so keep them out of the upload and out of doctor's env checks.\n" +
 			"/tools/\n",
 	},
+}
+
+// generatedTemplateFiles maps source files kept under non-Go suffixes in the
+// repository to their output names. The MCP Go server itself is a real Go
+// package after materialization, but its source must not be compiled as part
+// of Gregale's repository module.
+var generatedTemplateFiles = map[string]map[string]string{
+	"mcp-go": {
+		"main.go.tmpl":      "main.go",
+		"main_test.go.tmpl": "main_test.go",
+		"auth.go.tmpl":      "auth.go",
+		"tasks.go.tmpl":     "tasks.go",
+	},
+}
+
+// mcpGoModuleRequirements mirrors the Go SDK's pruned module graph so a fresh
+// mcp-go starter can run without a preliminary `go mod tidy`.
+const mcpGoModuleRequirements = `
+require github.com/modelcontextprotocol/go-sdk v1.8.0
+require (
+	github.com/jackc/pgx/v5 v5.11.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/yosida95/uritemplate/v3 v3.0.2
+)
+
+require (
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	golang.org/x/oauth2 v0.35.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+`
+
+func goModuleContent(name string) []byte {
+	content := fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)
+	if name == "mcp-go" {
+		content += mcpGoModuleRequirements
+	}
+	return []byte(content)
 }
 
 // Workflow sources remain visible to go:embed. Scaffold their conventional
@@ -150,6 +202,11 @@ func Materialize(name, dest string) error {
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
 	}
+	for source, output := range generatedTemplateFiles[name] {
+		if err := os.Rename(filepath.Join(dest, source), filepath.Join(dest, output)); err != nil {
+			return err
+		}
+	}
 	for file, content := range generatedDotfiles[name] {
 		target := filepath.Join(dest, file)
 		if _, err := os.Stat(target); os.IsNotExist(err) {
@@ -184,13 +241,15 @@ func Materialize(name, dest string) error {
 			return err
 		}
 	}
-	// hello-go is an HTTP app and needs its module marker. function-go stays
-	// marker-free so a later zero-config deploy detects handler.go as a
-	// function; the packer adds its build module to the upload archive.
-	if name == "hello-go" {
+	// HTTP Go apps need a module marker. function-go stays marker-free so a
+	// later zero-config deploy detects handler.go as a function; the packer
+	// adds its build module to the upload archive.
+	if name == "hello-go" || name == "mcp-go" {
 		modPath := filepath.Join(dest, "go.mod")
 		if _, err := os.Stat(modPath); os.IsNotExist(err) {
-			_ = os.WriteFile(modPath, []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)), 0o644)
+			if err := os.WriteFile(modPath, goModuleContent(name), 0o644); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -243,7 +302,11 @@ func TarGz(name, dest string) error {
 		if err != nil {
 			return err
 		}
-		hdr.Name = name + "/" + filepath.ToSlash(p)
+		archivePath := p
+		if output, ok := generatedTemplateFiles[name][p]; ok {
+			archivePath = output
+		}
+		hdr.Name = name + "/" + filepath.ToSlash(archivePath)
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
@@ -272,8 +335,8 @@ func TarGz(name, dest string) error {
 			return err
 		}
 	}
-	if name == "hello-go" || name == "function-go" {
-		modContent := []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion))
+	if name == "hello-go" || name == "function-go" || name == "mcp-go" {
+		modContent := goModuleContent(name)
 		hdr := &tar.Header{
 			Name:     name + "/go.mod",
 			Mode:     0o644,
@@ -354,7 +417,7 @@ func CategoryFor(name string) string {
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
-	case "mcp-node":
+	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
 		return "operations"

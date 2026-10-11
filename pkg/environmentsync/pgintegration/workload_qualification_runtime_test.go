@@ -37,7 +37,7 @@ func qualificationRuntimeFixture(t *testing.T, store gitOpsTestStore, durations 
 	}
 	return claimed, requests[1], state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID,
 		Netns: "qualification-netns", HostIP: "10.0.0.1", GuestUID: 20001, Inputs: state.RuntimeConfigInputs{
-			Scope: "production", Boundary: time.Unix(0, 0), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}}
+			Scope: "production", Boundary: time.Now().UTC().Truncate(time.Microsecond), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}}
 }
 
 func TestEnvironmentGitOpsQualificationRuntimeRechecksAdmissionAndCancelledAttempts(t *testing.T) {

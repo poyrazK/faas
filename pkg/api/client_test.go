@@ -1796,3 +1796,49 @@ func TestCreateCORSEdgeRule_HonoursExplicitMaxAge(t *testing.T) {
 		t.Errorf("explicit MaxAgeSeconds: got %d want %d", gotAction.MaxAgeSeconds, 1200)
 	}
 }
+
+func TestParkIfDeploymentKeepsGuardOnDrainRetry(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/v1/apps/worker/park/conditional" {
+			t.Errorf("unguarded route: %s", r.URL.Path)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "recorded-deployment" {
+			t.Errorf("guard missing: %v %v", body, err)
+		}
+		if calls == 1 {
+			WriteProblem(w, ErrCapacity("app instances did not drain before the park deadline").WithHeader("Retry-After", "1"))
+			return
+		}
+		WriteProblem(w, NewProblem(http.StatusConflict, CodeConflict, "Deployment changed", "changed"))
+	}))
+	defer srv.Close()
+	err := NewClient(srv.URL, "token").ParkIfDeployment(t.Context(), "worker", "recorded-deployment")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Problem.Code != CodeConflict || calls != 2 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
+
+func TestParkIfDeploymentRejectsLegacyServer(t *testing.T) {
+	parks := 0
+	requests := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/apps/worker/park", func(w http.ResponseWriter, r *http.Request) {
+		parks++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		mux.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	if err := NewClient(srv.URL, "token").ParkIfDeployment(t.Context(), "worker", "recorded-deployment"); err == nil {
+		t.Fatal("legacy server accepted guarded parking")
+	}
+	if parks != 0 || requests != 1 {
+		t.Fatalf("requests=%d unconditional parks=%d", requests, parks)
+	}
+}

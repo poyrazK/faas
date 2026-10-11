@@ -120,7 +120,7 @@ func populateDashboardOperationMilestones(r *http.Request, log *slog.Logger, acc
 		}
 		data.Workflows[index].StateHistory = append(data.Workflows[index].StateHistory, dashboard.CustomerOperationWorkflowStateHistory{
 			ID: entry.ID, OperationID: entry.OperationID, OperationURL: dashboardCustomerOperationsURL(app.Slug) + "/" + url.PathEscape(entry.OperationID),
-			DependsOn: entry.DependsOn, DependenciesOnly: entry.DependenciesOnly, BlockerResolutions: entry.BlockerResolutions, OutcomeCode: entry.OutcomeCode, OutcomeDescription: entry.OutcomeDescription, OutcomeOnly: entry.OutcomeOnly, DeadlineAt: entry.DeadlineAt, DeadlineOnly: entry.DeadlineOnly, BlockersOnly: entry.BlockersOnly, FromState: entry.FromState, State: entry.State, Revision: entry.Revision,
+			ResolutionVerifications: entry.ResolutionVerifications, Blockers: entry.Blockers, DependsOn: entry.DependsOn, DependenciesOnly: entry.DependenciesOnly, BlockerResolutions: entry.BlockerResolutions, OutcomeCode: entry.OutcomeCode, OutcomeDescription: entry.OutcomeDescription, OutcomeOnly: entry.OutcomeOnly, DeadlineAt: entry.DeadlineAt, DeadlineOnly: entry.DeadlineOnly, BlockersOnly: entry.BlockersOnly, FromState: entry.FromState, State: entry.State, Revision: entry.Revision,
 			OccurredAt: dashboardJobsTime(entry.OccurredAt), PublishedAt: dashboardJobsTime(entry.PublishedAt),
 		})
 	}
@@ -154,6 +154,13 @@ func populateDashboardOperationMilestones(r *http.Request, log *slog.Logger, acc
 	for i := range data.Workflows {
 		workflow := &data.Workflows[i]
 		if instance := page.WorkflowInstance; instance != nil && workflow.Name == instance.Workflow && workflow.InstanceID == instance.InstanceID {
+			if instance.State != nil {
+				workflow.SLA = instance.State.SLA
+			}
+			workflow.Bottlenecks = instance.Bottlenecks
+			workflow.ResolutionVerifications = instance.ResolutionVerifications
+			workflow.AwaitingVerificationCount = instance.AwaitingVerificationCount
+			workflow.ResolutionVerificationCount = instance.ResolutionVerificationCount
 			workflow.Readiness = instance.Readiness
 			if instance.Readiness != nil {
 				labels := map[string]string{"state_unknown": "No retained reported state", "terminal": "Workflow is terminal", "transition_undeclared": "Transition is not declared", "from_state_mismatch": "Reported state differs from the proposed source", "revision_mismatch": "Reported revision has changed", "contract_version_mismatch": "Contract version differs", "application_blocked": "Application reports blockers for this Operation", "dependency_unmet": "Prerequisites remain unmet", "milestone_required": "Milestones must accompany this transition", "policy_evidence_required": "Matching business policy evidence must accompany this transition", "dependency_required": "Required prerequisite workflow links have not been reported", "invariant_evidence_required": "Passing invariant evidence must accompany this transition", "effect_evidence_required": "Confirmed business effect evidence must accompany this transition"}

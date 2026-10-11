@@ -51,6 +51,7 @@ func approveQueueRetirement(t *testing.T, store queueIntentStore, source state.E
 	d.QueuePruningPolicy = "retain"
 	w := d.Workloads["api"]
 	delete(w.QueueBindings, "orders")
+	delete(w.QueueSmoke, "orders")
 	w.Variables["MODE"] = "retired"
 	d.Workloads["api"] = w
 	return approveQueueDefinition(t, store, current, d, "b")
@@ -99,8 +100,8 @@ func TestEnvironmentGitOpsQueueReviewedRetirementAndOriginalRecovery(t *testing.
 			}
 		}
 		runs, err := store.ListEnvironmentGitOpsRuns(t.Context(), source.AccountID, source.ID, 1)
-		if err != nil || len(runs) != 1 || runs[0].Status != "converged" {
-			t.Fatalf("retirement was not verified: %+v %v", runs, err)
+		if err != nil || len(runs) != 1 || runs[0].Status != "partial" || runs[0].ErrorCode != "environment_runtime_unacknowledged" {
+			t.Fatalf("intent-only queue retirement claimed runtime convergence: %+v %v", runs, err)
 		}
 		// Restoring the name, and even pinning a neighboring UUID, cannot
 		// release the retained delivery lane or commit unrelated intent.

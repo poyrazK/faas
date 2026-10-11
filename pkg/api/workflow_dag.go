@@ -145,7 +145,7 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 		if _, err := trigger.ScheduleCatchUpWindow(); err != nil {
 			return err
 		}
-		if timezone, err := cronexpr.NormalizeTimezone(trigger.Timezone); err != nil || timezone == "Local" {
+		if _, err := cronexpr.NormalizeTimezone(trigger.Timezone); err != nil || strings.TrimSpace(trigger.Timezone) == "Local" {
 			return fmt.Errorf("%w: timezone must identify an IANA zone or UTC", ErrWorkflowInvalidTrigger)
 		}
 		if _, err := cronexpr.Parse(trigger.Schedule, trigger.Timezone); err != nil {

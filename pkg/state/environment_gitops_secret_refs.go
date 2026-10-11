@@ -12,6 +12,7 @@ import (
 type gitOpsSecretBaseline struct {
 	ID         string          `json:"id"`
 	SecretRefs json.RawMessage `json:"secret_refs"`
+	Managed    bool            `json:"managed,omitempty"`
 }
 
 func gitOpsSecretBaselineResource(resource string) string {
@@ -26,7 +27,9 @@ func observedGitOpsSecretReferences(app gitOpsIntentApp, relevant map[string]boo
 	ids := make([]string, 0, len(app.LiveDeployments))
 	var observed map[string]string
 	for _, deployment := range app.LiveDeployments {
-		ids = append(ids, deployment.ID)
+		if !deployment.Managed {
+			ids = append(ids, deployment.ID)
+		}
 		if len(relevant) == 0 {
 			continue
 		}
