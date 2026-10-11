@@ -4,7 +4,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "cmd/gregale/**"
-      - "cmd/apid/managed_postgres_credentials*"
+      - "pkg/apid/apidserver/managed_postgres_credentials*"
       - "pkg/managedpostgres/**"
       - "pkg/api/limits.go"
       - "pkg/state/app_secret_delivery_policy*"
