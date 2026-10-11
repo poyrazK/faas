@@ -3713,6 +3713,7 @@ const (
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
 	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventOutboundAIBudgetThreshold        AppWebhookEvent = "outbound.ai_budget.threshold"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
@@ -3780,6 +3781,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventConsumerUsageThreshold,
+	AppWebhookEventOutboundAIBudgetThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,

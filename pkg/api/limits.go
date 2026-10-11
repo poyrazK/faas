@@ -702,6 +702,24 @@ const (
 	// AI fallback routes (ADR-983).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
+	// Admission-time reservations (ADR-984): the output reserve when a call
+	// names no output ceiling, and the bytes per estimated input token.
+	OutboundAIDefaultOutputReserveTokens int64 = 4096
+	OutboundAIReserveBytesPerToken       int64 = 4
+	// Per-app AI guardrails on a binding (ADR-984).
+	MaxOutboundAIRequestsPerMinute       = 100_000
+	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
+	MaxOutboundAIMaxOutputTokens         = 1_000_000
+	OutboundAIAllowedModelsMax           = 32
+	// Extra sealed provider keys per integration (ADR-984) and the local
+	// cooldown a key gets after a 429 without Retry-After.
+	OutboundIntegrationCredentialKeysMax        = 8
+	OutboundCredentialKeyDefaultCooldownSeconds = 30
+	OutboundAIRequestLogRetentionDays           = 7
+	OutboundAIRequestLogPageMax                 = 200
+	OutboundAIBudgetAlertsPageMax               = 100
+	OutboundAIBudgetAlertWarnPercent            = 80
+	OutboundAIBudgetAlertFullPercent            = 100
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

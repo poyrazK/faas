@@ -99,8 +99,10 @@ type OutboundAIRouteTarget struct {
 // OutboundAIRoute tries its targets in order (ADR-983). Callers use
 // $GREGALE_OUTBOUND_URL/r/{id}/{provider path}.
 type OutboundAIRoute struct {
-	ID        string                  `json:"id"`
-	Name      string                  `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Format is "native" or "openai" (ADR-984).
+	Format    string                  `json:"format"`
 	Targets   []OutboundAIRouteTarget `json:"targets"`
 	CreatedAt time.Time               `json:"created_at"`
 	UpdatedAt time.Time               `json:"updated_at"`
@@ -112,7 +114,9 @@ type OutboundAIRouteList struct {
 
 // CreateOutboundAIRouteRequest names a route and its ordered targets.
 type CreateOutboundAIRouteRequest struct {
-	Name    string                  `json:"name"`
+	Name string `json:"name"`
+	// Format defaults to "native"; "openai" translates (ADR-984).
+	Format  string                  `json:"format,omitempty"`
 	Targets []OutboundAIRouteTarget `json:"targets"`
 }
 
@@ -136,4 +140,193 @@ func ValidOutboundAIRouteTargetShape(targets []OutboundAIRouteTarget) bool {
 		}
 	}
 	return true
+}
+
+// Route formats (ADR-984). A native route sends the caller's request to
+// targets of one provider. An openai route accepts OpenAI chat completions
+// and translates them for Anthropic and Gemini targets.
+const (
+	OutboundAIRouteFormatNative = "native"
+	OutboundAIRouteFormatOpenAI = "openai"
+)
+
+// ValidOutboundAIRouteFormat accepts the empty value (native) and both formats.
+func ValidOutboundAIRouteFormat(format string) bool {
+	return format == "" || format == OutboundAIRouteFormatNative || format == OutboundAIRouteFormatOpenAI
+}
+
+// OutboundAIRouteFormatTargetProvider reports whether an integration of the
+// given provider may serve a route of the given format, and whether that
+// target must name its model.
+func OutboundAIRouteFormatTargetProvider(format, provider string) (allowed, needsModel bool) {
+	if format != OutboundAIRouteFormatOpenAI {
+		return provider != "", false
+	}
+	switch provider {
+	case OutboundAIProviderOpenAI:
+		return true, false
+	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini:
+		return true, true
+	}
+	return false, false
+}
+
+// PutOutboundBindingAIGuardrailsRequest replaces an app's per-minute limits,
+// model allow-list and output ceiling on one integration (ADR-984). Null
+// fields remove that guardrail.
+type PutOutboundBindingAIGuardrailsRequest struct {
+	RequestsPerMinute *int64   `json:"requests_per_minute"`
+	TokensPerMinute   *int64   `json:"tokens_per_minute"`
+	AllowedModels     []string `json:"allowed_models"`
+	MaxOutputTokens   *int64   `json:"max_output_tokens"`
+}
+
+// Valid checks every guardrail's range and the allow-list syntax.
+func (r PutOutboundBindingAIGuardrailsRequest) Valid() bool {
+	if r.RequestsPerMinute != nil && (*r.RequestsPerMinute < 1 || *r.RequestsPerMinute > MaxOutboundAIRequestsPerMinute) {
+		return false
+	}
+	if r.TokensPerMinute != nil && (*r.TokensPerMinute < 1 || *r.TokensPerMinute > MaxOutboundAITokensPerMinute) {
+		return false
+	}
+	if r.MaxOutputTokens != nil && (*r.MaxOutputTokens < 1 || *r.MaxOutputTokens > MaxOutboundAIMaxOutputTokens) {
+		return false
+	}
+	return r.AllowedModels == nil || ValidOutboundAIAllowedModels(r.AllowedModels)
+}
+
+// ValidOutboundAIAllowedModels accepts 1 to OutboundAIAllowedModelsMax
+// distinct exact model names or prefixes ending in a single "*".
+func ValidOutboundAIAllowedModels(models []string) bool {
+	if len(models) < 1 || len(models) > OutboundAIAllowedModelsMax {
+		return false
+	}
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		stem := strings.TrimSuffix(model, "*")
+		if !validAIModelText(model) || stem == "" || strings.Contains(stem, "*") {
+			return false
+		}
+		if _, dup := seen[model]; dup {
+			return false
+		}
+		seen[model] = struct{}{}
+	}
+	return true
+}
+
+// OutboundAIModelAllowed reports whether model matches an allow-list entry.
+// A nil list allows every model; an empty model never matches a list.
+func OutboundAIModelAllowed(patterns []string, model string) bool {
+	if patterns == nil {
+		return true
+	}
+	if model == "" {
+		return false
+	}
+	for _, pattern := range patterns {
+		if stem, prefix := strings.CutSuffix(pattern, "*"); prefix {
+			if strings.HasPrefix(model, stem) {
+				return true
+			}
+		} else if pattern == model {
+			return true
+		}
+	}
+	return false
+}
+
+var outboundCredentialKeyLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+
+// ValidOutboundCredentialKeyLabel accepts DNS-label style key labels.
+func ValidOutboundCredentialKeyLabel(label string) bool {
+	return outboundCredentialKeyLabel.MatchString(label)
+}
+
+// OutboundCredentialKey describes one extra provider key (ADR-984). The
+// sealed value is write-only and never returned.
+type OutboundCredentialKey struct {
+	ID        string    `json:"id"`
+	Label     string    `json:"label"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OutboundCredentialKeyList struct {
+	Items []OutboundCredentialKey `json:"items"`
+}
+
+// CreateOutboundCredentialKeyRequest adds an extra key. Authorization has
+// the same format as the integration's primary credential.
+type CreateOutboundCredentialKeyRequest struct {
+	Label         string `json:"label"`
+	Authorization string `json:"authorization"`
+}
+
+// AI budget names reported by alerts (ADR-984).
+const (
+	OutboundAIBudgetDailyTokens    = "daily_tokens"
+	OutboundAIBudgetAppDailyTokens = "app_daily_tokens"
+	OutboundAIBudgetDailyCost      = "daily_cost"
+	OutboundAIBudgetMonthlyCost    = "monthly_cost"
+)
+
+// OutboundAIBudgetAlert records the first settlement that reached a
+// threshold of one budget in one period. Limit and Used are tokens for
+// token budgets and millicents for cost budgets.
+type OutboundAIBudgetAlert struct {
+	ID               string    `json:"id"`
+	IntegrationID    string    `json:"integration_id"`
+	Budget           string    `json:"budget"`
+	AppID            *string   `json:"app_id"`
+	PeriodStart      string    `json:"period_start"`
+	ThresholdPercent int32     `json:"threshold_percent"`
+	Limit            int64     `json:"limit"`
+	Used             int64     `json:"used"`
+	CrossedAt        time.Time `json:"crossed_at"`
+}
+
+type OutboundAIBudgetAlertList struct {
+	Items []OutboundAIBudgetAlert `json:"items"`
+}
+
+// OutboundAIBudgetThresholdWebhookPayload is the data of an
+// outbound.ai_budget.threshold webhook. AlertID is stable across retries.
+type OutboundAIBudgetThresholdWebhookPayload struct {
+	AlertID          string    `json:"alert_id"`
+	IntegrationID    string    `json:"integration_id"`
+	IntegrationName  string    `json:"integration_name"`
+	Budget           string    `json:"budget"`
+	AppID            *string   `json:"app_id"`
+	PeriodStart      string    `json:"period_start"`
+	ThresholdPercent int32     `json:"threshold_percent"`
+	Limit            int64     `json:"limit"`
+	Used             int64     `json:"used"`
+	CrossedAt        time.Time `json:"crossed_at"`
+}
+
+// OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-984).
+// Caller is an app ID or "runs". No request or response content is kept.
+type OutboundAIRequestLogEntry struct {
+	ID                string    `json:"id"`
+	CreatedAt         time.Time `json:"created_at"`
+	Caller            string    `json:"caller"`
+	RouteID           *string   `json:"route_id"`
+	Model             string    `json:"model"`
+	Status            int       `json:"status"`
+	Outcome           string    `json:"outcome"`
+	InputTokens       int64     `json:"input_tokens"`
+	CachedInputTokens int64     `json:"cached_input_tokens"`
+	CacheWriteTokens  int64     `json:"cache_write_tokens"`
+	OutputTokens      int64     `json:"output_tokens"`
+	CostMillicents    int64     `json:"cost_millicents"`
+	DurationMS        int64     `json:"duration_ms"`
+	TimeToFirstByteMS *int64    `json:"ttfb_ms"`
+	Attempts          int       `json:"attempts"`
+}
+
+// OutboundAIRequestLogList is one newest-first page. NextBefore, when set,
+// is the created_at cursor for the next page.
+type OutboundAIRequestLogList struct {
+	Items      []OutboundAIRequestLogEntry `json:"items"`
+	NextBefore *time.Time                  `json:"next_before"`
 }
