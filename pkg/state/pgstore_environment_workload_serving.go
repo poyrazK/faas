@@ -253,6 +253,9 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 	}
 	slices.SortFunc(routes, func(a, b EnvironmentWorkloadServingRoute) int { return strings.Compare(a.AppID, b.AppID) })
 	q := sqlc.New()
+	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
 	if _, err := q.SetEnvironmentGitOpsServingContext(ctx, tx, lease.LeaseToken); err != nil {
 		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
 	}
@@ -285,9 +288,11 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 			exists = false // replace the route generations below
 		}
 	} else {
+		// Apply may advance intent under the same lease; the receipt must bind
+		// the validated graph, not the lease's earlier source snapshot.
 		if _, err := q.InsertEnvironmentWorkloadServingReceipt(ctx, tx, sqlc.InsertEnvironmentWorkloadServingReceiptParams{
 			GraphID: graphID, SourceID: mustPgUUID(lease.Source.ID), ReleaseSetID: mustPgUUID(release.ID),
-			SourceGeneration: lease.Source.Generation, IntentVersion: lease.Source.IntentVersion,
+			SourceGeneration: graph.Generation, IntentVersion: graph.IntentVersion,
 			RevisionID: mustPgUUID(lease.Revision.ID), PlanHash: reviewed.Hash, ExpectedGateways: receiptGateways,
 		}); err != nil {
 			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
@@ -380,6 +385,9 @@ func (s *PgStore) AcknowledgeEnvironmentGitOpsWorkloadServing(ctx context.Contex
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
 	if _, err := q.SetEnvironmentGitOpsServingContext(ctx, tx, lease.LeaseToken); err != nil {
 		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
 	}
