@@ -58,8 +58,13 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	n.Coordination = c
 	return n, nil
 }
-func checkReadinessNotification(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope, id string, sequence int64, operator bool) (api.OperationWorkflowReadinessNotificationCheck, error) {
-	out := api.OperationWorkflowReadinessNotificationCheck{Status: "unavailable", CheckedAt: time.Now().UTC()}
+func checkReadinessNotification(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope, id string, sequence int64, operator bool) (out api.OperationWorkflowReadinessNotificationCheck, err error) {
+	defer func() {
+		if err == nil {
+			out.Handoff = readinessHandoff(out)
+		}
+	}()
+	out = api.OperationWorkflowReadinessNotificationCheck{Status: "unavailable", CheckedAt: time.Now().UTC()}
 	if err := validateReadinessNotificationIdentity(account, tenant, app, scope, id, sequence, operator); err != nil {
 		return out, err
 	}

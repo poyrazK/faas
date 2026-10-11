@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
+    from ..models.operation_workflow_readiness_handoff import OperationWorkflowReadinessHandoff
     from ..models.operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
 
 
@@ -20,6 +21,9 @@ T = TypeVar("T", bound="OperationWorkflowReadinessNotificationCheck")
 class OperationWorkflowReadinessNotificationCheck:
     """Current advisory evidence check preserving the original notification. Global failures remain unavailable."""
 
+    handoff: OperationWorkflowReadinessHandoff
+    """Advisory handoff context for the same checked workflow observation; scheduling-time evidence is not
+    retained."""
     notification: OperationWorkflowReadinessNotification
     """Durable advisory readiness notification containing a bounded comparison and reporting Operation identities."""
     checked_at: datetime.datetime
@@ -32,6 +36,8 @@ class OperationWorkflowReadinessNotificationCheck:
     explicit."""
 
     def to_dict(self) -> dict[str, Any]:
+        handoff = self.handoff.to_dict()
+
         notification = self.notification.to_dict()
 
         checked_at = self.checked_at.isoformat()
@@ -46,6 +52,7 @@ class OperationWorkflowReadinessNotificationCheck:
 
         field_dict.update(
             {
+                "handoff": handoff,
                 "notification": notification,
                 "checked_at": checked_at,
                 "status": status,
@@ -59,9 +66,12 @@ class OperationWorkflowReadinessNotificationCheck:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
+        from ..models.operation_workflow_readiness_handoff import OperationWorkflowReadinessHandoff
         from ..models.operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
 
         d = dict(src_dict)
+        handoff = OperationWorkflowReadinessHandoff.from_dict(d.pop("handoff"))
+
         notification = OperationWorkflowReadinessNotification.from_dict(d.pop("notification"))
 
         checked_at = datetime.datetime.fromisoformat(d.pop("checked_at"))
@@ -76,6 +86,7 @@ class OperationWorkflowReadinessNotificationCheck:
             change = OperationWorkflowReadinessChange.from_dict(_change)
 
         operation_workflow_readiness_notification_check = cls(
+            handoff=handoff,
             notification=notification,
             checked_at=checked_at,
             status=status,

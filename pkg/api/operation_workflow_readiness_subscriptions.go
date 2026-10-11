@@ -74,7 +74,16 @@ type OperationWorkflowReadinessCoordinationRequest struct {
 	Note       string     `json:"note"`
 	FollowUpAt *time.Time `json:"follow_up_at,omitempty"`
 }
+
+// Handoff summarizes retained application evidence; it never authorizes execution.
+type OperationWorkflowReadinessHandoff struct {
+	Summary             string     `json:"summary"`
+	BaselineEvaluatedAt *time.Time `json:"baseline_evaluated_at,omitempty"`
+	Comparable          bool       `json:"comparable"`
+	Limitations         []string   `json:"limitations"`
+}
 type OperationWorkflowReadinessNotificationCheck struct {
+	Handoff      OperationWorkflowReadinessHandoff      `json:"handoff"`
 	Notification OperationWorkflowReadinessNotification `json:"notification"`
 	CheckedAt    time.Time                              `json:"checked_at"`
 	Status       string                                 `json:"status"`

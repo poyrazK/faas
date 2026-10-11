@@ -272,3 +272,6 @@ type OperationWorkflowReadinessFollowUp = api.OperationWorkflowReadinessFollowUp
 type OperationWorkflowReadinessFollowUpsResponse = api.OperationWorkflowReadinessFollowUpsResponse
 
 type OperationWorkflowReadinessDueReminder = api.OperationWorkflowReadinessDueReminder
+
+// OperationWorkflowReadinessHandoff is an advisory brief for checked notification evidence.
+type OperationWorkflowReadinessHandoff = api.OperationWorkflowReadinessHandoff

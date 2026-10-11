@@ -2237,6 +2237,7 @@ from .operation_workflow_readiness_follow_up import OperationWorkflowReadinessFo
 from .operation_workflow_readiness_follow_up_options import OperationWorkflowReadinessFollowUpOptions
 from .operation_workflow_readiness_follow_up_options_due import OperationWorkflowReadinessFollowUpOptionsDue
 from .operation_workflow_readiness_follow_ups_response import OperationWorkflowReadinessFollowUpsResponse
+from .operation_workflow_readiness_handoff import OperationWorkflowReadinessHandoff
 from .operation_workflow_readiness_inbox_response import OperationWorkflowReadinessInboxResponse
 from .operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
 from .operation_workflow_readiness_notification_check import OperationWorkflowReadinessNotificationCheck
@@ -5797,6 +5798,7 @@ __all__ = (
     "OperationWorkflowReadinessFollowUpOptions",
     "OperationWorkflowReadinessFollowUpOptionsDue",
     "OperationWorkflowReadinessFollowUpsResponse",
+    "OperationWorkflowReadinessHandoff",
     "OperationWorkflowReadinessInboxResponse",
     "OperationWorkflowReadinessNotification",
     "OperationWorkflowReadinessNotificationCheck",

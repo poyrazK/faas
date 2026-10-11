@@ -3,11 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
+import type { OperationWorkflowReadinessHandoff } from './OperationWorkflowReadinessHandoff.js';
 import type { OperationWorkflowReadinessNotification } from './OperationWorkflowReadinessNotification.js';
 /**
  * Current advisory evidence check preserving the original notification. Global failures remain unavailable.
  */
 export type OperationWorkflowReadinessNotificationCheck = {
+  handoff: OperationWorkflowReadinessHandoff;
   notification: OperationWorkflowReadinessNotification;
   /**
    * OperationWorkflowReadinessNotificationCheck.checked_at. Current check time.

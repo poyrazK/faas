@@ -75103,11 +75103,38 @@ components:
       - note
       - updated_at
       - updated_by
+    OperationWorkflowReadinessHandoff:
+      type: object
+      description: Advisory handoff context for the same checked workflow observation; scheduling-time evidence is not retained.
+      additionalProperties: false
+      properties:
+        summary:
+          type: string
+          description: OperationWorkflowReadinessHandoff.summary. Explanation of the current observation or unavailable evidence.
+        baseline_evaluated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessHandoff.baseline_evaluated_at. Original notification comparison observation time.
+        comparable:
+          type: boolean
+          description: OperationWorkflowReadinessHandoff.comparable. Whether current requirements can be shown without crossing a comparison boundary.
+        limitations:
+          type: array
+          description: OperationWorkflowReadinessHandoff.limitations. Explicit retained-evidence and advisory authority limitations.
+          items:
+            type: string
+      required:
+      - summary
+      - comparable
+      - limitations
+
     OperationWorkflowReadinessNotificationCheck:
       type: object
       description: Current advisory evidence check preserving the original notification. Global failures remain unavailable.
       additionalProperties: false
       properties:
+        handoff:
+          $ref: '#/components/schemas/OperationWorkflowReadinessHandoff'
         notification:
           $ref: '#/components/schemas/OperationWorkflowReadinessNotification'
         checked_at:
@@ -75121,6 +75148,7 @@ components:
         change:
           $ref: '#/components/schemas/OperationWorkflowReadinessChange'
       required:
+      - handoff
       - notification
       - checked_at
       - status

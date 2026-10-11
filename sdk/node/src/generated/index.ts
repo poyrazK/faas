@@ -1166,6 +1166,7 @@ export type { OperationWorkflowReadinessEvidenceChange } from './models/Operatio
 export type { OperationWorkflowReadinessFollowUp } from './models/OperationWorkflowReadinessFollowUp.js';
 export type { OperationWorkflowReadinessFollowUpOptions } from './models/OperationWorkflowReadinessFollowUpOptions.js';
 export type { OperationWorkflowReadinessFollowUpsResponse } from './models/OperationWorkflowReadinessFollowUpsResponse.js';
+export type { OperationWorkflowReadinessHandoff } from './models/OperationWorkflowReadinessHandoff.js';
 export type { OperationWorkflowReadinessInboxResponse } from './models/OperationWorkflowReadinessInboxResponse.js';
 export type { OperationWorkflowReadinessNotification } from './models/OperationWorkflowReadinessNotification.js';
 export type { OperationWorkflowReadinessNotificationCheck } from './models/OperationWorkflowReadinessNotificationCheck.js';

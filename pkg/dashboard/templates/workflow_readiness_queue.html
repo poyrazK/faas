@@ -239,6 +239,34 @@
   if (!id) return;
   const a = document.createElement('a'); a.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); a.textContent = label; parent.append(a,document.createElement('br'));
  };
+ window.renderReadinessHandoff = (parent, check, scope = panel.dataset.scope) => {
+  const operationLink = (parent, id, label) => {if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
+  parent.replaceChildren();
+  const h=check.handoff;
+  text(parent,'Workflow handoff · '+check.status+' · checked '+new Date(check.checked_at).toLocaleString());
+  if(!h){text(parent,'Handoff evidence is unavailable.');return;}
+  text(parent,h.summary);
+  const coordination=check.notification.coordination;
+  if(coordination){text(parent,'Follow-up owner: '+(coordination.owner || 'unassigned'));if(coordination.note)text(parent,'Coordination note: '+coordination.note);if(coordination.follow_up_at)text(parent,'Follow-up deadline: '+new Date(coordination.follow_up_at).toLocaleString());}
+  if(h.baseline_evaluated_at)text(parent,'Changes since saved notification observation: '+new Date(h.baseline_evaluated_at).toLocaleString());
+  const change=check.change;
+  if(change){operationLink(parent,change.baseline.operation_id,'Saved reporting Operation');operationLink(parent,change.current_operation_id,'Current reporting Operation');if(change.current_state)text(parent,'Reported current state: '+change.current_state);}
+  const current=h.comparable && change?.current;
+  if(current){
+   text(parent,current.workflow+' / '+current.instance_id+' · revision '+current.state_revision+' · contract '+current.contract_version);
+   text(parent,current.transition.operation+': '+current.transition.from+' → '+current.transition.to);
+   for(const blocker of current.blockers || [])text(parent,'Blocker '+blocker.code+': '+blocker.description+' · reported owner: '+(blocker.owner || 'unassigned')+(blocker.next_action ? ' · reported next action: '+blocker.next_action : ''));
+   for(const reason of current.reasons || [])text(parent,'Requirement: '+reason);
+   for(const name of current.missing_milestones || [])text(parent,'Missing milestone: '+name);
+   for(const name of current.missing_dependency_workflows || [])text(parent,'Missing dependency workflow: '+name);
+   text(parent,'Reporting: '+(current.reporting_status || 'unknown')+' · missing reports '+current.missing_report_count+' · overdue reports '+current.overdue_report_count);
+   text(parent,'Pending verification: '+current.pending_verification_count);
+   for(const proof of current.pending_verifications || []){text(parent,'Verification: '+proof.status);operationLink(parent,proof.resolution.verification_operation_id || proof.resolution_operation_id,'Verification evidence Operation');}
+   for(const advisory of current.advisories || [])text(parent,'Advisory: '+advisory);
+   for(const delta of change.evidence_changes || []){const fact=delta.after || delta.before;text(parent,'Evidence '+fact.category+' · '+fact.name+': '+delta.kind+' · '+fact.status);operationLink(parent,delta.before?.operation_id,'Previous evidence Operation');operationLink(parent,delta.after?.operation_id,'Current evidence Operation');operationLink(parent,delta.after?.invalidation_operation_id,'Invalidation Operation');}
+  }
+  for(const limitation of h.limitations || [])text(parent,limitation);
+ };
  const request = async (url, options = {}) => {
   const response = await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});
   if (!response.ok) { let problem; try { problem = await response.json(); } catch {} throw new Error(problem?.detail || problem?.title || 'Readiness subscription request failed (' + response.status + ').'); }
@@ -297,8 +325,9 @@
    savedDueInput=submittedDueInput;describeReminder(updated.reminder);Object.assign(c,updated.coordination);if(!updated.coordination.acknowledged_by){delete c.acknowledged_by;delete c.acknowledged_at;}if(!updated.coordination.follow_up_at)delete c.follow_up_at;updateCoordinationStatus();li.dataset.owner=updated.coordination.owner;li.dataset.pending=String(!!updated.coordination.follow_up_at);applyFollowupFilters();result.textContent='Saved '+updated.coordination.status+' by '+updated.coordination.updated_by+'.';
   }catch(error){result.textContent=error.message+' Refresh the inbox before retrying a conflicting edit.';}finally{save.disabled=false;}});
   li.append(form);
-  const check=document.createElement('button');check.type='button';check.textContent='Check latest evidence';li.append(check);
-  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detailURL);if(select.value===subscriptionID && li.isConnected){result.textContent='Current evidence: '+current.status+' at '+current.checked_at+'. '+(current.change?.explanation || 'No workflow comparison is available.');}}catch(error){result.textContent=error.message;}finally{check.disabled=false;}});
+  const handoff=document.createElement('div');li.append(handoff);
+  const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
+  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detailURL);if(select.value===subscriptionID && li.isConnected){window.renderReadinessHandoff(handoff,current);}}catch(error){result.textContent=error.message;}finally{check.disabled=false;}});
   inbox.append(li);applyFollowupFilters();
   while (inbox.children.length > 100) { ids.delete(inbox.firstElementChild.dataset.id); inbox.firstElementChild.remove(); }
  };
@@ -391,8 +420,9 @@
    }catch(error){status.textContent=error.message+' Reload the queue before retrying a conflicting edit.';}finally{save.disabled=false;clear.disabled=false;}
   };
   edit.addEventListener('submit',event=>{event.preventDefault();void mutate(due.value===savedDueInput && c.follow_up_at ? c.follow_up_at : new Date(due.value).toISOString());});clear.addEventListener('click',()=>{void mutate(undefined);});
-  const check=document.createElement('button');check.type='button';check.textContent='Check current evidence';li.append(check);
-  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detail);if(li.isConnected)status.textContent='Current evidence: '+current.status+' at '+new Date(current.checked_at).toLocaleString()+'. '+(current.change?.explanation || 'No workflow comparison is available.');}catch(error){status.textContent=error.message;}finally{check.disabled=false;}});
+  const handoff=document.createElement('div');li.append(handoff);
+  const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
+  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detail);if(li.isConnected)window.renderReadinessHandoff(handoff,current,row.scope);}catch(error){status.textContent=error.message;}finally{check.disabled=false;}});
   list.append(li);
  };
  const read=async()=>{

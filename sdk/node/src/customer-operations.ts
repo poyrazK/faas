@@ -713,7 +713,8 @@ function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscript
 
 export interface OperationWorkflowReadinessCoordinationRequest { revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
 export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
-export interface OperationWorkflowReadinessNotificationCheck { notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
+export interface OperationWorkflowReadinessNotificationCheck { handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
 export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
 export interface OperationWorkflowReadinessFollowUp { reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
