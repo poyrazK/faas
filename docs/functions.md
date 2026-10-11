@@ -14,3 +14,74 @@ and let source detection select the app profile.
 
 Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
+
+## Several functions in one project
+
+List the functions in `gregale.yaml`. Each one has its own directory with its
+own handler, and `gregale deploy` deploys each as its own function app, named
+`<project>-<name>`:
+
+```yaml
+functions:
+  - name: thumbs
+    root: functions/thumbs        # handler.js, handler.py, or a Go main
+    runtime: node24               # optional; inferred from the handler file
+    idle_timeout_s: 60            # optional
+    bucket_events:
+      - bucket: uploads           # bucket name or ID
+        events: ["s3:ObjectCreated:*"]
+        prefix: images/
+  - name: payments
+    root: functions/payments
+    webhooks:
+      - name: stripe
+        provider: stripe          # stripe or generic
+        signing_secret_env: STRIPE_WEBHOOK_SECRET
+        delivery_path: /
+  - name: digest
+    root: functions/digest
+triggers:
+  - kind: cron
+    app: digest                   # a function name
+    schedule: "0 8 * * *"
+    path: /
+```
+
+```bash
+cd shop
+gregale deploy            # deploys shop-thumbs, shop-payments, shop-digest
+gregale deploy --dry-run  # previews each function without changing anything
+```
+
+The project part of each name is the name a plain deploy would use: `--name`,
+or the directory's name. Functions deploy in the order listed. If one fails,
+the rest are not attempted and the summary says which functions are live; run
+the deploy again once it is fixed. Inside a monorepo workspace, a function's
+build includes the workspace, so functions can share packages.
+
+After each function deploys, Gregale applies its manifest settings:
+
+- **`idle_timeout_s`**: how long the function stays warm after a request.
+- **Cron triggers**: the function's crons match `triggers:` exactly. Removing
+  one from the file removes it.
+- **`bucket_events`**: notifications from that bucket go to the function.
+  Gregale changes only the notification rules it created for this function
+  and leaves every other rule on the bucket alone. Configuring notifications
+  needs the same permissions as `gregale bucket notifications set`. Use
+  `app:` to manage the bucket through the app that holds its write grant.
+- **`webhooks`**: an inbound webhook endpoint delivering to the function. The
+  first deploy creates it from the signing secret in the named environment
+  variable and prints the endpoint URL once; register that URL with the
+  provider. Later deploys update the delivery path. Endpoints that are no
+  longer listed are reported but never deleted, because deleting one would
+  break the URL the provider calls.
+
+Pass `--no-triggers` to deploy code without changing crons, bucket events or
+webhooks. A function removed from the list keeps its app; the deploy names
+it, and `gregale apps --yes <slug>` deletes it.
+
+A manifest with `functions:` holds only `functions`, cron `triggers` and
+`schema_version`. Other sections apply to a single app, so configure them per
+function after deploying. Repository deploys connected through GitHub refuse
+a `functions:` manifest; point each app at one function's root instead. The
+design is recorded in [ADR-976](adr/976-multi-function-projects.md).

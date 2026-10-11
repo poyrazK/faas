@@ -1926,6 +1926,14 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	if err := m.Validate(); err != nil {
 		return txn, err
 	}
+	return reconcileManifestCronsWithRollback(ctx, client, slug, m)
+}
+
+// reconcileManifestCronsWithRollback is deployManifestTriggersWithRollback
+// for an already loaded and validated manifest. The functions fan-out
+// (ADR-976) passes each function's crons through it.
+func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCronClient, slug string, m *gregalemanifest.Manifest) (*manifestCronTransaction, error) {
+	txn := &manifestCronTransaction{}
 	manage := m.Triggers != nil && len(m.Triggers) == 0
 	var matching []gregalemanifest.Trigger
 	for _, t := range m.Triggers {
@@ -3140,6 +3148,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 		return printErr("Invalid --name", &api.APIError{Problem: *problem})
+	}
+	// ADR-976: a manifest listing several functions fans out into one
+	// single-function deploy per entry, before any app or upload exists.
+	if !existingApp && developerSync == nil && !projectRequested && !deployFunction && !deployApp &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" {
+		fnManifest, isFunctionSet, fnErr := functionSetManifest(sourceDir)
+		if fnErr != nil {
+			return printErr("Invalid deploy manifest", fnErr)
+		}
+		if isFunctionSet {
+			return deployFunctionSet(ctx, functionSetDeploy{
+				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
+				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
+				noTriggers: *noTriggers,
+			})
+		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
 	// existing single-app slug rules for --name and --path, while making

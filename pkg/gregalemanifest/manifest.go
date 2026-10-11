@@ -1415,9 +1415,12 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
-	Release       *ReleaseConfig        `yaml:"release,omitempty"`
-	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
-	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
+	// Functions declares several functions deployed from one manifest, each
+	// as its own app (ADR-976). Mutually exclusive with Function.
+	Functions []FunctionSpec   `yaml:"functions,omitempty"`
+	Release   *ReleaseConfig   `yaml:"release,omitempty"`
+	Lifecycle *LifecycleConfig `yaml:"lifecycle,omitempty"`
+	Scaling   *ScalingConfig   `yaml:"scaling,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. It is
 	// inherited by invocations unless a binding or invocation overrides it.
 	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
@@ -2028,6 +2031,9 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if err := m.validateFunctions(plan); err != nil {
+		return err
 	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
