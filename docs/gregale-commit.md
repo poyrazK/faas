@@ -941,7 +941,7 @@ Results retain the event/subscriber identities and per-item statuses:
 An unknown result stops further writes and requires inspection before retrying.
 There are no automatic retries. Execution replay keys remain `commit-recovery-` plus SHA-256 of
 `kind + "\n" + url`. Routing keys additionally include the event source/ID,
-subscriber, acceptance timestamp and reviewed observation time so sibling
+subscriber, acceptance timestamp and routing generation so sibling
 consumers, events, and newly reviewed replay generations do not collide. Server idempotency retention is finite; keys do
 not authorize unattended retries or guarantee deduplication after expiry.
 Inspect original and recovery evidence before deciding what to do next.
@@ -999,3 +999,22 @@ model also preserves the exact text instead of truncating nanoseconds through
 `datetime`; Go uses `*time.Time`. Python regeneration reapplies this precision
 rule. Full database and production failure qualification remains pending; static
 checks and builds do not establish transactional runtime qualification.
+
+### Atomic routing generation guard
+
+Original routing recovery offers include `expected_generation` when the
+recipient has a routing generation. Replay checks it alongside
+`expected_accepted_at` and failed state in the transaction. A changed generation
+returns HTTP 409 with code `event_replay_generation_changed` without mutation.
+
+Commit recovery apply skips stale reviewed generations as `generation_changed`,
+including a race caught by the server after the fresh read. Missing generation
+evidence yields `generation_guard_unavailable`; refresh and review a new plan.
+Routing idempotency keys include the generation instead of observation time.
+Legacy and backfill receipts without recipient generation evidence cannot be
+automatically applied through this path. Acceptance-only and unguarded manual
+API requests retain their behavior.
+
+Manual replay supports `--expected-generation N --expected-accepted-at RFC3339`.
+The generation must be nonnegative and the acceptance guard is required.
+See [ADR-937](adr/937-routing-replay-generation-guard.md).

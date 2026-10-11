@@ -61,6 +61,9 @@ export async function applyCommitRecovery(source: string, reviewed: CommitRecove
             if (current) {
               const fresh = current.items[0];
               if (!fresh) result.reason = current.report.items[0]?.evidence_status ?? 'evidence_unavailable';
+              else if (item.action?.kind === 'routing_replay' && !Number.isSafeInteger(item.action.body?.expected_generation)) result.reason = 'generation_guard_unavailable';
+              else if (item.action?.kind === 'routing_replay' && current.report.items[0]?.subscribers[0]?.recipient?.routing?.generation === undefined) result.reason = 'generation_guard_unavailable';
+              else if (item.action?.kind === 'routing_replay' && item.action.body?.expected_generation !== current.report.items[0]?.subscribers[0]?.recipient?.routing?.generation) result.reason = 'generation_changed';
               else if (fresh.status !== 'eligible') result.reason = fresh.reason;
               else if (canonical(item.action) !== canonical(fresh.action)) result.reason = 'action_changed';
               else if (fresh.action?.kind === 'routing_replay' && !fresh.action.body?.expected_accepted_at) result.reason = 'acceptance_guard_unavailable';
@@ -69,7 +72,7 @@ export async function applyCommitRecovery(source: string, reviewed: CommitRecove
                 let identity = fresh.action.kind + '\n' + fresh.action.url;
                 const routing = fresh.action.kind === 'routing_replay';
                 const publication = original.acceptance.publication!;
-                if (routing) identity += '\n' + publication.source + '\n' + publication.id + '\n' + item.subscription_id.toLowerCase() + '\n' + fresh.action.body!.expected_accepted_at + '\n' + (original.observed_at ?? '');
+                if (routing) identity += '\n' + publication.source + '\n' + publication.id + '\n' + item.subscription_id.toLowerCase() + '\n' + fresh.action.body!.expected_accepted_at + '\n' + fresh.action.body!.expected_generation;
                 const idempotencyKey = 'commit-recovery-' + createHash('sha256').update(identity).digest('hex');
                 const post = request<unknown>(OpenAPI, { method: 'POST', url: fresh.action.url, body: routing ? fresh.action.body : undefined, mediaType: routing ? 'application/json' : undefined, headers: { 'Idempotency-Key': idempotencyKey } });
                 const cancel = () => post.cancel(); controller.signal.addEventListener('abort', cancel, { once: true });
@@ -83,7 +86,8 @@ export async function applyCommitRecovery(source: string, reviewed: CommitRecove
                   result.result = response; result.status = 'queued'; delete result.reason;
                 } catch (error) {
                   const status = (error as { status?: number }).status;
-                  if (status && status >= 400 && status < 500 && status !== 408) { result.status = 'rejected'; result.reason = `http_${status}`; }
+                  if (status === 409 && (error as { body?: { code?: string } }).body?.code === 'event_replay_generation_changed') { result.status = 'skipped'; result.reason = 'generation_changed'; }
+                  else if (status && status >= 400 && status < 500 && status !== 408) { result.status = 'rejected'; result.reason = `http_${status}`; }
                   else { result.status = 'unknown'; result.reason = 'inspect_before_retry'; stopped = true; cause = error; }
                 } finally { controller.signal.removeEventListener('abort', cancel); }
               }

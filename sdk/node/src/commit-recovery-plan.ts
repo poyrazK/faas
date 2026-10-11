@@ -47,6 +47,7 @@ function eligibility(row: CommitDeliveryReportSubscriber): Pick<CommitRecoveryPl
       const b = action.body;
       if (!slug || action.url !== `/v1/apps/${r.app_slug}/event-deliveries:replay-fanout-failure` || !b || b.allow_expired
         || b.event_source !== row.publication.source || b.event_id !== row.publication.id || (typeof b.subscription_id === 'string' ? b.subscription_id.toLowerCase() : '') !== row.subscription_id.toLowerCase()) return skip('action_identity_mismatch');
+      if (b.expected_generation !== undefined && (!Number.isSafeInteger(b.expected_generation) || b.expected_generation < 0 || !b.expected_accepted_at || b.expected_generation !== r.routing?.generation)) return skip('action_identity_mismatch');
       if (b.expected_accepted_at && !sameAcceptance(b.expected_accepted_at, row.publication.accepted_at)) return skip('action_identity_mismatch');
       break;
     }

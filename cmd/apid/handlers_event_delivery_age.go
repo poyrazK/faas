@@ -8,6 +8,20 @@ import (
 )
 
 func (s *server) applyEventAgeReplay(r *http.Request, store state.EventFanoutReplayStore, account, app string, req api.ReplayEventFanoutFailureRequest) error {
+	if req.ExpectedGeneration != nil {
+		if req.ExpectedAcceptedAt == nil || *req.ExpectedGeneration < 0 {
+			return state.ErrInvalidArgument
+		}
+		guarded, ok := store.(state.EventFanoutGenerationGuardedReplayStore)
+		if !ok {
+			return state.ErrInvalidArgument
+		}
+		err := guarded.ReplayFailedPublishedEventRecipientWithReplayGuards(r.Context(), account, app, req.EventSource, req.EventID, req.SubscriptionID, req.AllowExpired, *req.ExpectedAcceptedAt, *req.ExpectedGeneration)
+		if err == nil && req.AllowExpired {
+			s.audit.Emit(r.Context(), "event.subscription.delivery_age.overridden", &account, map[string]any{"app_id": app, "event_source": req.EventSource, "event_id": req.EventID, "subscription_id": req.SubscriptionID})
+		}
+		return err
+	}
 	if req.ExpectedAcceptedAt != nil {
 		guarded, ok := store.(state.EventFanoutGuardedReplayStore)
 		if !ok {

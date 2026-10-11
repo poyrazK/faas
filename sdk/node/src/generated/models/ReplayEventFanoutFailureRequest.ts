@@ -7,6 +7,10 @@
  */
 export type ReplayEventFanoutFailureRequest = {
   /**
+   * Optional routing generation. Requires expected_accepted_at; checked with failed state under the recipient row lock. A changed generation returns 409 event_replay_generation_changed without mutation.
+   */
+  expected_generation?: number;
+  /**
    * Optional exact original acceptance instant. Checked under the receipt row lock in the replay transaction; replacement returns 409 without mutation. Guarded replay targets the original acceptance snapshot, not backfills.
    */
   expected_accepted_at?: string;

@@ -156,6 +156,10 @@ func eventReceiptActions(receipt state.EventReceipt, entry state.EventReceiptRec
 		if entry.Origin == "" || entry.Origin == "acceptance" {
 			accepted := receipt.AcceptedAt
 			actions[len(actions)-1].Body.ExpectedAcceptedAt = &accepted
+			if entry.Routing.Generation != nil {
+				generation := *entry.Routing.Generation
+				actions[len(actions)-1].Body.ExpectedGeneration = &generation
+			}
 		}
 	}
 	if entry.HandlerReplayMode != "" {

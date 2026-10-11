@@ -75,6 +75,14 @@ def _eligibility(row: dict[str, Any]) -> dict[str, Any]:
             or str(body.get("subscription_id", "")).lower() != row["subscription_id"].lower()
         ):
             return skip("action_identity_mismatch")
+        generation = body.get("expected_generation")
+        if generation is not None and (
+            type(generation) is not int
+            or generation < 0
+            or not body.get("expected_accepted_at")
+            or generation != r.get("routing", {}).get("generation")
+        ):
+            return skip("action_identity_mismatch")
         if body.get("expected_accepted_at") and not _same_acceptance(body["expected_accepted_at"], p["accepted_at"]):
             return skip("action_identity_mismatch")
     elif kind in {"handler_replay", "keyed_handler_replay"}:

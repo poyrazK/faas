@@ -18,6 +18,9 @@ class ReplayEventFanoutFailureRequest:
     event_id: str
     event_source: str
     subscription_id: UUID
+    expected_generation: int | Unset = UNSET
+    """Optional routing generation. Requires expected_accepted_at; checked with failed state under the recipient
+    row lock. A changed generation returns 409 event_replay_generation_changed without mutation."""
     expected_accepted_at: str | Unset = UNSET
     """Optional exact original acceptance instant. Checked under the receipt row lock in the replay transaction;
     replacement returns 409 without mutation. Guarded replay targets the original acceptance snapshot, not
@@ -32,6 +35,8 @@ class ReplayEventFanoutFailureRequest:
         event_source = self.event_source
 
         subscription_id = str(self.subscription_id)
+
+        expected_generation = self.expected_generation
 
         expected_accepted_at: str | Unset = UNSET
         if not isinstance(self.expected_accepted_at, Unset):
@@ -48,6 +53,8 @@ class ReplayEventFanoutFailureRequest:
                 "subscription_id": subscription_id,
             }
         )
+        if expected_generation is not UNSET:
+            field_dict["expected_generation"] = expected_generation
         if expected_accepted_at is not UNSET:
             field_dict["expected_accepted_at"] = expected_accepted_at
         if allow_expired is not UNSET:
@@ -64,6 +71,8 @@ class ReplayEventFanoutFailureRequest:
 
         subscription_id = UUID(d.pop("subscription_id"))
 
+        expected_generation = d.pop("expected_generation", UNSET)
+
         _expected_accepted_at = d.pop("expected_accepted_at", UNSET)
         expected_accepted_at: str | Unset
         if isinstance(_expected_accepted_at, Unset):
@@ -77,6 +86,7 @@ class ReplayEventFanoutFailureRequest:
             event_id=event_id,
             event_source=event_source,
             subscription_id=subscription_id,
+            expected_generation=expected_generation,
             expected_accepted_at=expected_accepted_at,
             allow_expired=allow_expired,
         )

@@ -123,6 +123,7 @@ func selectEventRecoveryAction(source, id string, recipient api.EventReceiptReci
 		want := api.ReplayEventFanoutFailureRequest{EventSource: source, EventID: id, SubscriptionID: recipient.SubscriptionID}
 		if action.Body != nil {
 			want.ExpectedAcceptedAt = action.Body.ExpectedAcceptedAt
+			want.ExpectedGeneration = action.Body.ExpectedGeneration
 		}
 		if !api.ValidAppSlug(recipient.AppSlug) || action.URL != "/v1/apps/"+url.PathEscape(recipient.AppSlug)+"/event-deliveries:replay-fanout-failure" || action.Body == nil || *action.Body != want {
 			return action, "", fmt.Errorf("routing action does not match the selected recipient")

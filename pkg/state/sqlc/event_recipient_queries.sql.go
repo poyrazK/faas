@@ -881,6 +881,31 @@ func (q *Queries) EventRecipientReplayCandidates(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const eventRecipientReplayGenerationGuard = `-- name: EventRecipientReplayGenerationGuard :one
+SELECT generation, state FROM event_fanout_recipients
+WHERE outbox_id = $1::bigint AND app_id = $2::uuid
+  AND subscription_id = $3::text
+FOR UPDATE
+`
+
+type EventRecipientReplayGenerationGuardParams struct {
+	OutboxID       int64
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+type EventRecipientReplayGenerationGuardRow struct {
+	Generation int64
+	State      string
+}
+
+func (q *Queries) EventRecipientReplayGenerationGuard(ctx context.Context, db DBTX, arg EventRecipientReplayGenerationGuardParams) (EventRecipientReplayGenerationGuardRow, error) {
+	row := db.QueryRow(ctx, eventRecipientReplayGenerationGuard, arg.OutboxID, arg.AppID, arg.SubscriptionID)
+	var i EventRecipientReplayGenerationGuardRow
+	err := row.Scan(&i.Generation, &i.State)
+	return i, err
+}
+
 const eventRecipientReplayHasMore = `-- name: EventRecipientReplayHasMore :one
 SELECT EXISTS (
     SELECT 1 FROM event_fanout_outbox o

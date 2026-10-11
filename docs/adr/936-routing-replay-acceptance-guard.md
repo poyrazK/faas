@@ -40,3 +40,5 @@ consumer independent. Historical plans without a guard must be refreshed and
 reviewed because the new guarded offer changes their action body. Atomic
 PostgreSQL behavior and production failure scenarios still require qualification;
 local builds and static checks do not establish that qualification.
+
+ADR-937 adds a recipient generation guard and replaces observation time in routing idempotency keys.

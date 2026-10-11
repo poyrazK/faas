@@ -100,6 +100,26 @@ async def aapply_commit_recovery(
                                     if current["report"]["items"]
                                     else "evidence_unavailable"
                                 )
+                            elif (
+                                item.get("action", {}).get("kind") == "routing_replay"
+                                and type(item.get("action", {}).get("body", {}).get("expected_generation")) is not int
+                            ):
+                                result["reason"] = "generation_guard_unavailable"
+                            elif (
+                                item.get("action", {}).get("kind") == "routing_replay"
+                                and current["report"]["items"][0]["subscribers"][0]
+                                .get("recipient", {})
+                                .get("routing", {})
+                                .get("generation")
+                                is None
+                            ):
+                                result["reason"] = "generation_guard_unavailable"
+                            elif (
+                                item.get("action", {}).get("kind") == "routing_replay"
+                                and item["action"]["body"]["expected_generation"]
+                                != current["report"]["items"][0]["subscribers"][0]["recipient"]["routing"]["generation"]
+                            ):
+                                result["reason"] = "generation_changed"
                             elif fresh["status"] != "eligible":
                                 result["reason"] = fresh.get("reason", "no_recovery_action")
                             elif item.get("action") != fresh.get("action"):
@@ -124,7 +144,7 @@ async def aapply_commit_recovery(
                                             + "\n"
                                             + fresh["action"]["body"]["expected_accepted_at"]
                                             + "\n"
-                                            + original.get("observed_at", "")
+                                            + str(fresh["action"]["body"]["expected_generation"])
                                         )
                                     key = "commit-recovery-" + hashlib.sha256(identity.encode()).hexdigest()
                                     response = await client.get_async_httpx_client().post(
@@ -156,6 +176,16 @@ async def aapply_commit_recovery(
                                         result.pop("reason", None)
                                     elif 400 <= status < 500 and status != 408:
                                         result.update(status="rejected", reason=f"http_{status}")
+                                        if status == 409:
+                                            try:
+                                                problem = response.json()
+                                            except ValueError:
+                                                problem = None
+                                            if (
+                                                isinstance(problem, dict)
+                                                and problem.get("code") == "event_replay_generation_changed"
+                                            ):
+                                                result.update(status="skipped", reason="generation_changed")
                                     else:
                                         raise RuntimeError(f"ambiguous recovery response: HTTP {status}")
                                 except (Exception, asyncio.CancelledError) as error:

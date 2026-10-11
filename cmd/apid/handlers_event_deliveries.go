@@ -366,6 +366,10 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	if req.ExpectedGeneration != nil && (*req.ExpectedGeneration < 0 || req.ExpectedAcceptedAt == nil) {
+		api.WriteProblem(w, api.ErrValidation("expected_generation must be nonnegative and requires expected_accepted_at"))
+		return
+	}
 	store, ok := s.store.(state.EventFanoutReplayStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
@@ -373,6 +377,9 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 	}
 	err := s.applyEventAgeReplay(r, store, acct.ID, app.ID, req)
 	switch {
+	case errors.Is(err, state.ErrEventReplayGenerationChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_replay_generation_changed", "Replay generation changed", "the recipient generation changed; no recipient was requeued"))
+		return
 	case errors.Is(err, state.ErrEventReplayAcceptanceChanged):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event acceptance changed", "the guarded event acceptance was replaced; no recipient was requeued"))
 		return

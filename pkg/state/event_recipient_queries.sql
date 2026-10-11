@@ -375,3 +375,9 @@ FROM event_fanout_outbox o
 WHERE o.account_id = sqlc.arg(account_id)::uuid AND o.source = sqlc.arg(event_source)::text
   AND o.event_id = sqlc.arg(event_id)::text
 FOR UPDATE OF o;
+
+-- name: EventRecipientReplayGenerationGuard :one
+SELECT generation, state FROM event_fanout_recipients
+WHERE outbox_id = sqlc.arg(outbox_id)::bigint AND app_id = sqlc.arg(app_id)::uuid
+  AND subscription_id = sqlc.arg(subscription_id)::text
+FOR UPDATE;

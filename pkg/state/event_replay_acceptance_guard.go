@@ -3,10 +3,18 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
-	"time"
 )
+
+var ErrEventReplayGenerationChanged = errors.New("event replay generation changed")
+
+// EventFanoutGenerationGuardedReplayStore atomically checks acceptance, routing generation and failed state.
+type EventFanoutGenerationGuardedReplayStore interface {
+	ReplayFailedPublishedEventRecipientWithReplayGuards(context.Context, string, string, string, string, string, bool, time.Time, int64) error
+}
 
 var ErrEventReplayAcceptanceChanged = errors.New("event replay acceptance changed")
 
@@ -17,7 +25,15 @@ type EventFanoutGuardedReplayStore interface {
 }
 
 func (s *PgStore) ReplayFailedPublishedEventRecipientWithAcceptanceGuard(ctx context.Context, account, app, source, event, subscription string, allowExpired bool, expected time.Time) error {
-	if expected.IsZero() {
+	return s.replayRecipientWithGuards(ctx, account, app, source, event, subscription, allowExpired, expected, nil)
+}
+
+func (s *PgStore) ReplayFailedPublishedEventRecipientWithReplayGuards(ctx context.Context, account, app, source, event, subscription string, allowExpired bool, expected time.Time, generation int64) error {
+	return s.replayRecipientWithGuards(ctx, account, app, source, event, subscription, allowExpired, expected, &generation)
+}
+
+func (s *PgStore) replayRecipientWithGuards(ctx context.Context, account, app, source, event, subscription string, allowExpired bool, expected time.Time, generation *int64) error {
+	if expected.IsZero() || (generation != nil && *generation < 0) {
 		return ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -40,6 +56,24 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientWithAcceptanceGuard(ctx con
 	if !row.RecipientFound {
 		return ErrNotFound
 	}
+	if generation != nil {
+		if !row.RecipientClaims {
+			return ErrInvalidArgument
+		}
+		recipient, lockErr := q.EventRecipientReplayGenerationGuard(ctx, tx, sqlc.EventRecipientReplayGenerationGuardParams{OutboxID: row.ID, AppID: mustPgUUID(app), SubscriptionID: subscription})
+		if errors.Is(lockErr, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if lockErr != nil {
+			return lockErr
+		}
+		if recipient.Generation != *generation {
+			return ErrEventReplayGenerationChanged
+		}
+		if recipient.State != "failed" {
+			return ErrConflict
+		}
+	}
 	if !row.RecipientClaims && row.State != "delivered" {
 		return ErrConflict
 	}
@@ -53,5 +87,11 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientWithAcceptanceGuard(ctx co
 	if expected.IsZero() {
 		return ErrInvalidArgument
 	}
-	return m.replayFailedPublishedEventRecipient(ctx, account, app, source, event, subscription, allowExpired, &expected)
+	return m.replayFailedPublishedEventRecipient(ctx, account, app, source, event, subscription, allowExpired, &expected, nil)
+}
+func (m *MemStore) ReplayFailedPublishedEventRecipientWithReplayGuards(ctx context.Context, account, app, source, event, subscription string, allowExpired bool, expected time.Time, generation int64) error {
+	if expected.IsZero() || generation < 0 {
+		return ErrInvalidArgument
+	}
+	return m.replayFailedPublishedEventRecipient(ctx, account, app, source, event, subscription, allowExpired, &expected, &generation)
 }

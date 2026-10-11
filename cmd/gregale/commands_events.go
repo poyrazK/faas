@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -192,6 +193,7 @@ func cmdEventsReplayFanoutFailure(args []string) int {
 	flags, positional := splitArgsForFlags(args, "allow-expired")
 	fs := newFlagSet("events replay", flag.ContinueOnError)
 	expected := fs.String("expected-accepted-at", "", "pin the original receipt acceptance timestamp")
+	generationFlag := fs.String("expected-generation", "", "pin the routing replay generation; requires expected-accepted-at")
 	allowExpired := fs.Bool("allow-expired", false, "explicitly bypass delivery age for this replay generation")
 	eventID := fs.String("event-id", "", "published event id from events deliveries")
 	eventSource := fs.String("event-source", "", "published event source from events deliveries")
@@ -212,7 +214,16 @@ func cmdEventsReplayFanoutFailure(args []string) int {
 	if err != nil {
 		return printErr("Invalid acceptance guard", err)
 	}
+	var generation *int64
+	if *generationFlag != "" {
+		value, parseErr := strconv.ParseInt(*generationFlag, 10, 64)
+		if parseErr != nil || value < 0 || guard.ExpectedAcceptedAt == nil {
+			return printErr("Invalid generation guard", fmt.Errorf("expected-generation must be nonnegative and requires expected-accepted-at"))
+		}
+		generation = &value
+	}
 	resp, err := client.ReplayEventFanoutFailure(context.Background(), positional[0], api.ReplayEventFanoutFailureRequest{
+		ExpectedGeneration: generation,
 		ExpectedAcceptedAt: guard.ExpectedAcceptedAt, AllowExpired: *allowExpired, EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
 		SubscriptionID: strings.TrimSpace(*subscriptionID),
 	})

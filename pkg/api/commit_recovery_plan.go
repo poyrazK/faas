@@ -62,6 +62,9 @@ func commitRecoveryEligibility(row CommitDeliveryReportSubscriber) (string, stri
 		return skip("not_targeted")
 	}
 	var r struct {
+		Routing struct {
+			Generation *int64 `json:"generation"`
+		} `json:"routing"`
 		WorkflowName         string          `json:"workflow_name"`
 		AppSlug              string          `json:"app_slug"`
 		ExecutionUnavailable string          `json:"execution_unavailable"`
@@ -120,9 +123,13 @@ func commitRecoveryEligibility(row CommitDeliveryReportSubscriber) (string, stri
 			EventID            string     `json:"event_id"`
 			SubscriptionID     string     `json:"subscription_id"`
 			AllowExpired       bool       `json:"allow_expired"`
+			ExpectedGeneration *int64     `json:"expected_generation"`
 			ExpectedAcceptedAt *time.Time `json:"expected_accepted_at"`
 		}
 		if !commitRecoverySlug.MatchString(r.AppSlug) || strings.HasPrefix(r.AppSlug, "tag-") || action.URL != "/v1/apps/"+r.AppSlug+"/event-deliveries:replay-fanout-failure" || !hasBody || json.Unmarshal(action.Body, &body) != nil || body.AllowExpired || body.EventSource != row.Publication.Source || body.EventID != row.Publication.ID || !strings.EqualFold(body.SubscriptionID, row.SubscriptionID) {
+			return skip("action_identity_mismatch")
+		}
+		if body.ExpectedGeneration != nil && (body.ExpectedAcceptedAt == nil || *body.ExpectedGeneration < 0 || r.Routing.Generation == nil || *body.ExpectedGeneration != *r.Routing.Generation) {
 			return skip("action_identity_mismatch")
 		}
 		if body.ExpectedAcceptedAt != nil && !body.ExpectedAcceptedAt.Equal(row.Publication.AcceptedAt) {

@@ -778,3 +778,9 @@ Use `PlanCommitRecovery(ctx, savedReport, pages)` to build a read-only recovery 
 Use `ApplyCommitRecovery(ctx, reviewedPlan, limit, pages)` for sequential, freshly revalidated execution recovery. Unknown writes stop the batch and require inspection. Routing apply now submits the matching acceptance guard from a fresh server offer; older unguarded offers remain skipped. See the Commit documentation for limits and partial results.
 
 Selective routing replay accepts `expected_accepted_at`; a replaced acceptance returns 409 without requeuing the consumer. Refresh and review older plans before using guarded routing apply.
+
+Routing recovery offers include an `expected_generation` guard when available.
+Commit recovery apply skips changed generations as `generation_changed`, and
+missing guards as `generation_guard_unavailable`. Direct selective replay can
+supply the nonnegative generation together with `expected_accepted_at`; the
+server checks both and failed state atomically before requeue.

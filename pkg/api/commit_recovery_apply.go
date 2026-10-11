@@ -97,7 +97,10 @@ func (c *Client) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecover
 						}
 					} else {
 						fresh := current.Items[0]
-						if fresh.Status != "eligible" {
+						generationReason := commitRoutingGenerationReason(item.Action, current.Report)
+						if generationReason != "" {
+							result.Reason = generationReason
+						} else if fresh.Status != "eligible" {
 							result.Reason = fresh.Reason
 						} else if !sameCommitRecoveryAction(item.Action, fresh.Action) {
 							result.Reason = "action_changed"
@@ -110,9 +113,7 @@ func (c *Client) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecover
 							if fresh.Action.Kind == "routing_replay" {
 								body = fresh.Action.Body
 								keyIdentity += "\n" + original.Acceptance.Publication.Source + "\n" + original.Acceptance.Publication.ID + "\n" + strings.ToLower(item.SubscriptionID) + "\n" + original.Acceptance.Publication.AcceptedAt.UTC().Format(time.RFC3339Nano)
-								if original.ObservedAt != nil {
-									keyIdentity += "\n" + original.ObservedAt.UTC().Format(time.RFC3339Nano)
-								}
+								keyIdentity += fmt.Sprintf("\n%d", *commitRoutingGeneration(fresh.Action))
 							}
 							key := fmt.Sprintf("commit-recovery-%x", sha256.Sum256([]byte(keyIdentity)))
 							var response json.RawMessage
@@ -141,7 +142,10 @@ func (c *Client) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecover
 								result.Result = response
 							} else {
 								var apiErr *APIError
-								if errors.As(writeErr, &apiErr) && apiErr.Problem.Status >= 400 && apiErr.Problem.Status < 500 && apiErr.Problem.Status != 408 {
+								if errors.As(writeErr, &apiErr) && apiErr.Problem.Status == 409 && apiErr.Problem.Code == "event_replay_generation_changed" {
+									result.Status = "skipped"
+									result.Reason = "generation_changed"
+								} else if errors.As(writeErr, &apiErr) && apiErr.Problem.Status >= 400 && apiErr.Problem.Status < 500 && apiErr.Problem.Status != 408 {
 									result.Status = "rejected"
 									result.Reason = fmt.Sprintf("http_%d", apiErr.Problem.Status)
 								} else {
@@ -186,4 +190,41 @@ func commitRoutingGuardPresent(action *CommitRecoveryPlanAction) bool {
 		ExpectedAcceptedAt *time.Time `json:"expected_accepted_at"`
 	}
 	return json.Unmarshal(action.Body, &body) == nil && body.ExpectedAcceptedAt != nil && !body.ExpectedAcceptedAt.IsZero()
+}
+
+func commitRoutingGeneration(action *CommitRecoveryPlanAction) *int64 {
+	if action == nil || action.Kind != "routing_replay" {
+		return nil
+	}
+	var body struct {
+		Generation *int64 `json:"expected_generation"`
+	}
+	if json.Unmarshal(action.Body, &body) != nil || body.Generation == nil || *body.Generation < 0 {
+		return nil
+	}
+	return body.Generation
+}
+func commitRoutingGenerationReason(action *CommitRecoveryPlanAction, report CommitDeliveryReport) string {
+	if action == nil || action.Kind != "routing_replay" {
+		return ""
+	}
+	expected := commitRoutingGeneration(action)
+	if expected == nil {
+		return "generation_guard_unavailable"
+	}
+	if len(report.Items) == 0 || len(report.Items[0].Subscribers) == 0 {
+		return "generation_guard_unavailable"
+	}
+	var recipient struct {
+		Routing struct {
+			Generation *int64 `json:"generation"`
+		} `json:"routing"`
+	}
+	if json.Unmarshal(report.Items[0].Subscribers[0].Recipient, &recipient) != nil || recipient.Routing.Generation == nil {
+		return "generation_guard_unavailable"
+	}
+	if *expected != *recipient.Routing.Generation {
+		return "generation_changed"
+	}
+	return ""
 }
