@@ -792,3 +792,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-971: Policy-driven storage canary verification](971-policy-driven-storage-canary-verification.md)
 
 - [ADR-972: Node compute secret reload coordinator](972-node-compute-secret-reload-coordinator.md)
+- [ADR-979: Go and Python compute secret reload coordinators](979-go-python-compute-secret-reload-coordinators.md)

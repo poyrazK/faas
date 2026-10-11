@@ -916,3 +916,8 @@ Current `sla` data includes optional `warning_percent` and, when retained entry 
 
 Managed compute storage client loading and rotation are described in the
 [object storage compute guide](../../docs/object-storage-compute.md).
+Use `faas_sdk.secret_reload_runtime.SecretReloadCoordinator` with
+`storage.secret_consumer()` for startup, SIGHUP and manual adoption of atomic
+credential snapshots. Start and finish on the main thread to manage SIGHUP
+ownership, register every secret consumer, and reacquire `storage.current()` for
+each new storage request. Shutdown disables acquisition and fences late clients.

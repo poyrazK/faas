@@ -3,11 +3,18 @@
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from threading import RLock
-from typing import Generic, TypeVar
+from threading import Lock, RLock
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 from urllib.parse import urlsplit
 
 T = TypeVar("T")
+
+if TYPE_CHECKING:
+    from .secret_reload_runtime import SecretConsumer
+
+
+class _Cancellation(Protocol):
+    def is_set(self) -> bool: ...
 
 
 class ObjectStorageBindingError(Exception):
@@ -62,19 +69,52 @@ class ObjectStorageBinding(Generic[T]):
         self._prefix = prefix
         self._factory = factory
         self._lock = RLock()
+        self._reloads = Lock()
+        self._epoch = 0
         self._active: tuple[T, str] | None = None
 
-    def reload(self, values: Mapping[str, str]) -> None:
+    def reload(self, values: Mapping[str, str], cancel: _Cancellation | None = None) -> None:
+        # Preserve the caller's factory thread while keeping state acquisition
+        # and invalidation independent of construction/readiness latency.
+        snapshot = dict(values)
         with self._lock:
-            self._active = None
-            config = _configuration(self._prefix, values)
+            epoch = self._epoch
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise ObjectStorageBindingError("Object-storage reload cancelled")
+            if self._reloads.acquire(timeout=0.05):
+                break
+        try:
+            with self._lock:
+                if epoch != self._epoch:
+                    raise ObjectStorageBindingError("Object-storage reload cancelled")
+                self._active = None
+            config = _configuration(self._prefix, snapshot)
+            if cancel is not None and cancel.is_set():
+                raise ObjectStorageBindingError("Object-storage reload cancelled")
             try:
                 client = self._factory(config)
             except Exception:
                 raise ObjectStorageBindingError("Object-storage client could not be configured") from None
             if client is None:
                 raise ObjectStorageBindingError("Object-storage client is unavailable")
-            self._active = client, config.bucket
+            with self._lock:
+                if epoch != self._epoch or cancel is not None and cancel.is_set():
+                    raise ObjectStorageBindingError("Object-storage reload cancelled")
+                self._active = client, config.bucket
+        finally:
+            self._reloads.release()
+
+    def invalidate(self) -> None:
+        """Disable acquisition and fence late/queued clients without retiring them."""
+        with self._lock:
+            self._epoch += 1
+            self._active = None
+
+    def secret_consumer(self) -> "SecretConsumer":
+        from .secret_reload_runtime import SecretConsumer
+
+        return SecretConsumer(lambda snapshot, cancel: self.reload(snapshot.secrets, cancel), self.invalidate)
 
     def current(self) -> tuple[T, str]:
         with self._lock:

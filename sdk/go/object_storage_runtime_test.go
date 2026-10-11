@@ -8,10 +8,37 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func runtimeStorageValues() map[string]string {
 	return map[string]string{"ASSETS_ENDPOINT": "https://s3.gregale.test", "ASSETS_REGION": "auto", "ASSETS_BUCKET": "assets", "ASSETS_ACCESS_KEY_ID": "private-access", "ASSETS_SECRET_ACCESS_KEY": "private-secret", "ASSETS_ADDRESSING_STYLE": "path"}
+}
+
+func TestObjectStorageRuntimeSlowFactoryDoesNotBlockCurrent(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	b, err := NewObjectStorageBinding("ASSETS", func(context.Context, ObjectStorageClientConfig) (string, error) {
+		close(entered)
+		<-release
+		return "candidate", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded := make(chan error, 1)
+	go func() { reloaded <- b.Reload(context.Background(), runtimeStorageValues()) }()
+	<-entered
+	defer func() { close(release); <-reloaded }()
+	acquired := make(chan error, 1)
+	go func() { _, _, err := b.Current(); acquired <- err }()
+	select {
+	case err := <-acquired:
+		if err == nil {
+			t.Fatal("client available before candidate was ready")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Current blocked behind the client factory")
+	}
 }
 
 func TestObjectStorageRuntimeRotationRevocationAndSafeErrors(t *testing.T) {

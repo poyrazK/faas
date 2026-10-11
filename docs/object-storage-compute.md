@@ -72,11 +72,10 @@ so ordinary reads do not implicitly request optional provider checksum APIs.
 Go factories should honor `RequiredChecksumsOnly` as illustrated above. Explicit
 checksum requests still depend on the selected provider's capabilities.
 
-For in-process rotation, enable Gregale's secret reload protocol and install the
-signal handler before publishing reload readiness. Read the single
-`FAAS_SECRETS_SNAPSHOT_FILE` `{revision,secrets}` envelope. Pass its `secrets`
-map to `reload`/`Reload`, apply the other secret consumers, then ACK that exact
-revision using the process generation. The existing
+For in-process rotation, enable Gregale's secret reload protocol and use a
+language-specific coordinator below. Each reads the single
+`FAAS_SECRETS_SNAPSHOT_FILE` `{revision,secrets}` envelope, applies all registered
+consumers and ACKs its revision using the captured process generation. The existing
 [`secret-reload-node` helper](../cmd/gregale/templates/secret-reload-node/secret-reload.js)
 provides snapshot reading, startup waiting, serialization and fenced ACKs:
 call `await storage.reload(snapshot.secrets, signal)` from its application
@@ -143,7 +142,98 @@ abort signal. Shutdown removes this coordinator's listener, aborts pending work
 and disables new acquisition without waiting for arbitrary application code or
 destroying acquired clients. It does not install termination handlers, close the
 HTTP server or exit the process; the application owns graceful shutdown.
-Go and Python currently retain the manual snapshot/ACK integration shown above.
+
+### Go reload coordinator
+
+Use the Go SDK's `NewSecretReloadCoordinator` with the same manifest settings
+and the binding configured above. The context passed to `Start` owns the
+workload lifetime:
+
+```go
+ctx, shutdown := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer shutdown()
+reload, err := faas.NewSecretReloadCoordinator(faas.SecretReloadOptions{
+    Consumers: []faas.SecretConsumer{storage.SecretConsumer()},
+    OnError: func(err error) { log.Print(err) }, // Sanitized signal-reload error.
+})
+if err != nil { return err }
+defer reload.Stop()
+if _, err := reload.Start(ctx); err != nil { return err }
+// Start serving requests here. Reacquire storage.Current() for each request.
+```
+
+Imports for this lifecycle snippet are `context`, `log`, `os`, `os/signal` and
+`syscall`, in addition to the SDK and your chosen S3 library. Register other
+secret users with `faas.SecretConsumer{Apply: ..., Invalidate: ...}`. `Apply`
+receives a context and immutable `SecretSnapshot`; `Secrets()` returns a
+defensive copy. Invalidation must be synchronous, idempotent and quick, and
+fence late candidates. Factories run outside the binding's state lock; a slow
+factory cannot block `Current()` or `Invalidate()`.
+
+Startup and signal/manual refreshes use one serialized worker, with the same
+atomic-envelope, readiness, stale-ACK and retry contract as Node. An admitted
+manual `Reload(ctx)` cancellation is terminal: it disables all consumers and
+stops the coordinator so a late callback cannot qualify partial adoption.
+Cancellation before admission does not cancel another active refresh. `Stop()`
+removes only this coordinator's SIGHUP subscription, cancels waiting and disables
+consumers without joining arbitrary factories. A factory that ignores context
+may finish later; its candidate is fenced and subsequent factories cannot overlap
+it. Supply appropriate factory/readiness timeouts. SIGHUP requires a Unix runtime.
+
+### Python reload coordinator
+
+Use `faas_sdk.secret_reload_runtime` with the binding configured above:
+
+```python
+import signal
+import threading
+from faas_sdk.secret_reload_runtime import SecretReloadCoordinator
+
+shutdown = threading.Event()
+reload = SecretReloadCoordinator([storage.secret_consumer()], cancel=shutdown)
+
+def terminate(*_args):
+    shutdown.set()
+    reload.stop()
+
+signal.signal(signal.SIGTERM, terminate)
+signal.signal(signal.SIGINT, terminate)
+try:
+    reload.start()  # Main thread, before serving requests.
+    # Serve the app; reacquire storage.current() for each new request.
+    shutdown.wait()
+finally:
+    reload.stop()  # Main thread restores the prior SIGHUP handler.
+```
+
+Python's signal API requires startup on the main thread. The coordinator refuses
+an existing callable SIGHUP handler rather than replacing framework reload
+behavior; explicitly arrange signal ownership before opting in. `stop()`
+restores the prior handler only if this coordinator still owns it. A background
+stop or external cancellation immediately disables clients; call `stop()` again
+on the main thread to restore the handler. Failed startup and shutdown are
+terminal. The application owns termination handlers, server shutdown and exit.
+
+Register custom `SecretConsumer(apply, invalidate)` callbacks for every other
+secret user. `apply(snapshot, cancel)` runs synchronously on one daemon worker;
+the snapshot's secrets mapping is immutable and `cancel.check()` must succeed
+before publishing resources. Async callbacks cannot qualify adoption. Signal
+bursts coalesce with one pending follow-up and `reload.reload()` joins the same
+serialized worker. Startup waits at most thirty seconds for an initial version;
+callbacks and factories must bound their own work. The storage factory retains
+the thread calling `storage.reload()` and runs outside the binding state lock.
+Stopping does not join arbitrary callbacks or destroy previously acquired clients.
+
+The coordinator captures the four guest reload settings once. Missing/malformed
+snapshots cannot be ACKed; a consumer failure disables all consumers and sends
+only a `failed` ACK for a known valid revision. Native metadata HTTP bypasses
+proxy settings and control-plane client wrappers, does not follow redirects or
+parse bodies, and bounds each ACK request to five seconds. Transport failures
+and 503 responses retry an identical body at most ten times; stale responses
+reread the authoritative snapshot with at most five application attempts.
+Unconfirmed ACKs disable clients; a later signal/manual reload can recover from
+an ordinary refresh failure. ACKs attest only to registered callbacks and do not
+prove provider readiness or atomic publication of every application client.
 
 Acquire `current()`/`Current()` for each new request. In-flight requests may
 finish using a previously acquired client; the application owns retired-client

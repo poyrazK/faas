@@ -1024,3 +1024,8 @@ Current `sla` data includes optional `warning_percent` and, when retained entry 
 
 Managed compute storage client loading and rotation are described in the
 [object storage compute guide](../../docs/object-storage-compute.md).
+Use `NewSecretReloadCoordinator` with `storage.SecretConsumer()` to adopt atomic
+credential snapshots on startup, SIGHUP and manual refresh. Start with the
+workload's lifetime context before serving requests; call `Current()` for each
+new storage request. All registered consumers must succeed before a revision is
+ACKed. Shutdown disables new acquisition and fences late factories.
