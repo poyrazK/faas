@@ -96,6 +96,7 @@ func (q *Quotas) StartRegistryCleanup(ctx context.Context, id durableentity.ID, 
 		if c.SourceRevision != revision {
 			return nil, durableentity.ErrRequestConflict
 		}
+		_ = q.syncRegistryCleanupHint(ctx, key, c)
 		copy := *c
 		return &copy, nil
 	}
@@ -122,6 +123,7 @@ func (q *Quotas) StartRegistryCleanup(ctx context.Context, id durableentity.ID, 
 	if err = q.commitRegistryCleanup(ctx, key, r, v); err != nil {
 		return nil, err
 	}
+	_ = q.syncRegistryCleanupHint(ctx, key, r.RegistryCleanup)
 	copy := *r.RegistryCleanup
 	return &copy, nil
 }
@@ -201,6 +203,7 @@ func (q *Quotas) StepRegistryCleanup(ctx context.Context, id durableentity.ID, o
 	}
 	original := *c
 	if c.Phase == "complete" {
+		_ = q.syncRegistryCleanupHint(ctx, key, c)
 		copy := *c
 		return &copy, nil
 	}
@@ -268,6 +271,9 @@ func (q *Quotas) StepRegistryCleanup(ctx context.Context, id durableentity.ID, o
 	c.Revision++
 	if err = q.commitRegistryCleanupCheckpoint(ctx, key, r, v, original); err != nil {
 		return nil, err
+	}
+	if c.Phase == "complete" {
+		_ = q.syncRegistryCleanupHint(ctx, key, c)
 	}
 	copy := *c
 	return &copy, nil

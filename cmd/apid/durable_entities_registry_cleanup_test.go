@@ -109,7 +109,7 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 			}
 			dispatchedDuringCollection = true
 		}
-		page, err := q.SweepRegistryCleanups(t.Context(), "", func(durableentity.ID) bool { return true })
+		page, err := q.SweepIndexedRegistryCleanups(t.Context(), "", func(durableentity.ID) bool { return true })
 		if err != nil || page.Attempted != 1 || page.Failed != 0 {
 			t.Fatal(page, err)
 		}

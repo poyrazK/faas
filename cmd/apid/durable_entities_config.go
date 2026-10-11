@@ -154,6 +154,9 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 		if err := tenantQuotas.CheckRegistryCleanupWorker(ctx); err != nil {
 			return errors.New("registry cleanup worker requires verified quota discovery and private sidecar CAS permissions")
 		}
+		if err := tenantQuotas.CheckRegistryCleanupIndex(ctx); err != nil {
+			return errors.New("registry cleanup worker requires verified private index permissions")
+		}
 	}
 	// The request budget is shorter than this lease. We deliberately avoid a
 	// renewal writer racing every transition in the first synchronous slice.

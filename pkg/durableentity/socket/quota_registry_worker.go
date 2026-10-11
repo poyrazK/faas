@@ -125,7 +125,7 @@ func (q *Quotas) RegistryCleanupWorkerStatus(ctx context.Context, id durableenti
 	return &copy, nil
 }
 
-// Sweep discovers at most four quota roots, then attempts at most one cleanup
+// Sweep reconciles hints from at most four quota roots, then attempts one cleanup
 // page per eligible scope. It never creates an operation. Discovery cursors are
 // disposable; root/checkpoint and worker claims survive process restart.
 func (q *Quotas) SweepRegistryCleanups(ctx context.Context, cursor string, allow func(durableentity.ID) bool) (RegistryCleanupWorkerPage, error) {
@@ -162,14 +162,18 @@ func (q *Quotas) SweepRegistryCleanups(ctx context.Context, cursor string, allow
 		}
 		callCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 		r, _, err := q.read(callCtx, key)
-		if err == nil && registryCleanupActive(r) && !q.now().Before(r.RegistryCleanup.NotBefore) {
-			id := durableentity.ID{AccountID: r.Scope.Account, AppID: r.Scope.App, EnvironmentID: r.Scope.Environment, TenantID: r.Scope.Tenant, Namespace: "registry-cleanup", Key: "registry-cleanup"}
+		if err == nil && registryCleanupActive(r) {
+			id := registryCleanupScopeID(r)
 			if allow != nil && allow(id) {
-				var attempted bool
-				attempted, err = q.runRegistryCleanupAttempt(callCtx, key, id, r)
-				if attempted {
-					out.Attempted++
+				hintErr := q.syncRegistryCleanupHint(callCtx, key, r.RegistryCleanup)
+				if !q.now().Before(r.RegistryCleanup.NotBefore) {
+					var attempted bool
+					attempted, err = q.runRegistryCleanupAttempt(callCtx, key, id, r)
+					if attempted {
+						out.Attempted++
+					}
 				}
+				err = errors.Join(err, hintErr)
 			}
 		}
 		stop()
