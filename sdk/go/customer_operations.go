@@ -303,3 +303,6 @@ type OperationWorkflowCoordinationTimelineOptions = api.OperationWorkflowCoordin
 type OperationWorkflowCoordinationTimelineEvent = api.OperationWorkflowCoordinationTimelineEvent
 type OperationWorkflowCoordinationTimelineSource = api.OperationWorkflowCoordinationTimelineSource
 type OperationWorkflowCoordinationTimeline = api.OperationWorkflowCoordinationTimeline
+
+type OperationWorkflowCase = api.OperationWorkflowCase
+type OperationWorkflowCaseAction = api.OperationWorkflowCaseAction

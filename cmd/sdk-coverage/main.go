@@ -377,6 +377,8 @@ var methodRouteMap = map[string]string{
 	// Business workflow observation routes use domain-oriented SDK method names.
 	"GET /v1/apps/{slug}/workflow-readiness/timeline":            "GetAccountWorkflowCoordinationTimeline",
 	"GET /v1/platform-tenant-self/workflow-readiness/timeline":   "GetPlatformTenantSelfWorkflowCoordinationTimeline",
+	"GET /v1/apps/{slug}/workflow-readiness/case":                "GetAccountWorkflowCase",
+	"GET /v1/platform-tenant-self/workflow-readiness/case":       "GetPlatformTenantSelfWorkflowCase",
 	"GET /v1/apps/{slug}/workflow-readiness/follow-ups":          "ListAccountWorkflowReadinessFollowUps",
 	"GET /v1/platform-tenant-self/workflow-readiness/follow-ups": "ListPlatformTenantSelfWorkflowReadinessFollowUps",
 

@@ -37978,6 +37978,267 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /v1/apps/{slug}/workflow-readiness/case:
+    get:
+      operationId: GetAccountWorkflowCase
+      summary: Read account workflow case overview
+      description: GetAccountWorkflowCase. Combine retained current application state, blockers, dependencies, verification
+        and readiness with exact matching open follow-ups, advisory next steps and a retained coordination timeline.
+        Evidence and coordination are independently read. Missing or stale reports cannot establish readiness or business
+        success. The application retains outcome interpretation, authorization and execution. Account reads require
+        an explicit customer selector, read scope and MFA; customer identity derives from authentication.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: GetAccountWorkflowCase.slug. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: GetAccountWorkflowCase.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: true
+        description: GetAccountWorkflowCase.tenant_id. Required exact customer UUID; broad business-reference projections
+          are not accepted.
+        schema:
+          type: string
+          format: uuid
+      - name: subject_type
+        in: query
+        required: true
+        description: GetAccountWorkflowCase.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: GetAccountWorkflowCase.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: GetAccountWorkflowCase.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: GetAccountWorkflowCase.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: offset
+        in: query
+        required: false
+        description: GetAccountWorkflowCase.offset. Live event offset for the nested timeline only; follow-ups return
+          their own bounded overview.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 56000
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        description: GetAccountWorkflowCase.limit. Nested timeline page size; defaults to 20 with maximum 100.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: GetAccountWorkflowCase. Current evidence and retained coordination for one exact business workflow
+            case.
+          content:
+            application/json:
+              example:
+                status: unknown
+                summary: No retained application report is available.
+                follow_ups: []
+                follow_up_count: 0
+                overdue_follow_up_count: 0
+                follow_ups_truncated: false
+                actions: []
+                actions_truncated: false
+                timeline:
+                  items: []
+                  sources: []
+                  subject:
+                    type: order
+                    id: order-1
+                  workflow: checkout
+                  instance_id: order-1
+                  scope: prod
+                  evaluated_at: '2026-10-11T08:00:00Z'
+                  total_count: 0
+                  next_offset: 0
+                  has_more: false
+                  retention_limited: true
+                  sources_truncated: false
+                  history_truncated: false
+                  limitations:
+                  - Only retained inbox history is available.
+                evidence_checked_at: '2026-10-11T08:00:00Z'
+                coordination_checked_at: '2026-10-11T08:00:00Z'
+                evaluated_at: '2026-10-11T08:00:00Z'
+                limitations:
+                - Independent live reads; application owns business execution.
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowCase'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/workflow-readiness/case:
+    get:
+      operationId: GetPlatformTenantSelfWorkflowCase
+      summary: Read customer workflow case overview
+      description: GetPlatformTenantSelfWorkflowCase. Combine retained current application state, blockers, dependencies,
+        verification and readiness with exact matching open follow-ups, advisory next steps and a retained coordination
+        timeline. Evidence and coordination are independently read. Missing or stale reports cannot establish readiness
+        or business success. The application retains outcome interpretation, authorization and execution. Account
+        reads require an explicit customer selector, read scope and MFA; customer identity derives from authentication.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: app_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCase.app_id. Application UUID; customer identity comes from authentication.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCase.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: subject_type
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCase.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCase.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCase.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowCase.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: offset
+        in: query
+        required: false
+        description: GetPlatformTenantSelfWorkflowCase.offset. Live event offset for the nested timeline only; follow-ups
+          return their own bounded overview.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 56000
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        description: GetPlatformTenantSelfWorkflowCase.limit. Nested timeline page size; defaults to 20 with maximum
+          100.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: GetPlatformTenantSelfWorkflowCase. Current evidence and retained coordination for one exact
+            business workflow case.
+          content:
+            application/json:
+              example:
+                status: unknown
+                summary: No retained application report is available.
+                follow_ups: []
+                follow_up_count: 0
+                overdue_follow_up_count: 0
+                follow_ups_truncated: false
+                actions: []
+                actions_truncated: false
+                timeline:
+                  items: []
+                  sources: []
+                  subject:
+                    type: order
+                    id: order-1
+                  workflow: checkout
+                  instance_id: order-1
+                  scope: prod
+                  evaluated_at: '2026-10-11T08:00:00Z'
+                  total_count: 0
+                  next_offset: 0
+                  has_more: false
+                  retention_limited: true
+                  sources_truncated: false
+                  history_truncated: false
+                  limitations:
+                  - Only retained inbox history is available.
+                evidence_checked_at: '2026-10-11T08:00:00Z'
+                coordination_checked_at: '2026-10-11T08:00:00Z'
+                evaluated_at: '2026-10-11T08:00:00Z'
+                limitations:
+                - Independent live reads; application owns business execution.
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowCase'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
 
   securitySchemes:
@@ -76637,6 +76898,123 @@ components:
             comes from authentication.
           minimum: 1
           maximum: 100
+
+    OperationWorkflowCaseAction:
+      type: object
+      description: OperationWorkflowCaseAction. Current evidence and advisory coordination for an exact scoped business
+        workflow.
+      required:
+      - kind
+      - summary
+      properties:
+        kind:
+          type: string
+          description: OperationWorkflowCaseAction.kind. Advisory suggestion category; never an execution command.
+        summary:
+          type: string
+          description: OperationWorkflowCaseAction.summary. Evidence-based human next step.
+        owner:
+          type: string
+          description: OperationWorkflowCaseAction.owner. Application blocker owner, verification owner or separate
+            human coordination owner depending on kind.
+        operation_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCaseAction.operation_id. Retained reporting operation evidence link.
+        subscription_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCaseAction.subscription_id. Source readiness inbox for a follow-up suggestion.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowCaseAction.sequence. Retained source notification sequence.
+    OperationWorkflowCase:
+      type: object
+      description: OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
+      required:
+      - status
+      - summary
+      - follow_ups
+      - follow_up_count
+      - overdue_follow_up_count
+      - follow_ups_truncated
+      - actions
+      - actions_truncated
+      - timeline
+      - evidence_checked_at
+      - coordination_checked_at
+      - evaluated_at
+      - limitations
+      properties:
+        status:
+          type: string
+          description: OperationWorkflowCase.status. Unknown, stale, terminal_reported, no_transition, blocked or ready.
+            Terminal state alone is not success.
+        summary:
+          type: string
+          description: OperationWorkflowCase.summary. Current evidence interpretation with application authority boundaries.
+        instance:
+          type: object
+          $ref: '#/components/schemas/OperationWorkflowInstanceSnapshot'
+          description: OperationWorkflowCase.instance. Current retained exact-customer workflow projection; omitted
+            when no contract projection exists.
+        follow_ups:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessFollowUp'
+          description: OperationWorkflowCase.follow_ups. Matching open scheduled follow-ups, ordered by due clock; independent
+            of application readiness.
+        follow_up_count:
+          type: integer
+          minimum: 0
+          description: OperationWorkflowCase.follow_up_count. Total matching retained open scheduled follow-ups before
+            overview truncation.
+        overdue_follow_up_count:
+          type: integer
+          minimum: 0
+          description: OperationWorkflowCase.overdue_follow_up_count. Matching retained follow-ups due by coordination
+            check time.
+        follow_ups_truncated:
+          type: boolean
+          description: OperationWorkflowCase.follow_ups_truncated. Only the first 100 matching follow-ups are included.
+        actions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowCaseAction'
+          description: OperationWorkflowCase.actions. At most 100 evidence-based suggestions, with stale/missing evidence
+            requiring a refresh.
+        actions_truncated:
+          type: boolean
+          description: OperationWorkflowCase.actions_truncated. Additional suggestions exceeded the bounded overview.
+        timeline:
+          type: object
+          $ref: '#/components/schemas/OperationWorkflowCoordinationTimeline'
+          description: OperationWorkflowCase.timeline. Exact scope and identity with the independently read retained
+            coordination event page.
+        evidence_checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowCase.evidence_checked_at. Server observation clock after the application projection
+            read.
+        coordination_checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowCase.coordination_checked_at. Server clock used to classify follow-up overdue
+            status.
+        evaluated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowCase.evaluated_at. Server completion clock for the independent live reads.
+        limitations:
+          type: array
+          items:
+            type: string
+          description: OperationWorkflowCase.limitations. Explicit read consistency, retention and application authority
+            boundaries.
 
   responses:
     OperationConflict:

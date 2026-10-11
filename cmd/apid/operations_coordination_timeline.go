@@ -80,3 +80,37 @@ func workflowCoordinationTimelineOptions(r *http.Request, app string, operator b
 	}
 	return out, nil
 }
+
+func (s *server) accountWorkflowCase(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	s.workflowCase(w, r, acct, "", app.ID, true)
+}
+func (s *server) customerWorkflowCase(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	tenant, ok := platformTenantSelfID(w, r)
+	if !ok {
+		return
+	}
+	s.workflowCase(w, r, acct, tenant, "", false)
+}
+func (s *server) workflowCase(w http.ResponseWriter, r *http.Request, acct state.Account, tenant, app string, operator bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	store, ok := s.store.(state.OperationWorkflowCaseStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow case overview unavailable"))
+		return
+	}
+	opts, err := workflowCoordinationTimelineOptions(r, app, operator)
+	if err != nil {
+		writeOperationError(w, err)
+		return
+	}
+	out, err := store.WorkflowCase(r.Context(), acct.ID, tenant, opts, operator)
+	if err != nil {
+		writeOperationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

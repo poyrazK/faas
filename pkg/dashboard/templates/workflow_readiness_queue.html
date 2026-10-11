@@ -68,7 +68,7 @@
 <noscript><p>Enable JavaScript to save and compare views. The API and SDKs also accept saved queue snapshots.</p></noscript>
 </section>
 
-<section class="card" id="workflow-timeline" data-url="{{.Data.TimelineURL}}" data-list-url="{{.Data.ListURL}}" data-queue-url="{{.Data.QueueURL}}">
+<section class="card" id="workflow-timeline" data-case-url="{{.Data.CaseURL}}" data-url="{{.Data.TimelineURL}}" data-list-url="{{.Data.ListURL}}" data-queue-url="{{.Data.QueueURL}}">
 <h2>Workflow coordination timeline</h2>
 <p>Read retained coordination events for one exact business workflow instance. Times use your browser's local timezone. Latest snapshots do not reconstruct every earlier edit; gaps and deleted inboxes limit this history.</p>
 <form id="workflow-timeline-form">
@@ -80,8 +80,11 @@
 <label>Instance <input name="instance_id" required maxlength="256"></label>
 <label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
 <button type="submit">Load timeline</button>
+<button type="button" id="workflow-case-load">Load case overview</button>
+<p>The case overview combines current business evidence, retained open follow-ups and advisory next steps. Choose an exact customer to read application-owned workflow reports.</p>
 </form>
 <p id="workflow-timeline-message" role="status" aria-live="polite"></p>
+<div id="workflow-case-overview" aria-live="polite"></div>
 <ul id="workflow-timeline-sources"></ul>
 <ul id="workflow-timeline-limitations"></ul>
 <ol id="workflow-timeline-items" aria-live="polite"></ol>
@@ -591,7 +594,8 @@
  const form=document.getElementById('workflow-timeline-form'), message=document.getElementById('workflow-timeline-message');
  const items=document.getElementById('workflow-timeline-items'), sources=document.getElementById('workflow-timeline-sources');
  const limitations=document.getElementById('workflow-timeline-limitations'), more=document.getElementById('workflow-timeline-more');
- let generation=0, active=null, next=0, pending=false, seen=new Set();
+ let generation=0, active=null, next=0, pending=false, activeCase=false, seen=new Set();
+ const caseView=document.getElementById('workflow-case-overview'), caseButton=document.getElementById('workflow-case-load');
  const node=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n;};
  const clock=value=>{const d=new Date(value);return Number.isNaN(d.getTime())?'Unavailable clock':d.toLocaleString();};
  const safeURL=path=>{const u=new URL(path,window.location.origin);if(u.origin!==window.location.origin)throw new Error('Timeline must remain on this site');return u;};
@@ -631,14 +635,49 @@
   if(result.history_truncated)limitations.append(node('li','Older assignment changes are missing.'));
   if(!result.sources.length)sources.append(node('li','No retained readiness inboxes are available for this role, application and environment.'));
  }
+ function renderWorkflowCase(result) {
+  caseView.replaceChildren();caseView.append(node('h3','Workflow case overview'),node('p',result.summary));
+  const instance=result.instance, state=instance&&instance.state;
+  if(state) {
+   caseView.append(node('p','Application-reported state: '+state.state+' · '+(state.stale?'Stale report':'Retained report')+' · Updated '+clock(state.updated_at)));
+   if(state.outcome_code)caseView.append(node('p','Application-reported outcome: '+state.outcome_code+(state.outcome_description?' · '+state.outcome_description:'')));
+   for(const blocker of state.blockers||[])caseView.append(node('p','Blocker '+blocker.code+': '+blocker.description+(blocker.owner?' · Application owner: '+blocker.owner:'')+(blocker.next_action?' · '+blocker.next_action:'')));
+   if(state.operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(state.operation_id));url.searchParams.set('scope',result.timeline.scope);const link=node('a','Current reporting operation');link.href=url.href;caseView.append(link);}
+   if(instance.readiness)for(const r of instance.readiness.items||[]){
+    const details=['Transition '+r.transition.operation+': '+r.transition.from+' → '+r.transition.to,state.stale?'Stale report; refresh evidence to assess requirements':(r.ready?'Evaluated requirements satisfied; application authorization required':'Unmet evaluated requirements')];
+    if(!r.ready&&(r.reasons||[]).length)details.push('Unmet requirements: '+r.reasons.map(value=>value.replace(/_/g,' ')).join(', '));
+    if((r.missing_milestones||[]).length)details.push('Missing milestones: '+r.missing_milestones.join(', '));
+    if((r.missing_dependency_workflows||[]).length)details.push('Missing workflows: '+r.missing_dependency_workflows.join(', '));
+    for(const dependency of r.unmet_dependencies||[])details.push('Unmet dependency: '+dependency.dependency.workflow+' / '+dependency.dependency.instance_id);
+    if(r.pending_verification_count)details.push('Pending verification: '+r.pending_verification_count);
+    caseView.append(node('p',details.join(' · ')));
+   }
+   if(instance.awaiting_verification_count)caseView.append(node('p','Awaiting application verification: '+instance.awaiting_verification_count));
+  }
+  caseView.append(node('h4','Retained open follow-ups'),node('p',result.follow_up_count+' open · '+result.overdue_follow_up_count+' overdue'));
+  for(const row of result.follow_ups||[]) {
+   const details=[row.overdue?'Overdue':'Scheduled',row.coordination.owner||'Unassigned',clock(row.coordination.follow_up_at),row.coordination.status];
+   if(row.outcome_escalation){details.push('Assigned outcome escalation');if(row.outcome_escalation.response)details.push('Acknowledgment target: '+row.outcome_escalation.response.status);}
+   const p=node('p',details.join(' · '));const url=safeURL(root.dataset.queueUrl);url.searchParams.set('scope',result.timeline.scope);if(row.subscription_tenant_id)url.searchParams.set('tenant_id',row.subscription_tenant_id);url.hash='readiness-subscriptions/'+encodeURIComponent(row.subscription_id)+'/'+row.sequence;
+   const link=node('a',' Open source inbox');link.href=url.href;p.append(link);caseView.append(p);if(row.coordination.note)caseView.append(node('p',row.coordination.note));
+  }
+  if(result.follow_ups_truncated)caseView.append(node('p','Follow-up overview truncated; counts include retained matching work beyond this page.'));
+  caseView.append(node('h4','Suggested next steps'));
+  const actions=node('ul','');for(const action of result.actions||[])actions.append(node('li',action.summary+(action.owner?' · Owner: '+action.owner:'')));caseView.append(actions);
+  if(result.actions_truncated)caseView.append(node('p','Additional suggestions were omitted from this bounded view.'));
+  for(const text of result.limitations||[])caseView.append(node('p',text));
+  caseView.append(node('p','Application evidence checked '+clock(result.evidence_checked_at)+' · Coordination checked '+clock(result.coordination_checked_at)+'. These are independent live reads.'));
+ }
  async function loadTimeline(append) {
   const token=generation, query=new URLSearchParams(active);query.set('offset',String(append?next:0));
-  pending=true;more.disabled=true;message.textContent='Reading retained timeline…';
+  pending=true;more.disabled=true;message.textContent=activeCase?'Reading workflow case…':'Reading retained timeline…';
   try {
-   const url=safeURL(root.dataset.url);url.search=query.toString();
+   const url=safeURL(activeCase?root.dataset.caseUrl:root.dataset.url);url.search=query.toString();
    const response=await fetch(url.href,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{Accept:'application/json'}});
-   if(!response.ok)throw new Error('Timeline could not be read (HTTP '+response.status+').');
-   const result=await response.json();if(token!==generation)return;
+   if(!response.ok)throw new Error((activeCase?'Case overview':'Timeline')+' could not be read (HTTP '+response.status+').');
+   const payload=await response.json();if(token!==generation)return;
+   if(activeCase){if(!payload.timeline||!Array.isArray(payload.follow_ups)||!Array.isArray(payload.actions))throw new Error('Invalid case response.');renderWorkflowCase(payload);}
+   const result=activeCase?payload.timeline:payload;
    if(!Array.isArray(result.items)||!Array.isArray(result.sources)||!Number.isSafeInteger(result.next_offset))throw new Error('Invalid timeline response.');
    renderCoverage(result);
    for(const event of result.items){if(seen.has(event.id))continue;seen.add(event.id);items.append(renderTimelineEvent(event,result));}
@@ -647,13 +686,17 @@
   } catch(error) {if(token===generation)message.textContent=error instanceof Error?error.message:'Timeline could not be read.';}
   finally {if(token===generation){pending=false;more.disabled=false;}}
  }
- form.addEventListener('submit',event=>{
-  event.preventDefault();generation++;active=new URLSearchParams();
+ function startView(caseMode) {
+  if(!form.reportValidity())return;
+  if(caseMode&&!String(new FormData(form).get('tenant_id')||'')){message.textContent='Choose an exact customer to read its business workflow case.';return;}
+  generation++;activeCase=caseMode;active=new URLSearchParams();
   const data=new FormData(form);
   for(const key of ['scope','tenant_id','subject_type','subject_id','workflow','instance_id','limit']){const value=String(data.get(key)||'');if(value)active.set(key,value);}
-  next=0;seen=new Set();items.replaceChildren();sources.replaceChildren();limitations.replaceChildren();more.hidden=true;
+  next=0;seen=new Set();items.replaceChildren();sources.replaceChildren();limitations.replaceChildren();caseView.replaceChildren();more.hidden=true;
   void loadTimeline(false);
- });
+ }
+ form.addEventListener('submit',event=>{event.preventDefault();startView(false);});
+ caseButton.addEventListener('click',()=>startView(true));
  more.addEventListener('click',()=>{if(active&&!pending)void loadTimeline(true);});
 })();
 </script>

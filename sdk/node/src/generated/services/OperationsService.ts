@@ -43,6 +43,7 @@ import type { OperationWorkflowActionPreviewResponse } from '../models/Operation
 import type { OperationWorkflowArtifactResponse } from '../models/OperationWorkflowArtifactResponse.js';
 import type { OperationWorkflowAttentionResponse } from '../models/OperationWorkflowAttentionResponse.js';
 import type { OperationWorkflowAttentionSummary } from '../models/OperationWorkflowAttentionSummary.js';
+import type { OperationWorkflowCase } from '../models/OperationWorkflowCase.js';
 import type { OperationWorkflowControlResponse } from '../models/OperationWorkflowControlResponse.js';
 import type { OperationWorkflowCoordinationTimeline } from '../models/OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkflowOutcomesResponse.js';
@@ -5693,6 +5694,172 @@ export class OperationsService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/workflow-readiness/timeline',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read account workflow case overview
+   * GetAccountWorkflowCase. Combine retained current application state, blockers, dependencies, verification and readiness with exact matching open follow-ups, advisory next steps and a retained coordination timeline. Evidence and coordination are independently read. Missing or stale reports cannot establish readiness or business success. The application retains outcome interpretation, authorization and execution. Account reads require an explicit customer selector, read scope and MFA; customer identity derives from authentication.
+   * @returns OperationWorkflowCase GetAccountWorkflowCase. Current evidence and retained coordination for one exact business workflow case.
+   * @throws ApiError
+   */
+  public static getAccountWorkflowCase({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetAccountWorkflowCase.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * GetAccountWorkflowCase.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetAccountWorkflowCase.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * GetAccountWorkflowCase.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetAccountWorkflowCase.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetAccountWorkflowCase.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetAccountWorkflowCase.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetAccountWorkflowCase.offset. Live event offset for the nested timeline only; follow-ups return their own bounded overview.
+     */
+    offset?: number,
+    /**
+     * GetAccountWorkflowCase.limit. Nested timeline page size; defaults to 20 with maximum 100.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCase> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/case',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read customer workflow case overview
+   * GetPlatformTenantSelfWorkflowCase. Combine retained current application state, blockers, dependencies, verification and readiness with exact matching open follow-ups, advisory next steps and a retained coordination timeline. Evidence and coordination are independently read. Missing or stale reports cannot establish readiness or business success. The application retains outcome interpretation, authorization and execution. Account reads require an explicit customer selector, read scope and MFA; customer identity derives from authentication.
+   * @returns OperationWorkflowCase GetPlatformTenantSelfWorkflowCase. Current evidence and retained coordination for one exact business workflow case.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowCase({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetPlatformTenantSelfWorkflowCase.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.offset. Live event offset for the nested timeline only; follow-ups return their own bounded overview.
+     */
+    offset?: number,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.limit. Nested timeline page size; defaults to 20 with maximum 100.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCase> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/case',
       query: {
         'app_id': appId,
         'scope': scope,

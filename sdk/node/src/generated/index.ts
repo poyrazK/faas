@@ -1091,6 +1091,8 @@ export type { OperationWorkflowBlockerEscalationPolicy } from './models/Operatio
 export type { OperationWorkflowBlockerPerformance } from './models/OperationWorkflowBlockerPerformance.js';
 export type { OperationWorkflowBlockerResolution } from './models/OperationWorkflowBlockerResolution.js';
 export type { OperationWorkflowBottlenecks } from './models/OperationWorkflowBottlenecks.js';
+export type { OperationWorkflowCase } from './models/OperationWorkflowCase.js';
+export type { OperationWorkflowCaseAction } from './models/OperationWorkflowCaseAction.js';
 export type { OperationWorkflowChangeReason } from './models/OperationWorkflowChangeReason.js';
 export type { OperationWorkflowConditionChange } from './models/OperationWorkflowConditionChange.js';
 export type { OperationWorkflowConditionComparison } from './models/OperationWorkflowConditionComparison.js';

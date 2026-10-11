@@ -366,3 +366,29 @@ type OperationWorkflowCoordinationTimeline struct {
 	HistoryTruncated bool                                          `json:"history_truncated"`
 	Limitations      []string                                      `json:"limitations"`
 }
+
+// Case suggestions are advisory; the application retains business interpretation and execution authority.
+type OperationWorkflowCaseAction struct {
+	Kind           string `json:"kind"`
+	Summary        string `json:"summary"`
+	Owner          string `json:"owner,omitempty"`
+	OperationID    string `json:"operation_id,omitempty"`
+	SubscriptionID string `json:"subscription_id,omitempty"`
+	Sequence       int64  `json:"sequence,omitempty"`
+}
+type OperationWorkflowCase struct {
+	Status                string                                `json:"status"`
+	Summary               string                                `json:"summary"`
+	Instance              *OperationWorkflowInstanceSnapshot    `json:"instance,omitempty"`
+	FollowUps             []OperationWorkflowReadinessFollowUp  `json:"follow_ups"`
+	FollowUpCount         int                                   `json:"follow_up_count"`
+	OverdueFollowUpCount  int                                   `json:"overdue_follow_up_count"`
+	FollowUpsTruncated    bool                                  `json:"follow_ups_truncated"`
+	Actions               []OperationWorkflowCaseAction         `json:"actions"`
+	ActionsTruncated      bool                                  `json:"actions_truncated"`
+	Timeline              OperationWorkflowCoordinationTimeline `json:"timeline"`
+	EvidenceCheckedAt     time.Time                             `json:"evidence_checked_at"`
+	CoordinationCheckedAt time.Time                             `json:"coordination_checked_at"`
+	EvaluatedAt           time.Time                             `json:"evaluated_at"`
+	Limitations           []string                              `json:"limitations"`
+}

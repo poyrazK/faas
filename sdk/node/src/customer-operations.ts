@@ -351,6 +351,21 @@ export class GregaleOperationClient {
     }
     return this.request('/v1/platform-tenant-self/workflow-readiness/timeline?' + q, 'GET', undefined, undefined, signal);
   }
+  workflowCase(options: OperationWorkflowCoordinationTimelineOptions, signal?: AbortSignal): Promise<OperationWorkflowCase> {
+    const q = readinessSubscriptionQuery(options);
+    if (!options.subjectType || !options.subjectID || !options.workflow || !options.instanceID) throw new Error('Explicit subject and workflow instance required');
+    q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
+    q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
+    if (options.offset !== undefined) {
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 56000) throw new Error('Invalid timeline offset');
+      q.set('offset', String(options.offset));
+    }
+    if (options.limit !== undefined) {
+      if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100) throw new Error('Invalid timeline page size');
+      q.set('limit', String(options.limit));
+    }
+    return this.request('/v1/platform-tenant-self/workflow-readiness/case?' + q, 'GET', undefined, undefined, signal);
+  }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -763,3 +778,6 @@ export interface OperationWorkflowCoordinationTimelineOptions extends OperationW
 export interface OperationWorkflowCoordinationTimelineEvent { id: string; at: string; kind: string; summary: string; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; notification_id: string; sequence: number; actor?: string; owner?: string; status?: string; note?: string; follow_up_at?: string; expected_outcome_code?: string; reported_outcome_code?: string; state_revision?: number; reporting_operation_ids: string[] }
 export interface OperationWorkflowCoordinationTimelineSource { subscription_id: string; name: string; earliest_sequence: number; latest_sequence: number; retained_count: number; gap_before: boolean; missing_during_read: boolean }
 export interface OperationWorkflowCoordinationTimeline { items: OperationWorkflowCoordinationTimelineEvent[]; sources: OperationWorkflowCoordinationTimelineSource[]; subject: OperationSubject; workflow: string; instance_id: string; scope: string; platform_tenant_id?: string; evaluated_at: string; total_count: number; next_offset: number; has_more: boolean; retention_limited: boolean; sources_truncated: boolean; history_truncated: boolean; limitations: string[] }
+
+export interface OperationWorkflowCaseAction { kind: string; summary: string; owner?: string; operation_id?: string; subscription_id?: string; sequence?: number }
+export interface OperationWorkflowCase { status: string; summary: string; instance?: OperationWorkflowInstanceSnapshot; follow_ups: OperationWorkflowReadinessFollowUp[]; follow_up_count: number; overdue_follow_up_count: number; follow_ups_truncated: boolean; actions: OperationWorkflowCaseAction[]; actions_truncated: boolean; timeline: OperationWorkflowCoordinationTimeline; evidence_checked_at: string; coordination_checked_at: string; evaluated_at: string; limitations: string[] }

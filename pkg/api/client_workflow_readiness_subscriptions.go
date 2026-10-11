@@ -147,3 +147,15 @@ func (c *Client) GetPlatformTenantSelfWorkflowCoordinationTimeline(ctx context.C
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/timeline?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
 	return out, err
 }
+
+func (c *Client) GetAccountWorkflowCase(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCase, error) {
+	var out OperationWorkflowCase
+	opts.AppID = ""
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/case?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
+	return out, err
+}
+func (c *Client) GetPlatformTenantSelfWorkflowCase(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCase, error) {
+	var out OperationWorkflowCase
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/case?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
+	return out, err
+}

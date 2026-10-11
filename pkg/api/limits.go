@@ -9716,3 +9716,6 @@ const OperationWorkflowReadinessCoordinationRevisionMax int64 = 1<<53 - 1
 // Timeline projections share existing subscription/inbox and page budgets.
 const OperationWorkflowCoordinationTimelineEventsMax = OperationWorkflowReadinessFollowUpCandidatesMax * (OperationWorkflowReadinessAssignmentHistoryMax + 12)
 const OperationWorkflowCoordinationTimelineOperationLinksMax = 48
+
+const OperationWorkflowCaseFollowUpsMax = OperationHistoryPageMax
+const OperationWorkflowCaseActionsMax = OperationHistoryPageMax
