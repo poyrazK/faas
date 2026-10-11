@@ -164,7 +164,12 @@ the builder VM. That is the only case that waits for a build.
 2. **Node watch mode, explicit command.** `dev.watch.command` only; builder
    plan rewrite for Railpack Node plans; no-restart apply; RAM floor; auth
    requirement; metrics `watch` label; metal tests. *Implemented, apart from
-   the metrics label and metal tests:*
+   the metrics label. `TestDevWatchMetal` passed on the native KVM test node
+   (2026-10-11): a Node app with a build script built as a verbatim watch
+   build, served `npm run dev`, and an edit reached the running development
+   server as a live patch (applied in 14 ms) that `node --watch` reloaded
+   without a guest-init restart; `TestDevLoopMetal` passed in the same run
+   and leakcheck stayed clean.*
    - `gregale dev --watch` / `--watch-command` and `dev.watch` (`true` or
      `{command}`). Without a command the CLI uses `npm run dev` when
      `package.json` has a `dev` script, which pulls part of phase 3 forward.
