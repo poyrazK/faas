@@ -10195,3 +10195,31 @@ preservation, single preparation, denied or foreign admission, ordinary source
 wakes, unsupported clients and rejection before VM effects. Durable native
 ownership and closure, proof-backed release, native KVM qualification and live
 provider qualification remain pending. Public full-stage admission remains gated.
+
+### Durable incoming checkpoint wake claims and tombstones
+
+The native owner now has a private incoming wake journal containing the exact
+retained scheduler dispatch, an independent incoming generation, kernel boot,
+acceptance timestamp and separate claim/revocation flags. Its strict record reader
+rejects missing, duplicate, unknown, damaged, public, foreign-instance or prior-boot
+evidence. Claims and revocation use the existing canonical incoming instance lock
+shared with qualification and generic native producers. A claim never replays;
+pre-dispatch revocation persists an exact tombstone that survives daemon restart.
+Errors, including lost publication replies, return no partial incoming ownership.
+
+Wake and qualification records cannot borrow the same incoming instance. A new
+wake claim or tombstone also refuses an existing physical owner. Generic native
+producers fail when this namespace contains a retained or damaged record. This
+first version deliberately grants no native producer capability: it does not
+bind a physical generation, revoke an already bound process, prove producer
+closure or release evidence. It is not exposed through a serving wake handler.
+Production sender and receiver support remain gated until physical binding,
+request payload matching and delayed producer revocation are implemented.
+Manager claim and revoke accessors require the configured local compute identity
+and a journal-backed backend; their descriptors carry incoming evidence only.
+
+Portable journal tests cover restart, pre-dispatch tombstones, duplicate and
+foreign claims, publication uncertainty, damaged and prior-boot records,
+concurrent claim/revoke, cancellation, physical ownership and qualification
+namespace exclusion. Dedicated native KVM acceptance remains pending; no native
+VM or live provider was exercised. Public full-stage admission remains gated.

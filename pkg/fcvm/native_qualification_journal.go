@@ -232,6 +232,9 @@ func (j *nativeQualificationJournal) update(ctx context.Context, frame state.Env
 		return record, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	if err := j.owner.requireCheckpointWakeAbsent(frame.InstanceID); err != nil {
+		return record, err
+	}
 	record, err = j.read(frame.InstanceID)
 	if err == nil {
 		if record.Execution != frame || create {

@@ -54,6 +54,9 @@ func (j *nativeLaunchJournal) lockQualificationProducer(ctx context.Context, ins
 	fail := func(err error) (*os.File, *nativeQualificationRecord, error) {
 		return nil, nil, errors.Join(err, lock.Close())
 	}
+	if err := j.requireCheckpointWakeAbsent(id.String()); err != nil {
+		return fail(err)
+	}
 	path, _ := q.path(id.String())
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		if permitted {
@@ -109,6 +112,9 @@ func (j *nativeQualificationJournal) bindNative(ctx context.Context, record nati
 // Any existing physical spelling, including a damaged record, prevents a
 // qualification claim from borrowing the instance's previous native owner.
 func (j *nativeQualificationJournal) requireNativeAbsent(instance string) error {
+	if err := j.owner.requireCheckpointWakeAbsent(instance); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(j.owner.root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
