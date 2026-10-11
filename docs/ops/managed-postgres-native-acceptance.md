@@ -16,7 +16,7 @@ managed database and binding services, catalog, age/HMAC credential delivery,
 release task, scheduler, vmmd, imaged, builderd and gateway. It needs no Neon key or
 paid provider resources.
 
-The strict verdict requires all six phases and the parent test to pass:
+The strict verdict requires all seven phases and the parent test to pass:
 
 1. Upload a scratch Dockerfile containing the SQL probe compiled from the current
    checkout; run its normal release migration; restore the initial serving guest
@@ -27,12 +27,16 @@ The strict verdict requires all six phases and the parent test to pass:
 3. Rotate the writer while running. Require the real scheduler's retirement
    receipt, withdrawal of previous resident guests, stale snapshot invalidation,
    and a PostgreSQL authentication rejection for the retired credential.
-4. Park and restore a guest using the new credential. Require the gateway's
+4. Park a guest retaining writer and reader pools, then disconnect its external
+   SQL sessions. Require a real snapshot restore and successful loopback-only
+   `after_restore` callback that resets both pools and reads the existing marker
+   through new TLS sessions before readiness. Preserve data and credentials.
+5. Park and restore a guest using the new credential. Require the gateway's
    `restore` receipt, the new credential proof, unchanged reader proof and marker,
    and increasing SQL counter.
-5. Rotate while parked and restart schedd. Require durable notification recovery,
+6. Rotate while parked and restart schedd. Require durable notification recovery,
    retirement, delivery of the next credential and preserved SQL data.
-6. Stop owned daemons, disable fixture provisioning, delete every owned binding,
+7. Stop owned daemons, disable fixture provisioning, delete every owned binding,
    independently prove encrypted-secret removal and SQL credential retirement,
    then delete the managed database. Cleanup failures fail the parent test;
    role/database teardown and host leak checks are also required.
@@ -43,11 +47,26 @@ a vendor API and never supplies a scheduler retirement receipt itself. The
 SQL-only regression suite explicitly supplies that receipt because it has no
 guests; it runs in CI's TLS-enabled PostgreSQL shard.
 
-Every SQL request opens fresh TLS sessions. This suite does not qualify retained
-connection pools, application `after_restore` reconnection hooks, provider pooling,
-real-provider DNS/Internet access, branching or point-in-time recovery. The fixture
-represents pooled/direct endpoints with the same SQL server. Backend-specific
-qualification and application reconnect testing remain separate requirements.
+The serving workload retains separate writer and reader pools. Its source
+manifest opts into a two-second `after_restore` callback; the handler requires a
+loopback peer and the platform header. It discards captured sockets and reads
+the existing marker without mutations. Missing data or unavailable SQL fails
+the callback and readiness. Manual tasks still use fresh short-lived sessions.
+The proxy retires sessions only through explicit fault controls or cleanup;
+it does not expire idle connections after thirty seconds.
+
+The local TLS/SCRAM race tests exercise retained sessions beyond that former
+deadline, socket loss, concurrent writes, pre-commit cancellation, hook failure,
+and retirement of held sessions and fresh logins. Mutations use explicit
+transactions and are never automatically retried. A failed COMMIT can still
+have an uncertain outcome; these checks do not establish exactly-once delivery
+for application retries.
+
+The deployed runner must actually pass to establish guest pool/hook acceptance.
+Compilation and local SQL tests alone cannot do so. This fixture does not qualify
+provider pooling, real-provider DNS/Internet access, branching or point-in-time
+recovery: its pooled/direct endpoints share one SQL server. Fresh backend-specific
+qualification and supported native-host execution remain separate requirements.
 
 Run on an idle designated x86_64 Linux acceptance host with root, KVM, Firecracker,
 jailer, ip, nft, Python 3, a supported guest kernel and qualified builder base:

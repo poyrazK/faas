@@ -143,8 +143,9 @@ through rotation, and cleanup verification. Version-7 evidence remains a
 historical provider result; it cannot authorize new provisioning under v8.
 
 The separate [deployed SQL acceptance](ops/managed-postgres-native-acceptance.md)
-exercises release/runtime credential separation, real guest SQL, rotation,
-snapshot restore and cleanup using a disposable PostgreSQL fixture. Run
+exercises release/runtime credential separation, retained writer/reader pools,
+the application's restore reconnect hook, real guest SQL, rotation, snapshot
+restore and cleanup using a disposable PostgreSQL fixture. Run
 `make test-managed-postgres-native` on a designated isolated acceptance host.
 Provider management is simulated; a nested-node run remains diagnostic and
 does not replace fresh provider v8 and supported native-host qualification.

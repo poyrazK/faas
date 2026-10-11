@@ -26,6 +26,12 @@ class VerdictTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verdict.verify(self.events()[:-1])
 
+    def test_old_evidence_without_pooled_recovery_is_rejected(self):
+        old = [line for line in self.events()
+               if json.loads(line)["Test"] != verdict.ROOT + "/pooled_disconnect_recovery"]
+        with self.assertRaisesRegex(ValueError, "pooled_disconnect_recovery"):
+            verdict.verify(old)
+
     def test_package_failure_after_cleanup(self):
         with self.assertRaises(ValueError):
             verdict.verify(self.events() + [json.dumps({"Action": "fail"})])
