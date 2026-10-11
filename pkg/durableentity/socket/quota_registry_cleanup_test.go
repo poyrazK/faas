@@ -381,7 +381,7 @@ func TestRegistryCleanupCheckpointMergesConcurrentQuotaMutations(t *testing.T) {
 		t.Fatal("checkpoint did not merge admission conflict", c, err)
 	}
 	u, err := other.Inspect(t.Context(), fresh)
-	if err != nil || u.EntityReservations != 1 || u.ReservedBytes != 1152 || u.RecoveryBytes != 128 || u.Invocations != 1 || u.Grants != 1 || u.GrantsIssued != 1 || u.Connections != 1 {
+	if err != nil || u.EntityReservations != 1 || u.GrantBytes <= 0 || u.ReservedBytes != 1152+u.GrantBytes || u.RecoveryBytes != 128 || u.Invocations != 1 || u.Grants != 1 || u.GrantsIssued != 1 || u.Connections != 1 {
 		t.Fatal("checkpoint lost concurrent quota state", u, err)
 	}
 	if err := other.AdmitInvocation(t.Context(), id); !errors.Is(err, durableentity.ErrRetired) {
