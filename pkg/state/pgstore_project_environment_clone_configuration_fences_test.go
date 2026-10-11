@@ -560,7 +560,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(purge) != 2 {
 		t.Fatal("missing parent purge downgrade")
 	}
-	reservationRaw, err := migrations.FS.ReadFile("20261007165523001_clone_checkpoint_target_reservations.sql")
+	reservationRaw, err := migrations.FS.ReadFile("20261011232006310_clone_checkpoint_target_reservations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(reservation) != 2 {
 		t.Fatal("missing target reservation successor downgrade")
 	}
-	unusedRaw, err := migrations.FS.ReadFile("20261009144750847_clone_checkpoint_unused_reservation_guard.sql")
+	unusedRaw, err := migrations.FS.ReadFile("20261011232006374_clone_checkpoint_unused_reservation_guard.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

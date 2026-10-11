@@ -95,7 +95,7 @@ func TestPgCloneSchedulerFenceAdmissionsAndRetention(t *testing.T) {
 	if _, err = s.CreateInstance(ctx, w.AppID, w.SourceDeploymentID, string(state.StateColdBooting), 128, node, uuid.NewString()); err != nil {
 		t.Fatal("source admission", err)
 	}
-	raw, err := migrations.FS.ReadFile("20261011160000000_clone_scheduler_request_fences.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006416_clone_scheduler_request_fences.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestPgCloneSchedulerFenceWaitingAndOldSnapshots(t *testing.T) {
 
 func TestPgCloneSchedulerFenceEmptyMigrationReplay(t *testing.T) {
 	_, pool, _ := pgWorkloadRetirementFixture(t, "unmaterialized")
-	raw, err := migrations.FS.ReadFile("20261011160000000_clone_scheduler_request_fences.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006416_clone_scheduler_request_fences.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

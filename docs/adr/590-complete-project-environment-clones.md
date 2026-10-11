@@ -10278,3 +10278,22 @@ provenance, artifact immutability, lock-held producer validation, physical
 revocation and native producer closure still need implementation and native
 x86_64 KVM qualification before enabling tagged wakes or full-stage admission.
 Live provider qualification remains canceled.
+
+### Release integration with the current server and migration history
+
+The accumulated checkpoint changes now follow ADR-977's apid server relocation:
+existing stage server implementation and tests live in `pkg/apid/apidserver`,
+while `cmd/apid` remains the daemon entry point. Its size baseline accounts for
+this move of existing stage code; extracting that domain from server internals
+is separate work. Newly authored apid domains still belong in their own package.
+
+Unmerged checkpoint migrations were regenerated after the current main history
+using the migration generator's prerequisite ordering. Their relative dependency
+order and SQL bodies remain intact, while colliding versions from independently
+merged qualification changes remain untouched. This renumbering applies only to
+this PR's unmerged migrations, not migrations already released on main.
+
+Cold/restore qualification and checkpoint wake ownership exclude one another
+under the same incoming lock. Checkpoint binding can still read its own retained
+record; competing restore claim and recovery entry points reject that record.
+This integration does not enable tagged serving or qualify native closure.

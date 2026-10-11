@@ -79,7 +79,7 @@ func TestPgCloneWakeDispatchRetainsUnknownRPCOutcome(t *testing.T) {
 			if err = pool.QueryRow(ctx, "SELECT count(*) FROM project_environment_clone_wake_dispatches").Scan(&count); err != nil || count != 1 {
 				t.Fatal("source acquired clone retention", count, err)
 			}
-			raw, err := migrations.FS.ReadFile("20261011180000000_clone_wake_dispatch_evidence.sql")
+			raw, err := migrations.FS.ReadFile("20261011232006426_clone_wake_dispatch_evidence.sql")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,7 +161,7 @@ func TestPgCloneWakeDispatchQueuedAndStaleSnapshot(t *testing.T) {
 func TestPgCloneWakeDispatchEmptyMigrationReplay(t *testing.T) {
 	_, pool, _ := pgWorkloadRetirementFixture(t, "unmaterialized")
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261011180000000_clone_wake_dispatch_evidence.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006426_clone_wake_dispatch_evidence.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

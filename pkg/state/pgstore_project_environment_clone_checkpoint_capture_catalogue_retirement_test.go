@@ -113,7 +113,7 @@ func TestPgCheckpointCaptureRetirementAdoptedMixedAtomicCleanup(t *testing.T) {
 func TestPgCheckpointCaptureRetirementAdoptedCatalogueMigration(t *testing.T) {
 	s, pool, l := pgCaptureRetirementFixture(t, "adopted")
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261009204527613_clone_checkpoint_capture_catalogue_retirements.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006385_clone_checkpoint_capture_catalogue_retirements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

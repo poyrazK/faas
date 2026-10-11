@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const cloneDeploymentCleanupMigration = "20261011122125286_clone_deployment_cleanup_receipts.sql"
+const cloneDeploymentCleanupMigration = "20261011232006411_clone_deployment_cleanup_receipts.sql"
 
 func deploymentCleanupFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, state.ProjectEnvironmentCloneCheckpointWorkloadRetirement) {
 	t.Helper()

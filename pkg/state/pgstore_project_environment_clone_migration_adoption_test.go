@@ -115,7 +115,7 @@ func TestPgCloneMigrationAdoptionRetainsDestinationWithoutSourceMetadata(t *test
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM project_environment_clone_migration_adoptions").Scan(&count); err != nil || count != 1 {
 		t.Fatal("source acquired clone dispatch evidence", err)
 	}
-	raw, err := migrations.FS.ReadFile("20261011200000000_clone_migration_adoption_dispatch.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006429_clone_migration_adoption_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestPgCloneMigrationAdoptionQueuedAndStaleSnapshot(t *testing.T) {
 func TestPgCloneMigrationAdoptionEmptyMigrationReplay(t *testing.T) {
 	_, pool, _ := pgWorkloadRetirementFixture(t, "unmaterialized")
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261011200000000_clone_migration_adoption_dispatch.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006429_clone_migration_adoption_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

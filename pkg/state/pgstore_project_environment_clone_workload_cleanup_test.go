@@ -147,7 +147,7 @@ func dropEmptyCloneWorkloadCleanupForParentMigration(t *testing.T, tx pgx.Tx) {
 	t.Helper()
 	dropEmptyCloneDeploymentCleanupForParentMigration(t, tx)
 	dropEmptyCloneEnvironmentCleanupForParentMigration(t, tx)
-	raw, err := migrations.FS.ReadFile("20261011080544284_clone_workload_configuration_cleanups.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006400_clone_workload_configuration_cleanups.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func dropEmptyCloneWorkloadCleanupForParentMigration(t *testing.T, tx pgx.Tx) {
 
 func TestPgCloneWorkloadCleanupMigrationRefusesEvidence(t *testing.T) {
 	s, pool, l, _ := configurationCleanupFixture(t, true)
-	raw, err := migrations.FS.ReadFile("20261011080544284_clone_workload_configuration_cleanups.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006400_clone_workload_configuration_cleanups.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

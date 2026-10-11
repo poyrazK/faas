@@ -178,7 +178,7 @@ func TestPgCloneConfigurationOwnershipWriteRollbackAndForeignScope(t *testing.T)
 func TestPgCloneConfigurationOwnershipMigrationRefusesEvidence(t *testing.T) {
 	limits, _ := api.LimitsFor(api.PlanPro)
 	s, pool, l, _ := configurationOwnershipFixture(t)
-	raw, err := migrations.FS.ReadFile("20261010145708910_clone_configuration_ownership_receipts.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006394_clone_configuration_ownership_receipts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

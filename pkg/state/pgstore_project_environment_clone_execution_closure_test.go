@@ -216,7 +216,7 @@ func TestPgCloneWorkloadRetirementChecksOrphanExecutionAndEnvironment(t *testing
 func TestPgCloneQualificationFenceMigrationRetention(t *testing.T) {
 	s, pool, l := pgWorkloadRetirementFixture(t, "unmaterialized")
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261011163000000_clone_qualification_dispatch_fences.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006421_clone_qualification_dispatch_fences.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

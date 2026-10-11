@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const cloneEnvironmentCleanupMigration = "20261011110541918_clone_environment_metadata_cleanups.sql"
+const cloneEnvironmentCleanupMigration = "20261011232006408_clone_environment_metadata_cleanups.sql"
 
 func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
 	for _, fault := range []string{"none", "write", "domain", "scope", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {

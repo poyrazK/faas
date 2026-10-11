@@ -240,7 +240,7 @@ func TestPgCheckpointCaptureRetirementRecoveryAndTerminalReplay(t *testing.T) {
 func TestPgCheckpointCaptureRetirementMigrationAndChangedOwnership(t *testing.T) {
 	s, pool, l := pgCaptureRetirementFixture(t, "unknown")
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261009195949878_clone_checkpoint_capture_retirements.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006383_clone_checkpoint_capture_retirements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestPgCheckpointCaptureRetirementMigrationAndChangedOwnership(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := migrations.FS.ReadFile("20261009204527613_clone_checkpoint_capture_catalogue_retirements.sql")
+	newer, err := migrations.FS.ReadFile("20261011232006385_clone_checkpoint_capture_catalogue_retirements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -226,7 +226,7 @@ func TestPgCheckpointWorkloadRetirementRejectsChangedOwnership(t *testing.T) {
 
 func TestPgCheckpointWorkloadRetirementMigrationOwnership(t *testing.T) {
 	s, pool, l := pgWorkloadRetirementFixture(t, "unmaterialized")
-	raw, err := migrations.FS.ReadFile("20261010121608261_clone_checkpoint_workload_retirements.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006392_clone_checkpoint_workload_retirements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

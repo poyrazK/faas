@@ -15,7 +15,7 @@ import (
 
 func TestPgCloneObjectSecretWithdrawalMigrationGuards(t *testing.T) {
 	s, pool, l, _ := configurationOwnershipFixture(t)
-	raw, err := migrations.FS.ReadFile("20261011092246104_clone_object_secret_withdrawal_receipts.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006406_clone_object_secret_withdrawal_receipts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -80,7 +80,7 @@ func TestPgCloneMigrationResumeRetainsOriginalSource(t *testing.T) {
 	if err = s.FinishProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx, l, pgWorkloadRetirementProof(in.Plan)); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("source uncertainty accepted as closure", err)
 	}
-	raw, err := migrations.FS.ReadFile("20261011210000000_clone_migration_resume_dispatch.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006432_clone_migration_resume_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestPgCloneMigrationResumeQueuedAndStaleSnapshot(t *testing.T) {
 func TestPgCloneMigrationResumeEmptyMigrationReplay(t *testing.T) {
 	_, pool, _ := pgWorkloadRetirementFixture(t, "unmaterialized")
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261011210000000_clone_migration_resume_dispatch.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006432_clone_migration_resume_dispatch.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

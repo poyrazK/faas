@@ -15,7 +15,7 @@ import (
 
 func TestPgClonePostgresSecretWithdrawalMigrationGuards(t *testing.T) {
 	s, pool, l, _ := configurationOwnershipFixture(t)
-	raw, err := migrations.FS.ReadFile("20261011083735571_clone_postgres_secret_withdrawal_receipts.sql")
+	raw, err := migrations.FS.ReadFile("20261011232006402_clone_postgres_secret_withdrawal_receipts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

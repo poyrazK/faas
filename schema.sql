@@ -54265,7 +54265,7 @@ CREATE TABLE project_environment_clone_workload_cleanups (
  cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
--- filename: 20261011083735571_clone_postgres_secret_withdrawal_receipts.sql
+-- filename: 20261011232006402_clone_postgres_secret_withdrawal_receipts.sql
 
 -- ADR-590: original ownership survives atomic PostgreSQL envelope withdrawal.
 CREATE TABLE project_environment_clone_postgres_secret_withdrawals (
@@ -54293,7 +54293,7 @@ CREATE TABLE project_environment_clone_object_secret_withdrawals (
  CHECK(recorded_at>=publication_withdrawn_at)
 );
 
--- filename: 20261011110541918_clone_environment_metadata_cleanups.sql
+-- filename: 20261011232006408_clone_environment_metadata_cleanups.sql
 
 -- ADR-590: atomic removal of unborrowed original environment metadata.
 CREATE TABLE project_environment_clone_environment_cleanups (

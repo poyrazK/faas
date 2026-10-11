@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const cloneCompensationReceiptMigration = "20261011133000000_clone_terminal_compensation_receipts.sql"
+const cloneCompensationReceiptMigration = "20261011232006413_clone_terminal_compensation_receipts.sql"
 
 func terminalCompensationFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, state.ProjectEnvironmentCloneLease) {
 	t.Helper()
