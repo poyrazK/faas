@@ -28,6 +28,7 @@ type warmSnapshotFailureClient struct {
 	stopErr      error
 	destroyErr   error
 	deleteErr    error
+	exitCode     int32
 	stopCalls    int
 	destroyCalls int
 	deleteCalls  int
@@ -61,7 +62,49 @@ func (c *warmSnapshotFailureClient) Destroy(context.Context, *vmmdpb.DestroyRequ
 	if c.destroyErr != nil {
 		return nil, c.destroyErr
 	}
-	return &vmmdpb.DestroyResponse{ExitCode: 0}, nil
+	return &vmmdpb.DestroyResponse{ExitCode: c.exitCode}, nil
+}
+
+func TestWaitForCompletionRequiresMatchingGuestResult(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		hostExit  int32
+		done      *api.BuildDone
+		wantExit  int
+		wantClass string
+	}{
+		{"host configuration failure", 1, nil, 1, "FailureInfra"},
+		{"clean host exit without guest", 0, nil, -1, "FailureInfra"},
+		{"foreign result", 0, &api.BuildDone{SchemaVersion: 1, BuildID: "another-build", ExitCode: 0}, -1, "FailureInfra"},
+		{"halted successful guest", -9, &api.BuildDone{SchemaVersion: 1, BuildID: "build-1", ExitCode: 0, DevPatch: &api.DevPatchSourceMap{Version: 1, Verbatim: true, ImageDir: "/app"}}, 0, ""},
+		{"guest source failure", -9, &api.BuildDone{SchemaVersion: 1, BuildID: "build-1", ExitCode: 1}, 1, "FailureUserError"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.done != nil {
+				data, err := json.Marshal(tc.done)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "build-done.json"), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			driver := &VMMDriver{cli: &warmSnapshotFailureClient{exitCode: tc.hostExit}}
+			out, err := driver.waitForCompletion(context.Background(), BuildHandle{BuildID: "build-1", Instance: "build-build-1", ExportDir: dir, TimeoutSec: 1}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.ExitCode != tc.wantExit || out.FailureClass != tc.wantClass {
+				t.Fatalf("outcome=%+v, want exit=%d class=%q", out, tc.wantExit, tc.wantClass)
+			}
+			if tc.done != nil && tc.done.DevPatch != nil {
+				if out.DevPatch == nil || out.DevPatch.Version != tc.done.DevPatch.Version || out.DevPatch.Verbatim != tc.done.DevPatch.Verbatim || out.DevPatch.ImageDir != tc.done.DevPatch.ImageDir {
+					t.Fatalf("development source map=%+v, want %+v", out.DevPatch, tc.done.DevPatch)
+				}
+			}
+		})
+	}
 }
 
 func (c *warmSnapshotFailureClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.DeleteWarmSnapshotResponse, error) {

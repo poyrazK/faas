@@ -37,6 +37,9 @@ func StartRuntimeConfigReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm
 	if err := jailer.RegisterGuestVsockStreamHandler(VsockRuntimeConfigHostPort, r.handleGuestStream); err != nil {
 		return nil, fmt.Errorf("runtime config receiver register port %d: %w", VsockRuntimeConfigHostPort, err)
 	}
+	if err := jailer.RegisterEnvironmentQualificationRestoreStreamHandler(VsockRuntimeConfigHostPort, r.handleQualificationRestoreStream); err != nil {
+		return nil, fmt.Errorf("qualification runtime config receiver register port %d: %w", VsockRuntimeConfigHostPort, err)
+	}
 	log.Info("runtime config receiver registered", "vsock_host_port", VsockRuntimeConfigHostPort, "transport", "firecracker_uds", "enabled", store != nil)
 	return r, nil
 }

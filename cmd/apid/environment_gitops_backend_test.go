@@ -207,8 +207,8 @@ func testGitOpsBackendCommittedRecovery(t *testing.T, lostReply bool) {
 		t.Fatalf("complete recovered fleet: %v %v", worked, err)
 	}
 	current, _ = store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, "production")
-	if current.AppliedRevisionID != source.ApprovedRevisionID {
-		t.Fatal("acknowledged recovery did not publish the applied revision")
+	if current.AppliedRevisionID != "" {
+		t.Fatal("fleet recovery published an unqualified workload revision")
 	}
 	freshNotifier.mu.Lock()
 	defer freshNotifier.mu.Unlock()

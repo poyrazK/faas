@@ -771,7 +771,7 @@ type APIConsumerUsageEvent struct {
 	DiscoveredRoute string // optional normalized method/template
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
-	// so rate cards can weight routes (ADR-846).
+	// so rate cards can weight routes (ADR-952).
 	BillingRoute  string
 	DiscoveredAt  time.Time
 	WindowStart   time.Time
@@ -829,7 +829,7 @@ type APIConsumerUsageBucket struct {
 }
 
 // APIConsumerRouteUsageBucket is one consumer's billable units on one
-// bounded route label in one UTC minute (ADR-846). The per-minute totals in
+// bounded route label in one UTC minute (ADR-952). The per-minute totals in
 // APIConsumerUsageBucket stay authoritative; a minute's route units never
 // exceed them, and routes missing here count at weight 1.
 type APIConsumerRouteUsageBucket struct {
@@ -863,17 +863,17 @@ type APIConsumerRateCard struct {
 	Unit                   string
 	PriceMillicentsPerUnit int64
 	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-950).
 	IncludedUnitsPerMonth int64
-	// Tiers is an optional graduated price ladder (ADR-845). When set it
+	// Tiers is an optional graduated price ladder (ADR-951). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
 	Tiers []APIConsumerRateCardTier
 	// RouteWeights counts each request on a listed route label as that many
-	// units (ADR-846); unlisted routes count 1. Weighted units feed the
+	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
-	// to (ADR-847); empty is the app default plan.
+	// to (ADR-953); empty is the app default plan.
 	PlanID        string
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
@@ -979,13 +979,13 @@ type APIConsumerUsageStatementBucket struct {
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
 	// ChargedUnits is how many units this bucket bills at its price
-	// (ADR-844). Nil on buckets written before allowances existed, where
+	// (ADR-950). Nil on buckets written before allowances existed, where
 	// every priced unit was charged; read it through Charged. An adjustment
 	// may charge more units than it adds when late usage used allowance
 	// that later minutes had consumed.
 	ChargedUnits *int64 `json:"charged_units,omitempty"`
 	// TierUnits splits BillableUnits across a tiered card's ladder steps
-	// (ADR-845); AmountMillicents is the sum of each step's units times its
+	// (ADR-951); AmountMillicents is the sum of each step's units times its
 	// price. In an adjustment, entries can be negative when late usage moved
 	// already-billed units into another step.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
@@ -1862,6 +1862,7 @@ type AppManifest struct {
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *api.ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *api.TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                       `json:"max_retries,omitempty"`
 	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
@@ -1925,7 +1926,7 @@ func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -2280,16 +2281,21 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
-	// GitOps candidate. It is internal metadata, never an activation receipt.
+	// GitOps candidate. It remains attached after activation so serving runtime
+	// configuration is preserved; it is internal metadata, never a receipt.
 	EnvironmentWorkloadRuntime string `json:"-"`
-	ID                         string
-	AppID                      string
-	BuildID                    string // empty when an image deploy has no build pipeline
-	ImageDigest                string
-	Kind                       DeploymentKind
-	SourcePath                 string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes                int64
-	SourceRoot                 string // repository-relative build root inside SourcePath; empty = archive root
+	// EnvironmentWorkloadHeldValue is nil only for legacy in-memory values, in
+	// which case the presence of frozen workload inputs retains the old held
+	// behavior. Persistent rows always carry the explicit flag.
+	EnvironmentWorkloadHeldValue *bool `json:"-"`
+	ID                           string
+	AppID                        string
+	BuildID                      string // empty when an image deploy has no build pipeline
+	ImageDigest                  string
+	Kind                         DeploymentKind
+	SourcePath                   string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes                  int64
+	SourceRoot                   string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.
@@ -4228,11 +4234,12 @@ type Invocation struct {
 	// contract; the ledger keeps the routing field internal.
 	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
-	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
-	InstanceID       string           `json:"instance_id,omitempty"`
-	Source           InvocationSource `json:"source"`
-	// EnvironmentID is authenticated operational ownership, never request
-	// intent. Production remains NULL; stage admission persists the UUID.
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	InstanceID       string `json:"instance_id,omitempty"`
+	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	ResolvedDeploymentID string           `json:"-"`
+	Source               InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request intent.
 	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
@@ -7645,7 +7652,7 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
-	Template   bool              `json:"template,omitempty"` // ADR-967
+	Template   bool              `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeaderOp is one mutation. Action ∈ {add,set,remove}; Value
@@ -7656,7 +7663,7 @@ type EdgeRuleHeaderOp struct {
 	Name     string `json:"name"`
 	Value    string `json:"value,omitempty"`
 	Action   string `json:"action"`
-	Template bool   `json:"template,omitempty"` // ADR-967
+	Template bool   `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and

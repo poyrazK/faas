@@ -2233,7 +2233,7 @@ func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, 
 	return out, nil
 }
 
-// compileRedirectTemplates compiles a templated redirect (ADR-967). A
+// compileRedirectTemplates compiles a templated redirect (ADR-968). A
 // stored template that no longer compiles drops the rule, like an
 // unparseable match_path.
 func compileRedirectTemplates(a *state.EdgeRuleRedirectAction) (*api.EdgeRuleTemplate, map[string]*api.EdgeRuleTemplate, error) {

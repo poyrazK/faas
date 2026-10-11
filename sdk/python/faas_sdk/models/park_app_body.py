@@ -14,8 +14,8 @@ T = TypeVar("T", bound="ParkAppBody")
 @_attrs_define
 class ParkAppBody:
     expected_deployment_id: UUID | Unset = UNSET
-    """Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409
-    without parking; resend the same guard on drain retries."""
+    """The deployment UUID to compare atomically before parking. A stale or absent current deployment returns 409
+    without parking; reuse this UUID on drain retries."""
 
     def to_dict(self) -> dict[str, Any]:
         expected_deployment_id: str | Unset = UNSET

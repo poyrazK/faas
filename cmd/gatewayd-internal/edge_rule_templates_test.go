@@ -6,7 +6,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 967 — templated header and redirect actions compile at host load;
+// adr: 968 — templated header and redirect actions compile at host load;
 // a stored template that no longer compiles drops only its rule.
 func TestCompileEdgeRuleTemplates(t *testing.T) {
 	headers := []state.EdgeRule{

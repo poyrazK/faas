@@ -1063,6 +1063,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
+		return
+	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1529,7 +1533,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		return
 	}
-	if req.BeforeCheckpoint != nil || req.Profiling != nil {
+	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
 		// baked manifest does not match this update.
@@ -2426,6 +2430,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	}
 
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
+		return state.Deployment{}, problem
+	}
+	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, target); problem != nil {
 		return state.Deployment{}, problem
 	}
 	var current state.Deployment
@@ -6042,6 +6049,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
 	resp := s.deploymentResponse(d, app)
+	resp.DurableEntityValidator = s.deploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
 	}

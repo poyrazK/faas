@@ -394,6 +394,11 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 }
 
 func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string, encryption *ResolvedObjectEncryption) (SignedRequest, error) {
+	var err error
+	conditions, err = signWriteConditions(r, conditions)
+	if err != nil {
+		return SignedRequest{}, err
+	}
 	if r.Encryption != nil || r.Protection != nil {
 		return SignedRequest{}, ErrUnsupported // Owned selections are consumed by the branded broker.
 	}

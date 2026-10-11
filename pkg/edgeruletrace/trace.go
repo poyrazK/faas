@@ -2545,7 +2545,7 @@ func traceEdgeRuleLists(expr *api.EdgeRuleMatchExpr, supplied []api.EdgeRuleList
 	return out
 }
 
-// traceTemplateInput is the simulated request for ADR-967 templates. The
+// traceTemplateInput is the simulated request for ADR-968 templates. The
 // trace takes no query string, so query values expand empty.
 func traceTemplateInput(input Input, requestPath string) api.EdgeRuleTemplateInput {
 	return api.EdgeRuleTemplateInput{

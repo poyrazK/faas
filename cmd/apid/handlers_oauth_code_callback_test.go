@@ -372,6 +372,73 @@ func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T
 	}
 }
 
+// The authorization URL must use operator configuration for the public console,
+// even when a reverse proxy delivers the request on a different host.
+func TestRedirectToGitHubAuthorization_PublicConsoleCallback(t *testing.T) {
+	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
+	for _, tc := range []struct {
+		name        string
+		requestURL  string
+		consoleBase string
+		override    string
+		want        string
+	}{
+		{
+			name:       "default console behind HTTPS proxy",
+			requestURL: "https://api.example.com/dashboard/install/connect",
+			want:       "https://gregale.dev/oauth/code-callback",
+		},
+		{
+			name:       "default console behind TLS termination",
+			requestURL: "http://127.0.0.1:8081/dashboard/install/connect",
+			want:       "https://gregale.dev/oauth/code-callback",
+		},
+		{
+			name:        "configured console",
+			requestURL:  "https://api.example.com/dashboard/install/connect",
+			consoleBase: "https://console.example.com/",
+			want:        "https://console.example.com/oauth/code-callback",
+		},
+		{
+			name:        "local development console",
+			requestURL:  "http://127.0.0.1:8081/dashboard/install/connect",
+			consoleBase: "http://localhost:3000",
+			want:        "http://localhost:3000/oauth/code-callback",
+		},
+		{
+			name:        "explicit GitHub redirect overrides console",
+			requestURL:  "https://api.example.com/dashboard/install/connect",
+			consoleBase: "https://console.example.com",
+			override:    "https://github-console.example.com/oauth/code-callback",
+			want:        "https://github-console.example.com/oauth/code-callback",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", tc.override)
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			srv := newServerWithDeps(state.NewMemStore(), log, "gregale.dev", noopNotifier{}, "", noopMailer{}, nil, nil, nil, 15*time.Minute, "")
+			if tc.consoleBase != "" {
+				srv.WithCLIAuthURLBase(tc.consoleBase)
+			}
+			r := httptest.NewRequest(http.MethodPost, tc.requestURL, nil)
+			rec := httptest.NewRecorder()
+			if !srv.redirectToGitHubAuthorization(rec, r, 0) || rec.Code != http.StatusFound {
+				t.Fatalf("authorization: status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			loc, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("parse Location: %v", err)
+			}
+			if loc.Scheme != "https" || loc.Host != "github.com" || loc.Path != "/login/oauth/authorize" {
+				t.Fatalf("authorization destination = %s", loc)
+			}
+			if got := loc.Query().Get("redirect_uri"); got != tc.want {
+				t.Errorf("redirect_uri = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGithubAppInstallURL_RejectsNonHTTPSConfiguration(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "http://github.com/apps/test-app/installations/new")
 	if _, err := githubAppInstallURL("state"); err == nil {

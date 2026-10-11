@@ -19,7 +19,7 @@ func templateInput() EdgeRuleTemplateInput {
 	}
 }
 
-// adr: 967 — header templates expand request values, drop control
+// adr: 968 — header templates expand request values, drop control
 // characters, and leave unknown values empty.
 func TestEdgeRuleHeaderTemplate(t *testing.T) {
 	cases := map[string]string{
@@ -53,7 +53,7 @@ func TestEdgeRuleHeaderTemplate(t *testing.T) {
 	}
 }
 
-// adr: 967 — redirect templates escape values, keep request values out of
+// adr: 968 — redirect templates escape values, keep request values out of
 // the scheme and host, and cannot become protocol-relative.
 func TestEdgeRuleRedirectTemplate(t *testing.T) {
 	cases := map[string]string{

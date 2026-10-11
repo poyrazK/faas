@@ -1,10 +1,11 @@
 from typing import Literal
 
 DebugDependencyLatencyItemType = Literal[
-    "application", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
+    "app_dependency", "application", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
 ]
 
 DEBUG_DEPENDENCY_LATENCY_ITEM_TYPE_VALUES: set[DebugDependencyLatencyItemType] = {
+    "app_dependency",
     "application",
     "guest_transport",
     "managed_binding",

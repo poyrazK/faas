@@ -60,6 +60,9 @@ func validSnapshot(value manifest, state snapshot) bool {
 	if value.AlarmDelivery != nil && (state.AlarmAt == nil || !state.AlarmAt.Equal(value.AlarmDelivery.At)) {
 		return false
 	}
+	if value.OutboxDelivery != nil && (len(state.Outbox) == 0 || state.Outbox[0].ID != value.OutboxDelivery.MessageID) {
+		return false
+	}
 	if state.Schema == 1 {
 		return len(state.Outbox) == 0 && state.ReceiptRoot == nil && state.LegacyReceipts == nil && validReceipts(state.Receipts, state.Version)
 	}

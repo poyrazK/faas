@@ -222,7 +222,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	redirectTo := fs.String("redirect-to", "", "kind=redirect: Location URL (required)")
 	var redirectHeaders multiFlag
 	fs.Var(&redirectHeaders, "redirect-header", "kind=redirect: extra header (Name:Value; repeat)")
-	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-967)")
+	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-968)")
 
 	// headers
 	var headersReqAdd, headersReqSet multiFlag
@@ -626,7 +626,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	redirectTo := fs.String("redirect-to", "", "kind=redirect: Location URL")
 	var redirectHeaders multiFlag
 	fs.Var(&redirectHeaders, "redirect-header", "kind=redirect: extra header (Name:Value; repeat)")
-	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-967)")
+	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-968)")
 	var headersReqAdd, headersReqSet, headersReqRm multiFlag
 	var headersResAdd, headersResSet, headersResRm multiFlag
 	fs.Var(&headersReqAdd, "headers-request-add", "kind=headers: request header to add")
@@ -1006,7 +1006,7 @@ type edgeRuleActionInputs struct {
 	// redirect
 	RedirectStatus  int
 	RedirectTo      string
-	ActionTemplate  bool // ADR-967
+	ActionTemplate  bool // ADR-968
 	RedirectHeaders []string
 	// headers
 	HeadersReqAdd, HeadersReqSet []string

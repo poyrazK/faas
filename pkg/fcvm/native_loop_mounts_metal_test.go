@@ -102,6 +102,41 @@ func TestMetalNativeLoopMountRecovery(t *testing.T) {
 	if err := loops.requireRemoved(owner); err != nil {
 		t.Fatal(err)
 	}
+	// Hold an extra original loop descriptor through the unmount/clear ioctl.
+	// A successful LOOP_CLR_FD then only marks AUTOCLEAR; retirement must wait
+	// for this opener to close without issuing a second detach effect.
+	closed := make(chan error, 1)
+	if err := loops.session(ctx, owner, drive, func(string) error {
+		records, err := loops.records(owner)
+		if err != nil {
+			return err
+		}
+		for _, record := range records {
+			if record.Removed {
+				continue
+			}
+			loop, _, err := openNativeLoopDevice(record.Device.Number)
+			if err != nil {
+				return err
+			}
+			time.AfterFunc(100*time.Millisecond, func() { closed <- loop.Close() })
+			return nil
+		}
+		return errors.New("delayed detach fixture has no original attachment")
+	}); err != nil {
+		t.Fatal("delayed original loop retirement:", err)
+	}
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("delayed loop opener was not joined", ctx.Err())
+	}
+	if err := loops.requireRemoved(owner); err != nil {
+		t.Fatal("delayed loop detach was not confirmed", err)
+	}
 	// The child exits from inside the writer, skipping every Go defer. Its
 	// surviving mount must be recovered through durable frames alone.
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMetalNativeLoopMountRecovery$", "-test.timeout=60s")
@@ -110,14 +145,19 @@ func TestMetalNativeLoopMountRecovery(t *testing.T) {
 		t.Fatalf("crash fixture: %v %s", err, out)
 	}
 	records, err := loops.records(owner)
-	if err != nil || len(records) != 2 || records[0].Removed == records[1].Removed {
+	if err != nil || len(records) != 3 {
 		t.Fatalf("crash mount frames=%+v %v", records, err)
 	}
 	var orphan nativeLoopMountRecord
+	unfinished := 0
 	for _, record := range records {
 		if !record.Removed {
 			orphan = record
+			unfinished++
 		}
+	}
+	if unfinished != 1 {
+		t.Fatal("crash fixture changed original unfinished attachment count", unfinished)
 	}
 	entry, err := readNativeLoopMount(loops.point(orphan))
 	if err != nil || entry == nil || entry.id != orphan.MountID {

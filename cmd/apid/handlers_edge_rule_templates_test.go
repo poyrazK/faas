@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 967 — templated header and redirect actions are validated on write
+// adr: 968 — templated header and redirect actions are validated on write
 // and the template flag round-trips.
 func TestEdgeRuleTemplatesAPI(t *testing.T) {
 	e := setup(t, api.PlanHobby)

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -96,6 +97,7 @@ func TestUnwiredBackendReturnsNotFound(t *testing.T) {
 func TestRunWithDeps_ServesAndShutsDown(t *testing.T) {
 	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	deps := defaultDeps()
+	deps.egressPendingPath = filepath.Join(t.TempDir(), "pending.json")
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
 	deps.newSrv = func(addr string, h http.Handler) *http.Server {
@@ -190,6 +192,7 @@ func TestListenAddr_OffSentinelIsHandled(t *testing.T) {
 func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
 	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	deps := defaultDeps()
+	deps.egressPendingPath = filepath.Join(t.TempDir(), "pending.json")
 	deps.capCheck = func() error { return nil }
 	deps.listen = func(_, _ string) (net.Listener, error) {
 		return nil, errors.New("addr in use")
@@ -210,6 +213,7 @@ func TestRunWithDeps_ServeError(t *testing.T) {
 	// Serve error or a successful Shutdown — both are acceptable termination
 	// signals.
 	deps := defaultDeps()
+	deps.egressPendingPath = filepath.Join(t.TempDir(), "pending.json")
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
 

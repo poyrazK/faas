@@ -210,6 +210,17 @@ export { GregaleOperationSession, type OperationSessionOptions, type OperationSe
 export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
 export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type CustomerOperationFeatureOptions } from './operation-feature.js';
 
+export {
+  decodeDurableEntityHandlerRequest, durableEntityWebhookIntent, encodeDurableEntityTransition,
+  type DurableEntityIdentity, type DurableEntityHandlerLimits, type DurableEntityHandlerRequest,
+  type DurableEntityWebhookIntent, type DurableEntityTransition,
+} from './durable-entity-handler.js';
+export {
+  DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION,
+  DURABLE_ENTITY_MAX_REQUEST_BYTES, DURABLE_ENTITY_MAX_TRANSITION_BYTES, DURABLE_ENTITY_HANDLER_PATH,
+  DURABLE_ENTITY_RESTORE_VALIDATION_PROTOCOL_VERSION, DURABLE_ENTITY_RESTORE_VALIDATION_PATH, DURABLE_ENTITY_RESTORE_VALIDATION_MAX_RESPONSE_BYTES,
+} from './durable-entity-contract.js';
+
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
 export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
@@ -290,3 +301,14 @@ export type { OperationWorkflowPlannedEffect } from './generated/models/Operatio
 export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
+
+export { inspectDurableEntity, type DurableEntityInspectOptions } from './durable-entities.js';
+export { retryDurableEntity, type DurableEntityRetryOptions } from './durable-entities.js';
+export { exportDurableEntity, restoreDurableEntity, type DurableEntityExportOptions, type DurableEntityRestoreOptions } from './durable-entities.js';
+export { listDurableEntityBackups, getDurableEntityBackup, previewDurableEntityRestore, type DurableEntityBackupListOptions, type DurableEntityBackupGetOptions, type DurableEntityRestorePreviewOptions } from './durable-entities.js';
+export { decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestoreValidation, type DurableEntityRestoreValidationRequest } from './durable-entity-restore-validation.js';
+export { validateDurableEntityRestore, type DurableEntityRestoreValidationOptions } from './durable-entities.js';
+
+export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
+export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
+export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';

@@ -9,11 +9,56 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) configureDurableEntities(ctx context.Context, getenv func(string) string) error {
+	artifacts, artifactErr := validatorbundle.OpenArtifacts(getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
+	if artifacts != nil && (getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" || getenv("FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED") != "1" || getenv("FAAS_DURABLE_ENTITY_VALIDATOR_RELEASE_GATE_ENABLED") != "1") {
+		return errors.New("shared validator artifacts require durable entities, isolated validation and validator release preflight")
+	}
+	s.durableEntityValidatorArtifacts = artifacts
+	releaseGate := getenv("FAAS_DURABLE_ENTITY_VALIDATOR_RELEASE_GATE_ENABLED") == "1"
+	if releaseGate && getenv("FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED") != "1" {
+		return errors.New("validator release gate requires isolated restore validation")
+	}
+	s.durableEntityValidatorReleaseGateEnabled = releaseGate
+	isolation := getenv("FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED") == "1"
+	if isolation {
+		if getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" || getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") != "1" || !s.executionAPIEnabled {
+			return errors.New("isolated restore validation requires durable entities, restore validation and disposable executions")
+		}
+		if artifacts == nil {
+			bundles, err := loadDurableEntityValidatorBundles(getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATOR_BUNDLES_FILE"))
+			if err != nil {
+				return err
+			}
+			s.durableEntityValidatorBundles = bundles
+		}
+	}
+	s.durableEntityRestoreIsolationEnabled = isolation
+	handlers := getenv("FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED") == "1"
+	if handlers && (getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" || getenv("FAAS_DURABLE_ENTITY_OUTBOX_ENABLED") != "1") {
+		return errors.New("durable entity outbox handlers require the invocation preview and outbox relay")
+	}
 	if getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
+		if getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") == "1" {
+			return errors.New("durable entity restore validation requires the invocation preview")
+		}
+		if getenv("FAAS_DURABLE_ENTITY_BACKUPS_ENABLED") == "1" {
+			return errors.New("durable entity backups require the invocation preview")
+		}
+		if getenv("FAAS_DURABLE_ENTITY_HEALTH_ENABLED") == "1" {
+			return errors.New("durable entity health requires the invocation preview")
+		}
+		if getenv("FAAS_DURABLE_ENTITY_OUTBOX_ENABLED") == "1" {
+			return errors.New("durable entity outbox requires the invocation preview")
+		}
 		if getenv("FAAS_DURABLE_ENTITY_ALARMS_ENABLED") == "1" {
 			return errors.New("durable entity alarms require the invocation preview")
 		}
@@ -63,9 +108,35 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 			return errors.New("durable entity maintenance requires private delimiter/flat listing and deletion")
 		}
 	}
+	outbox := getenv("FAAS_DURABLE_ENTITY_OUTBOX_ENABLED") == "1"
+	if outbox {
+		if _, ok := s.store.(state.EntityOutboxDeliveryStore); !ok {
+			return errors.New("durable entity outbox requires deduplicating webhook acceptance")
+		}
+		if err := engine.CheckOutboxDiscovery(probeCtx); err != nil {
+			return errors.New("durable entity outbox requires private delimiter/flat listing and hint deletion")
+		}
+	}
+	health := getenv("FAAS_DURABLE_ENTITY_HEALTH_ENABLED") == "1"
+	if health {
+		if err := engine.CheckHealthDiscovery(probeCtx); err != nil {
+			return errors.New("durable entity health requires private delimiter listing")
+		}
+	}
+	backups := getenv("FAAS_DURABLE_ENTITY_BACKUPS_ENABLED") == "1"
+	if backups {
+		if err := engine.CheckBackups(probeCtx); err != nil {
+			return errors.New("durable entity backups require private listing and deletion")
+		}
+	}
+	s.durableEntityRestoreValidationEnabled = getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") == "1"
+	s.durableEntityBackupsEnabled = backups
+	s.durableEntityHealthEnabled = health
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance
+	s.durableEntityOutboxEnabled = outbox
+	s.durableEntityOutboxHandlersEnabled = handlers
 	return nil
 }
 

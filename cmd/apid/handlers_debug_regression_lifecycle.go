@@ -133,6 +133,7 @@ func debugRegressionObservationToItem(row sqlc.DebugRegressionObservation) api.D
 			item.Factor = formatFloat2(f.Float64)
 		}
 	}
+	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
 	return item
 }
 
@@ -144,19 +145,20 @@ func (s *server) notifyDebugRegressionChanged(ctx context.Context, appID string,
 		return
 	}
 	payload, err := json.Marshal(map[string]any{
-		"app_id":            appID,
-		"deployment_id":     item.DeploymentID,
-		"route":             item.Route,
-		"p95_ms":            item.P95MS,
-		"p95_base_ms":       item.P95BaseMS,
-		"affected_count":    item.AffectedCount,
-		"regression_factor": item.Factor,
-		"state":             item.State,
-		"first_detected_at": item.FirstDetectedAt,
-		"last_detected_at":  item.LastDetectedAt,
-		"acknowledged_at":   item.AcknowledgedAt,
-		"dismissed_until":   item.DismissedUntil,
-		"resolved_at":       item.ResolvedAt,
+		"app_id":               appID,
+		"deployment_id":        item.DeploymentID,
+		"route":                item.Route,
+		"p95_ms":               item.P95MS,
+		"p95_base_ms":          item.P95BaseMS,
+		"affected_count":       item.AffectedCount,
+		"regression_factor":    item.Factor,
+		"state":                item.State,
+		"first_detected_at":    item.FirstDetectedAt,
+		"last_detected_at":     item.LastDetectedAt,
+		"acknowledged_at":      item.AcknowledgedAt,
+		"dismissed_until":      item.DismissedUntil,
+		"resolved_at":          item.ResolvedAt,
+		"suspected_dependency": item.SuspectedDependency,
 	})
 	if err != nil {
 		return

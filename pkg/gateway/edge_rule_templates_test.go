@@ -29,7 +29,7 @@ func templateTestRequest(target string) *http.Request {
 	return req.WithContext(WithEdgeRuleMatchContext(context.Background(), m))
 }
 
-// adr: 967 — templated request and response header ops render request
+// adr: 968 — templated request and response header ops render request
 // values; literal ops are untouched.
 func TestEdgeRuleHeaderTemplatesApply(t *testing.T) {
 	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
@@ -61,7 +61,7 @@ func TestEdgeRuleHeaderTemplatesApply(t *testing.T) {
 	}
 }
 
-// adr: 967 — a templated redirect renders its target from the request.
+// adr: 968 — a templated redirect renders its target from the request.
 func TestEdgeRuleRedirectTemplateApply(t *testing.T) {
 	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	h.edgeRules = stubEdgeRuleMatcher{redirect: &EdgeRuleRedirectResolved{

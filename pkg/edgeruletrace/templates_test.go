@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
 
-// adr: 967 — the simulator renders templated redirects and headers with
+// adr: 968 — the simulator renders templated redirects and headers with
 // the simulated request, as the gateway would.
 func TestSimulateExpandsTemplates(t *testing.T) {
 	rules := []api.EdgeRuleResponse{

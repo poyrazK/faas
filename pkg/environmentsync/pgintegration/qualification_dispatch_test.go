@@ -29,9 +29,327 @@ func dispatchIDs(t *testing.T, store state.EnvironmentGitOpsQualificationDiscove
 	return ids
 }
 
+func preparedServiceBindingQualificationFixture(t *testing.T, basic gitOpsTestStore) ([]state.EnvironmentWorkloadQualificationRequest, state.App) {
+	return preparedServiceBindingQualificationFixtureWithProtocolTransport(t, basic, "", "")
+}
+
+func preparedServiceBindingQualificationFixtureWithProtocolTransport(t *testing.T, basic gitOpsTestStore, appProtocol string, transport api.ServiceBindingTransport) ([]state.EnvironmentWorkloadQualificationRequest, state.App) {
+	t.Helper()
+	store, source, desired, _, _, _ := workloadIntentFixtureWithProtocolTransport(t, basic, "enforce", state.AppTypeApp, appProtocol, transport)
+	backend, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
+		Slug: "shop-private-backend", WorkloadName: "private-backend", Type: state.AppTypeApp, Status: state.AppActive,
+		RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{Port: 8079, ExecutionMode: api.ExecutionModeService}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: backend.ID, Scope: "production", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, ImageDigest: "registry.example/backend@sha256:" + strings.Repeat("c", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	caller := desired.Definition.Workloads["api"]
+	caller.ServiceBindings = map[string]api.EnvironmentServiceBinding{"backend": {Workload: "backend", EnvKey: "BACKEND_URL"}}
+	caller.Runtime = json.RawMessage(`{"port":8080,"healthz":"/readyz"}`)
+	desired.Definition.Workloads["api"] = caller
+	desired.Definition.Workloads["backend"] = api.EnvironmentWorkload{App: backend.Slug,
+		Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/backend@sha256:" + strings.Repeat("d", 64)},
+		Runtime: json.RawMessage(`{"port":8082,"execution_mode":"service","healthz":"/readyz"}`)}
+	desired, err = environmentsync.Compile(desired.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, strings.Repeat("b", 40)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adoptWorkloadIntent(t, store, source)
+	lease, err := store.ClaimEnvironmentGitOps(t.Context(), "graph-dispatch-preparer", time.Now(), 3*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, claimedIntentPlan(t, store, lease, desired)); err != nil {
+		t.Fatal(err)
+	}
+	plan := claimedIntentPlan(t, store, lease, desired)
+	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("binding candidates: %+v %v", candidates, err)
+	}
+	for _, candidate := range candidates {
+		if err := basic.SetDeploymentRootfs(t.Context(), candidate.DeploymentID, "/reviewed.ext4", "binding-"+candidate.Resource, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := basic.UpdateDeploymentStatus(t.Context(), candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan); err != nil || graph.Phase != "prepared" {
+		t.Fatalf("binding graph: %+v %v", graph, err)
+	}
+	requests, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(t.Context(), lease, plan)
+	if err != nil || len(requests) != 2 {
+		t.Fatalf("binding qualification requests: %+v %v", requests, err)
+	}
+	return requests, backend
+}
+
+func preparedHTTPQualificationFixture(t *testing.T, basic gitOpsTestStore) []state.EnvironmentWorkloadQualificationRequest {
+	t.Helper()
+	store, source, desired, _, _, _ := workloadIntentFixture(t, basic, "enforce")
+	workload := desired.Definition.Workloads["api"]
+	workload.Runtime = json.RawMessage(`{"port":8080,"healthz":"/readyz"}`)
+	desired.Definition.Workloads["api"] = workload
+	desired, err := environmentsync.Compile(desired.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, strings.Repeat("b", 40)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adoptWorkloadIntent(t, store, source)
+	lease, err := store.ClaimEnvironmentGitOps(t.Context(), "http-graph-preparer", time.Now(), 3*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := claimedIntentPlan(t, store, lease, desired)
+	if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, plan); err != nil {
+		t.Fatal(err)
+	}
+	plan = claimedIntentPlan(t, store, lease, desired)
+	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("HTTP qualification candidate: %+v %v", candidates, err)
+	}
+	for _, candidate := range candidates {
+		if err := basic.SetDeploymentRootfs(t.Context(), candidate.DeploymentID, "/reviewed.ext4", "http-"+candidate.Resource, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := basic.UpdateDeploymentStatus(t.Context(), candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan); err != nil || graph.Phase != "prepared" {
+		t.Fatalf("HTTP qualification graph: %+v %v", graph, err)
+	}
+	requests, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(t.Context(), lease, plan)
+	if err != nil || len(requests) != 1 || len(requests[0].FrozenInputs.ServiceBindings) != 0 {
+		t.Fatalf("unbound HTTP qualification request: %+v %v", requests, err)
+	}
+	return requests
+}
+
+func TestEnvironmentQualificationGraphDispatchIncludesUnboundHTTPWorkloads(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		requests := preparedHTTPQualificationFixture(t, basic)
+		dispatch := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+		nodeID := qualificationPlacement(t, basic, 4096).NodeID
+		ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeID, "", 10)
+		if err != nil || len(ids) != 1 || ids[0] != requests[0].GraphID {
+			t.Fatalf("unbound HTTP graph discovery: %v %v", ids, err)
+		}
+		claimed, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeID, "http-graph", time.Minute)
+		if err != nil || len(claimed) != 1 || claimed[0].Attempt != 1 || claimed[0].ExecutionMode != api.ExecutionModeRequest {
+			t.Fatalf("unbound HTTP graph claim: %+v %v", claimed, err)
+		}
+	})
+}
+
+func TestPgEnvironmentQualificationGraphDiscoveryStopsAfterSmokeReceipt(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	var store gitOpsTestStore = state.NewPgStore(pool)
+	requests := preparedHTTPQualificationFixture(t, store)
+	request := requests[0]
+	placement := qualificationPlacement(t, store, 4096)
+	nodeID := placement.NodeID
+	dispatch := store.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+	claimed, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), request.GraphID, nodeID, "smoke-replay-test", 5*time.Minute)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim HTTP graph: %+v %v", claimed, err)
+	}
+	request = claimed[0]
+	admission, err := store.(state.EnvironmentGitOpsQualificationInstanceStore).CreateEnvironmentWorkloadQualificationInstance(t.Context(), request, placement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := admission.Execution
+	executor := store.(state.EnvironmentQualificationExecutionStore)
+	if err := executor.MarkEnvironmentQualificationDispatched(t.Context(), request, frame); err != nil {
+		t.Fatal(err)
+	}
+	inputs := state.RuntimeConfigInputs{Scope: request.FrozenInputs.Scope, Boundary: time.Now().UTC(), Variables: map[string]string{},
+		SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+	runtime := state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID,
+		Netns: "qualification-smoke-source", HostIP: "10.0.0.1", GuestUID: 20001, Inputs: inputs}
+	if _, err := store.(state.EnvironmentGitOpsQualificationRuntimeStore).PublishEnvironmentWorkloadQualificationRuntime(t.Context(), request, runtime); err != nil {
+		t.Fatal(err)
+	}
+	configReceipts := store.(state.EnvironmentQualificationConfigReceiptStore)
+	if _, err := configReceipts.RecordEnvironmentQualificationConfigReceipt(t.Context(), request, frame, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	proof := captureProof(frame)
+	captures := store.(state.EnvironmentQualificationSnapshotStore)
+	if _, err := captures.RecordEnvironmentQualificationSnapshot(t.Context(), request, frame, proof); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.RetireEnvironmentQualificationExecution(t.Context(), frame, state.EnvironmentQualificationRetirement{
+		Kind: state.QualificationNativeRetired, ReceiptID: proof.CaptureID, NativeGeneration: proof.NativeGeneration,
+		KernelBootID: proof.KernelBootID, ProcessesExited: true, ResourcesRemoved: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A captured guest is restored on the same physical qualification node;
+	// only its wake identity changes for the isolated second incarnation.
+	restorePlacement := placement
+	restorePlacement.WakeID = uuid.NewString()
+	restore, err := store.(state.EnvironmentQualificationRestoreStore).CreateEnvironmentQualificationRestore(t.Context(), request, restorePlacement)
+	if err != nil || !restore.Created {
+		t.Fatalf("admit isolated restore: %+v %v", restore, err)
+	}
+	if err := store.(state.EnvironmentQualificationRestoreStore).MarkEnvironmentQualificationRestoreDispatched(t.Context(), request, restore.Execution); err != nil {
+		t.Fatal(err)
+	}
+	runtime.NodeID, runtime.WakeID = restorePlacement.NodeID, restorePlacement.WakeID
+	runtime.Netns, runtime.HostIP, runtime.GuestUID = "qualification-smoke-restore", "10.0.0.2", 20002
+	runtime.Inputs.Boundary = time.Now().UTC()
+	if _, err := store.(state.EnvironmentQualificationRestoreRuntimeStore).PublishEnvironmentQualificationRestoreRuntime(t.Context(), request, restore.Execution, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configReceipts.RecordEnvironmentQualificationConfigReceipt(t.Context(), request, restore.Execution, strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+	retirement := qualificationNativeProof()
+	if retirement.NativeGeneration == proof.NativeGeneration {
+		retirement.NativeGeneration = uuid.NewString()
+	}
+	// Restoring a captured VM stays within its kernel boot; only the native
+	// generation and retirement receipt change for the isolated restore.
+	retirement.KernelBootID = proof.KernelBootID
+	if err := executor.RetireEnvironmentQualificationExecution(t.Context(), restore.Execution, retirement); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.(state.EnvironmentQualificationRestoreReceiptStore).RecordEnvironmentQualificationRestoreReceipt(t.Context(), request, restore.Execution, runtime.Inputs); err != nil {
+		t.Fatal(err)
+	}
+	policy, policySHA256, err := state.EnvironmentQualificationSmokePolicyFor(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.(state.EnvironmentQualificationSmokeReceiptStore).RecordEnvironmentQualificationSmokeReceipt(t.Context(), request,
+		state.EnvironmentQualificationSmokeEvidence{Resource: request.Resource, InstanceID: restore.Execution.InstanceID,
+			PolicyID: policy.ID, PolicySHA256: policySHA256, ResultSHA256: strings.Repeat("c", 64), Passed: true}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := store.(state.EnvironmentQualificationSmokeReceiptStore).EnvironmentQualificationSmokeReceipt(t.Context(), request.ID, request.Attempt)
+	if err != nil || receipt.GraphID != request.GraphID || receipt.InstanceID != restore.Execution.InstanceID || receipt.PolicySHA256 != policySHA256 {
+		t.Fatalf("current-attempt smoke receipt was not durably recorded: %+v %v", receipt, err)
+	}
+	// The active claim and the current-attempt smoke receipt both make this
+	// graph ineligible for advisory rediscovery. Keep the lease guard intact;
+	// production code releases it only through normal expiry/recovery.
+	ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeID, "", 10)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("completed graph remained discoverable after its current-attempt smoke receipt: %v %v", ids, err)
+	}
+}
+
+func TestEnvironmentQualificationGraphDispatchDiscoversAndClaimsWholeCohort(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		requests, backend := preparedServiceBindingQualificationFixture(t, basic)
+		dispatch := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+		nodeA := qualificationPlacement(t, basic, 4096).NodeID
+		nodeB := qualificationPlacement(t, basic, 4096).NodeID
+		if err := basic.SetAppNodeID(t.Context(), backend.ID, nodeB); err != nil {
+			t.Fatal(err)
+		}
+		if ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeA, "", 10); err != nil || len(ids) != 0 {
+			t.Fatalf("split-owner graph discovered on the wrong node: %v %v", ids, err)
+		}
+		qualifier := basic.(state.EnvironmentGitOpsQualificationStore)
+		if _, err := qualifier.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "individual", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("binding member bypassed the atomic graph claim: %v", err)
+		}
+		if _, err := basic.(state.EnvironmentGitOpsQualificationDispatchStore).ClaimEnvironmentWorkloadQualificationForNode(
+			t.Context(), requests[0].ID, nodeB, "individual-node", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("node-scoped member bypassed the atomic graph claim: %v", err)
+		}
+		ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeB, "", 10)
+		if err != nil || len(ids) != 1 || ids[0] != requests[0].GraphID {
+			t.Fatalf("complete binding graph discovery: %v %v", ids, err)
+		}
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeA, "wrong-node", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("wrong-node graph claim: %v", err)
+		}
+		claimed, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeB, "graph-scheduler", time.Minute)
+		if err != nil || len(claimed) != 2 {
+			t.Fatalf("atomic graph claim: %+v %v", claimed, err)
+		}
+		for _, request := range claimed {
+			if request.Attempt != 1 || request.Phase != "claimed" || request.WorkerID != "graph-scheduler" || request.LeaseToken == "" || request.ReservedInstanceID == "" {
+				t.Fatalf("incomplete graph member claim: %+v", request)
+			}
+		}
+		if claimed[0].ReservedInstanceID == claimed[1].ReservedInstanceID || claimed[0].LeaseToken == claimed[1].LeaseToken {
+			t.Fatal("graph members shared an attempt identity")
+		}
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeB, "duplicate", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("active graph lease was replayed: %v", err)
+		}
+		for _, request := range claimed {
+			if err := basic.(state.EnvironmentGitOpsQualificationStore).ValidateEnvironmentWorkloadQualification(t.Context(), request); err != nil {
+				t.Fatalf("atomic claim published an invalid member lease: %v", err)
+			}
+		}
+	})
+}
+
+func TestEnvironmentQualificationGraphDispatchSupportsHTTPSAndRejectsUnsupportedProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		protocol  string
+		transport api.ServiceBindingTransport
+		supported bool
+	}{
+		{name: "https", transport: api.ServiceBindingTransportHTTPS, supported: true},
+		{name: "grpc", protocol: "grpc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stores(t, func(t *testing.T, basic gitOpsTestStore) {
+				requests, _ := preparedServiceBindingQualificationFixtureWithProtocolTransport(t, basic, tc.protocol, tc.transport)
+				dispatch := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore)
+				nodeID := qualificationPlacement(t, basic, 4096).NodeID
+				ids, err := dispatch.ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeID, "", 10)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.supported {
+					if len(ids) != 1 || ids[0] != requests[0].GraphID {
+						t.Fatalf("HTTPS graph discovery: %v", ids)
+					}
+					claimed, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), ids[0], nodeID, "https-graph", time.Minute)
+					if err != nil || len(claimed) != len(requests) {
+						t.Fatalf("HTTPS graph claim: %+v %v", claimed, err)
+					}
+				} else {
+					if len(ids) != 0 {
+						t.Fatalf("unsupported graph was discoverable: %v", ids)
+					}
+					if _, err := dispatch.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), requests[0].GraphID, nodeID, "unsupported", time.Minute); !errors.Is(err, state.ErrConflict) {
+						t.Fatalf("unsupported graph was claimable: %v", err)
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestEnvironmentQualificationDispatchDiscoveryPagesWithoutClaiming(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
-		_, _, requests := preparedQualificationFixture(t, basic)
+		_, requests := preparedRequestModeQualificationFixture(t, basic)
 		discovery := basic.(state.EnvironmentGitOpsQualificationDiscoveryStore)
 		nodeID := qualificationPlacement(t, basic, 4096).NodeID
 		want := []string{requests[0].ID, requests[1].ID}
@@ -98,7 +416,7 @@ func TestEnvironmentQualificationDispatchDiscoveryPagesWithoutClaiming(t *testin
 
 func TestEnvironmentQualificationDispatchDiscoveryRetainsUncertainReservations(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
-		_, _, requests := preparedQualificationFixture(t, basic)
+		_, requests := preparedRequestModeQualificationFixture(t, basic)
 		discovery := basic.(state.EnvironmentGitOpsQualificationDiscoveryStore)
 		qualifier := basic.(state.EnvironmentGitOpsQualificationStore)
 		placement := qualificationPlacement(t, basic, 4096)
@@ -142,7 +460,7 @@ func TestEnvironmentQualificationDispatchDiscoveryRetainsUncertainReservations(t
 
 func TestEnvironmentQualificationDispatchDiscoveryTracksOwnershipAndRevocation(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
-		lease, _, requests := preparedQualificationFixture(t, basic)
+		lease, requests := preparedRequestModeQualificationFixture(t, basic)
 		discovery := basic.(state.EnvironmentGitOpsQualificationDiscoveryStore)
 		nodeA := qualificationPlacement(t, basic, 4096).NodeID
 		nodeB := qualificationPlacement(t, basic, 4096).NodeID
@@ -233,27 +551,33 @@ func TestPgEnvironmentQualificationDispatchDiscoverySurvivesRestartAndRacingClai
 			t.Fatal("claim race returned unexpected error", err)
 		}
 	}
-	if claimed != 1 || conflicted != 1 || !reflect.DeepEqual(dispatchIDs(t, restarted, nodeID, "", 2), []string{requests[1].ID}) {
-		t.Fatal("stale discovery duplicated the execution lease", claimed, conflicted)
+	remaining := dispatchIDs(t, restarted, nodeID, "", 2)
+	wantRemaining := slices.DeleteFunc(slices.Clone(before), func(id string) bool { return id == requests[0].ID })
+	if claimed != 1 || conflicted != 1 || !reflect.DeepEqual(remaining, wantRemaining) {
+		t.Fatal("stale discovery duplicated the execution lease", claimed, conflicted, remaining, wantRemaining)
 	}
 }
 
 func TestEnvironmentQualificationDispatchDiscoveryExcludesJobExecution(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		tc := struct {
+			mode  string
+			class state.WorkloadClass
+		}{mode: api.ExecutionModeJob, class: state.WorkloadClassJob}
 		source, desired := seedMode(t, basic, "enforce")
 		app, err := basic.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
-			Slug: "shop-job", Type: state.AppTypeApp, Status: state.AppActive, WorkloadClass: state.WorkloadClassJob,
-			RAMMB: 512, MaxConcurrency: 1, Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeJob}})
+			Slug: "shop-" + tc.mode, Type: state.AppTypeApp, Status: state.AppActive, WorkloadClass: tc.class,
+			RAMMB: 512, MaxConcurrency: 1, Manifest: state.AppManifest{ExecutionMode: tc.mode}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := basic.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Status: state.DeployLive,
-			Kind: state.DeploymentKindImage, ImageDigest: "registry.example/job@sha256:" + strings.Repeat("c", 64)}); err != nil {
+			Kind: state.DeploymentKindImage, ImageDigest: "registry.example/" + tc.mode + "@sha256:" + strings.Repeat("c", 64)}); err != nil {
 			t.Fatal(err)
 		}
-		desired.Definition.Workloads = map[string]api.EnvironmentWorkload{"job": {App: app.Slug,
-			Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/job@sha256:" + strings.Repeat("d", 64)},
-			Runtime: json.RawMessage(`{"execution_mode":"job"}`)}}
+		desired.Definition.Workloads = map[string]api.EnvironmentWorkload{tc.mode: {App: app.Slug,
+			Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/" + tc.mode + "@sha256:" + strings.Repeat("d", 64)},
+			Runtime: json.RawMessage(`{"execution_mode":"` + tc.mode + `"}`)}}
 		desired, err = environmentsync.Compile(desired.Definition)
 		if err != nil {
 			t.Fatal(err)
@@ -264,7 +588,7 @@ func TestEnvironmentQualificationDispatchDiscoveryExcludesJobExecution(t *testin
 		}
 		intent := basic.(intentTestStore)
 		adoptWorkloadIntent(t, intent, source)
-		lease, err := basic.ClaimEnvironmentGitOps(t.Context(), "job-preparer", time.Now(), time.Minute)
+		lease, err := basic.ClaimEnvironmentGitOps(t.Context(), tc.mode+"-preparer", time.Now(), time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,35 +598,40 @@ func TestEnvironmentQualificationDispatchDiscoveryExcludesJobExecution(t *testin
 		plan := claimedIntentPlan(t, intent, lease, desired)
 		candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
 		if err != nil || len(candidates) != 1 {
-			t.Fatal("job candidate was not prepared", len(candidates), err)
+			t.Fatal("unsupported-mode candidate was not prepared", len(candidates), err)
 		}
-		if err := basic.SetDeploymentRootfs(t.Context(), candidates[0].DeploymentID, "/reviewed.ext4", "reviewed-job", 4096); err != nil {
+		if err := basic.SetDeploymentRootfs(t.Context(), candidates[0].DeploymentID, "/reviewed.ext4", "reviewed-"+tc.mode, 4096); err != nil {
 			t.Fatal(err)
 		}
 		if err := basic.UpdateDeploymentStatus(t.Context(), candidates[0].DeploymentID, state.DeploySnapshotting, ""); err != nil {
 			t.Fatal(err)
 		}
 		if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan); err != nil || graph.Phase != "prepared" {
-			t.Fatal("job graph was not prepared", graph.Phase, err)
+			t.Fatal("unsupported-mode graph was not prepared", graph.Phase, err)
 		}
 		requests, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(t.Context(), lease, plan)
-		if err != nil || len(requests) != 1 || requests[0].ExecutionMode != api.ExecutionModeJob {
-			t.Fatal("job qualification was not queued", len(requests), err)
-		}
-		if _, err := basic.(state.EnvironmentGitOpsQualificationDispatchStore).ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[0].ID,
-			qualificationPlacement(t, basic, 4096).NodeID, "vm-dispatcher", time.Minute); !errors.Is(err, state.ErrConflict) {
-			t.Fatal("VM dispatcher claimed unsupported job execution", err)
+		if err != nil || len(requests) != 1 || requests[0].ExecutionMode != tc.mode {
+			t.Fatal("qualification request was not queued", len(requests), err)
 		}
 		nodeID := qualificationPlacement(t, basic, 4096).NodeID
+		dispatch := basic.(state.EnvironmentGitOpsQualificationDispatchStore)
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[0].ID,
+			nodeID, "vm-dispatcher", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("VM dispatcher claimed unsupported execution mode", tc.mode, err)
+		}
 		if ids := dispatchIDs(t, basic.(state.EnvironmentGitOpsQualificationDiscoveryStore), nodeID, "", 1); len(ids) != 0 {
-			t.Fatal("VM discovery dispatched a job without its qualification adapter", ids)
+			t.Fatal("VM discovery dispatched an unsupported execution mode", tc.mode, ids)
+		}
+		graphIDs, err := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore).ListEnvironmentWorkloadQualificationGraphsForDispatch(t.Context(), nodeID, "", 1)
+		if err != nil || len(graphIDs) != 0 {
+			t.Fatal("graph discovery dispatched an unsupported execution mode", tc.mode, graphIDs, err)
 		}
 	})
 }
 
 func TestEnvironmentQualificationNodeClaimFencesStaleOwnershipWithoutConsumingAttempt(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
-		_, _, requests := preparedQualificationFixture(t, basic)
+		_, requests := preparedRequestModeQualificationFixture(t, basic)
 		dispatch := basic.(state.EnvironmentGitOpsQualificationDispatchStore)
 		nodeA, nodeB := qualificationPlacement(t, basic, 4096).NodeID, qualificationPlacement(t, basic, 4096).NodeID
 		for _, request := range requests {

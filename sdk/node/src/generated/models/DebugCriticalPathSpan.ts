@@ -10,8 +10,9 @@ export type DebugCriticalPathSpan = {
   parent_span_id?: string;
   name: string;
   kind: string;
-  dependency_type?: 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal';
+  dependency_type?: 'managed_binding' | 'outbound_integration' | 'guest_transport' | 'platform_internal' | 'app_dependency';
   dependency_kind?: string;
+  dependency_name?: string;
   status?: string;
   start_time: string;
   end_time: string;

@@ -1,6 +1,6 @@
 package api
 
-// ADR-967: request values in header and redirect actions. A template is
+// ADR-968: request values in header and redirect actions. A template is
 // literal text with ${name} references (and $$ for a literal $), parsed and
 // validated once, then expanded per request with values the gateway already
 // resolves for match conditions. The same implementation backs apid

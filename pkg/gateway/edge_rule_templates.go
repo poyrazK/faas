@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-967: request values in header and redirect actions. Templates are
+// ADR-968: request values in header and redirect actions. Templates are
 // compiled at host load; here they are expanded per request from the same
 // snapshot match conditions read (trusted client IP, lazy country/ASN).
 

@@ -323,7 +323,8 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"EventRetentionQuery": true, // client-only retention query options; route parameters are the wire contract
+	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
+	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
 	// Workflow list options encode URL query parameters, not JSON request bodies.
@@ -1067,6 +1068,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_versions.go"),
 		filepath.Join(root, "pkg", "api", "durable_entities.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_inspection.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_recovery.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_export.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_backups.go"),
+		filepath.Join(root, "pkg", "api", "durable_entity_validator_deployment.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
@@ -1170,6 +1176,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
+		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-958 — zero-config guest tracing manifest DTO
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
@@ -1185,8 +1192,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
-		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-847 consumer plan DTOs
-		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-848 usage completeness DTO
+		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
+		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),

@@ -13,19 +13,29 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type linuxNativeImageSources struct{ base string }
+type linuxNativeImageSources struct{ base, diskStagingRoot string }
 
 func newNativeImageSourceBackend(base string) nativeImageSourceBackend {
 	return linuxNativeImageSources{base: base}
 }
 
 type linuxNativeImagePreparation struct {
-	source    *os.File
-	root      *os.File
-	identity  nativeLoopIdentity
-	namespace nativeLoopIdentity
-	link      bool
-	owner     nativeLaunchRecord
+	source         *os.File
+	root           *os.File
+	identity       nativeLoopIdentity
+	namespace      nativeLoopIdentity
+	link           bool
+	owner          nativeLaunchRecord
+	staging        string // original epoch owns this temporary link before creation
+	diskRoot       string
+	diskClaim      *nativeDiskImageClaim
+	restoreBacking *nativeSnapshotBackingImage
+	// Verified restore clones retain their immutable claim after dropping the
+	// temporary link. Only their original anchor retirement removes it.
+	restoreClone bool
+	// Live capture attaches these original disk outputs to a namespace that
+	// already exists. Keep their owned link until that joined handoff finishes.
+	retainDiskClaim bool
 }
 
 func (p *linuxNativeImagePreparation) Identity() nativeLoopIdentity { return p.identity }
@@ -39,7 +49,19 @@ func (p *linuxNativeImagePreparation) Metadata() (nativeImageMetadata, error) {
 func (p *linuxNativeImagePreparation) Namespace() nativeLoopIdentity { return p.namespace }
 func (p *linuxNativeImagePreparation) PreferLink() bool              { return p.link }
 func (p *linuxNativeImagePreparation) Close() error {
-	return errors.Join(p.source.Close(), p.root.Close())
+	var err error
+	if p.diskClaim != nil {
+		if p.retainDiskClaim {
+			err = checkRetainedNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+		} else if p.restoreClone {
+			err = finishNativeRestoreDiskImageHandoff(p.diskRoot, *p.diskClaim)
+		} else {
+			err = retireNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+		}
+	} else if p.staging != "" {
+		err = removeNativeImageStagingSource(p.staging, p.identity)
+	}
+	return errors.Join(err, p.source.Close(), p.root.Close())
 }
 
 func nativeImageFileMetadata(file *os.File) (nativeLoopIdentity, nativeImageMetadata, error) {
@@ -109,9 +131,16 @@ func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source,
 	return &linuxNativeImagePreparation{source: input, root: rootFile, identity: identity, namespace: namespace, link: preferLink && uint64(rootStat.Dev) == identity.Device, owner: owner}, nil
 }
 
+func nativeImageRootPlacement(base string, owner nativeLaunchRecord, root, name string) error {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\\x00") || filepath.Base(filepath.Dir(root)) != owner.Lease.Instance || filepath.Base(root) != "root" || filepath.Dir(filepath.Dir(filepath.Dir(root))) != base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(root))), "firecracker") {
+		return errors.New("native image source: image placement differs from the original jail")
+	}
+	return nil
+}
+
 func (b linuxNativeImageSources) prepareRoot(owner nativeLaunchRecord, root, name string) (file *os.File, stat unix.Stat_t, err error) {
-	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\\x00") || filepath.Base(filepath.Dir(root)) != owner.Lease.Instance || filepath.Base(root) != "root" || filepath.Dir(filepath.Dir(filepath.Dir(root))) != b.base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(root))), "firecracker") {
-		return nil, stat, errors.New("native image source: image placement differs from the original jail")
+	if err := nativeImageRootPlacement(b.base, owner, root, name); err != nil {
+		return nil, stat, err
 	}
 	file, err = os.OpenFile(root, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -153,6 +182,12 @@ func syncNativeImageParent(path string) error {
 }
 
 func (p *linuxNativeImagePreparation) CreateAnchor(point string, publish func(nativeLoopIdentity) error) (uint64, error) {
+	// stageOwned already durably owns this source inode and epoch. Linux
+	// cannot attach an unlinked mount root; retain a journal-owned link until
+	// both binds have been acknowledged, then remove it in Close.
+	if err := p.linkAnonymousSource(point); err != nil {
+		return 0, err
+	}
 	identity, err := nativeImagePlaceholder(point)
 	if err != nil {
 		return 0, err
@@ -161,7 +196,7 @@ func (p *linuxNativeImagePreparation) CreateAnchor(point string, publish func(na
 		return 0, err
 	}
 	if err := unix.Mount(nativeImageFDPath(p.source), point, "", unix.MS_BIND, ""); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("native image source: bind original anchor: %w", err)
 	}
 	return nativeImageMountID(point)
 }
@@ -189,7 +224,7 @@ func (p *linuxNativeImagePreparation) CreateReference(ref nativeImageReference, 
 		return ref, err
 	}
 	if err := unix.Mount(nativeImageFDPath(p.source), point, "", unix.MS_BIND, ""); err != nil {
-		return ref, err
+		return ref, fmt.Errorf("native image source: bind original jail reference: %w", err)
 	}
 	attributes := uint64(unix.MOUNT_ATTR_NODEV | unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NOEXEC)
 	if ref.ReadOnly {
@@ -391,8 +426,15 @@ func removeNativeImagePlaceholder(point string, identity nativeLoopIdentity) err
 	return syncNativeImageParent(point)
 }
 
-func (linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, point string) error {
+func (b linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, point string) error {
 	if err := checkNativeImageNamespace(record); err != nil {
+		return err
+	}
+	if err := inspectNativeImageStagingSource(record, point); err != nil {
+		return err
+	}
+	claim, err := b.diskStagingClaim(record, point)
+	if err != nil {
 		return err
 	}
 	id, err := nativeImageMountID(point)
@@ -418,10 +460,45 @@ func (linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, poin
 			return errors.Join(err, errors.New("native image source: anchor survived unmount"))
 		}
 	}
-	return removeNativeImagePlaceholder(point, record.Placeholder)
+	if err := removeNativeImagePlaceholder(point, record.Placeholder); err != nil {
+		return err
+	}
+	if err := removeNativeImageStagingSource(point+nativeImageStagingSuffix, record.Identity); err != nil {
+		return err
+	}
+	if claim != nil {
+		return retireNativeDiskImageClaim(b.diskStagingRoot, *claim)
+	}
+	return nil
 }
 
-func (linuxNativeImageSources) CheckAnchor(record nativeImageSourceRecord, point string) (err error) {
+func (b linuxNativeImageSources) CheckAnchor(record nativeImageSourceRecord, point string) (err error) {
+	return b.checkAnchor(record, point, false)
+}
+
+// Only the original capture handoff may inspect an anchor whose temporary
+// connected dentry is still required by move_mount. Ordinary IO requires its
+// retirement. Both modes retain all inode, metadata and namespace checks.
+func (b linuxNativeImageSources) checkAnchor(record nativeImageSourceRecord, point string, handoff bool) (err error) {
+	claim, err := b.diskStagingClaim(record, point)
+	if err != nil {
+		return err
+	}
+	if claim != nil {
+		if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, record.Epoch)); !handoff && !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(err, errors.New("native image source: disk staging producer has not retired its temporary link"))
+		} else if handoff && err != nil {
+			return err
+		}
+		if record.Removed {
+			return errors.New("native image source: retired anchor retains a disk claim")
+		}
+	} else if handoff {
+		return errors.New("native snapshot handoff: original output link claim is unavailable")
+	}
+	if _, err := os.Lstat(point + nativeImageStagingSuffix); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(err, errors.New("native image source: staging producer has not retired its temporary link"))
+	}
 	if record.Removed {
 		if err := checkNativeImageNamespace(record); err != nil {
 			return err
@@ -574,9 +651,15 @@ func (linuxNativeImageSources) CheckReference(record nativeImageSourceRecord, re
 }
 
 func (b linuxNativeImageSources) Inventory(root string, records []nativeImageSourceRecord) error {
+	if err := b.inventoryDiskStaging(records); err != nil {
+		return err
+	}
 	known := make(map[string]bool)
 	for _, record := range records {
 		point := filepath.Join(root, "points", record.Epoch)
+		if err := inspectNativeImageStagingSource(record, point); err != nil {
+			return err
+		}
 		if record.Removed {
 			if err := b.CheckAnchor(record, point); err != nil {
 				return err
