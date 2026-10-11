@@ -105,7 +105,7 @@ func (s *Service) CreateEventRecovery(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
-	if req.WorkflowRuns != nil && !s.workflowRuntimeEnabled {
+	if req.WorkflowRuns != nil && !s.Host.WorkflowRuntimeEnabled() {
 		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 		return
 	}
