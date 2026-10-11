@@ -676,6 +676,22 @@ const (
 // below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
+// AI gateway bounds on outbound integrations (ADR-979). The token limit is a
+// structural bound on a customer-selected spend guard for the customer's own
+// provider key, not a plan allowance. Usage rows are UTC-day rollups; the
+// model cap stops a customer-chosen origin from inflating them.
+const (
+	MaxOutboundAITokensPerDay        int64 = 100_000_000_000
+	OutboundAIUsageRetentionDays           = 90
+	OutboundAIUsageModelsPerDay            = 32
+	OutboundAIModelNameMaxBytes            = 128
+	OutboundAIUsageJSONParseMaxBytes       = 1 << 20
+	OutboundAIUsageEventMaxBytes           = 256 << 10
+	// OutboundAIMaxTokensPerResponse clamps each provider-reported count so
+	// a misbehaving origin cannot overflow the daily rollup counters.
+	OutboundAIMaxTokensPerResponse int64 = 1_000_000_000
+)
+
 // Operator-only managed realtime resume preview safety bounds. These are not
 // plan entitlements or a billing allowance; product limits are decided before
 // the preview is promoted.

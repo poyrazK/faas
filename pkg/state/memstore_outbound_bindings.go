@@ -19,6 +19,10 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 		limit := *in.DailyRequestLimit
 		in.DailyRequestLimit = &limit
 	}
+	if in.AIDailyTokenLimit != nil {
+		limit := *in.AIDailyTokenLimit
+		in.AIDailyTokenLimit = &limit
+	}
 	return in
 }
 

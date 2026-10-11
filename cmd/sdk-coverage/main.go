@@ -453,6 +453,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations/{integration}/usage":                               "GetOutboundIntegrationUsage",
 	"PUT /v1/outbound/integrations/{integration}/budget":                              "SetOutboundIntegrationDailyBudget",
 	"PUT /v1/outbound/integrations/{integration}/request-policy":                      "SetOutboundIntegrationRequestPolicy",
+	"PUT /v1/outbound/integrations/{integration}/ai":                                  "SetOutboundIntegrationAIPolicy",
+	"GET /v1/outbound/integrations/{integration}/ai-usage":                            "GetOutboundIntegrationAIUsage",
 	"GET /v1/apps/{slug}/outbound-bindings":                                           "ListOutboundAppBindings",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":                             "BindOutboundIntegration",
 	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":                           "UpdateOutboundBindingPolicy",

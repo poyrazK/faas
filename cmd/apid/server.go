@@ -2752,6 +2752,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundIntegrationUsage))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundIntegrationDailyBudget))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/request-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRequestPolicy))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundAIPolicy))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundAIUsage))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/probe-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundProbePolicy))))

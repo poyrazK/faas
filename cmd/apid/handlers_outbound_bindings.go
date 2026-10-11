@@ -30,6 +30,8 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		OwnerKind:            offer.OwnerKind,
 		DailyRequestLimit:    copyOutboundDailyLimit(offer.DailyRequestLimit),
 		RequestPolicy:        offer.RequestPolicy,
+		AIProvider:           offer.AIProvider,
+		AIDailyTokenLimit:    copyOutboundDailyLimit(offer.AIDailyTokenLimit),
 	}
 }
 
@@ -95,6 +97,10 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if !api.ValidOutboundAIPolicy(req.AIProvider, req.AIDailyTokenLimit) {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, outboundAIPolicyInvalidDetail)
+		return
+	}
 	requestPolicy := api.DefaultOutboundRequestPolicy()
 	if req.RequestPolicy != nil {
 		requestPolicy = *req.RequestPolicy
@@ -119,6 +125,8 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		DailyRequestLimit:   copyOutboundDailyLimit(req.DailyRequestLimit),
 		RequestPolicy:       requestPolicy,
 		Enabled:             true, CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: "customer",
+		AIProvider:        req.AIProvider,
+		AIDailyTokenLimit: copyOutboundDailyLimit(req.AIDailyTokenLimit),
 	}
 	created, err := store.CreateOutboundIntegration(r.Context(), offer)
 	switch {

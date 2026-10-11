@@ -33,6 +33,55 @@ type OutboundIntegrationOffer struct {
 	CredentialConfigured bool
 	OwnerKind            string
 	RequestPolicy        api.OutboundRequestPolicy
+	AIProvider           string
+	AIDailyTokenLimit    *int64
+}
+
+// OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
+// for a caller (an app ID or "runs") and model (ADR-979).
+type OutboundAIUsageItem struct {
+	Caller               string
+	Model                string
+	Requests             int64
+	ErrorRequests        int64
+	UsageUnknownRequests int64
+	InputTokens          int64
+	CachedInputTokens    int64
+	CacheWriteTokens     int64
+	OutputTokens         int64
+}
+
+// OutboundAIUsage is one UTC day of AI usage for an integration.
+// DailyTokenCount is the live admission counter for today and the sum of
+// rollup tokens for an earlier day.
+type OutboundAIUsage struct {
+	UsageDate       string
+	AIProvider      string
+	DailyTokenCount int64
+	DailyTokenLimit *int64
+	ResetsAt        time.Time
+	Items           []OutboundAIUsageItem
+}
+
+// OutboundAIStore owns customer AI gateway settings and reads the usage
+// rollups that outboundd writes. It is separate from OutboundBindingStore so
+// existing binding implementations do not change.
+type OutboundAIStore interface {
+	SetOutboundAIPolicy(ctx context.Context, accountID, integrationID, provider string, dailyTokenLimit *int64) error
+	GetOutboundAIUsage(ctx context.Context, accountID, integrationID, usageDate string) (OutboundAIUsage, error)
+}
+
+// validOutboundAIUsageDate accepts a YYYY-MM-DD UTC date inside the rollup
+// retention window, so reads cannot scan beyond what outboundd keeps.
+func validOutboundAIUsageDate(usageDate string, now time.Time) (time.Time, bool) {
+	day, err := time.Parse("2006-01-02", usageDate)
+	if err != nil {
+		return time.Time{}, false
+	}
+	utcNow := now.UTC()
+	today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+	oldest := today.AddDate(0, 0, -api.OutboundAIUsageRetentionDays)
+	return day, !day.Before(oldest) && !day.After(today)
 }
 
 // OutboundIntegrationUsage is the durable UTC-day counter for one managed
@@ -101,6 +150,9 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 		return ErrInvalidArgument
 	}
 	if offer.DailyRequestLimit != nil && (*offer.DailyRequestLimit < 1 || *offer.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return ErrInvalidArgument
+	}
+	if !api.ValidOutboundAIPolicy(offer.AIProvider, offer.AIDailyTokenLimit) {
 		return ErrInvalidArgument
 	}
 	policy := offer.RequestPolicy

@@ -20,6 +20,10 @@ type Metrics struct {
 	circuitEvents          *prometheus.CounterVec
 	retryBudgetEvents      *prometheus.CounterVec
 	providerCooldownEvents *prometheus.CounterVec
+	aiRequests             *prometheus.CounterVec
+	aiTokens               *prometheus.CounterVec
+	aiTimeToFirstByte      *prometheus.HistogramVec
+	aiUsageRecordEvents    *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -67,6 +71,23 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_provider_cooldown_events_total",
 			Help: "Shared provider-directed outbound cooldown checks by integration and bounded event.",
 		}, []string{"integration_id", "event"}),
+		aiRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_requests_total",
+			Help: "Settled AI gateway calls by integration and usage outcome (known, unknown, or error).",
+		}, []string{"integration_id", "outcome"}),
+		aiTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_tokens_total",
+			Help: "Provider-reported AI tokens by integration and kind (input, cached_input, cache_write, or output). Input includes cached and cache-write tokens.",
+		}, []string{"integration_id", "kind"}),
+		aiTimeToFirstByte: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "outbound_ai_time_to_first_byte_seconds",
+			Help:    "Time from the AI provider request to the first response body byte, by integration.",
+			Buckets: []float64{.05, .1, .25, .5, 1, 2, 4, 8, 15, 30, 60, 120},
+		}, []string{"integration_id"}),
+		aiUsageRecordEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_usage_record_events_total",
+			Help: "AI usage settlement writes by integration and bounded event (recorded, state_error, or unavailable).",
+		}, []string{"integration_id", "event"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -78,6 +99,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.circuitEvents,
 		m.retryBudgetEvents,
 		m.providerCooldownEvents,
+		m.aiRequests,
+		m.aiTokens,
+		m.aiTimeToFirstByte,
+		m.aiUsageRecordEvents,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -172,4 +197,34 @@ func (m *Metrics) ObserveProviderCooldown(integrationID, event string) {
 		return
 	}
 	m.providerCooldownEvents.WithLabelValues(integrationID, event).Inc()
+}
+
+// ObserveAIUsage records one settled AI call. Model names are deliberately
+// not labels: they are provider-controlled and would be unbounded.
+func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, usage AIUsage, timeToFirstByte time.Duration) {
+	if m == nil || m.aiRequests == nil {
+		return
+	}
+	m.aiRequests.WithLabelValues(integrationID, string(outcome)).Inc()
+	if timeToFirstByte > 0 {
+		m.aiTimeToFirstByte.WithLabelValues(integrationID).Observe(timeToFirstByte.Seconds())
+	}
+	if outcome != AIUsageOutcomeKnown {
+		return
+	}
+	for kind, value := range map[string]int64{
+		"input": usage.InputTokens, "cached_input": usage.CachedInputTokens,
+		"cache_write": usage.CacheWriteTokens, "output": usage.OutputTokens,
+	} {
+		if value > 0 {
+			m.aiTokens.WithLabelValues(integrationID, kind).Add(float64(value))
+		}
+	}
+}
+
+func (m *Metrics) ObserveAIUsageRecord(integrationID, event string) {
+	if m == nil || m.aiUsageRecordEvents == nil {
+		return
+	}
+	m.aiUsageRecordEvents.WithLabelValues(integrationID, event).Inc()
 }

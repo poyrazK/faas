@@ -66,6 +66,8 @@ metrics_addr = "127.0.0.1:9108"
 # circuit_breaker_failure_threshold = 0 # optional; 0 disables, otherwise 1..20
 # circuit_breaker_open_seconds = 0 # required with threshold; cool-down 1..300s
 # retry_budget_per_minute = 0 # optional shared extra-attempt bucket; 0 disables
+# ai_provider = "openai" # optional AI gateway mode: "openai" (compatible wire format) or "anthropic" (ADR-979)
+# ai_daily_token_limit = 0 # optional UTC-day input+output token limit; requires ai_provider; 0 disables
 # enabled = true
 # request_timeout defaults to 30s when omitted; enabled defaults to true.
 # To let the account provide and rotate the provider Authorization value,

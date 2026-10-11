@@ -31,6 +31,7 @@ const (
 	ReasonAppNotAttached   = "app_not_attached"
 	ReasonCircuitOpen      = "circuit_breaker_open"
 	ReasonProviderCooldown = "provider_cooldown"
+	ReasonDailyTokenLimit  = "daily_token_limit"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -76,6 +77,12 @@ type Integration struct {
 	AllowedMethods      []string
 	AllowedPathPrefixes []string
 	Enabled             bool
+	// AIProvider enables token usage extraction for "openai" (the
+	// OpenAI-compatible wire format) or "anthropic" responses (ADR-979).
+	AIProvider string
+	// DailyAITokenLimit stops new admissions once the UTC day's settled
+	// input plus output tokens reach it. It requires AIProvider.
+	DailyAITokenLimit *int64
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -129,6 +136,9 @@ func (i Integration) Validate() error {
 	}
 	if i.DailyRequestLimit != nil && (*i.DailyRequestLimit < 1 || *i.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
 		return fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
+	if !api.ValidOutboundAIPolicy(i.AIProvider, i.DailyAITokenLimit) {
+		return fmt.Errorf("%w: AI provider or daily token limit is invalid", ErrInvalidIntegration)
 	}
 	for appID, limit := range i.BindingDailyRequestLimits {
 		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
@@ -204,6 +214,9 @@ type AdmissionSpec struct {
 	Burst             int
 	MaxInFlight       int
 	DailyRequestLimit *int64
+	// DailyAITokenLimit rejects new admissions once the UTC day's settled AI
+	// tokens reach it. The Postgres backend reads the stored value instead.
+	DailyAITokenLimit *int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string
@@ -302,6 +315,7 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		copyItem.BindingAppIDs = copyStringSet(item.BindingAppIDs)
 		copyItem.CustomerAppRoutes = copyRoutePolicies(item.CustomerAppRoutes)
 		copyItem.DailyRequestLimit = copyInt64Pointer(item.DailyRequestLimit)
+		copyItem.DailyAITokenLimit = copyInt64Pointer(item.DailyAITokenLimit)
 		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
 		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
@@ -327,6 +341,7 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.BindingAppIDs = copyStringSet(i.BindingAppIDs)
 	i.CustomerAppRoutes = copyRoutePolicies(i.CustomerAppRoutes)
 	i.DailyRequestLimit = copyInt64Pointer(i.DailyRequestLimit)
+	i.DailyAITokenLimit = copyInt64Pointer(i.DailyAITokenLimit)
 	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
 	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)

@@ -620,6 +620,7 @@ from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
+from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
 from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
 from .create_platform_tenant_access_token_request import CreatePlatformTenantAccessTokenRequest
 from .create_platform_tenant_access_token_request_scopes_item import CreatePlatformTenantAccessTokenRequestScopesItem
@@ -2239,12 +2240,15 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_ai_usage_item import OutboundAIUsageItem
+from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
 from .outbound_binding_probe_policy_method import OutboundBindingProbePolicyMethod
 from .outbound_binding_usage_response import OutboundBindingUsageResponse
 from .outbound_integration_offer import OutboundIntegrationOffer
+from .outbound_integration_offer_ai_provider import OutboundIntegrationOfferAiProvider
 from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
 from .outbound_integration_offer_list import OutboundIntegrationOfferList
 from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
@@ -2715,6 +2719,8 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
+from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
@@ -4166,6 +4172,7 @@ __all__ = (
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
     "CreateOutboundIntegrationRequest",
+    "CreateOutboundIntegrationRequestAiProvider",
     "CreateOutboundIntegrationRequestAllowedMethodsItem",
     "CreatePlatformTenantAccessTokenRequest",
     "CreatePlatformTenantAccessTokenRequestScopesItem",
@@ -5733,12 +5740,15 @@ __all__ = (
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAIUsageItem",
+    "OutboundAIUsageResponse",
     "OutboundAppBinding",
     "OutboundAppBindingList",
     "OutboundBindingProbePolicy",
     "OutboundBindingProbePolicyMethod",
     "OutboundBindingUsageResponse",
     "OutboundIntegrationOffer",
+    "OutboundIntegrationOfferAiProvider",
     "OutboundIntegrationOfferCredentialSource",
     "OutboundIntegrationOfferList",
     "OutboundIntegrationOfferOwnerKind",
@@ -6163,6 +6173,8 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundAIPolicyRequest",
+    "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",

@@ -366,3 +366,77 @@ request latency, readiness, and standard OTLP exporter health. The outbound
 integration metrics described above use only operator-owned integration IDs or
 the shared `customer_managed` label; they never include URLs or raw provider
 status codes.
+
+## AI gateway integrations
+
+An integration in front of an LLM provider can declare `ai_provider`. Use
+`openai` for OpenAI and any provider that speaks its wire format, or
+`anthropic` for the Anthropic Messages API. The gateway then reads the response
+model and token usage while forwarding each `POST` response, records UTC-day
+usage per caller and model, and can stop new calls at a daily token limit. The
+provider key, workload identity, route policy and every request policy above
+still apply. See [ADR-979](../adr/979-ai-gateway-outbound-integrations.md).
+
+Set it when creating a customer integration, or later:
+
+```json
+{
+  "name": "llm",
+  "origin": "https://api.anthropic.com",
+  "allowed_methods": ["POST"],
+  "allowed_path_prefixes": ["/v1/messages"],
+  "ai_provider": "anthropic",
+  "ai_daily_token_limit": 2000000,
+  "request_policy": {
+    "rate_per_second": 10, "burst": 20, "max_in_flight": 20,
+    "request_timeout_ms": 120000
+  }
+}
+```
+
+`PUT /v1/outbound/integrations/{id}/ai` replaces the settings with
+`{"ai_provider":"openai","daily_token_limit":5000000}`. Send an empty
+`ai_provider` and a null limit to turn AI handling off. The call requires MFA
+and deploy-write scope. Operator integrations take `ai_provider` and
+`ai_daily_token_limit` in `outboundd.toml`.
+
+`GET /v1/outbound/integrations/{id}/ai-usage?date=YYYY-MM-DD` returns one UTC
+day: the provider, the day's token count and limit, and one item per caller
+(an app ID, or `runs`) and model. Each item has request, error and
+unknown-usage counts plus input, cached input, cache write and output tokens.
+Input tokens include cached reads and cache writes for both providers. Rollups
+are kept for 90 days; omit `date` for today.
+
+The token limit counts input plus output tokens. Tokens are known only after a
+response, so admission rejects new calls once the day's settled total reaches
+the limit (`429`, `X-Gregale-Outbound-Rejection: daily_token_limit`,
+`Retry-After` to the next UTC midnight). Calls already in flight finish and may
+end above the limit, so treat it as a spend guard rather than an exact cap.
+
+Usage comes from the provider's own response:
+
+- JSON responses up to 1 MiB are parsed; larger ones count as unknown usage.
+- Streaming OpenAI chat completions include usage only when the request sets
+  `"stream_options": {"include_usage": true}`. Without it, the call counts as
+  unknown usage and adds no tokens.
+- Non-2xx responses count as errors with no tokens.
+- One integration records at most 32 distinct models per day; later ones are
+  grouped as `other`.
+
+Every `text/event-stream` and `application/x-ndjson` response, AI or not, is
+flushed to the caller as each provider chunk arrives. Its write deadline
+follows the request timeout instead of the daemon's `write_timeout`, so set
+`request_timeout_ms` high enough for your longest generation.
+
+AI metrics keep the bounded integration label and never include model names:
+`outbound_ai_requests_total` (by `known`, `unknown` or `error` outcome),
+`outbound_ai_tokens_total` (by `input`, `cached_input`, `cache_write` and
+`output` kind), `outbound_ai_time_to_first_byte_seconds` and
+`outbound_ai_usage_record_events_total`. The dependency span also carries
+OpenTelemetry GenAI attributes (`gen_ai.system`, `gen_ai.response.model` and
+`gen_ai.usage.*`).
+
+Apps reach these integrations the same way as any managed integration: through
+an operator-routed, guest-reachable gateway origin, or through the ADR-424
+broker for Runs. A default app route and a loopback base URL for stock SDKs are
+not part of this release.

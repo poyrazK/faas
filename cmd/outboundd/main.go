@@ -198,6 +198,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
+	go runAIUsagePrune(ctx, backend, log)
 	readyProbe := &wire.ReadyzProbe{}
 	pgSignal, stopPGSignal := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
 	readyProbe.RegisterSignal(pgSignal, stopPGSignal)
@@ -255,6 +256,33 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// aiUsagePruner removes AI usage rollups past their retention (ADR-979).
+type aiUsagePruner interface {
+	PruneAIUsage(context.Context) (int64, error)
+}
+
+// runAIUsagePrune deletes expired AI usage rollups at startup and hourly.
+// Deletion is idempotent, so concurrent replicas need no coordination.
+func runAIUsagePrune(ctx context.Context, pruner aiUsagePruner, log *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		deleted, err := pruner.PruneAIUsage(pruneCtx)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			log.Warn("outboundd: prune AI usage rollups", "err", err)
+		} else if deleted > 0 {
+			log.Info("outboundd: pruned AI usage rollups", "rows", deleted)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func outboundSpansWriterTarget(getenv func(string) string) string {

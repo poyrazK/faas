@@ -46,6 +46,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var retryBudgetPerMinute int
 	var enabled bool
 	var policyUpdatedAt time.Time
+	var aiProvider string
+	var aiDailyTokenLimitValue int64
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
@@ -55,13 +57,15 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       integration.updated_at, integration.enabled, integration.provider_auth_mode,
 		       integration.credential_source, integration.allowed_methods,
 		       integration.allowed_path_prefixes, integration.owner_kind,
-		       COALESCE(integration.daily_request_limit, 0)
+		       COALESCE(integration.daily_request_limit, 0),
+		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0)
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
-			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
+			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
+			&aiProvider, &aiDailyTokenLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -172,7 +176,10 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		RetryBudgetPerMinute:           retryBudgetPerMinute,
 		PolicyRevision:                 policyUpdatedAt.UnixNano(),
 		ProviderAuthMode:               providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
-		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
+		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider}
+	if aiDailyTokenLimitValue > 0 {
+		i.DailyAITokenLimit = &aiDailyTokenLimitValue
+	}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}

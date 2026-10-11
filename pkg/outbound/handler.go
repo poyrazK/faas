@@ -263,6 +263,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
 		DailyRequestLimit:              integration.DailyRequestLimit,
+		DailyAITokenLimit:              copyInt64Pointer(integration.DailyAITokenLimit),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -472,6 +473,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
+	if aiObserver := observeAIResponse(integration, r, resp, cacheHit); aiObserver != nil {
+		// Deferred so an aborted stream still settles the tokens it used.
+		defer h.settleAIUsage(ctx, integration, appID, resp.StatusCode, aiObserver, upstreamStarted, dependencySpan, metricIntegrationID)
+	}
 	if workflowIdentity != nil {
 		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)
 		return
@@ -484,10 +489,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, value)
 		}
 	}
+	streamController := prepareStreamingResponse(ctx, w, resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	var downstream io.Writer = w
 	if h.MaxResponseBytes > 0 {
 		downstream = &responseBodyCapWriter{ResponseWriter: w, limit: h.MaxResponseBytes}
+	}
+	if streamController != nil {
+		_ = streamController.Flush()
+		downstream = &flushingWriter{dst: downstream, flush: streamController.Flush}
 	}
 	if _, err := io.Copy(downstream, resp.Body); err != nil {
 		// The provider status is already committed. Returning normally would

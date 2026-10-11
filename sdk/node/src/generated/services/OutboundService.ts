@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
+import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
 import type { OutboundBindingProbePolicy } from '../models/OutboundBindingProbePolicy.js';
@@ -11,6 +12,7 @@ import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffe
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRequest.js';
 import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
@@ -265,6 +267,80 @@ export class OutboundService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set or clear a customer-owned integration's AI provider and daily token limit.
+   * Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in the selected provider's format and stops new calls once the UTC day's settled input plus output tokens reach the limit; calls already in flight may finish above it.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundIntegrationAiPolicy({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the customer-owned integration whose AI gateway settings are being changed.
+     */
+    integration: string,
+    requestBody: PutOutboundAIPolicyRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/ai',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one UTC day of AI gateway token usage by caller and model.
+   * Requires MFA and read scope. Rollups are kept for 90 days.
+   * @returns OutboundAIUsageResponse AI usage for the selected day.
+   * @throws ApiError
+   */
+  public static getOutboundIntegrationAiUsage({
+    integration,
+    date,
+  }: {
+    /**
+     * UUID of the integration whose AI usage is being read.
+     */
+    integration: string,
+    /**
+     * UTC day as YYYY-MM-DD within the last 90 days; defaults to today.
+     */
+    date?: string,
+  }): CancelablePromise<OutboundAIUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'date': date,
+      },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

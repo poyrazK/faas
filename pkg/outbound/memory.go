@@ -30,7 +30,17 @@ type memoryState struct {
 	retryBudgetTokens        float64
 	retryBudgetRefill        time.Time
 	retryBudgetPerMinute     int
+	dailyAITokenCount        int64
+	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
 	initialized              bool
+}
+
+type memoryAIUsageKey struct{ caller, model string }
+
+// AIUsageTotals is one UTC-day rollup for a caller and model.
+type AIUsageTotals struct {
+	Requests, ErrorRequests, UsageUnknownRequests                  int64
+	InputTokens, CachedInputTokens, CacheWriteTokens, OutputTokens int64
 }
 
 // MemoryBackend is a deterministic in-process backend for tests and local
@@ -65,6 +75,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	if spec.BindingDailyRequestLimit != nil && spec.BindingAppID == "" {
 		return Decision{}, fmt.Errorf("%w: binding daily request limit requires an app ID", ErrInvalidIntegration)
 	}
+	if spec.DailyAITokenLimit != nil && (*spec.DailyAITokenLimit < 1 || *spec.DailyAITokenLimit > api.MaxOutboundAITokensPerDay) {
+		return Decision{}, fmt.Errorf("%w: daily token limit is outside the supported range", ErrInvalidIntegration)
+	}
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
 	}
@@ -85,13 +98,7 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		state = &memoryState{tokens: float64(spec.Burst), last: now, leases: make(map[string]memoryLease), bindingDailyCounts: make(map[string]int64), initialized: true}
 		b.states[spec.IntegrationID] = state
 	}
-	if state.dailyUsageDate != today {
-		state.dailyUsageDate = today
-		state.dailyRequestCount = 0
-		state.bindingDailyCounts = make(map[string]int64)
-	} else if state.bindingDailyCounts == nil {
-		state.bindingDailyCounts = make(map[string]int64)
-	}
+	state.rollDay(today)
 	if !state.initialized {
 		state.tokens = float64(spec.Burst)
 		state.last = now
@@ -156,6 +163,14 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 			retry = time.Millisecond
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
+	}
+	if spec.DailyAITokenLimit != nil && state.dailyAITokenCount >= *spec.DailyAITokenLimit {
+		nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+		retry := nextDay.Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyTokenLimit, RequestTimeout: ttl}, nil
 	}
 	state.tokens--
 	state.dailyRequestCount++
@@ -361,6 +376,93 @@ func validUUID(value string) bool {
 	return err == nil
 }
 
+// rollDay resets every UTC-day counter when the day changes.
+func (s *memoryState) rollDay(today string) {
+	if s.dailyUsageDate != today {
+		s.dailyUsageDate = today
+		s.dailyRequestCount = 0
+		s.dailyAITokenCount = 0
+		s.bindingDailyCounts = make(map[string]int64)
+		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
+		return
+	}
+	if s.bindingDailyCounts == nil {
+		s.bindingDailyCounts = make(map[string]int64)
+	}
+	if s.aiUsage == nil {
+		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
+	}
+}
+
+// RecordAIUsage settles one AI call with the same day rollover and model cap
+// as the Postgres backend.
+func (b *MemoryBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateAIUsageRecord(record); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[record.IntegrationID]
+	if state == nil {
+		state = &memoryState{leases: make(map[string]memoryLease), bindingDailyCounts: make(map[string]int64)}
+		b.states[record.IntegrationID] = state
+	}
+	state.rollDay(b.now().UTC().Format("2006-01-02"))
+	state.dailyAITokenCount += record.Usage.BudgetTokens()
+	key := memoryAIUsageKey{caller: record.Caller, model: record.Usage.Model}
+	if _, exists := state.aiUsage[key]; !exists && memoryDistinctModels(state.aiUsage) >= api.OutboundAIUsageModelsPerDay {
+		key.model = aiUsageOverflowModel
+	}
+	row := state.aiUsage[key]
+	row.Requests++
+	switch record.Outcome {
+	case AIUsageOutcomeError:
+		row.ErrorRequests++
+	case AIUsageOutcomeUnknown:
+		row.UsageUnknownRequests++
+	}
+	row.InputTokens += record.Usage.InputTokens
+	row.CachedInputTokens += record.Usage.CachedInputTokens
+	row.CacheWriteTokens += record.Usage.CacheWriteTokens
+	row.OutputTokens += record.Usage.OutputTokens
+	state.aiUsage[key] = row
+	return nil
+}
+
+func memoryDistinctModels(rows map[memoryAIUsageKey]AIUsageTotals) int {
+	models := make(map[string]struct{}, len(rows))
+	for key := range rows {
+		models[key.model] = struct{}{}
+	}
+	return len(models)
+}
+
+// DailyAITokenCount reports the settled UTC-day AI tokens for tests.
+func (b *MemoryBackend) DailyAITokenCount(integrationID string) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if state := b.states[integrationID]; state != nil && state.dailyUsageDate == b.now().UTC().Format("2006-01-02") {
+		return state.dailyAITokenCount
+	}
+	return 0
+}
+
+// AIUsageRollup reports one caller/model UTC-day rollup for tests.
+func (b *MemoryBackend) AIUsageRollup(integrationID, caller, model string) (AIUsageTotals, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil {
+		return AIUsageTotals{}, false
+	}
+	row, ok := state.aiUsage[memoryAIUsageKey{caller: caller, model: model}]
+	return row, ok
+}
+
 var _ CircuitBreakerBackend = (*MemoryBackend)(nil)
 var _ RetryBudgetBackend = (*MemoryBackend)(nil)
 var _ ProviderCooldownBackend = (*MemoryBackend)(nil)
+var _ AIUsageBackend = (*MemoryBackend)(nil)

@@ -13,9 +13,19 @@ import (
 var _ OutboundBindingStore = (*PgStore)(nil)
 var _ OutboundRunsGrantStore = (*PgStore)(nil)
 
+// outboundAITokenLimit maps the trailing ai_daily_token_limit column that
+// every offer and binding projection selects after ai_provider.
+func outboundAITokenLimit(limit pgtype.Int8) *int64 {
+	if !limit.Valid || limit.Int64 < 1 {
+		return nil
+	}
+	value := limit.Int64
+	return &value
+}
+
 func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var id, accountID pgtype.UUID
-	var dailyRequestLimit pgtype.Int8
+	var dailyRequestLimit, aiDailyTokenLimit pgtype.Int8
 	var accountPlan string
 	var requestPolicy api.OutboundRequestPolicy
 	var offer OutboundIntegrationOffer
@@ -24,9 +34,10 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS,
 		&requestPolicy.MaxRetries, &requestPolicy.ResponseCacheTTLSeconds,
 		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
-		&requestPolicy.RetryBudgetPerMinute); err != nil {
+		&requestPolicy.RetryBudgetPerMinute, &offer.AIProvider, &aiDailyTokenLimit); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
+	offer.AIDailyTokenLimit = outboundAITokenLimit(aiDailyTokenLimit)
 	offer.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
 	offer.RequestPolicy = requestPolicy
 	if offer.OwnerKind == "customer" {
@@ -42,7 +53,7 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 
 func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 	var id, accountID, appID pgtype.UUID
-	var dailyRequestLimit pgtype.Int8
+	var dailyRequestLimit, aiDailyTokenLimit pgtype.Int8
 	var bindingDailyRequestLimit pgtype.Int8
 	var accountPlan string
 	var requestPolicy api.OutboundRequestPolicy
@@ -54,9 +65,10 @@ func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 		&requestPolicy.RatePerSecond, &requestPolicy.Burst, &requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS,
 		&requestPolicy.MaxRetries, &requestPolicy.ResponseCacheTTLSeconds,
 		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
-		&requestPolicy.RetryBudgetPerMinute); err != nil {
+		&requestPolicy.RetryBudgetPerMinute, &binding.AIProvider, &aiDailyTokenLimit); err != nil {
 		return OutboundAppBinding{}, mapErr(err)
 	}
+	binding.AIDailyTokenLimit = outboundAITokenLimit(aiDailyTokenLimit)
 	binding.DailyRequestLimit = effectiveOutboundDailyRequestLimit(dailyRequestLimit, accountPlan)
 	binding.BindingDailyRequestLimit = effectiveOutboundDailyRequestLimit(bindingDailyRequestLimit, accountPlan)
 	binding.RequestPolicy = requestPolicy
@@ -99,7 +111,8 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
 		       integration.max_retries, integration.response_cache_ttl_seconds,
 		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
-		       integration.retry_budget_per_minute
+		       integration.retry_budget_per_minute,
+		       COALESCE(integration.ai_provider, ''), integration.ai_daily_token_limit
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential
@@ -187,7 +200,8 @@ func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID 
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
 		       integration.max_retries, integration.response_cache_ttl_seconds,
 		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
-		       integration.retry_budget_per_minute
+		       integration.retry_budget_per_minute,
+		       COALESCE(integration.ai_provider, ''), integration.ai_daily_token_limit
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN accounts account ON account.id = integration.account_id
@@ -254,13 +268,14 @@ func (s *PgStore) CreateOutboundIntegration(ctx context.Context, offer OutboundI
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst, max_in_flight,
 		     request_timeout_ms, max_retries, response_cache_ttl_seconds, circuit_breaker_failure_threshold,
 		     circuit_breaker_open_seconds, retry_budget_per_minute, enabled, provider_auth_mode, allowed_methods,
-		     allowed_path_prefixes, credential_source, owner_kind, daily_request_limit)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,'managed',$15,$16,'customer_sealed','customer',$17)`,
+		     allowed_path_prefixes, credential_source, owner_kind, daily_request_limit, ai_provider, ai_daily_token_limit)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,'managed',$15,$16,'customer_sealed','customer',$17,NULLIF($18, ''),$19)`,
 		integrationID, accountID, offer.Name, offer.Origin, zeroTokenHash,
 		offer.RequestPolicy.RatePerSecond, offer.RequestPolicy.Burst, offer.RequestPolicy.MaxInFlight,
 		offer.RequestPolicy.RequestTimeoutMS, offer.RequestPolicy.MaxRetries, offer.RequestPolicy.ResponseCacheTTLSeconds,
 		offer.RequestPolicy.CircuitBreakerFailureThreshold, offer.RequestPolicy.CircuitBreakerOpenSeconds,
-		offer.RequestPolicy.RetryBudgetPerMinute, offer.AllowedMethods, offer.AllowedPathPrefixes, offer.DailyRequestLimit)
+		offer.RequestPolicy.RetryBudgetPerMinute, offer.AllowedMethods, offer.AllowedPathPrefixes, offer.DailyRequestLimit,
+		offer.AIProvider, offer.AIDailyTokenLimit)
 	if err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
@@ -404,7 +419,8 @@ func (s *PgStore) BindOutboundIntegration(ctx context.Context, accountID, appID,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight, integration.request_timeout_ms,
 		       integration.max_retries, integration.response_cache_ttl_seconds,
 		       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
-		       integration.retry_budget_per_minute
+		       integration.retry_budget_per_minute,
+		       COALESCE(integration.ai_provider, ''), integration.ai_daily_token_limit
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN accounts account ON account.id = integration.account_id

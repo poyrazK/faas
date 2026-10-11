@@ -81,6 +81,8 @@ type IntegrationConfig struct {
 	CircuitBreakerFailureThreshold int           `toml:"circuit_breaker_failure_threshold"`
 	CircuitBreakerOpenSeconds      int           `toml:"circuit_breaker_open_seconds"`
 	RetryBudgetPerMinute           int           `toml:"retry_budget_per_minute"`
+	AIProvider                     string        `toml:"ai_provider"`
+	AIDailyTokenLimit              int64         `toml:"ai_daily_token_limit"`
 	Enabled                        *bool         `toml:"enabled"`
 }
 
@@ -201,6 +203,11 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if raw.DailyRequestLimit != 0 {
 			limit := raw.DailyRequestLimit
 			policy.DailyRequestLimit = &limit
+		}
+		policy.AIProvider = raw.AIProvider
+		if raw.AIDailyTokenLimit != 0 {
+			limit := raw.AIDailyTokenLimit
+			policy.DailyAITokenLimit = &limit
 		}
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes

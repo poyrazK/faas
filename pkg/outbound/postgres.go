@@ -44,6 +44,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if spec.BindingDailyRequestLimit != nil && spec.BindingAppID == "" {
 		return Decision{}, fmt.Errorf("%w: binding daily request limit requires an app ID", ErrInvalidIntegration)
 	}
+	if spec.DailyAITokenLimit != nil && (*spec.DailyAITokenLimit < 1 || *spec.DailyAITokenLimit > api.MaxOutboundAITokensPerDay) {
+		return Decision{}, fmt.Errorf("%w: daily token limit is outside the supported range", ErrInvalidIntegration)
+	}
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
 	}
@@ -72,7 +75,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	// binding before the integration row, matching binding-policy writes and
 	// preventing a stale resolver snapshot from bypassing a completed update.
 	var plan, ownerKind string
-	var storedDailyRequestLimit int64
+	var storedDailyRequestLimit, storedDailyAITokenLimit int64
 	var requestPolicy api.OutboundRequestPolicy
 	err = tx.QueryRow(ctx, `
 		SELECT account.plan
@@ -123,14 +126,16 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
 		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
-		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind
+		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind,
+		       COALESCE(ai_daily_token_limit, 0)
 		  FROM outbound_integrations
 		 WHERE id = $1
 		 FOR SHARE`, integrationID).
 		Scan(&storedDailyRequestLimit, &requestPolicy.RatePerSecond, &requestPolicy.Burst,
 			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries,
 			&requestPolicy.ResponseCacheTTLSeconds, &requestPolicy.CircuitBreakerFailureThreshold,
-			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind)
+			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind,
+			&storedDailyAITokenLimit)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -171,7 +176,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	var tokens float64
 	var lastRefill time.Time
 	var usageDate time.Time
-	var dailyRequestCount int64
+	var dailyRequestCount, dailyAITokenCount int64
 	var circuitFailureCount int
 	var circuitOpenUntil pgtype.Timestamptz
 	var circuitProbeLeaseID pgtype.UUID
@@ -183,13 +188,15 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		SELECT tokens, last_refill, daily_usage_date, daily_request_count,
 		       circuit_failure_count, circuit_open_until, circuit_probe_lease_id,
 		       circuit_policy_failure_threshold, circuit_policy_open_seconds,
-		       retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute
+		       retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute,
+		       daily_ai_token_count
 		FROM outbound_admission_state
 		WHERE integration_id = $1
 		FOR UPDATE`, integrationID).Scan(&tokens, &lastRefill, &usageDate, &dailyRequestCount,
 		&circuitFailureCount, &circuitOpenUntil, &circuitProbeLeaseID,
 		&circuitPolicyThreshold, &circuitPolicyOpenSeconds,
-		&retryBudgetTokens, &retryBudgetRefilledAt, &retryBudgetPolicyPerMinute); err != nil {
+		&retryBudgetTokens, &retryBudgetRefilledAt, &retryBudgetPolicyPerMinute,
+		&dailyAITokenCount); err != nil {
 		return Decision{}, err
 	}
 	if circuitPolicyThreshold != spec.CircuitBreakerFailureThreshold || circuitPolicyOpenSeconds != spec.CircuitBreakerOpenSeconds {
@@ -215,6 +222,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if !usageDate.UTC().Truncate(24 * time.Hour).Equal(today) {
 		usageDate = today
 		dailyRequestCount = 0
+		dailyAITokenCount = 0
 	}
 	var bindingDailyRequestCount int64
 	if bindingAppID != uuid.Nil {
@@ -258,10 +266,11 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5,
 		    circuit_failure_count = $6, circuit_open_until = $7, circuit_probe_lease_id = $8,
 		    circuit_policy_failure_threshold = $9, circuit_policy_open_seconds = $10,
-		    retry_budget_tokens = $11, retry_budget_refilled_at = $12, retry_budget_policy_per_minute = $13
+		    retry_budget_tokens = $11, retry_budget_refilled_at = $12, retry_budget_policy_per_minute = $13,
+		    daily_ai_token_count = $14
 		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount,
 		circuitFailureCount, circuitOpenUntil, circuitProbeLeaseID, circuitPolicyThreshold, circuitPolicyOpenSeconds,
-		retryBudgetTokens, retryBudgetRefilledAt, retryBudgetPolicyPerMinute); err != nil {
+		retryBudgetTokens, retryBudgetRefilledAt, retryBudgetPolicyPerMinute, dailyAITokenCount); err != nil {
 		return Decision{}, err
 	}
 	var inFlight int
@@ -313,6 +322,18 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 			return Decision{}, err
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
+	}
+	// Tokens are settled after each response (ADR-979), so this stops new
+	// calls once the settled total reaches the limit; in-flight calls finish.
+	if storedDailyAITokenLimit > 0 && dailyAITokenCount >= storedDailyAITokenLimit {
+		retry := today.Add(24 * time.Hour).Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Decision{}, err
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyTokenLimit, RequestTimeout: ttl}, nil
 	}
 	tokens--
 	dailyRequestCount++

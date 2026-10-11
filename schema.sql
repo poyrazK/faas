@@ -23970,12 +23970,37 @@ CREATE TABLE public.outbound_admission_state (
     retry_budget_policy_per_minute integer DEFAULT 0 NOT NULL,
     provider_cooldown_until timestamp with time zone,
     provider_cooldown_policy_revision bigint DEFAULT 0 NOT NULL,
+    daily_ai_token_count bigint DEFAULT 0 NOT NULL,
     CONSTRAINT outbound_admission_state_circuit_failure_count_check CHECK ((circuit_failure_count >= 0)),
     CONSTRAINT outbound_admission_state_circuit_policy_chk CHECK ((((circuit_policy_failure_threshold = 0) AND (circuit_policy_open_seconds = 0)) OR (((circuit_policy_failure_threshold >= 1) AND (circuit_policy_failure_threshold <= 20)) AND ((circuit_policy_open_seconds >= 1) AND (circuit_policy_open_seconds <= 300))))),
+    CONSTRAINT outbound_admission_state_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
     CONSTRAINT outbound_admission_state_daily_request_count_chk CHECK ((daily_request_count >= 0)),
     CONSTRAINT outbound_admission_state_retry_budget_policy_per_minute_check CHECK (((retry_budget_policy_per_minute >= 0) AND (retry_budget_policy_per_minute <= 3000))),
     CONSTRAINT outbound_admission_state_retry_budget_tokens_check CHECK (((retry_budget_tokens >= (0)::double precision) AND (retry_budget_tokens <= (3000)::double precision))),
     CONSTRAINT outbound_admission_state_tokens_check CHECK ((tokens >= (0)::double precision))
+);
+
+
+--
+-- Name: outbound_ai_usage_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_usage_daily (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    caller text NOT NULL,
+    model text NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    usage_unknown_requests bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    cached_input_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = 'runs'::text) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
+    CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))
 );
 
 
@@ -24078,7 +24103,11 @@ CREATE TABLE public.outbound_integrations (
     retry_budget_per_minute integer DEFAULT 0 NOT NULL,
     response_cache_ttl_seconds integer DEFAULT 0 NOT NULL,
     runs_enabled boolean DEFAULT false NOT NULL,
+    ai_provider text,
+    ai_daily_token_limit bigint,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_integrations_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint))))),
+    CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text])))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
     CONSTRAINT outbound_integrations_burst_check CHECK ((burst > 0)),
@@ -32906,6 +32935,14 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 
 --
+-- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_usage_daily
+    ADD CONSTRAINT outbound_ai_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, caller, model);
+
+
+--
 -- Name: outbound_app_binding_usage outbound_app_binding_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39890,6 +39927,13 @@ CREATE INDEX orgs_status_idx ON public.orgs USING btree (status) WHERE (status <
 --
 
 CREATE INDEX outbound_admission_leases_expiry_idx ON public.outbound_admission_leases USING btree (integration_id, expires_at);
+
+
+--
+-- Name: outbound_ai_usage_daily_usage_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_usage_daily_usage_date_idx ON public.outbound_ai_usage_daily USING btree (usage_date);
 
 
 --
@@ -50649,6 +50693,14 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 ALTER TABLE ONLY public.outbound_admission_state
     ADD CONSTRAINT outbound_admission_state_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_usage_daily outbound_ai_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_usage_daily
+    ADD CONSTRAINT outbound_ai_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

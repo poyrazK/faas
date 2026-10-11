@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_outbound_integration_request_ai_provider import (
+    CreateOutboundIntegrationRequestAiProvider,
+    check_create_outbound_integration_request_ai_provider,
+)
 from ..models.create_outbound_integration_request_allowed_methods_item import (
     CreateOutboundIntegrationRequestAllowedMethodsItem,
     check_create_outbound_integration_request_allowed_methods_item,
@@ -34,6 +38,10 @@ class CreateOutboundIntegrationRequest:
     """Optional per-integration daily admitted-request limit; account plan ceilings may be lower."""
     request_policy: OutboundRequestPolicy | Unset = UNSET
     """Effective customer-selected per-integration policy, bounded by the account plan."""
+    ai_provider: CreateOutboundIntegrationRequestAiProvider | Unset = UNSET
+    """Optional AI gateway mode (ADR-979). Enables token usage extraction for that provider's response format."""
+    ai_daily_token_limit: int | None | Unset = UNSET
+    """Optional UTC-day input plus output token limit. Requires ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +66,16 @@ class CreateOutboundIntegrationRequest:
         if not isinstance(self.request_policy, Unset):
             request_policy = self.request_policy.to_dict()
 
+        ai_provider: str | Unset = UNSET
+        if not isinstance(self.ai_provider, Unset):
+            ai_provider = self.ai_provider
+
+        ai_daily_token_limit: int | None | Unset
+        if isinstance(self.ai_daily_token_limit, Unset):
+            ai_daily_token_limit = UNSET
+        else:
+            ai_daily_token_limit = self.ai_daily_token_limit
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +90,10 @@ class CreateOutboundIntegrationRequest:
             field_dict["daily_request_limit"] = daily_request_limit
         if request_policy is not UNSET:
             field_dict["request_policy"] = request_policy
+        if ai_provider is not UNSET:
+            field_dict["ai_provider"] = ai_provider
+        if ai_daily_token_limit is not UNSET:
+            field_dict["ai_daily_token_limit"] = ai_daily_token_limit
 
         return field_dict
 
@@ -111,6 +133,22 @@ class CreateOutboundIntegrationRequest:
         else:
             request_policy = OutboundRequestPolicy.from_dict(_request_policy)
 
+        _ai_provider = d.pop("ai_provider", UNSET)
+        ai_provider: CreateOutboundIntegrationRequestAiProvider | Unset
+        if isinstance(_ai_provider, Unset):
+            ai_provider = UNSET
+        else:
+            ai_provider = check_create_outbound_integration_request_ai_provider(_ai_provider)
+
+        def _parse_ai_daily_token_limit(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_daily_token_limit = _parse_ai_daily_token_limit(d.pop("ai_daily_token_limit", UNSET))
+
         create_outbound_integration_request = cls(
             name=name,
             origin=origin,
@@ -118,6 +156,8 @@ class CreateOutboundIntegrationRequest:
             allowed_path_prefixes=allowed_path_prefixes,
             daily_request_limit=daily_request_limit,
             request_policy=request_policy,
+            ai_provider=ai_provider,
+            ai_daily_token_limit=ai_daily_token_limit,
         )
 
         create_outbound_integration_request.additional_properties = d

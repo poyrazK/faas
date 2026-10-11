@@ -1207,6 +1207,8 @@ export type { OrgMeResponse } from './models/OrgMeResponse.js';
 export type { OrgResponse } from './models/OrgResponse.js';
 export type { OrgSlug } from './models/OrgSlug.js';
 export type { OrgWithRole } from './models/OrgWithRole.js';
+export type { OutboundAIUsageItem } from './models/OutboundAIUsageItem.js';
+export type { OutboundAIUsageResponse } from './models/OutboundAIUsageResponse.js';
 export type { OutboundAppBinding } from './models/OutboundAppBinding.js';
 export type { OutboundAppBindingList } from './models/OutboundAppBindingList.js';
 export type { OutboundBindingProbePolicy } from './models/OutboundBindingProbePolicy.js';
@@ -1458,6 +1460,7 @@ export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenc
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
+export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './models/PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentialRequest.js';
 export type { PutOutboundDailyRequestBudgetRequest } from './models/PutOutboundDailyRequestBudgetRequest.js';

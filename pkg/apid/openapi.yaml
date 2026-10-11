@@ -504,6 +504,59 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the customer-owned integration whose AI gateway settings are being changed.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationAIPolicy
+      summary: Set or clear a customer-owned integration's AI provider and daily token limit.
+      description: Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in the selected provider's format and stops new calls once the UTC day's settled input plus output tokens reach the limit; calls already in flight may finish above it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIPolicyRequest' }
+      responses:
+        '204': { description: AI gateway settings updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-usage:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI usage is being read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundIntegrationAIUsage
+      summary: Read one UTC day of AI gateway token usage by caller and model.
+      description: Requires MFA and read scope. Rollups are kept for 90 days.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: UTC day as YYYY-MM-DD within the last 90 days; defaults to today.
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: AI usage for the selected day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/runs:
     parameters:
       - name: integration
@@ -44898,6 +44951,16 @@ components:
           maximum: 100000000
           description: Effective per-integration UTC-day admitted-request limit; null means no configured limit.
         request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
+        ai_provider:
+          type: string
+          enum: [openai, anthropic]
+          description: Present for AI gateway integrations (ADR-979). openai is the OpenAI-compatible wire format; the gateway extracts token usage in that provider's response format.
+        ai_daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+          description: UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means no limit.
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -44926,6 +44989,60 @@ components:
           allOf:
             - $ref: '#/components/schemas/OutboundRequestPolicy'
           description: Optional full request policy. Omission selects the default 10 RPS, burst 20, 10 in flight, and 30-second timeout.
+        ai_provider:
+          type: string
+          enum: [openai, anthropic]
+          description: Optional AI gateway mode (ADR-979). Enables token usage extraction for that provider's response format.
+        ai_daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+          description: Optional UTC-day input plus output token limit. Requires ai_provider.
+    PutOutboundAIPolicyRequest:
+      type: object
+      description: Replace an integration's AI gateway settings. An empty ai_provider turns AI handling off and requires a null daily_token_limit.
+      required: [ai_provider, daily_token_limit]
+      properties:
+        ai_provider:
+          type: string
+          enum: ['', openai, anthropic]
+        daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+    OutboundAIUsageItem:
+      type: object
+      description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens]
+      properties:
+        caller: { type: string, description: 'App UUID, or "runs" for stateless Runs.' }
+        model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        usage_unknown_requests: { type: integer, format: int64, minimum: 0, description: 'Successful calls whose response reported no usage, such as an OpenAI stream without stream_options.include_usage.' }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        cached_input_tokens: { type: integer, format: int64, minimum: 0 }
+        cache_write_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+    OutboundAIUsageResponse:
+      type: object
+      description: One UTC day of AI gateway usage for an integration.
+      required: [usage_date, ai_provider, daily_token_count, daily_token_limit, resets_at, items]
+      properties:
+        usage_date: { type: string, format: date }
+        ai_provider: { type: string, description: Empty when AI handling is off. }
+        daily_token_count: { type: integer, format: int64, minimum: 0, description: Settled admission counter for today; the rollup sum of input and output tokens for an earlier day. }
+        daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+        resets_at: { type: string, format: date-time, description: End of usage_date in UTC. }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIUsageItem' }
     OutboundRequestPolicy:
       type: object
       description: Effective customer-selected per-integration policy, bounded by the account plan.
