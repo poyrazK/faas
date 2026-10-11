@@ -17,7 +17,7 @@ import (
 func (s *Service) ObjectBucketTags(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodDelete && !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	b, _, p, ok := s.loadBucket(w, r, acct, true)

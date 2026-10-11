@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -69,7 +70,7 @@ func (s *Service) CreateObjectUploadRoute(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	var req api.CreateObjectUploadRouteRequest
@@ -163,9 +164,16 @@ func viewBucket(b state.ObjectBucket) BucketView {
 	return BucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, Public: b.PublicRead, ServeAt: b.ServeAt, CreatedAt: b.CreatedAt}
 }
 
+// ErrObjectStorageDisabled marks the operator gate: the installation has
+// object storage switched off, so retrying cannot help. It still matches
+// objectstorage.ErrUnavailable for callers that test the broad class.
+var ErrObjectStorageDisabled = fmt.Errorf("%w: not enabled on this installation", objectstorage.ErrUnavailable)
+
 func BucketProblem(w http.ResponseWriter, err error) {
 	status, code, detail := 503, "object_storage_unavailable", "Object storage is unavailable; retry later."
 	switch {
+	case errors.Is(err, ErrObjectStorageDisabled):
+		detail = "Object storage is not enabled on this Gregale installation; `gregale capabilities` shows feature availability."
 	case errors.Is(err, state.ErrObjectBucketWriteFenced):
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
@@ -311,7 +319,7 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	if req.Public && !s.Host.ObjectStorage().Accounting.Valid() {

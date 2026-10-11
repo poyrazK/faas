@@ -27,7 +27,7 @@ func (s *Service) lifecyclePolicyService(w http.ResponseWriter, r *http.Request,
 	svc := objectstorage.LifecyclePolicyService{Store: st}
 	if r.Method == http.MethodPut {
 		if !s.ObjectStorageEnabled() {
-			BucketProblem(w, objectstorage.ErrUnavailable)
+			BucketProblem(w, ErrObjectStorageDisabled)
 			return b, svc, false
 		}
 		backend, err := s.Host.ObjectStorage().Resolve(b.BackendID, b.BackendFingerprint)
@@ -94,7 +94,7 @@ func (s *Service) CreateObjectLifecycleScan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	if r.ContentLength != 0 || r.URL.RawQuery != "" {

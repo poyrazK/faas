@@ -3946,9 +3946,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
+	var postRPC events.PostRPCTimings
+	tPreCommit := time.Now()
 	joinScaleOutStamp()
+	tStampJoined := time.Now()
 	release2 := e.lockApp(bootInput.appID)
 	defer release2()
+	tLocked := time.Now()
 
 	// Publish the runtime identity and RUNNING state in one conditional write.
 	// The old success path paid for InstanceByID, SetInstanceRuntime, another
@@ -3965,6 +3969,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
+	tPublished := time.Now()
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -4084,6 +4089,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// this is idempotent for deployments that never had a backoff row and does
 	// not need to delay the newly routable target.
 	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
+	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -4176,6 +4182,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			TriggerClass:          inboundCorr.TriggerClass,
 			QueuedCount:           bootInput.queuedCount,
 			ConcurrencyAtAdmit:    bootInput.concurrencyAtAdmit,
+			PostRPC:               postRPC,
 		})
 	}
 

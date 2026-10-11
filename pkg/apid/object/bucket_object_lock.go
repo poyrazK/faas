@@ -90,7 +90,7 @@ func (s *Service) GetObjectBucketObjectLock(w http.ResponseWriter, r *http.Reque
 
 func (s *Service) PutObjectBucketObjectLock(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	b, backend, st, ok := s.objectLockBucket(w, r, acct)

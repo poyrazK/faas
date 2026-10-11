@@ -64,7 +64,7 @@ func (s *server) loadJobManagedObject(w http.ResponseWriter, r *http.Request, ac
 		return state.ObjectBucket{}, nil, "", false
 	}
 	if !s.object.ObjectStorageEnabled() {
-		object.BucketProblem(w, objectstorage.ErrUnavailable)
+		object.BucketProblem(w, object.ErrObjectStorageDisabled)
 		return state.ObjectBucket{}, nil, "", false
 	}
 	if s.objectStorage.Accounting.GatewaySafety() {

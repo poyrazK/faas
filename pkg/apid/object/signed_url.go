@@ -16,7 +16,7 @@ import (
 
 func (s *Service) issueSignedBucketObject(w http.ResponseWriter, r *http.Request, acct state.Account, req objectstorage.SignRequest) {
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	b, _, provider, ok := s.loadBucket(w, r, acct, true)

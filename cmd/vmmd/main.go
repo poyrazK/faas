@@ -1145,7 +1145,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			cloneRoot = cacheBackend.Root()
 		}
 		cloneGate := layerCloneOwnershipGate(durableInstanceLive(store), mgr, resourceJournal)
-		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath), cloneGate, mgr)
+		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath, os.TempDir()), cloneGate, mgr)
 	}
 
 	// Orphan sweep — schedule via a context-bound goroutine that

@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -899,6 +900,49 @@ func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
 		}
 	}
 	return crons
+}
+
+// reconcileProductionEnvironment reports the environment names that deploy to
+// the project's production scope, where unchanged apps already serve.
+func reconcileProductionEnvironment(environment string) bool {
+	switch strings.TrimSpace(environment) {
+	case "", "default", "production":
+		return true
+	}
+	return false
+}
+
+type liveDeploymentForScopeStore interface {
+	LiveDeploymentForScope(ctx context.Context, appID, scope string) (state.Deployment, error)
+}
+
+// environmentAppsWithoutLiveDeployment returns selected apps that the
+// reconcile left unchanged but that have never been deployed to environment.
+// Builds were enqueued only for added or changed app rows, so a cloned
+// environment's first deploy queued nothing and the CLI reported every build
+// as failed (production-us hunt #9, `env create staging` then
+// `deploy --project --environment staging`).
+func environmentAppsWithoutLiveDeployment(ctx context.Context, store liveDeploymentForScopeStore, selected []state.App, environment string, added, changed []state.App) ([]state.App, error) {
+	queued := make(map[string]bool, len(added)+len(changed))
+	for _, app := range added {
+		queued[app.ID] = true
+	}
+	for _, app := range changed {
+		queued[app.ID] = true
+	}
+	var out []state.App
+	for _, app := range selected {
+		if queued[app.ID] {
+			continue
+		}
+		if _, err := store.LiveDeploymentForScope(ctx, app.ID, environment); err == nil {
+			continue
+		} else if !errors.Is(err, state.ErrNotFound) && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("live deployment for %s in %s: %w", app.Slug, environment, err)
+		}
+		out = append(out, app)
+	}
+	return out, nil
 }
 
 // appliedBuild is an alias for api.AppliedBuild so the local code
@@ -2190,7 +2234,25 @@ func (s *server) scanService(
 	// is what we want. A future refactor that moves the ScanDir
 	// cleanup into this func must keep staging reads ahead of
 	// the cleanup.
-	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, rec.Changed, req.Environment)
+	buildChanged := rec.Changed
+	if !reconcileProductionEnvironment(req.Environment) {
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if appsErr != nil {
+			prob := customerInternalProblem(s.log, "load workloads for environment deployment",
+				"Gregale could not load this project's workloads to deploy the environment.",
+				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		firstBuilds, firstErr := environmentAppsWithoutLiveDeployment(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), req.Environment, rec.Added, rec.Changed)
+		if firstErr != nil {
+			prob := customerInternalProblem(s.log, "inspect environment deployments",
+				"Gregale could not check which workloads this environment still needs to deploy.",
+				"Retry the deployment in a moment; if it continues, contact support.", firstErr)
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		buildChanged = append(append([]state.App(nil), rec.Changed...), firstBuilds...)
+	}
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, buildChanged, req.Environment)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs

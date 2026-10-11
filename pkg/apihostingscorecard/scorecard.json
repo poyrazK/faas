@@ -219,13 +219,14 @@
       "id": "route-change-safety",
       "name": "Route change safety",
       "category": "delivery",
-      "description": "Route changes are reviewed before release: source impact maps a diff to affected endpoints, saved route requirements check authentication, throttle and budget policy, and lifecycle review keeps a route that still has customer traffic or a saved requirement from being retired without evidence.",
-      "capabilities": ["route-lifecycle-review", "route-requirements", "route-source-impact"],
+      "description": "Route changes are reviewed before release: source impact maps a diff to affected endpoints, saved route requirements check authentication, throttle and budget policy, lifecycle review keeps a route that still has customer traffic or a saved requirement from being retired without evidence, and the route advisor proposes cache, async and throttle rules from observed traffic that are created disabled for review.",
+      "capabilities": ["route-advisor", "route-lifecycle-review", "route-requirements", "route-source-impact"],
       "targets": [{"metric": "count", "operator": "gte", "value": 1, "unit": "runs"}],
       "evidence": [
         {"kind": "test", "locator": "pkg/routerequirements/evaluate_test.go::TestEvaluateRequirementsUsesSelectedPolicyAndAppBudget"},
         {"kind": "test", "locator": "pkg/routeimpact/analyze_test.go::TestFastAPINestedRoutersAndImportedHandlers"},
-        {"kind": "test", "locator": "cmd/gregale/commands_routes_lifecycle_test.go::TestBuildRouteLifecycleReviewClassifiesOnlySupportedQuietRouteAsCandidate"}
+        {"kind": "test", "locator": "cmd/gregale/commands_routes_lifecycle_test.go::TestBuildRouteLifecycleReviewClassifiesOnlySupportedQuietRouteAsCandidate"},
+        {"kind": "test", "locator": "pkg/routeadvisor/advisor_test.go::TestCacheSuggestionRules"}
       ]
     },
     {

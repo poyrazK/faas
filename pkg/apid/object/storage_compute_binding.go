@@ -121,7 +121,7 @@ func (s *Service) CreateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 		return
 	}
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	if bucket.State != "ready" {

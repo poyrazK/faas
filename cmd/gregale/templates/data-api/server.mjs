@@ -4,11 +4,14 @@ import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, limits } from './config.mjs'
+import { runtimeConfig, servingContracts, limits } from './config.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
+  const acceptedFingerprints = servingContracts(config)
   return http.createServer(async (req, res) => {
+    const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
+    if (guarded) req.url = guarded[2]
     traceRequest(req, res, log)
     const origin = req.headers.origin
     if (origin && config.origins.includes(origin)) {
@@ -23,6 +26,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }
     if (req.url === '/healthz' && req.method === 'GET') return readiness(res, readyPort)
     if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
+    let rpc
     if (req.url.startsWith('/rest/v1/')) {
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
@@ -30,7 +34,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const schema = req.headers['content-profile'] ?? config.schemas[0]
-        if (raw !== path || !match || !config.functions?.some(f => f.schema === schema && f.name === match[1])) return problem(res, 404, 'not_found')
+        if (raw !== path || !match) return problem(res, 404, 'not_found')
+        rpc = { schema, name: match[1] }
+        if (!guarded && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
         if (req.method !== 'POST') return problem(res, 405, 'method_not_allowed')
       }
     }
@@ -41,6 +47,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     let payload
     try { payload = await verify(token) } catch { return problem(res, 401, 'token_invalid') }
     if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+    if (guarded) {
+      if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
+      if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
+      if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
+    }
     if (req.url === '/__gregale/schema') {
       if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
       return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint })
@@ -50,7 +61,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // cannot select an administrator, owner or another application's role.
       const claims = { ...payload, role: config.role }
       const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
-      proxy(req, res, internal, upstreamPort, config)
+      if (res.destroyed || req.aborted) return
+      proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1')
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
 }
@@ -73,7 +85,7 @@ function readiness(res, port, contract = {}) {
   request.on('error', () => problem(res, 503, 'data_api_unavailable'))
 }
 
-function proxy(req, res, token, port, config) {
+function proxy(req, res, token, port, config, restBasePath) {
   const declared = Number(req.headers['content-length'] ?? 0)
   if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
   const headers = { authorization: `Bearer ${token}` }
@@ -82,7 +94,7 @@ function proxy(req, res, token, port, config) {
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
   const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, timeout: limits.queryMs }, response => {
-    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config)
+    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath)
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
     const out = {}
     for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
@@ -102,7 +114,7 @@ function proxy(req, res, token, port, config) {
   req.pipe(upstream)
 }
 
-function openAPISpec(response, res, config) {
+function openAPISpec(response, res, config, restBasePath) {
   let bytes = 0
   const chunks = []
   response.on('data', chunk => {
@@ -119,7 +131,7 @@ function openAPISpec(response, res, config) {
       // The engine's loopback address must not become the public client URL.
       delete document.host
       delete document.schemes
-      document.basePath = '/rest/v1'
+      document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
@@ -139,6 +151,8 @@ export async function main(env = process.env) {
   config.snapshot = snapshot
   config.functions = snapshot.functions
   config.fingerprint = fingerprint(snapshot)
+  // Reject stale owner policies before starting an engine process.
+  servingContracts(config)
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.

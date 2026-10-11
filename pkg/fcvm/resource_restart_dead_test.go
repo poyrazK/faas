@@ -1,4 +1,4 @@
-// adr: 967
+// adr: 971
 package fcvm
 
 import (
@@ -104,7 +104,7 @@ func TestResourceRestartDeadLeavesReusedPathAlone(t *testing.T) {
 	r, materialised, _ := deadRecordFixture(t, opts)
 	// Keep the recorded inode allocated so the replacement gets another one;
 	// Linux otherwise hands the freed number straight back, which (device,
-	// inode) identity cannot distinguish (ADR-967).
+	// inode) identity cannot distinguish (ADR-971).
 	recorded, err := os.Open(materialised)
 	if err != nil {
 		t.Fatal(err)

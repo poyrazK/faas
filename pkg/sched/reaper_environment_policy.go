@@ -21,6 +21,25 @@ func reaperEnvironmentKey(instance InstanceInfo) string {
 	return instance.AppID + "\x00scope:" + instance.Scope
 }
 
+// reaperDeploymentEnded reports a deployment that will never serve again
+// and has no runtime policy to resolve. Production-us hunt #9: a rollback
+// cancelled mid-flight left its target's running instance with no runtime
+// values, so every tick logged "policy unavailable", the reaper skipped it,
+// and it held the app's only concurrency slot for 36 minutes.
+func reaperDeploymentEnded(status state.DeploymentStatus) bool {
+	return status == state.DeployCancelled || status == state.DeployFailed
+}
+
+// reaperAbortedCanary reports a canary candidate the circuit breaker aborted:
+// still live but at 0% traffic, so nothing routes to it again unless an
+// operator recovers it. Production-us hunt #9: the aborted candidate's idle
+// instance kept the rollout grant slot of a max_concurrency=1 app until the
+// idle timeout, so the next deploy's hosting smoke answered 429 for four
+// minutes. It drains like a superseded revision, keeping its snapshot.
+func reaperAbortedCanary(d state.Deployment) bool {
+	return d.Status == state.DeployLive && d.TrafficPercent == 0 && state.AbortedCanaryCandidate(d)
+}
+
 type reaperDeploymentPolicy struct {
 	app           state.App
 	deployment    state.Deployment
@@ -53,9 +72,14 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				}
 				if policy.err == nil {
 					policy.scope = normalizedDeploymentScope(policy.deployment.Scope)
+				}
+				// A cancelled or failed deployment has no runtime policy left to
+				// resolve; its instances only need retiring.
+				resolve := policy.err == nil && !reaperDeploymentEnded(policy.deployment.Status)
+				if resolve {
 					policy.app, policy.err = state.ResolveAppForDeployment(ctx, store, app, policy.deployment)
 				}
-				if policy.err == nil {
+				if resolve && policy.err == nil {
 					var owner state.RuntimeAppValuesSnapshot
 					owner, policy.err = store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, row.DeploymentID)
 					if policy.err == nil && (owner.AccountID != app.AccountID || owner.AppID != app.ID || owner.DeploymentID != row.DeploymentID || owner.Scope != policy.scope || api.ValidateScope(owner.Scope) != nil) {
@@ -63,7 +87,7 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 					}
 					policy.environmentID = owner.EnvironmentID
 				}
-				if policy.err == nil {
+				if resolve && policy.err == nil {
 					var scaling state.RuntimeScalingState
 					scaling, policy.err = l.engine.runtimeScalingStateForDeployment(ctx, policy.app, policy.deployment)
 					if policy.err == nil && scaling.EnvironmentID != policy.environmentID {
@@ -77,11 +101,15 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				}
 			}
 			row.Scope, row.EnvironmentID = policy.scope, policy.environmentID
+			if policy.err == nil && reaperDeploymentEnded(policy.deployment.Status) {
+				row.DeploymentEnded = true
+				continue
+			}
 			if policy.err != nil || policy.app.ID != row.AppID || policy.app.AccountID != app.AccountID {
 				row.PolicyUnavailable = true
 				continue
 			}
-			if policy.deployment.Status == state.DeploySuperseded {
+			if policy.deployment.Status == state.DeploySuperseded || reaperAbortedCanary(policy.deployment) {
 				row.DeploymentSuperseded = true
 				continue
 			}

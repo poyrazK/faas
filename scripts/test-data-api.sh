@@ -37,11 +37,11 @@ npm test --prefix "$starter_dir"
 node --test tests/data-api/install-sdk.test.mjs
 node --test tests/data-api/artifacts.test.mjs
 node --test tests/data-api/browser-cors.test.mjs
-node --test tests/data-api/staging/canary.test.mjs
+node --test tests/data-api/staging/*.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then
   DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/starter.test.mjs
   go build -o "$runtime_dir/gregale-dev-diff" ./cmd/gregale
-  DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/composites.test.mjs tests/data-api/view-relationships.test.mjs tests/data-api/computed-relationships.test.mjs tests/data-api/json-projections.test.mjs tests/data-api/cursor-pagination.test.mjs
+  DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/composites.test.mjs tests/data-api/view-relationships.test.mjs tests/data-api/computed-relationships.test.mjs tests/data-api/json-projections.test.mjs tests/data-api/cursor-pagination.test.mjs tests/data-api/cancellation.test.mjs tests/data-api/optimistic-concurrency.test.mjs tests/data-api/idempotency.test.mjs tests/data-api/outbox.test.mjs tests/data-api/bulk-mutations.test.mjs tests/data-api/import-preview.test.mjs
   DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/dev.test.mjs
 fi
 npm run typecheck --prefix "$starter_dir/client"

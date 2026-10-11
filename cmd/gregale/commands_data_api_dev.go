@@ -16,21 +16,23 @@ import (
 )
 
 type dataAPIDevOptions struct {
-	Directory     string `json:"directory"`
-	Output        string `json:"output"`
-	Port          int    `json:"port"`
-	Check         bool   `json:"check"`
-	CheckTypes    bool   `json:"check_types"`
-	Once          bool   `json:"once"`
-	JSON          bool   `json:"json"`
-	Watch         bool   `json:"watch"`
-	Baseline      string `json:"baseline"`
-	CheckBreaking bool   `json:"check_breaking"`
-	Scenario      string `json:"scenario"`
-	Replay        string `json:"replay"`
-	CLI           string `json:"cli"`
-	Config        string `json:"config"`
-	OutputSet     bool   `json:"output_set"`
+	Directory         string `json:"directory"`
+	Output            string `json:"output"`
+	Port              int    `json:"port"`
+	Check             bool   `json:"check"`
+	CheckTypes        bool   `json:"check_types"`
+	Once              bool   `json:"once"`
+	JSON              bool   `json:"json"`
+	Watch             bool   `json:"watch"`
+	Baseline          string `json:"baseline"`
+	CheckBreaking     bool   `json:"check_breaking"`
+	Approval          string `json:"approval"`
+	AcceptedContracts string `json:"accepted_contracts"`
+	Scenario          string `json:"scenario"`
+	Replay            string `json:"replay"`
+	CLI               string `json:"cli"`
+	Config            string `json:"config"`
+	OutputSet         bool   `json:"output_set"`
 }
 
 func cmdDataAPIDev(args []string) int {
@@ -47,11 +49,13 @@ func cmdDataAPIDev(args []string) int {
 	scenario := fs.String("scenario", "", "select one named replay scenario (requires --replay)")
 	replay := fs.String("replay", "", "replay saved requests relative to the project (requires --once)")
 	checkBreaking := fs.Bool("check-breaking", false, "reject breaking schema changes; requires an existing baseline")
+	acceptedContracts := fs.String("accepted-contracts", "", "project-relative reviewed runtime contract policy")
+	approval := fs.String("approval", "", "reviewed compatibility approvals (requires --baseline and --check-breaking)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if (*checkTypes && !*once) || fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--check-types --once] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--replay FILE --once] [--scenario NAME]", "data-api")
+	if (*approval != "" && (*baseline == "" || !*checkBreaking)) || (*checkTypes && !*once) || fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
+		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--check-types --once] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--approval FILE] [--accepted-contracts FILE] [--replay FILE --once] [--scenario NAME]", "data-api")
 		return 1
 	}
 	base, err := filepath.Abs(*directory)
@@ -98,8 +102,34 @@ func cmdDataAPIDev(args []string) int {
 		return printErr("Invalid output", errors.New("types output and compatibility baseline must be different files"))
 	}
 	if *baseline != "" || *checkBreaking {
-		if _, err = readDataAPIContractFile(contractPath); err != nil {
-			return printErr("Invalid compatibility baseline", fmt.Errorf("%w; initialize a local contract with data-api dev --once or use --baseline FILE", err))
+		contract, contractErr := readDataAPIContractFile(contractPath)
+		if contractErr != nil {
+			return printErr("Invalid compatibility baseline", fmt.Errorf("%w; initialize a local contract with data-api dev --once or use --baseline FILE", contractErr))
+		}
+		if *approval != "" {
+			*approval = dataAPISyncPath(base, *approval)
+			approved, approvalErr := readDataAPIApprovalFile(*approval)
+			if approvalErr != nil {
+				return printErr("Invalid compatibility approval", approvalErr)
+			}
+			if approved.BaselineFingerprint != contract.Fingerprint {
+				return printErr("Invalid compatibility approval", errors.New("baseline fingerprint does not match"))
+			}
+			info, statErr := os.Stat(*approval)
+			if target == *approval || (statErr == nil && outputErr == nil && os.SameFile(info, outputInfo)) {
+				return printErr("Invalid output", errors.New("types output and compatibility approval must be different files"))
+			}
+		}
+	}
+	if *acceptedContracts != "" {
+		*acceptedContracts = dataAPISyncPath(base, *acceptedContracts)
+		if _, err := readDataAPIAcceptedContractsFile(*acceptedContracts); err != nil {
+			return printErr("Invalid accepted contracts", err)
+		}
+		for _, path := range []string{target, contractPath, configPath, *replay, *approval} {
+			if path != "" && dataAPIContractOutputAliases(*acceptedContracts, path) {
+				return printErr("Invalid accepted contracts", errors.New("policy must differ from types, baseline, config, replay and approval files"))
+			}
 		}
 	}
 	cli, err := os.Executable()
@@ -148,7 +178,7 @@ func cmdDataAPIDev(args []string) int {
 			outputSet = true
 		}
 	})
-	options, err := json.Marshal(dataAPIDevOptions{Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
+	options, err := json.Marshal(dataAPIDevOptions{Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
 	if err != nil {
 		return printErr("Could not prepare local options", err)
 	}

@@ -836,6 +836,42 @@ func TestPGAppErrorsPurgeEnforcesRetention(t *testing.T) {
 	}
 }
 
+// Production-us hunt #9: the gateway sends an empty headers sample for every
+// occurrence after a fingerprint's first. apid inserted "" into the jsonb
+// column, Postgres rejected it, and the occurrence lost its drill-down row
+// and its Issues event (apid_app_errors_recorded_total{outcome="db_error"}
+// 479 vs ok 7; an issue showed 2 events for 433 504s).
+func TestPGAppErrorsReceiverStoresRepeatOccurrenceWithoutHeaders(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	ctx := context.Background()
+	app := seedPGApp(t, e, "errs-repeat")
+	dep := issueSeedDeployment(t, e, app, 1)
+	receiver := newAppErrorsReceiver(e.store, nil, true)
+	fp := strings.Repeat("d", 64)
+	for i, headers := range []string{`{"Cf-Ray":"first"}`, "", ""} {
+		out := receiver.handleOne(ctx, &apidpb.IncrementAppErrorRequest{
+			AccountId: e.acct.ID, AppId: app.ID, DeploymentId: dep.ID, Fingerprint: fp,
+			RouteTemplate: "/x", HttpStatus: 504, ErrorClass: "unhandled",
+			HeadersSampleJson: headers, ReceivedAtUnixMs: time.Now().UnixMilli(),
+			RequestId: uuid.NewString(),
+		})
+		if out.GetOutcome() == outcomeDBError {
+			t.Fatalf("occurrence %d with headers %q: outcome db_error", i, headers)
+		}
+	}
+	var requests, withoutHeaders int
+	if err := e.pool.QueryRow(ctx, `select count(*), count(*) filter (where headers_sample is null) from app_error_requests where app_id = $1`, app.ID).Scan(&requests, &withoutHeaders); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 || withoutHeaders != 2 {
+		t.Fatalf("app_error_requests rows = %d (%d without headers), want 3 (2)", requests, withoutHeaders)
+	}
+	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+	if len(list.Items) != 1 || list.Items[0].EventCount != 3 {
+		t.Fatalf("issues = %+v, want one issue with 3 events", list.Items)
+	}
+}
+
 // An error with nothing to redact arrives with an empty (nil) redactions
 // list; pgx sent it as NULL into a NOT NULL column, so the per-request row
 // was never written and the customer's error drill-down stayed empty.

@@ -263,9 +263,14 @@ type restoreTimingBreakdown struct {
 	// PreBootJoinWaitMs is how long the restore waited for the concurrent
 	// pre-boot write after the rest of the jail was staged. Operator-only.
 	PreBootJoinWaitMs int64
-	StageSnapshotMs   int64
-	HelperMs          int64
-	StartJailerMs     int64
+	// StageWritableMs is the per-instance drive clone inside StageDrivesMs,
+	// and PreBootSkipped reports whether the pre-boot write was skipped
+	// because the captured drive already held it. Operator-only.
+	StageWritableMs int64
+	PreBootSkipped  bool
+	StageSnapshotMs int64
+	HelperMs        int64
+	StartJailerMs   int64
 	// NetworkWaitMs is how long the restore blocked on the overlapped wake
 	// network before startJailer (wake_network.go). Operator-only, like the
 	// TUN subphases: it is not on the customer wake.restore_breakdown event.
@@ -2032,6 +2037,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
 		StageSnapshotMs:      tMemState.Sub(tSnapshotStart).Milliseconds(),
 		PreBootJoinWaitMs:    tPreBootJoined.Sub(tHelper).Milliseconds(),
+		StageWritableMs:      tStageWritable.Sub(tStageWritableStart).Milliseconds(),
+		PreBootSkipped:       preBootSkipped,
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
 		StartJailerMs:        tStartJailer.Sub(tNetworkReady).Milliseconds(),
 		NetworkWaitMs:        networkWait.Milliseconds(),
@@ -2052,6 +2059,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
+	v.wakePhaseMetrics.ObserveRestorePhases(breakdown)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
 	// The durable wake event above is the operator-facing record. Keep the
 	// duplicate structured log at Debug so a slow journald sink cannot delay
@@ -3211,7 +3219,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	}
 
 	if !memPublishedLocally {
-		memTmp, tmpErr := os.CreateTemp("", "faas-snap-*.mem")
+		memTmp, tmpErr := os.CreateTemp("", snapshotTempPattern(l.Instance, ".mem"))
 		if tmpErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: alloc snapshot mem tmp: %w", tmpErr)
 		}
@@ -7301,7 +7309,7 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 			return path, nil
 		}
 	}
-	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-snap-*.bin", "materialised")
+	tmp, err := v.newMaterialisedFile(instanceID, "", snapshotTempPattern(instanceID, ".bin"), "materialised")
 	if err != nil {
 		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
 	}
@@ -7608,6 +7616,18 @@ func layerCloneTempPattern(instance string) string {
 	// across a daemon restart. ReapOrphanedLayerClones applies the same
 	// durable liveness gate as the jail sweep before removing one.
 	return ".faas-layer-" + instance + "-*"
+}
+
+// snapshotTempPattern names a snapshot memory or materialised-artifact temp
+// file in vmmd's TMPDIR. Like layerCloneTempPattern it carries the instance id,
+// so a file stranded by a vmmd crash is reclaimed by ReapOrphanedLayerClones
+// behind the same durable liveness gate instead of lingering for good
+// (production compute-1 held 12 unnamed ones, 2026-10-01..06).
+func snapshotTempPattern(instance, ext string) string {
+	if !looksLikeInstanceID(instance) {
+		return "faas-snap-*" + ext
+	}
+	return "faas-snap-" + instance + "-*" + ext
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

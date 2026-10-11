@@ -230,10 +230,13 @@ test('staging owner release grants RPCs, compiles contracts and survives role re
   assert.match(before, /"create_note"/); assert.doesNotMatch(before, /"priority"/)
   await stagingClient(t, before, true)
   login = new pg.Client({ connectionString: loginURL.toString() }); await login.connect()
-  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice' })])
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice', tenant: 'canary' })])
   const created = (await login.query("SELECT * FROM api.create_note('atomic')")).rows[0]
   assert.equal(created.subject, 'alice')
-  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'bob' })])
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice', tenant: 'other' })])
+  assert.equal((await login.query('SELECT * FROM api.notes WHERE id=$1', [created.id])).rowCount, 0)
+  await assert.rejects(login.query("SELECT * FROM api.create_note('wrong-tenant')"), { code: '42501' })
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'bob', tenant: 'canary' })])
   assert.equal((await login.query('SELECT * FROM api.notes WHERE id=$1',[created.id])).rowCount, 0)
   assert.equal((await login.query("SELECT * FROM api.create_note('private')")).rows[0].subject, 'bob')
   await login.end(); login = undefined
@@ -254,7 +257,7 @@ test('staging owner release grants RPCs, compiles contracts and survives role re
   loginURL.username = rotated
   assert.equal(generate(await inspect(loginURL.toString(), ['api'])), after)
   login = new pg.Client({ connectionString: loginURL.toString() }); await login.connect()
-  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice' })])
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice', tenant: 'canary' })])
   assert.equal((await login.query('SELECT priority FROM api.notes WHERE id=$1',[created.id])).rows[0].priority, 0)
   assert.equal((await login.query("SELECT * FROM api.create_note('rotated')")).rows[0].subject, 'alice')
 })

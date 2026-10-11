@@ -131,7 +131,7 @@ func (s *Service) loadMultipartUpload(w http.ResponseWriter, r *http.Request, ac
 func (s *Service) CreateObjectMultipartUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	bucket, store, _, ok := s.multipartUploadStore(w, r, acct)
@@ -263,7 +263,7 @@ func objectMultipartPartListQuery(w http.ResponseWriter, r *http.Request) (int32
 func (s *Service) SignObjectMultipartPart(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.ObjectStorageEnabled() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
+		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
 	bucket, upload, _, _, ok := s.loadMultipartUpload(w, r, acct)
