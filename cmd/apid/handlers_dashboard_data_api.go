@@ -1,4 +1,4 @@
-// adr: 935 — owner tooling runs schema inspection inside the deployed app.
+// adr: 968 — owner tooling runs schema inspection inside the deployed app.
 package main
 
 import (
