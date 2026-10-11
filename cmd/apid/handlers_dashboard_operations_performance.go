@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.GapProgressGroups = workflowGapProgressLinks(data.SummaryURL, opts, summary)
 		data.NewMissingProgressInstances = workflowNewMissingProgressLinks(data.ListURL, opts, summary.NewMissingProgress)
 		data.MissingProgressInstances = workflowMissingProgressLinks(data.ListURL, opts, summary.MissingProgress)
 		data.MissingConditionGroups = workflowMissingConditionLinks(data.SummaryURL, opts, summary)
@@ -251,4 +252,16 @@ func workflowNewMissingProgressLinks(listPath string, opts api.OperationWorkflow
 		views = append(views, dashboard.WorkflowNewMissingProgressLink{OperationWorkflowNewMissingConditionProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
 	}
 	return views
+}
+
+func workflowGapProgressLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowGapProgressGroupLink {
+	links := []dashboard.WorkflowGapProgressGroupLink{}
+	if summary.NewMissingProgress == nil {
+		return links
+	}
+	for _, group := range summary.NewMissingProgress.Groups {
+		selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_gap_owner", ContractVersion: group.ContractVersion, State: group.State, Owner: group.Owner, Unassigned: group.Unassigned, GapStatus: group.GapStatus}
+		links = append(links, dashboard.WorkflowGapProgressGroupLink{OperationWorkflowGapProgressGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
+	}
+	return links
 }

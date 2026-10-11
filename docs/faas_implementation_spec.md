@@ -2610,3 +2610,36 @@ and existing gaps card to the saved comparison view with coverage, before/after
 expectations, guidance, prior reporting Operation, baseline/current pin links and
 workflow history. API schemas and Go, Node and Python SDKs expose the projection.
 Execution and business decisions remain application-owned.
+
+### Reporting-gap category drilldowns
+
+`new_missing_progress.groups` groups comparable current gaps by current contract,
+state, refresh owner (including unassigned) and category. Canonical ordering is
+contract/state/owner/category, capped at the existing 64-group limit. Counts use
+full classified evidence before previews. Each workflow contributes once per
+group and can appear in several groups; workflow counts are not additive.
+
+The `condition_gap_owner` contributor dimension requires ongoing cohort, the
+current comparison summary's `cohort_token`, saved `baseline_token`, and an exact
+returned group selected by contract_version/state/gap_status plus exactly one
+of owner or unassigned=true. The baseline must match account/customer, app,
+environment and workflow and cannot be later than the current token evaluation.
+Changed current evidence returns 409 and requires refreshing the summary. Other
+dimensions reject baseline_token and gap_status. Comparison-only historical
+definitions use the existing scoped batch SQLC lookup once and do not enter the
+current cohort fingerprint.
+
+Contributors include `gap_progress` filtered to the selected category and owner
+before the first-16 preview, with exact counts, baseline report/state, prior
+evidence and pinned current guidance. Customer responses omit nested tenant
+identifiers. Dashboard links carry both tokens and link workflow history and
+baseline/current/prior reporting Operations. Lost reports, new expectations,
+existing gaps, changed declarations and contract changes remain separate.
+
+Ranks and distributions measure full observed report-only workflow blocked
+intervals with stable identity ties, not gap age, causation or business severity.
+Intervals spanning contract boundaries are omitted. Current report comparisons permit contract boundaries while baseline history
+must be continuous within its contract. Generic duration coverage retains its
+stricter eligibility; new_missing_progress reports comparison coverage separately
+so contract-change contributors remain accessible. No persistence, migrations,
+new limits, execution, notifications or VM lifecycle changes are introduced.

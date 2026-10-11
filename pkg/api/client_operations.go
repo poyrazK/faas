@@ -521,7 +521,7 @@ func operationWorkflowPerformanceInstanceQuery(opts OperationWorkflowPerformance
 	if opts.ContractVersion != 0 {
 		q.Set("contract_version", strconv.Itoa(opts.ContractVersion))
 	}
-	for key, value := range map[string]string{"condition_evidence_status": opts.ConditionEvidenceStatus, "condition_id": opts.ConditionID, "condition_description": opts.ConditionDescription, "condition_result": opts.ConditionResult, "state": opts.State, "operation": opts.Operation, "code": opts.Code, "owner": opts.Owner, "cohort_token": opts.CohortToken, "kind": opts.Kind, "decision_code": opts.DecisionCode, "rule_id": opts.RuleID, "rule_version": opts.RuleVersion, "group_id": opts.GroupID, "path_id": opts.PathID, "outcome_code": opts.OutcomeCode} {
+	for key, value := range map[string]string{"gap_status": opts.GapStatus, "condition_evidence_status": opts.ConditionEvidenceStatus, "condition_id": opts.ConditionID, "condition_description": opts.ConditionDescription, "condition_result": opts.ConditionResult, "state": opts.State, "operation": opts.Operation, "code": opts.Code, "owner": opts.Owner, "cohort_token": opts.CohortToken, "kind": opts.Kind, "decision_code": opts.DecisionCode, "rule_id": opts.RuleID, "rule_version": opts.RuleVersion, "group_id": opts.GroupID, "path_id": opts.PathID, "outcome_code": opts.OutcomeCode} {
 		if value != "" {
 			q.Set(key, value)
 		}

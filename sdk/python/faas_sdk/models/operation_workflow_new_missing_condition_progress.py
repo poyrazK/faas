@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_gap_progress_group import OperationWorkflowGapProgressGroup
     from ..models.operation_workflow_new_missing_condition_progress_count import (
         OperationWorkflowNewMissingConditionProgressCount,
     )
@@ -29,6 +30,8 @@ class OperationWorkflowNewMissingConditionProgress:
 
     """
 
+    groups: list[OperationWorkflowGapProgressGroup]
+    groups_truncated: bool
     baseline_at: datetime.datetime
     evaluated_at: datetime.datetime
     sampled_workflow_count: int
@@ -43,6 +46,13 @@ class OperationWorkflowNewMissingConditionProgress:
     items: list[OperationWorkflowNewMissingConditionProgressInstance]
 
     def to_dict(self) -> dict[str, Any]:
+        groups = []
+        for groups_item_data in self.groups:
+            groups_item = groups_item_data.to_dict()
+            groups.append(groups_item)
+
+        groups_truncated = self.groups_truncated
+
         baseline_at = self.baseline_at.isoformat()
 
         evaluated_at = self.evaluated_at.isoformat()
@@ -77,6 +87,8 @@ class OperationWorkflowNewMissingConditionProgress:
 
         field_dict.update(
             {
+                "groups": groups,
+                "groups_truncated": groups_truncated,
                 "baseline_at": baseline_at,
                 "evaluated_at": evaluated_at,
                 "sampled_workflow_count": sampled_workflow_count,
@@ -96,6 +108,7 @@ class OperationWorkflowNewMissingConditionProgress:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_gap_progress_group import OperationWorkflowGapProgressGroup
         from ..models.operation_workflow_new_missing_condition_progress_count import (
             OperationWorkflowNewMissingConditionProgressCount,
         )
@@ -104,6 +117,15 @@ class OperationWorkflowNewMissingConditionProgress:
         )
 
         d = dict(src_dict)
+        groups = []
+        _groups = d.pop("groups")
+        for groups_item_data in _groups:
+            groups_item = OperationWorkflowGapProgressGroup.from_dict(groups_item_data)
+
+            groups.append(groups_item)
+
+        groups_truncated = d.pop("groups_truncated")
+
         baseline_at = datetime.datetime.fromisoformat(d.pop("baseline_at"))
 
         evaluated_at = datetime.datetime.fromisoformat(d.pop("evaluated_at"))
@@ -139,6 +161,8 @@ class OperationWorkflowNewMissingConditionProgress:
             items.append(items_item)
 
         operation_workflow_new_missing_condition_progress = cls(
+            groups=groups,
+            groups_truncated=groups_truncated,
             baseline_at=baseline_at,
             evaluated_at=evaluated_at,
             sampled_workflow_count=sampled_workflow_count,

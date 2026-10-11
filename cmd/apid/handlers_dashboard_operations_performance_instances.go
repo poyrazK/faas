@@ -16,13 +16,16 @@ import (
 
 func workflowPerformanceContributorURL(path string, opts api.OperationWorkflowPerformanceOptions, cohort, token string, group api.OperationWorkflowPerformanceGroup) string {
 	q := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}, "cohort": {cohort}, "dimension": {group.Dimension}, "cohort_token": {token}}
+	if group.Dimension == "condition_gap_owner" {
+		q.Set("baseline_token", opts.BaselineToken)
+	}
 	if opts.TenantID != "" {
 		q.Set("tenant_id", opts.TenantID)
 	}
 	if group.ContractVersion > 0 {
 		q.Set("contract_version", strconv.Itoa(group.ContractVersion))
 	}
-	for key, value := range map[string]string{"condition_evidence_status": group.ConditionEvidenceStatus, "condition_id": group.ConditionID, "condition_description": group.ConditionDescription, "condition_result": group.ConditionResult, "state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
+	for key, value := range map[string]string{"gap_status": group.GapStatus, "condition_evidence_status": group.ConditionEvidenceStatus, "condition_id": group.ConditionID, "condition_description": group.ConditionDescription, "condition_result": group.ConditionResult, "state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
 		if value != "" {
 			q.Set(key, value)
 		}
@@ -54,6 +57,8 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		return "Refresh priority · oldest overdue report age"
 	case "condition_refresh_blocked":
 		return "Refresh priority · full workflow blocked duration"
+	case "condition_gap_owner":
+		return fmt.Sprintf("Reporting gaps · %s · state %s · contract %d · refresh owner %s", group.GapStatus, group.State, group.ContractVersion, owner)
 	case "condition_missing_owner":
 		return fmt.Sprintf("Missing condition reports · state %s · contract %d · refresh owner %s", group.State, group.ContractVersion, owner)
 	case "condition_refresh_owner":

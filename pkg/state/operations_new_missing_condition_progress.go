@@ -45,8 +45,9 @@ func workflowNewMissingConditionProgress(instances []workflowPerformanceInstance
 		a, b := ordered[i], ordered[j]
 		return operationAttentionKey(a.Tenant, a.Subject, a.Current.Workflow, a.Current.InstanceID) < operationAttentionKey(b.Tenant, b.Subject, b.Current.Workflow, b.Current.InstanceID)
 	})
+	buckets := map[workflowGapProgressGroupKey]*workflowMissingConditionBucket{}
 	for _, instance := range ordered {
-		baseline, before, after, status := workflowMissingProgressComparison(instance, definitions, baselineAt, at)
+		item, status := workflowNewMissingProgressInstance(instance, definitions, baselineAt, at)
 		switch status {
 		case "incomplete":
 			out.ExcludedIncompleteWorkflowCount++
@@ -63,48 +64,23 @@ func workflowNewMissingConditionProgress(instances []workflowPerformanceInstance
 		case "ambiguous":
 			out.ExcludedAmbiguousWorkflowCount++
 			continue
-		}
-		missing := []api.OperationWorkflowConditionCoverageEntry{}
-		if !instance.Current.Terminal {
-			for _, entry := range after {
-				if entry.Status == "missing" {
-					missing = append(missing, entry)
-				}
-			}
-		}
-		if len(missing) == 0 {
+		case "no_gap":
 			out.NoCurrentMissingWorkflowCount++
 			continue
 		}
-		type key struct{ Step, ID string }
-		previous := map[key]api.OperationWorkflowConditionCoverageEntry{}
-		if !baseline.Current.Terminal {
-			for _, entry := range before {
-				previous[key{entry.Step, entry.Definition.ID}] = entry
-			}
+		for _, count := range item.Statuses {
+			totals[count.Status] += count.ConditionCount
 		}
-		item := api.OperationWorkflowNewMissingConditionProgressInstance{PlatformTenantID: instance.Tenant, Subject: instance.Subject, BaselineReport: baseline.Observations[len(baseline.Observations)-1].History, BaselineTerminal: baseline.Current.Terminal, State: instance.Current, StateChanged: baseline.Current.State != instance.Current.State, CurrentMissingConditionCount: int64(len(missing)), Changes: []api.OperationWorkflowNewMissingConditionProgressChange{}}
-		counts := map[string]int64{}
-		for _, entry := range missing {
-			var old *api.OperationWorkflowConditionCoverageEntry
-			if value, exists := previous[key{entry.Step, entry.Definition.ID}]; exists {
-				v := value
-				old = &v
-			}
-			change := workflowNewMissingProgressChange(old, entry, effectiveWorkflowContractVersion(baseline.Current.ContractVersion) != effectiveWorkflowContractVersion(instance.Current.ContractVersion))
-			counts[change.Status]++
-			totals[change.Status]++
-			if len(item.Changes) < api.OperationWorkflowConditionRefreshEvidenceMax {
-				item.Changes = append(item.Changes, change)
-			} else {
-				item.ChangesTruncated = true
-			}
+		workflowGapProgressBuckets(instance, item, buckets, at)
+		if len(item.Changes) > api.OperationWorkflowConditionRefreshEvidenceMax {
+			item.Changes = item.Changes[:api.OperationWorkflowConditionRefreshEvidenceMax]
+			item.ChangesTruncated = true
 		}
-		item.Statuses = workflowNewMissingProgressCounts(counts)
 		out.Items = append(out.Items, item)
 		out.ComparedWorkflowCount++
 	}
 	out.Statuses = workflowNewMissingProgressCounts(totals)
+	workflowGapProgressGroups(out, buckets)
 	return out
 }
 func hideNewMissingProgressTenants(progress *api.OperationWorkflowNewMissingConditionProgress) {
@@ -115,4 +91,43 @@ func hideNewMissingProgressTenants(progress *api.OperationWorkflowNewMissingCond
 		progress.Items[i].PlatformTenantID = ""
 		progress.Items[i].State.PlatformTenantID = ""
 	}
+}
+
+func workflowNewMissingProgressInstance(instance workflowPerformanceInstance, definitions map[string][]api.OperationWorkflowSpec, baselineAt, at time.Time) (api.OperationWorkflowNewMissingConditionProgressInstance, string) {
+	baseline, before, after, status := workflowMissingProgressComparison(instance, definitions, baselineAt, at)
+	if status != "" {
+		return api.OperationWorkflowNewMissingConditionProgressInstance{}, status
+	}
+	missing := []api.OperationWorkflowConditionCoverageEntry{}
+	if !instance.Current.Terminal {
+		for _, entry := range after {
+			if entry.Status == "missing" {
+				missing = append(missing, entry)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return api.OperationWorkflowNewMissingConditionProgressInstance{}, "no_gap"
+	}
+	type key struct{ Step, ID string }
+	previous := map[key]api.OperationWorkflowConditionCoverageEntry{}
+	if !baseline.Current.Terminal {
+		for _, entry := range before {
+			previous[key{entry.Step, entry.Definition.ID}] = entry
+		}
+	}
+	item := api.OperationWorkflowNewMissingConditionProgressInstance{PlatformTenantID: instance.Tenant, Subject: instance.Subject, BaselineReport: baseline.Observations[len(baseline.Observations)-1].History, BaselineTerminal: baseline.Current.Terminal, State: instance.Current, StateChanged: baseline.Current.State != instance.Current.State, CurrentMissingConditionCount: int64(len(missing)), Changes: []api.OperationWorkflowNewMissingConditionProgressChange{}}
+	counts := map[string]int64{}
+	for _, entry := range missing {
+		var old *api.OperationWorkflowConditionCoverageEntry
+		if value, exists := previous[key{entry.Step, entry.Definition.ID}]; exists {
+			v := value
+			old = &v
+		}
+		change := workflowNewMissingProgressChange(old, entry, effectiveWorkflowContractVersion(baseline.Current.ContractVersion) != effectiveWorkflowContractVersion(instance.Current.ContractVersion))
+		counts[change.Status]++
+		item.Changes = append(item.Changes, change)
+	}
+	item.Statuses = workflowNewMissingProgressCounts(counts)
+	return item, ""
 }

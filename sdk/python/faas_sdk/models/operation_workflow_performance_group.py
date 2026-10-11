@@ -17,6 +17,10 @@ from ..models.operation_workflow_performance_group_dimension import (
     OperationWorkflowPerformanceGroupDimension,
     check_operation_workflow_performance_group_dimension,
 )
+from ..models.operation_workflow_performance_group_gap_status import (
+    OperationWorkflowPerformanceGroupGapStatus,
+    check_operation_workflow_performance_group_gap_status,
+)
 from ..models.operation_workflow_performance_group_kind import (
     OperationWorkflowPerformanceGroupKind,
     check_operation_workflow_performance_group_kind,
@@ -31,6 +35,7 @@ class OperationWorkflowPerformanceGroup:
     """Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads."""
 
     dimension: OperationWorkflowPerformanceGroupDimension
+    gap_status: OperationWorkflowPerformanceGroupGapStatus | Unset = UNSET
     condition_evidence_status: OperationWorkflowPerformanceGroupConditionEvidenceStatus | Unset = UNSET
     """Optional active-condition contributor filter; other dimensions reject this selector."""
     condition_id: str | Unset = UNSET
@@ -53,6 +58,10 @@ class OperationWorkflowPerformanceGroup:
 
     def to_dict(self) -> dict[str, Any]:
         dimension: str = self.dimension
+
+        gap_status: str | Unset = UNSET
+        if not isinstance(self.gap_status, Unset):
+            gap_status = self.gap_status
 
         condition_evidence_status: str | Unset = UNSET
         if not isinstance(self.condition_evidence_status, Unset):
@@ -101,6 +110,8 @@ class OperationWorkflowPerformanceGroup:
                 "dimension": dimension,
             }
         )
+        if gap_status is not UNSET:
+            field_dict["gap_status"] = gap_status
         if condition_evidence_status is not UNSET:
             field_dict["condition_evidence_status"] = condition_evidence_status
         if condition_id is not UNSET:
@@ -142,6 +153,13 @@ class OperationWorkflowPerformanceGroup:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         dimension = check_operation_workflow_performance_group_dimension(d.pop("dimension"))
+
+        _gap_status = d.pop("gap_status", UNSET)
+        gap_status: OperationWorkflowPerformanceGroupGapStatus | Unset
+        if isinstance(_gap_status, Unset):
+            gap_status = UNSET
+        else:
+            gap_status = check_operation_workflow_performance_group_gap_status(_gap_status)
 
         _condition_evidence_status = d.pop("condition_evidence_status", UNSET)
         condition_evidence_status: OperationWorkflowPerformanceGroupConditionEvidenceStatus | Unset
@@ -196,6 +214,7 @@ class OperationWorkflowPerformanceGroup:
 
         operation_workflow_performance_group = cls(
             dimension=dimension,
+            gap_status=gap_status,
             condition_evidence_status=condition_evidence_status,
             condition_id=condition_id,
             condition_description=condition_description,

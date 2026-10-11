@@ -7,6 +7,7 @@ import type { OperationWorkflowConditionCoverage } from './OperationWorkflowCond
 import type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
 import type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
 import type { OperationWorkflowDurationDistribution } from './OperationWorkflowDurationDistribution.js';
+import type { OperationWorkflowNewMissingConditionProgress } from './OperationWorkflowNewMissingConditionProgress.js';
 import type { OperationWorkflowPerformanceCoverageReason } from './OperationWorkflowPerformanceCoverageReason.js';
 import type { OperationWorkflowPerformanceGroup } from './OperationWorkflowPerformanceGroup.js';
 import type { OperationWorkflowPerformanceInstance } from './OperationWorkflowPerformanceInstance.js';
@@ -14,6 +15,7 @@ import type { OperationWorkflowPerformanceInstance } from './OperationWorkflowPe
  * Coverage counts cover the selected cohort before dimension selection. Duration statistics and ranked items include only complete-history instances contributing to the exact dimension. Overall dimensions include eligible zero values. The token binds both sampled cohorts and evidence at evaluated_at; it does not store a database snapshot.
  */
 export type OperationWorkflowPerformanceInstancesResponse = {
+  new_missing_progress?: OperationWorkflowNewMissingConditionProgress;
   condition_coverage?: OperationWorkflowConditionCoverage;
   active_conditions?: OperationWorkflowActiveConditionSummary;
   condition_outcomes?: OperationWorkflowConditionOutcomeSummary;

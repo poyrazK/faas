@@ -18,6 +18,9 @@ from ...models.list_platform_tenant_self_workflow_performance_instances_conditio
 from ...models.list_platform_tenant_self_workflow_performance_instances_dimension import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
 )
+from ...models.list_platform_tenant_self_workflow_performance_instances_gap_status import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus,
+)
 from ...models.list_platform_tenant_self_workflow_performance_instances_kind import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
 )
@@ -33,6 +36,8 @@ def _get_kwargs(
     workflow: str,
     cohort: ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
     dimension: ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -68,6 +73,14 @@ def _get_kwargs(
 
     json_dimension: str = dimension
     params["dimension"] = json_dimension
+
+    params["baseline_token"] = baseline_token
+
+    json_gap_status: str | Unset = UNSET
+    if not isinstance(gap_status, Unset):
+        json_gap_status = gap_status
+
+    params["gap_status"] = json_gap_status
 
     params["contract_version"] = contract_version
 
@@ -191,6 +204,8 @@ def sync_detailed(
     workflow: str,
     cohort: ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
     dimension: ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -266,7 +281,17 @@ def sync_detailed(
     appears once in its selected group and ranks by full observed workflow blocked duration with stable
     identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
     come from the latest reporting Operation pinned definition. Missing condition entries and pinned
-    guidance are previewed up to 16 with exact counts and explicit truncation.
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
+    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
+    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
+    report comparisons permit contract boundaries while baseline history must be continuous within its
+    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
+    existing duration groups. Generic duration coverage remains separate from new_missing_progress
+    coverage.
 
     Args:
         app_id (UUID):
@@ -274,6 +299,8 @@ def sync_detailed(
         workflow (str):
         cohort (ListPlatformTenantSelfWorkflowPerformanceInstancesCohort):
         dimension (ListPlatformTenantSelfWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -309,6 +336,8 @@ def sync_detailed(
         workflow=workflow,
         cohort=cohort,
         dimension=dimension,
+        baseline_token=baseline_token,
+        gap_status=gap_status,
         contract_version=contract_version,
         state=state,
         operation=operation,
@@ -344,6 +373,8 @@ def sync(
     workflow: str,
     cohort: ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
     dimension: ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -419,7 +450,17 @@ def sync(
     appears once in its selected group and ranks by full observed workflow blocked duration with stable
     identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
     come from the latest reporting Operation pinned definition. Missing condition entries and pinned
-    guidance are previewed up to 16 with exact counts and explicit truncation.
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
+    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
+    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
+    report comparisons permit contract boundaries while baseline history must be continuous within its
+    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
+    existing duration groups. Generic duration coverage remains separate from new_missing_progress
+    coverage.
 
     Args:
         app_id (UUID):
@@ -427,6 +468,8 @@ def sync(
         workflow (str):
         cohort (ListPlatformTenantSelfWorkflowPerformanceInstancesCohort):
         dimension (ListPlatformTenantSelfWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -463,6 +506,8 @@ def sync(
         workflow=workflow,
         cohort=cohort,
         dimension=dimension,
+        baseline_token=baseline_token,
+        gap_status=gap_status,
         contract_version=contract_version,
         state=state,
         operation=operation,
@@ -492,6 +537,8 @@ async def asyncio_detailed(
     workflow: str,
     cohort: ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
     dimension: ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -567,7 +614,17 @@ async def asyncio_detailed(
     appears once in its selected group and ranks by full observed workflow blocked duration with stable
     identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
     come from the latest reporting Operation pinned definition. Missing condition entries and pinned
-    guidance are previewed up to 16 with exact counts and explicit truncation.
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
+    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
+    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
+    report comparisons permit contract boundaries while baseline history must be continuous within its
+    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
+    existing duration groups. Generic duration coverage remains separate from new_missing_progress
+    coverage.
 
     Args:
         app_id (UUID):
@@ -575,6 +632,8 @@ async def asyncio_detailed(
         workflow (str):
         cohort (ListPlatformTenantSelfWorkflowPerformanceInstancesCohort):
         dimension (ListPlatformTenantSelfWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -610,6 +669,8 @@ async def asyncio_detailed(
         workflow=workflow,
         cohort=cohort,
         dimension=dimension,
+        baseline_token=baseline_token,
+        gap_status=gap_status,
         contract_version=contract_version,
         state=state,
         operation=operation,
@@ -643,6 +704,8 @@ async def asyncio(
     workflow: str,
     cohort: ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
     dimension: ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -718,7 +781,17 @@ async def asyncio(
     appears once in its selected group and ranks by full observed workflow blocked duration with stable
     identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
     come from the latest reporting Operation pinned definition. Missing condition entries and pinned
-    guidance are previewed up to 16 with exact counts and explicit truncation.
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
+    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
+    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
+    report comparisons permit contract boundaries while baseline history must be continuous within its
+    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
+    existing duration groups. Generic duration coverage remains separate from new_missing_progress
+    coverage.
 
     Args:
         app_id (UUID):
@@ -726,6 +799,8 @@ async def asyncio(
         workflow (str):
         cohort (ListPlatformTenantSelfWorkflowPerformanceInstancesCohort):
         dimension (ListPlatformTenantSelfWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -763,6 +838,8 @@ async def asyncio(
             workflow=workflow,
             cohort=cohort,
             dimension=dimension,
+            baseline_token=baseline_token,
+            gap_status=gap_status,
             contract_version=contract_version,
             state=state,
             operation=operation,

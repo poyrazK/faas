@@ -3,6 +3,7 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type WorkflowPerformanceData struct {
+	GapProgressGroups                                                    []WorkflowGapProgressGroupLink
 	NewMissingProgressInstances                                          []WorkflowNewMissingProgressLink
 	MissingProgressInstances                                             []WorkflowMissingProgressLink
 	MissingConditionGroups                                               []WorkflowMissingConditionGroupLink
@@ -99,4 +100,9 @@ type WorkflowMissingProgressLink struct {
 type WorkflowNewMissingProgressLink struct {
 	api.OperationWorkflowNewMissingConditionProgressInstance
 	HistoryURL string
+}
+
+type WorkflowGapProgressGroupLink struct {
+	api.OperationWorkflowGapProgressGroup
+	ContributorsURL string
 }

@@ -1520,6 +1520,7 @@ from .list_account_workflow_performance_instances_condition_result import (
     ListAccountWorkflowPerformanceInstancesConditionResult,
 )
 from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
+from .list_account_workflow_performance_instances_gap_status import ListAccountWorkflowPerformanceInstancesGapStatus
 from .list_account_workflow_performance_instances_kind import ListAccountWorkflowPerformanceInstancesKind
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
@@ -1572,6 +1573,9 @@ from .list_platform_tenant_self_workflow_performance_instances_condition_result 
 )
 from .list_platform_tenant_self_workflow_performance_instances_dimension import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+)
+from .list_platform_tenant_self_workflow_performance_instances_gap_status import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus,
 )
 from .list_platform_tenant_self_workflow_performance_instances_kind import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
@@ -2127,6 +2131,8 @@ from .operation_workflow_dependent_instance_dependency_status import OperationWo
 from .operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
 from .operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
 from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+from .operation_workflow_gap_progress_group import OperationWorkflowGapProgressGroup
+from .operation_workflow_gap_progress_group_gap_status import OperationWorkflowGapProgressGroupGapStatus
 from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
 from .operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
 from .operation_workflow_instance_step import OperationWorkflowInstanceStep
@@ -2173,6 +2179,7 @@ from .operation_workflow_performance_group_condition_evidence_status import (
 )
 from .operation_workflow_performance_group_condition_result import OperationWorkflowPerformanceGroupConditionResult
 from .operation_workflow_performance_group_dimension import OperationWorkflowPerformanceGroupDimension
+from .operation_workflow_performance_group_gap_status import OperationWorkflowPerformanceGroupGapStatus
 from .operation_workflow_performance_group_kind import OperationWorkflowPerformanceGroupKind
 from .operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
 from .operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
@@ -5077,6 +5084,7 @@ __all__ = (
     "ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus",
     "ListAccountWorkflowPerformanceInstancesConditionResult",
     "ListAccountWorkflowPerformanceInstancesDimension",
+    "ListAccountWorkflowPerformanceInstancesGapStatus",
     "ListAccountWorkflowPerformanceInstancesKind",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
@@ -5120,6 +5128,7 @@ __all__ = (
     "ListPlatformTenantSelfWorkflowPerformanceInstancesConditionEvidenceStatus",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesKind",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
@@ -5642,6 +5651,8 @@ __all__ = (
     "OperationWorkflowDurationDistribution",
     "OperationWorkflowEffectRequirement",
     "OperationWorkflowEvidenceMilestone",
+    "OperationWorkflowGapProgressGroup",
+    "OperationWorkflowGapProgressGroupGapStatus",
     "OperationWorkflowInstanceMilestoneRef",
     "OperationWorkflowInstanceSnapshot",
     "OperationWorkflowInstanceStep",
@@ -5676,6 +5687,7 @@ __all__ = (
     "OperationWorkflowPerformanceGroupConditionEvidenceStatus",
     "OperationWorkflowPerformanceGroupConditionResult",
     "OperationWorkflowPerformanceGroupDimension",
+    "OperationWorkflowPerformanceGroupGapStatus",
     "OperationWorkflowPerformanceGroupKind",
     "OperationWorkflowPerformanceInstance",
     "OperationWorkflowPerformanceInstancesResponse",

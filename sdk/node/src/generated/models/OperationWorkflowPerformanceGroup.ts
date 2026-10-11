@@ -6,6 +6,7 @@
  * Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads.
  */
 export type OperationWorkflowPerformanceGroup = {
+  gap_status?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed';
   /**
    * Optional active-condition contributor filter; other dimensions reject this selector.
    */
@@ -23,7 +24,7 @@ export type OperationWorkflowPerformanceGroup = {
   group_id?: string;
   path_id?: string;
   outcome_code?: string;
-  dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner';
+  dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner';
   contract_version?: number;
   state?: string;
   operation?: string;

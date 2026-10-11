@@ -4,6 +4,7 @@ import "time"
 
 // OperationWorkflowPerformanceGroup identifies one exact performance dimension.
 type OperationWorkflowPerformanceGroup struct {
+	GapStatus               string `json:"gap_status,omitempty"`
 	ConditionEvidenceStatus string `json:"condition_evidence_status,omitempty"`
 	ConditionID             string `json:"condition_id,omitempty"`
 	ConditionDescription    string `json:"condition_description,omitempty"`
@@ -32,43 +33,45 @@ type OperationWorkflowPerformanceInstanceOptions struct {
 
 // OperationWorkflowPerformanceInstance is a complete-history contributor.
 type OperationWorkflowPerformanceInstance struct {
-	MissingConditions           []OperationWorkflowConditionCoverageEntry  `json:"missing_conditions,omitempty"`
-	MissingConditionCount       int64                                      `json:"missing_condition_count,omitempty"`
-	MissingConditionsTruncated  bool                                       `json:"missing_conditions_truncated,omitempty"`
-	RefreshPriority             *OperationWorkflowConditionRefreshPriority `json:"refresh_priority,omitempty"`
-	RefreshEvidence             []OperationWorkflowDecisionOutcomeEvidence `json:"refresh_evidence,omitempty"`
-	RefreshEvidenceCount        int64                                      `json:"refresh_evidence_count,omitempty"`
-	RefreshEvidenceTruncated    bool                                       `json:"refresh_evidence_truncated,omitempty"`
-	DecisionEvidence            *OperationWorkflowDecisionOutcomeEvidence  `json:"decision_evidence,omitempty"`
-	PlatformTenantID            string                                     `json:"platform_tenant_id,omitempty"`
-	Subject                     OperationSubject                           `json:"subject"`
-	OperationID                 string                                     `json:"operation_id"`
-	State                       OperationWorkflowState                     `json:"state"`
-	ObservedSeconds             int64                                      `json:"observed_seconds"`
-	ResolutionVerifications     []OperationWorkflowResolutionVerification  `json:"resolution_verifications"`
-	AwaitingVerificationCount   int64                                      `json:"awaiting_verification_count"`
-	ResolutionVerificationCount int64                                      `json:"resolution_verification_count"`
+	GapProgress                 *OperationWorkflowNewMissingConditionProgressInstance `json:"gap_progress,omitempty"`
+	MissingConditions           []OperationWorkflowConditionCoverageEntry             `json:"missing_conditions,omitempty"`
+	MissingConditionCount       int64                                                 `json:"missing_condition_count,omitempty"`
+	MissingConditionsTruncated  bool                                                  `json:"missing_conditions_truncated,omitempty"`
+	RefreshPriority             *OperationWorkflowConditionRefreshPriority            `json:"refresh_priority,omitempty"`
+	RefreshEvidence             []OperationWorkflowDecisionOutcomeEvidence            `json:"refresh_evidence,omitempty"`
+	RefreshEvidenceCount        int64                                                 `json:"refresh_evidence_count,omitempty"`
+	RefreshEvidenceTruncated    bool                                                  `json:"refresh_evidence_truncated,omitempty"`
+	DecisionEvidence            *OperationWorkflowDecisionOutcomeEvidence             `json:"decision_evidence,omitempty"`
+	PlatformTenantID            string                                                `json:"platform_tenant_id,omitempty"`
+	Subject                     OperationSubject                                      `json:"subject"`
+	OperationID                 string                                                `json:"operation_id"`
+	State                       OperationWorkflowState                                `json:"state"`
+	ObservedSeconds             int64                                                 `json:"observed_seconds"`
+	ResolutionVerifications     []OperationWorkflowResolutionVerification             `json:"resolution_verifications"`
+	AwaitingVerificationCount   int64                                                 `json:"awaiting_verification_count"`
+	ResolutionVerificationCount int64                                                 `json:"resolution_verification_count"`
 }
 
 // OperationWorkflowPerformanceInstancesResponse preserves cohort coverage alongside ranked contributors.
 type OperationWorkflowPerformanceInstancesResponse struct {
-	ConditionCoverage               *OperationWorkflowConditionCoverage          `json:"condition_coverage,omitempty"`
-	ActiveConditions                *OperationWorkflowActiveConditionSummary     `json:"active_conditions,omitempty"`
-	ConditionOutcomes               *OperationWorkflowConditionOutcomeSummary    `json:"condition_outcomes,omitempty"`
-	DecisionOutcomes                *OperationWorkflowDecisionOutcomeSummary     `json:"decision_outcomes,omitempty"`
-	EvaluatedAt                     time.Time                                    `json:"evaluated_at"`
-	CohortToken                     string                                       `json:"cohort_token"`
-	Workflow                        string                                       `json:"workflow"`
-	Cohort                          string                                       `json:"cohort"`
-	Group                           OperationWorkflowPerformanceGroup            `json:"group"`
-	MatchingWorkflowCount           int64                                        `json:"matching_workflow_count"`
-	SampledWorkflowCount            int64                                        `json:"sampled_workflow_count"`
-	CompleteHistoryWorkflowCount    int64                                        `json:"complete_history_workflow_count"`
-	ExcludedIncompleteWorkflowCount int64                                        `json:"excluded_incomplete_workflow_count"`
-	CohortTruncated                 bool                                         `json:"cohort_truncated"`
-	Exclusions                      []OperationWorkflowPerformanceCoverageReason `json:"exclusions"`
-	Duration                        OperationWorkflowDurationDistribution        `json:"duration"`
-	Items                           []OperationWorkflowPerformanceInstance       `json:"items"`
+	NewMissingProgress              *OperationWorkflowNewMissingConditionProgress `json:"new_missing_progress,omitempty"`
+	ConditionCoverage               *OperationWorkflowConditionCoverage           `json:"condition_coverage,omitempty"`
+	ActiveConditions                *OperationWorkflowActiveConditionSummary      `json:"active_conditions,omitempty"`
+	ConditionOutcomes               *OperationWorkflowConditionOutcomeSummary     `json:"condition_outcomes,omitempty"`
+	DecisionOutcomes                *OperationWorkflowDecisionOutcomeSummary      `json:"decision_outcomes,omitempty"`
+	EvaluatedAt                     time.Time                                     `json:"evaluated_at"`
+	CohortToken                     string                                        `json:"cohort_token"`
+	Workflow                        string                                        `json:"workflow"`
+	Cohort                          string                                        `json:"cohort"`
+	Group                           OperationWorkflowPerformanceGroup             `json:"group"`
+	MatchingWorkflowCount           int64                                         `json:"matching_workflow_count"`
+	SampledWorkflowCount            int64                                         `json:"sampled_workflow_count"`
+	CompleteHistoryWorkflowCount    int64                                         `json:"complete_history_workflow_count"`
+	ExcludedIncompleteWorkflowCount int64                                         `json:"excluded_incomplete_workflow_count"`
+	CohortTruncated                 bool                                          `json:"cohort_truncated"`
+	Exclusions                      []OperationWorkflowPerformanceCoverageReason  `json:"exclusions"`
+	Duration                        OperationWorkflowDurationDistribution         `json:"duration"`
+	Items                           []OperationWorkflowPerformanceInstance        `json:"items"`
 }
 
 // OperationWorkflowDecisionOutcomeEvidence identifies the qualifying report and optional decision fact. Active groups use latest snapshots.

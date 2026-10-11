@@ -4,6 +4,8 @@ import "time"
 
 // OperationWorkflowNewMissingConditionProgress explains current missing reports relative to a saved baseline.
 type OperationWorkflowNewMissingConditionProgress struct {
+	Groups                                 []OperationWorkflowGapProgressGroup                    `json:"groups"`
+	GroupsTruncated                        bool                                                   `json:"groups_truncated"`
 	BaselineAt                             time.Time                                              `json:"baseline_at"`
 	EvaluatedAt                            time.Time                                              `json:"evaluated_at"`
 	SampledWorkflowCount                   int64                                                  `json:"sampled_workflow_count"`
@@ -38,4 +40,14 @@ type OperationWorkflowNewMissingConditionProgressChange struct {
 	Before      *OperationWorkflowConditionCoverageEntry `json:"before,omitempty"`
 	After       OperationWorkflowConditionCoverageEntry  `json:"after"`
 	Explanation string                                   `json:"explanation"`
+}
+
+type OperationWorkflowGapProgressGroup struct {
+	ContractVersion       int                                   `json:"contract_version"`
+	State                 string                                `json:"state"`
+	Owner                 string                                `json:"owner,omitempty"`
+	Unassigned            bool                                  `json:"unassigned"`
+	GapStatus             string                                `json:"gap_status"`
+	MissingConditionCount int64                                 `json:"missing_condition_count"`
+	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
 }

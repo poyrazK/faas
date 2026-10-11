@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
     from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
     from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
+    from ..models.operation_workflow_new_missing_condition_progress import OperationWorkflowNewMissingConditionProgress
     from ..models.operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
     from ..models.operation_workflow_performance_group import OperationWorkflowPerformanceGroup
     from ..models.operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
@@ -50,6 +51,13 @@ class OperationWorkflowPerformanceInstancesResponse:
     """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
     zero."""
     items: list[OperationWorkflowPerformanceInstance]
+    new_missing_progress: OperationWorkflowNewMissingConditionProgress | Unset = UNSET
+    """Optional baseline_token comparison explaining current missing reports relative to retained baseline
+    expectations in today's completed and ongoing sample. Current terminal workflows produce no active gaps.
+    Publication visibility, retained immutable baseline definitions, continuous baseline report history, conflict
+    and evidence limits match missing_progress. Workflows with no retained baseline are not invented as new gaps,
+    and unavailable definitions are excluded. This is not original cohort membership or total historical backlog.
+    All current missing status counts precede preview caps; missing evidence is not failed verification."""
     condition_coverage: OperationWorkflowConditionCoverage | Unset = UNSET
     """Reporting coverage for current states in the bounded ongoing sample. Expectations come only from the latest
     reporting Operation's immutable definition, not a global registry or every Operation in the workflow. Missing
@@ -110,6 +118,10 @@ class OperationWorkflowPerformanceInstancesResponse:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        new_missing_progress: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.new_missing_progress, Unset):
+            new_missing_progress = self.new_missing_progress.to_dict()
+
         condition_coverage: dict[str, Any] | Unset = UNSET
         if not isinstance(self.condition_coverage, Unset):
             condition_coverage = self.condition_coverage.to_dict()
@@ -145,6 +157,8 @@ class OperationWorkflowPerformanceInstancesResponse:
                 "items": items,
             }
         )
+        if new_missing_progress is not UNSET:
+            field_dict["new_missing_progress"] = new_missing_progress
         if condition_coverage is not UNSET:
             field_dict["condition_coverage"] = condition_coverage
         if active_conditions is not UNSET:
@@ -163,6 +177,9 @@ class OperationWorkflowPerformanceInstancesResponse:
         from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
         from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
         from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
+        from ..models.operation_workflow_new_missing_condition_progress import (
+            OperationWorkflowNewMissingConditionProgress,
+        )
         from ..models.operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
         from ..models.operation_workflow_performance_group import OperationWorkflowPerformanceGroup
         from ..models.operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
@@ -203,6 +220,13 @@ class OperationWorkflowPerformanceInstancesResponse:
             items_item = OperationWorkflowPerformanceInstance.from_dict(items_item_data)
 
             items.append(items_item)
+
+        _new_missing_progress = d.pop("new_missing_progress", UNSET)
+        new_missing_progress: OperationWorkflowNewMissingConditionProgress | Unset
+        if isinstance(_new_missing_progress, Unset):
+            new_missing_progress = UNSET
+        else:
+            new_missing_progress = OperationWorkflowNewMissingConditionProgress.from_dict(_new_missing_progress)
 
         _condition_coverage = d.pop("condition_coverage", UNSET)
         condition_coverage: OperationWorkflowConditionCoverage | Unset
@@ -246,6 +270,7 @@ class OperationWorkflowPerformanceInstancesResponse:
             exclusions=exclusions,
             duration=duration,
             items=items,
+            new_missing_progress=new_missing_progress,
             condition_coverage=condition_coverage,
             active_conditions=active_conditions,
             condition_outcomes=condition_outcomes,

@@ -6,12 +6,14 @@ import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowConditionCoverageEntry } from './OperationWorkflowConditionCoverageEntry.js';
 import type { OperationWorkflowConditionRefreshPriority } from './OperationWorkflowConditionRefreshPriority.js';
 import type { OperationWorkflowDecisionOutcomeEvidence } from './OperationWorkflowDecisionOutcomeEvidence.js';
+import type { OperationWorkflowNewMissingConditionProgressInstance } from './OperationWorkflowNewMissingConditionProgressInstance.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
 /**
  * Current state and verification findings for one complete-history contributor. Customer responses omit tenant identifiers. Observed seconds measure the selected historical group rather than current ownership alone.
  */
 export type OperationWorkflowPerformanceInstance = {
+  gap_progress?: OperationWorkflowNewMissingConditionProgressInstance;
   /**
    * Exact missing condition count for the selected current state and refresh owner before preview limits.
    */
