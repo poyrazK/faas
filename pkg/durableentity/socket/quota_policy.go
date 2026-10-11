@@ -86,7 +86,7 @@ func (q *Quotas) PolicyStatus(ctx context.Context, id durableentity.ID) (QuotaPo
 }
 func policyPreview(r quotaRecord, p QuotaPolicyRequest, node TenantLimits) (QuotaPolicyPreview, error) {
 	preview := QuotaPolicyPreview{Revision: r.PolicyRevision, Current: r.Limits, Proposed: p.Limits, NodeMatches: node == p.Limits, CurrentReservedBytes: retainedBytes(r)}
-	if !validPolicyRequest(p) || !increaseLimits(r.Limits, p.Limits) || r.Schema == 2 && r.Limits == p.Limits {
+	if !validPolicyRequest(p) || !increaseLimits(r.Limits, p.Limits) || r.Schema >= 2 && r.Limits == p.Limits {
 		return preview, durableentity.ErrInvalid
 	}
 	for _, c := range r.PolicyChanges {
@@ -94,13 +94,13 @@ func policyPreview(r quotaRecord, p QuotaPolicyRequest, node TenantLimits) (Quot
 			return preview, durableentity.ErrInvalid
 		}
 	}
-	preview.ProjectedReservedBytes = grantBytes(r)
+	preview.ProjectedReservedBytes = grantBytes(r) + recoveryBytes(r)
 	for _, e := range r.Entities {
 		preview.ProjectedReservedBytes += max(e.Bytes, p.Limits.EntityBytes)
 	}
 	preview.AdditionalBytes = preview.ProjectedReservedBytes - preview.CurrentReservedBytes
 	preview.ByteShortfall = max(0, preview.ProjectedReservedBytes-p.Limits.RetainedBytes)
-	preview.ReadyToApply = preview.ByteShortfall == 0 && preview.NodeMatches && r.PolicyRevision == p.ExpectedRevision && r.Migration != nil && r.Migration.Phase != "complete" && r.Migration.ID == p.ExpectedMigrationID && r.Migration.Revision == p.ExpectedMigrationRevision && p.MigrationID != r.Migration.ID && len(r.Connections) == 0
+	preview.ReadyToApply = preview.ByteShortfall == 0 && preview.NodeMatches && !pendingRetirements(r) && r.PolicyRevision == p.ExpectedRevision && r.Migration != nil && r.Migration.Phase != "complete" && r.Migration.ID == p.ExpectedMigrationID && r.Migration.Revision == p.ExpectedMigrationRevision && p.MigrationID != r.Migration.ID && len(r.Connections) == 0
 	return preview, nil
 }
 func (q *Quotas) PreviewPolicy(ctx context.Context, id durableentity.ID, p QuotaPolicyRequest) (QuotaPolicyPreview, error) {
@@ -152,7 +152,7 @@ func (q *Quotas) ApplyPolicy(ctx context.Context, id durableentity.ID, p QuotaPo
 			return nil, durableentity.ErrInventoryPending
 		}
 		change := QuotaPolicyChange{Revision: r.PolicyRevision + 1, Actor: actor, At: q.now(), From: r.Limits, Request: p}
-		r.Schema = 2
+		r.Schema = max(r.Schema, 2)
 		r.PolicyRevision = change.Revision
 		r.PolicyChanges = append(r.PolicyChanges, change)
 		r.Limits = p.Limits

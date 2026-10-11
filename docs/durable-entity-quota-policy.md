@@ -103,6 +103,11 @@ managed policies. Do not delete/TTL `tenant-quotas/v1/`, downgrade its schema, o
 restore an older authority record. Native GCS/KVM and fleet acceptance are still
 external release prerequisites.
 
+For capacity left behind by unused objects, use the separate opt-in
+[retirement workflow](durable-entity-retirement.md). Managed policies and completed
+reservation migration are prerequisites; pending tracked retirements block policy
+replacement. New retirement-aware ledger schema 3 preserves the policy contract.
+
 ## Source qualification
 
 [CI run 38150848249](https://github.com/poyrazK/faas/actions/runs/38150848249)

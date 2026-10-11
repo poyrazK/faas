@@ -59,7 +59,7 @@ func (q *Quotas) migrationRecord(ctx context.Context, id durableentity.ID) (quot
 	if err != nil {
 		return quotaRecord{}, err
 	}
-	if r.Schema != 2 {
+	if r.Schema < 2 {
 		r.Limits = stricterLimits(r.Limits, q.Limits)
 	}
 	prune(&r, q.now())
@@ -148,6 +148,9 @@ func (q *Quotas) StartMigration(ctx context.Context, id durableentity.ID, migrat
 	}
 	var result *QuotaMigration
 	err = q.mutateMigration(ctx, scopeKey(scope), &scope, true, func(r *quotaRecord, now time.Time) error {
+		if pendingRetirements(*r) {
+			return durableentity.ErrInventoryPending
+		}
 		if r.Migration != nil && r.Migration.ID == migrationID {
 			result = r.Migration
 			return nil
@@ -211,7 +214,7 @@ func (q *Quotas) StepMigration(ctx context.Context, id durableentity.ID, migrati
 	if _, err := migrationPlan(r, page); err != nil {
 		return nil, err
 	}
-	if r.Schema == 2 {
+	if r.Schema >= 2 {
 		if r.Limits != q.Limits {
 			return nil, ErrPolicyMismatch
 		}

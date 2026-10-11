@@ -17,6 +17,9 @@ func (m *Manager) RaiseQuotaEntityLimit(ctx context.Context, id ID, limit int64)
 	if err != nil {
 		return err
 	}
+	if before.Retirement != nil {
+		return ErrRetired
+	}
 	if before.StorageLimitBytes == limit {
 		return nil
 	}

@@ -32,6 +32,8 @@ scope progress separately. A completed coverage pass does not verify fleet
 quiescence or native acceptance, so this report retains its external blockers.
 The optional [quota policy workflow](durable-entity-quota-policy.md) reports its
 configuration separately and preserves those external blockers as well.
+The optional [retirement workflow](durable-entity-retirement.md) also preserves
+those blockers; completed cleanup is not native fleet acceptance.
 
 ## Qualification
 

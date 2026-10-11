@@ -45,6 +45,10 @@ func durableEntityTenantLimits(getenv func(string) string, entityBytes int64) (e
 	return limits, nil
 }
 func writeEntityTenantQuotaProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, durableentity.ErrRetired) {
+		api.WriteProblem(w, api.NewProblem(410, "durable_entity_retired", "Entity retired", "this entity identity is permanently retired; use a new identity for new work"))
+		return
+	}
 	if errors.Is(err, entitysocket.ErrPolicyMismatch) {
 		api.WriteProblem(w, api.NewProblem(503, "durable_entity_quota_policy_mismatch", "Quota policy mismatch", "this node's configured limits differ from the approved scope policy"))
 		return

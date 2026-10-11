@@ -38,6 +38,11 @@ func (m *Manager) ScanQuotaInventory(ctx context.Context, cursor string, scope I
 			return QuotaInventoryPage{}, err
 		}
 		id := base.ID
+		// Retirement owns its residual recovery charge; migration must not
+		// recreate a full active reservation for a permanent tombstone.
+		if base.Retirement != nil {
+			continue
+		}
 		if id.AccountID == scope.AccountID && id.AppID == scope.AppID && id.EnvironmentID == "" {
 			return QuotaInventoryPage{}, ErrInventoryPending
 		}

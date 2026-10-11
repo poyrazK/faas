@@ -39,6 +39,7 @@ func (s *server) durableEntityReadinessForApp(appID string) durableEntityReadine
 	configuration("tenant_quotas", s.durableEntityTenantQuotas != nil, true, "Release baseline requires shared tenant admission budgets and a positive per-entity retained-byte cap.")
 	configuration("quota_migration_workflow", s.durableEntityQuotaMigrationEnabled, false, "Optional fenced reservation backfill and coverage scan; scope completion is inspected separately.")
 	configuration("quota_policy_workflow", s.durableEntityQuotaPolicyEnabled, false, "Optional audited quota increases; persisted policy and node alignment are inspected separately.")
+	configuration("retirement_workflow", s.durableEntityRetirementEnabled, false, "Optional permanent object retirement and verified capacity reclamation; native acceptance remains external.")
 	configuration("service_sessions", s.durableEntitySockets != nil, false, "Optional bounded WebSocket transport.")
 	configuration("browser_sessions", s.durableEntitySessionGrants != nil, false, "Optional scoped browser session grants.")
 	configuration("alarms", s.durableEntityAlarmsEnabled, false, "Optional scheduled entity wake-ups.")

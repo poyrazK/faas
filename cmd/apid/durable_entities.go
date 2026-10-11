@@ -125,6 +125,8 @@ func writeDurableEntityProblem(w http.ResponseWriter, err error) {
 	}
 	status, code, detail := http.StatusServiceUnavailable, "durable_entity_unavailable", "entity storage or execution is unavailable; retry the same request_id and exact payload"
 	switch {
+	case errors.Is(err, durableentity.ErrRetired):
+		status, code, detail = http.StatusGone, "durable_entity_retired", "this entity identity is permanently retired; use a new identity for new work"
 	case errors.Is(err, durableentity.ErrInvalid):
 		status, code, detail = http.StatusUnprocessableEntity, "durable_entity_invalid", "invalid entity identity, request, or handler transition"
 	case errors.Is(err, durableentity.ErrLimit):

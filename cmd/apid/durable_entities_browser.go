@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/durableentity"
 	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -25,6 +26,10 @@ func (s *server) sessionGrantAvailable(w http.ResponseWriter) bool {
 	return true
 }
 func grantProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, durableentity.ErrRetired) {
+		writeEntityTenantQuotaProblem(w, err)
+		return
+	}
 	var quota *entitysocket.QuotaError
 	if errors.As(err, &quota) {
 		writeEntityTenantQuotaProblem(w, err)

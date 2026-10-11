@@ -20,9 +20,14 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityTenantQuotas = nil
 	s.durableEntityQuotaMigrationEnabled = false
 	s.durableEntityQuotaPolicyEnabled = false
+	s.durableEntityRetirementEnabled = false
 	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
 	migration := getenv("FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED") == "1"
 	policy := getenv("FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED") == "1"
+	retirement := getenv("FAAS_DURABLE_ENTITY_RETIREMENT_ENABLED") == "1"
+	if retirement && !policy {
+		return errors.New("entity retirement requires quota policy management")
+	}
 	if policy && !migration {
 		return errors.New("quota policy changes require quota migration")
 	}
@@ -135,6 +140,11 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 			return errors.New("quota migration requires bounded private delimiter listing")
 		}
 	}
+	if retirement {
+		if err := engine.CheckMaintenance(probeCtx); err != nil {
+			return errors.New("entity retirement requires bounded private listing and verified delete permission")
+		}
+	}
 	alarms := getenv("FAAS_DURABLE_ENTITY_ALARMS_ENABLED") == "1"
 	if alarms {
 		if err := engine.CheckAlarmDiscovery(probeCtx); err != nil {
@@ -180,6 +190,7 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityTenantQuotas = tenantQuotas
 	s.durableEntityQuotaMigrationEnabled = migration
 	s.durableEntityQuotaPolicyEnabled = policy
+	s.durableEntityRetirementEnabled = retirement
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance

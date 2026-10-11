@@ -58,7 +58,10 @@ until a controlled policy migration; it cannot quietly enlarge the execution
 cap. Existing larger reservations remain as high-water charges when caps lower. Reservations remain across restarts, receipt GC,
 cohort reclamation, failed guest execution and window expiry. This deliberately
 trades utilization for a safe admission decision without a cross-object commit.
-There is no automatic entity-reservation release. The opt-in migration workflow
+The opt-in [retirement workflow](durable-entity-retirement.md) can release an
+active slot and reduce its byte charge after verified cleanup, while preserving
+required recovery bytes and a permanent identity fence. There is no automatic
+entity-reservation release. The opt-in migration workflow
 inventories historical entities and verifies reservation coverage. At most 64
 distinct entity reservations exist per scope.
 Existing reservations continue admitting attempts when the tenant byte cap is
