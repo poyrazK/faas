@@ -1436,3 +1436,43 @@ To update types, run `gregale data-api dev --port 0 --once` with the same
 This detects drift; use `--check-breaking` separately for compatibility checks.
 The workflow still creates local contract artifacts and runs configured setup
 and authorization steps; the types output alone is preserved by this flag.
+
+### Reusable cursor pagination
+
+```ts
+import { cursorPage, cursorFrom } from '@gregale/data'
+
+const order = [
+  { column: 'created_at', ascending: false, nullsFirst: false },
+  { column: 'id', ascending: false, unique: true },
+] as const
+const { data, error } = await cursorPage(
+  db.from('notes').select('id,created_at,body'),
+  { order, size: 20 },
+)
+if (error) throw error
+const after = data.length ? cursorFrom(data.at(-1)!, order) : undefined
+// Supply after with the same order and filters on a fresh query for the next page.
+```
+
+`cursorPage` preserves the selected result type and supports table/view reads,
+filters, cancellation and native errors. Use a fresh array-returning select
+builder without existing ordering, range or limits. Include every ordering
+column in the selected row to extract its cursor. Ordering columns must be
+simple names with scalar string, finite number, boolean or null values; JSON,
+embedded fields and expression ordering are unsupported. Dates use their wire
+strings. Defaults are ascending and nulls last, explicitly applied at every key.
+
+The final ordering column must be non-null and unique within the filtered
+result. Mark it `unique: true`; the application is responsible for this database
+invariant. The helper cannot infer constraints from client types. Cursor values
+are validated and quoted for PostgREST filter syntax, including commas, quotes
+and backslashes. Cursor tuples are neither signed nor authorization tokens.
+
+Keep filters, ordering and identity consistent across pages. RLS runs on every
+request. Deleting the cursor row does not invalidate continuation; newer rows
+before the cursor do not shift subsequent pages. This is not a snapshot across
+requests: inserts after the cursor can appear, deleted rows disappear, and
+changing ordering values can move rows. Stop when a page is empty. Large integer
+keys must be represented without JavaScript precision loss by your application.
+Existing server row caps can return fewer rows than the requested page size.

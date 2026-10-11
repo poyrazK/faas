@@ -41,7 +41,7 @@ node --test tests/data-api/staging/canary.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then
   DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/starter.test.mjs
   go build -o "$runtime_dir/gregale-dev-diff" ./cmd/gregale
-  DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/composites.test.mjs tests/data-api/view-relationships.test.mjs tests/data-api/computed-relationships.test.mjs tests/data-api/json-projections.test.mjs
+  DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/composites.test.mjs tests/data-api/view-relationships.test.mjs tests/data-api/computed-relationships.test.mjs tests/data-api/json-projections.test.mjs tests/data-api/cursor-pagination.test.mjs
   DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/dev.test.mjs
 fi
 npm run typecheck --prefix "$starter_dir/client"
