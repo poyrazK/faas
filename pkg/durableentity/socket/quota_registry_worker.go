@@ -36,9 +36,14 @@ type registryWorkerRecord struct {
 	RegistryCleanupWorkerStatus
 }
 type RegistryCleanupWorkerPage struct {
-	NextCursor string
-	Attempted  int
-	Failed     int
+	NextCursor         string
+	Attempted          int
+	Failed             int
+	Scanned            int
+	Active             int
+	Pruned             int
+	HintRepairFailures int
+	OldestActiveAt     time.Time
 }
 
 func workerError(err error) string {
@@ -152,6 +157,7 @@ func (q *Quotas) SweepRegistryCleanups(ctx context.Context, cursor string, allow
 		return out, durableentity.ErrCorrupt
 	}
 	out.NextCursor = page.NextCursor
+	out.Scanned = len(page.Keys)
 	for _, path := range page.Keys {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -165,7 +171,11 @@ func (q *Quotas) SweepRegistryCleanups(ctx context.Context, cursor string, allow
 		if err == nil && registryCleanupActive(r) {
 			id := registryCleanupScopeID(r)
 			if allow != nil && allow(id) {
+				out.observeActive(r.RegistryCleanup)
 				hintErr := q.syncRegistryCleanupHint(callCtx, key, r.RegistryCleanup)
+				if hintErr != nil {
+					out.HintRepairFailures++
+				}
 				if !q.now().Before(r.RegistryCleanup.NotBefore) {
 					var attempted bool
 					attempted, err = q.runRegistryCleanupAttempt(callCtx, key, id, r)
@@ -273,4 +283,12 @@ func (q *Quotas) CheckRegistryCleanupWorker(ctx context.Context) error {
 		return durableentity.ErrCorrupt
 	}
 	return nil
+}
+
+// Counts describe this bounded page before stepping, not a fleet backlog.
+func (p *RegistryCleanupWorkerPage) observeActive(c *RegistryCleanup) {
+	p.Active++
+	if p.OldestActiveAt.IsZero() || c.At.Before(p.OldestActiveAt) {
+		p.OldestActiveAt = c.At
+	}
 }

@@ -92,6 +92,7 @@ func (q *Quotas) SweepIndexedRegistryCleanups(ctx context.Context, cursor string
 		return out, durableentity.ErrCorrupt
 	}
 	out.NextCursor = page.NextCursor
+	out.Scanned = len(page.Keys)
 	seen := map[string]bool{}
 	for _, path := range page.Keys {
 		if ctx.Err() != nil {
@@ -113,10 +114,18 @@ func (q *Quotas) SweepIndexedRegistryCleanups(ctx context.Context, cursor string
 				if errors.Is(err, durableentity.ErrNotFound) {
 					err = nil
 				}
-			} else if c != nil && hint.Epoch == c.Epoch && hint.Operation == c.OperationID && registryCleanupActive(root) && !q.now().Before(c.NotBefore) && !seen[hint.Scope] {
+				if err == nil {
+					out.Pruned++
+				}
+			} else if c != nil && hint.Epoch == c.Epoch && hint.Operation == c.OperationID && registryCleanupActive(root) && !seen[hint.Scope] {
 				id := registryCleanupScopeID(root)
 				if allow != nil && allow(id) {
 					seen[hint.Scope] = true
+					out.observeActive(c)
+					if q.now().Before(c.NotBefore) {
+						stop()
+						continue
+					}
 					var attempted bool
 					attempted, err = q.runRegistryCleanupAttempt(callCtx, hint.Scope, id, root)
 					if attempted {

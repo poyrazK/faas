@@ -48,7 +48,7 @@ func (s *server) inspectEntityRegistryCleanup(w http.ResponseWriter, r *http.Req
 		}
 		seconds = &age
 	}
-	writeJSON(w, 200, map[string]any{"cleanup": status, "worker_enabled": s.durableEntityRegistryCleanupWorkerEnabled, "worker": worker, "worker_status_error": workerError, "seconds_since_last_success": seconds})
+	writeJSON(w, 200, map[string]any{"cleanup": status, "worker_enabled": s.durableEntityRegistryCleanupWorkerEnabled, "worker": worker, "worker_status_error": workerError, "seconds_since_last_success": seconds, "discovery_health": s.durableEntityRegistryHealth.snapshot(time.Now(), s.durableEntityRegistryCleanupWorkerEnabled), "progress_health": registryCleanupProgress(time.Now(), status, worker, workerError != nil, s.durableEntityRegistryCleanupWorkerEnabled)})
 }
 func (s *server) startEntityRegistryCleanup(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, ok := s.entityRegistryCleanupScope(w, r, acct, false)

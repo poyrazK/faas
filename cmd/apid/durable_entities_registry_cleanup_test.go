@@ -71,6 +71,19 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 	selectors := "?namespace=counters&key=customer:456"
 	if r := e.do(t, "GET", path+selectors, nil, headers); r.Code != 200 || r.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(r.Code, r.Body.String())
+	} else {
+		var health struct {
+			Discovery struct {
+				Scope string `json:"scope"`
+				State string `json:"state"`
+			} `json:"discovery_health"`
+			Progress struct {
+				State string `json:"state"`
+			} `json:"progress_health"`
+		}
+		if json.Unmarshal(r.Body.Bytes(), &health) != nil || health.Discovery.Scope != "serving_node" || health.Discovery.State != "disabled" || health.Progress.State != "idle" {
+			t.Fatal("health missing from authorized response", r.Body.String())
+		}
 	}
 	request := map[string]any{"operation_id": uuid.NewString(), "expected_revision": status.Revision}
 	if r := e.do(t, "POST", path+"/start"+selectors, request, headers); r.Code != 403 {

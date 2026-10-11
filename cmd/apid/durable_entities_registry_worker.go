@@ -12,6 +12,8 @@ func (s *server) runDurableEntityRegistryCleanup(ctx context.Context) {
 	if !s.durableEntityRegistryCleanupWorkerEnabled || !s.durableEntityRegistryCleanupEnabled || s.durableEntityTenantQuotas == nil {
 		return
 	}
+	s.durableEntityRegistryHealth.start(time.Now())
+	defer s.durableEntityRegistryHealth.stop()
 	indexed, roots := "", ""
 	indexFailures, rootFailures := 0, 0
 	var indexDue, rootDue time.Time
@@ -45,6 +47,8 @@ func (s *server) runDurableEntityRegistryCleanup(ctx context.Context) {
 				}
 			}
 			rootDue = time.Now().Add(delay)
+			s.durableEntityRegistryHealth.observe(false, time.Now(), rootDue, err)
+			s.logRegistryCleanupPage("reconciliation", page)
 		}
 		if cycle.Err() == nil && !time.Now().Before(indexDue) {
 			page, err := s.durableEntityTenantQuotas.SweepIndexedRegistryCleanups(cycle, indexed, allow)
@@ -64,6 +68,8 @@ func (s *server) runDurableEntityRegistryCleanup(ctx context.Context) {
 				}
 			}
 			indexDue = time.Now().Add(delay)
+			s.durableEntityRegistryHealth.observe(true, time.Now(), indexDue, err)
+			s.logRegistryCleanupPage("index", page)
 		}
 		stop()
 		if ctx.Err() != nil {
@@ -71,4 +77,8 @@ func (s *server) runDurableEntityRegistryCleanup(ctx context.Context) {
 		}
 		timer.Reset(entitysocket.RegistryCleanupWorkerPoll)
 	}
+}
+
+func (s *server) logRegistryCleanupPage(lane string, p entitysocket.RegistryCleanupWorkerPage) {
+	s.log.Debug("durable registry cleanup page observations", "lane", lane, "scanned", p.Scanned, "active_observed", p.Active, "oldest_active_at", p.OldestActiveAt, "attempted", p.Attempted, "failed", p.Failed, "hints_pruned", p.Pruned, "hint_repair_failures", p.HintRepairFailures)
 }

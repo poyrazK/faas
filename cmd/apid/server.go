@@ -71,6 +71,7 @@ type server struct {
 	durableEntityRegistryEnabled              bool
 	durableEntityRegistryCleanupEnabled       bool
 	durableEntityRegistryCleanupWorkerEnabled bool
+	durableEntityRegistryHealth               registryCleanupHealth
 	durableEntityApps                         map[string]bool
 	durableEntityAlarmsEnabled                bool
 	durableEntityHealthEnabled                bool
