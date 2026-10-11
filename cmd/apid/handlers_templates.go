@@ -56,6 +56,8 @@ func templateDescription(name string) string {
 		return "Python function runtime — customise the handler"
 	case "function-go":
 		return "Go function runtime — customise the handler"
+	case "function-rust":
+		return "Rust function on the binary runtime — static executable built from a Dockerfile"
 	case "s3-uploader":
 		return "S3-compatible PUT/GET adapter — bring your own bucket"
 	case "slack-bot":

@@ -250,7 +250,7 @@ func (r *recorder) result() response {
 		status = http.StatusOK
 	}
 	body := r.body.Bytes()
-	headers := make(map[string]string, len(r.header)+1)
+	headers := make(map[string]string, len(r.header))
 	for k, values := range r.header {
 		if len(values) == 0 {
 			continue
