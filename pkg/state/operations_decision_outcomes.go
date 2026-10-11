@@ -17,7 +17,7 @@ type workflowDecisionOutcomeBucket struct {
 
 // Only complete completed histories qualify. Repeated facts count once per workflow/group.
 func workflowDecisionOutcomes(instances []workflowPerformanceInstance) *api.OperationWorkflowDecisionOutcomeSummary {
-	out := &api.OperationWorkflowDecisionOutcomeSummary{SampledWorkflowCount: int64(len(instances)), Groups: []api.OperationWorkflowDecisionOutcomeGroup{}}
+	out := &api.OperationWorkflowDecisionOutcomeSummary{RuleComparisons: workflowRuleComparisons(instances), SampledWorkflowCount: int64(len(instances)), Groups: []api.OperationWorkflowDecisionOutcomeGroup{}}
 	if len(instances) > 0 {
 		out.MatchingWorkflowCount = instances[0].CohortTotal
 	}
@@ -107,7 +107,16 @@ func visitWorkflowDecisionOutcomes(instance workflowPerformanceInstance, visit f
 	if instance.Bottlenecks == nil || !instance.Bottlenecks.HistoryComplete || !instance.Current.Terminal || instance.Current.OutcomeCode == "" {
 		return
 	}
+	visitWorkflowDecisionOutcomeReports(instance, visit)
+}
+
+// Coverage can identify observed versions in incomplete histories without treating them as eligible.
+func visitWorkflowDecisionOutcomeReports(instance workflowPerformanceInstance, visit func(workflowDecisionOutcomeKey, api.OperationWorkflowDecisionOutcomeEvidence) bool) {
 	observations := append([]workflowBottleneckObservation(nil), instance.Observations...)
+	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[j], observations[i]) })
+	if len(observations) > api.OperationWorkflowBottleneckHistoryMax {
+		observations = observations[:api.OperationWorkflowBottleneckHistoryMax]
+	}
 	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[i], observations[j]) })
 	for _, observation := range observations {
 		h := observation.History

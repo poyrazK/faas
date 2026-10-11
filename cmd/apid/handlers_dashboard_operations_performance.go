@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -54,6 +55,9 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 		data.Summary = &summary
 		if summary.DecisionOutcomes != nil {
 			data.DecisionGroups = workflowDecisionOutcomeLinks(data.SummaryURL, opts, summary)
+			if summary.DecisionOutcomes.RuleComparisons != nil {
+				data.RuleComparisons = workflowRuleComparisonViews(summary.DecisionOutcomes.RuleComparisons)
+			}
 		}
 		data.EvaluatedAt = dashboardJobsTime(summary.EvaluatedAt)
 		data.Cohorts = []dashboard.WorkflowPerformanceCohort{{Name: "Completed", OperationWorkflowPerformanceCohort: summary.Completed}, {Name: "Ongoing", OperationWorkflowPerformanceCohort: summary.Ongoing}}
@@ -97,4 +101,20 @@ func workflowDecisionOutcomeLinks(path string, opts api.OperationWorkflowPerform
 		links = append(links, link)
 	}
 	return links
+}
+
+func workflowRuleComparisonViews(summary *api.OperationWorkflowRuleComparisonSummary) []dashboard.WorkflowRuleComparison {
+	views := make([]dashboard.WorkflowRuleComparison, 0, len(summary.Comparisons))
+	for _, comparison := range summary.Comparisons {
+		view := dashboard.WorkflowRuleComparison{OperationWorkflowRuleComparison: comparison}
+		for _, version := range comparison.Versions {
+			item := dashboard.WorkflowRuleVersion{OperationWorkflowRuleVersionStatistics: version}
+			for _, outcome := range version.Outcomes {
+				item.Outcomes = append(item.Outcomes, dashboard.WorkflowRuleOutcome{OperationWorkflowRuleVersionOutcome: outcome, Percent: fmt.Sprintf("%d.%02d%%", outcome.ProportionBasisPoints/100, outcome.ProportionBasisPoints%100)})
+			}
+			view.Versions = append(view.Versions, item)
+		}
+		views = append(views, view)
+	}
+	return views
 }

@@ -76,6 +76,7 @@ type OperationWorkflowVerificationPerformance struct {
 
 // OperationWorkflowDecisionOutcomeSummary groups completed workflows by reported business decisions and paths.
 type OperationWorkflowDecisionOutcomeSummary struct {
+	RuleComparisons                 *OperationWorkflowRuleComparisonSummary `json:"rule_comparisons,omitempty"`
 	MatchingWorkflowCount           int64                                   `json:"matching_workflow_count"`
 	SampledWorkflowCount            int64                                   `json:"sampled_workflow_count"`
 	LinkedWorkflowCount             int64                                   `json:"linked_workflow_count"`
@@ -99,4 +100,36 @@ type OperationWorkflowDecisionOutcomeGroup struct {
 	OutcomeCode     string                                `json:"outcome_code"`
 	CompletionTime  OperationWorkflowDurationDistribution `json:"completion_time"`
 	BlockedTime     OperationWorkflowDurationDistribution `json:"blocked_time"`
+}
+
+// OperationWorkflowRuleComparisonSummary compares observed rule versions within the completed sample.
+type OperationWorkflowRuleComparisonSummary struct {
+	SampledWorkflowCount      int64                             `json:"sampled_workflow_count"`
+	UnattributedWorkflowCount int64                             `json:"unattributed_workflow_count"`
+	ComparisonsTruncated      bool                              `json:"comparisons_truncated"`
+	Comparisons               []OperationWorkflowRuleComparison `json:"comparisons"`
+}
+type OperationWorkflowRuleComparison struct {
+	ContractVersion   int                                      `json:"contract_version"`
+	DecisionCode      string                                   `json:"decision_code"`
+	RuleID            string                                   `json:"rule_id"`
+	Status            string                                   `json:"status"`
+	VersionsTruncated bool                                     `json:"versions_truncated"`
+	Versions          []OperationWorkflowRuleVersionStatistics `json:"versions"`
+}
+type OperationWorkflowRuleVersionStatistics struct {
+	RuleVersion                     string                                `json:"rule_version"`
+	ObservedWorkflowCount           int64                                 `json:"observed_workflow_count"`
+	EligibleWorkflowCount           int64                                 `json:"eligible_workflow_count"`
+	ExcludedIncompleteWorkflowCount int64                                 `json:"excluded_incomplete_workflow_count"`
+	MissingOutcomeWorkflowCount     int64                                 `json:"missing_outcome_workflow_count"`
+	CompletionTime                  OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime                     OperationWorkflowDurationDistribution `json:"blocked_time"`
+	OutcomesTruncated               bool                                  `json:"outcomes_truncated"`
+	Outcomes                        []OperationWorkflowRuleVersionOutcome `json:"outcomes"`
+}
+type OperationWorkflowRuleVersionOutcome struct {
+	OutcomeCode           string `json:"outcome_code"`
+	WorkflowCount         int64  `json:"workflow_count"`
+	ProportionBasisPoints int64  `json:"proportion_basis_points"`
 }

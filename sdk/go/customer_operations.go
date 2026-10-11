@@ -193,3 +193,8 @@ type OperationWorkflowDecisionOutcomeSummary = api.OperationWorkflowDecisionOutc
 type OperationWorkflowDecisionOutcomeGroup = api.OperationWorkflowDecisionOutcomeGroup
 
 type OperationWorkflowDecisionOutcomeEvidence = api.OperationWorkflowDecisionOutcomeEvidence
+
+type OperationWorkflowRuleComparisonSummary = api.OperationWorkflowRuleComparisonSummary
+type OperationWorkflowRuleComparison = api.OperationWorkflowRuleComparison
+type OperationWorkflowRuleVersionStatistics = api.OperationWorkflowRuleVersionStatistics
+type OperationWorkflowRuleVersionOutcome = api.OperationWorkflowRuleVersionOutcome

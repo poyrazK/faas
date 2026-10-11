@@ -298,3 +298,5 @@ export type { OperationWorkflowOutcomeLink } from './customer-operations.js';
 export type { OperationWorkflowDecisionOutcomeSummary, OperationWorkflowDecisionOutcomeGroup } from './customer-operations.js';
 
 export type { OperationWorkflowDecisionOutcomeEvidence } from './customer-operations.js';
+
+export type { OperationWorkflowRuleComparisonSummary, OperationWorkflowRuleComparison, OperationWorkflowRuleVersionStatistics, OperationWorkflowRuleVersionOutcome } from './customer-operations.js';

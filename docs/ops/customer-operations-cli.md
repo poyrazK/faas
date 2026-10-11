@@ -568,3 +568,44 @@ reporting Operation, and retained workflow history (transitions, blockers and
 outcome). The existing refresh prompt handles cohort changes. Go and Node
 helpers serialize the exact selectors; generated Node and Python clients
 expose the additive parameters and evidence DTOs.
+
+### Compare observed rule versions
+
+`decision_outcomes.rule_comparisons` adds side-by-side version statistics to
+the existing performance summary and decision contributor coverage. Identity
+is the pinned workflow contract, decision code and rule ID; versions are opaque
+strings displayed in lexical order. No newer/older relationship is inferred.
+The dashboard shows outcome counts and percentages and full-workflow completion
+and blocked-time p50/p95 distributions for every returned version.
+
+Coverage uses the same bounded completed sample and latest retained 1024 reports
+per workflow, excluding pagination lookahead. A workflow counts once per exact
+observed identity/version, whether its decision was reported as a change reason,
+selected-path fact, or both. Membership stops at the first retained terminal
+report. Incomplete histories can identify observed versions only; they never
+supply duration or outcome statistics. Missing history may hide other versions
+or an earlier terminal report, so these coverage memberships do not establish
+the full business path. Versions without eligible observations display no data.
+
+For each version, observed counts partition into eligible workflows, excluded
+incomplete histories, and complete workflows without a latest reported outcome.
+Unattributed workflows have no observed decision identity (including paths with
+no decision), which does not prove a rule was unused. A workflow can report
+several versions and appear in several columns. Cohort coverage and truncation
+remain on the enclosing decision summary; these are observed associations,
+not a controlled experiment, significance test or proof of rule causation.
+`compared` means at least two returned versions have eligible observations;
+otherwise status is `insufficient_data`.
+
+Each outcome's integer proportion uses all eligible workflows for that version:
+`floor(workflow_count * 10000 / eligible_workflow_count)` basis points. The
+dashboard displays percentages to two decimal places. Proportions may sum below
+100% because of rounding or omitted outcomes. Up to 16 comparison identities,
+16 versions per identity, and 16 outcome codes per version are retained in
+canonical/lexical order, with independent truncation flags. Accumulators retain
+only the smallest keys, preserving every sample for returned identities and
+durations/denominators across omitted outcomes. Comparisons do not depend on
+which decision outcome groups survive the separate 64-group limit.
+
+Go, Node and Python expose the additive DTOs. Existing cohort tokens and
+contributor refresh behavior remain in force. No endpoint or migration is added.

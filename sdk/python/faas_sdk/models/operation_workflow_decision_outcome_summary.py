@@ -5,8 +5,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.operation_workflow_decision_outcome_group import OperationWorkflowDecisionOutcomeGroup
+    from ..models.operation_workflow_rule_comparison_summary import OperationWorkflowRuleComparisonSummary
 
 
 T = TypeVar("T", bound="OperationWorkflowDecisionOutcomeSummary")
@@ -36,6 +39,12 @@ class OperationWorkflowDecisionOutcomeSummary:
     cohort_truncated: bool
     groups_truncated: bool
     groups: list[OperationWorkflowDecisionOutcomeGroup]
+    rule_comparisons: OperationWorkflowRuleComparisonSummary | Unset = UNSET
+    """Side-by-side rule version statistics from the same bounded completed workflow sample. Observed identities
+    are scoped to contract, decision code and rule ID. Version names are opaque and sorted lexically, not
+    chronologically. Workflows may report several versions and contribute to several columns; comparisons do not
+    establish causation or statistical significance. Coverage of unobserved versions cannot be inferred from missing
+    history."""
 
     def to_dict(self) -> dict[str, Any]:
         matching_workflow_count = self.matching_workflow_count
@@ -59,6 +68,10 @@ class OperationWorkflowDecisionOutcomeSummary:
             groups_item = groups_item_data.to_dict()
             groups.append(groups_item)
 
+        rule_comparisons: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rule_comparisons, Unset):
+            rule_comparisons = self.rule_comparisons.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -74,12 +87,15 @@ class OperationWorkflowDecisionOutcomeSummary:
                 "groups": groups,
             }
         )
+        if rule_comparisons is not UNSET:
+            field_dict["rule_comparisons"] = rule_comparisons
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_decision_outcome_group import OperationWorkflowDecisionOutcomeGroup
+        from ..models.operation_workflow_rule_comparison_summary import OperationWorkflowRuleComparisonSummary
 
         d = dict(src_dict)
         matching_workflow_count = d.pop("matching_workflow_count")
@@ -105,6 +121,13 @@ class OperationWorkflowDecisionOutcomeSummary:
 
             groups.append(groups_item)
 
+        _rule_comparisons = d.pop("rule_comparisons", UNSET)
+        rule_comparisons: OperationWorkflowRuleComparisonSummary | Unset
+        if isinstance(_rule_comparisons, Unset):
+            rule_comparisons = UNSET
+        else:
+            rule_comparisons = OperationWorkflowRuleComparisonSummary.from_dict(_rule_comparisons)
+
         operation_workflow_decision_outcome_summary = cls(
             matching_workflow_count=matching_workflow_count,
             sampled_workflow_count=sampled_workflow_count,
@@ -115,6 +138,7 @@ class OperationWorkflowDecisionOutcomeSummary:
             cohort_truncated=cohort_truncated,
             groups_truncated=groups_truncated,
             groups=groups,
+            rule_comparisons=rule_comparisons,
         )
 
         return operation_workflow_decision_outcome_summary

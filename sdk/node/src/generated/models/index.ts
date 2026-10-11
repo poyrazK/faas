@@ -1138,6 +1138,10 @@ export type { OperationWorkflowRetainedMilestoneRequirement } from './OperationW
 export type { OperationWorkflowRevisionChange } from './OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
 export type { OperationWorkflowRevisionEvidence } from './OperationWorkflowRevisionEvidence.js';
+export type { OperationWorkflowRuleComparison } from './OperationWorkflowRuleComparison.js';
+export type { OperationWorkflowRuleComparisonSummary } from './OperationWorkflowRuleComparisonSummary.js';
+export type { OperationWorkflowRuleVersionOutcome } from './OperationWorkflowRuleVersionOutcome.js';
+export type { OperationWorkflowRuleVersionStatistics } from './OperationWorkflowRuleVersionStatistics.js';
 export type { OperationWorkflowStaleOnly } from './OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './OperationWorkflowState.js';
 export type { OperationWorkflowStateCursor } from './OperationWorkflowStateCursor.js';
