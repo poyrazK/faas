@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -35,6 +36,21 @@ func TestCreateEdgeRuleAsyncRoundTrip(t *testing.T) {
 	}
 	if string(response.Action) != `{"kind":"async","async":{}}` {
 		t.Errorf("action = %s, want async envelope", response.Action)
+	}
+}
+
+func TestCreateEdgeRuleRejectsOpenAPITemplatePath(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	slug := mustSeedEdgeRuleApp(t, e, "reports")
+	req := asyncEdgeRuleRequest()
+	req.MatchPath = "/reports/{id}"
+	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `\"/reports/?*\"`) {
+		t.Fatalf("templated path: status = %d, body = %s; want 400 naming the glob", rec.Code, rec.Body.String())
+	}
+	req.MatchPath = "/reports/?*"
+	if rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("suggested glob: status = %d, body = %s; want 201", rec.Code, rec.Body.String())
 	}
 }
 
@@ -90,10 +106,10 @@ func TestCreateEdgeRuleAsyncRejectsWorker(t *testing.T) {
 }
 
 func TestValidateEdgeRuleAsyncActionRejectsFields(t *testing.T) {
-	if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(`{}`), api.PlanHobby); problem != nil {
+	if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(`{}`), "/", api.PlanHobby); problem != nil {
 		t.Fatalf("empty action rejected: %+v", problem)
 	}
-	if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(`{"queue":"custom"}`), api.PlanHobby); problem == nil {
+	if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(`{"queue":"custom"}`), "/", api.PlanHobby); problem == nil {
 		t.Fatal("async action with unsupported field was accepted")
 	}
 	for _, raw := range []string{
@@ -102,7 +118,7 @@ func TestValidateEdgeRuleAsyncActionRejectsFields(t *testing.T) {
 		`{"retry_policy":{"max_attempts":-1}}`,
 		`{"retry_policy":{"unknown":1}}`,
 	} {
-		if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(raw), api.PlanHobby); problem == nil {
+		if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(raw), "/", api.PlanHobby); problem == nil {
 			t.Errorf("async action %s was accepted", raw)
 		}
 	}

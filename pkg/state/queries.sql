@@ -8933,7 +8933,7 @@ RETURNING *;
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
 -- trigger admission, so quota checks and the projection share the same commit.
 -- name: QueueConsumerLockApp :one
-select id, account_id, type, workload_class from apps
+select id, account_id, type, workload_class, coalesce(manifest->>'execution_mode','')::text as execution_mode from apps
 where id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and status<>'deleted' for update;
 
 -- name: QueueConsumerLockAccount :one

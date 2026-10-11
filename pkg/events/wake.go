@@ -666,6 +666,45 @@ type BootCompleted struct {
 	TriggerClass          string // issue #1398 — user|monitor|crawler|preview_bot|unknown
 	QueuedCount           int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit    int    // ADR-123 — same reading; 0 is cold start
+	PostRPC               PostRPCTimings
+}
+
+// PostRPCTimings splits schedd's work between the vmmd Wake RPC returning and
+// the instance publishing RUNNING (schedd_wake_rpc_duration_seconds
+// phase="rpc_to_running"). Production-us measured that window at 130-154 ms
+// mean per wake against ~14 ms in September (hunt #9), with no way to tell
+// which step grew. Each field is a span in milliseconds:
+//   - PreCommitMs: startup CPU-boost persistence and cold-fallback snapshot
+//     retirement, right after the RPC.
+//   - StampJoinMs: waiting for the concurrent scale-out stamp.
+//   - LockWaitMs: re-acquiring the per-app lock.
+//   - PublishMs: the RUNNING runtime publication transaction.
+//   - FinalizeMs: characterization, transition event, secret delivery record.
+type PostRPCTimings struct {
+	Set                                                         bool
+	PreCommitMs, StampJoinMs, LockWaitMs, PublishMs, FinalizeMs int64
+}
+
+// NewPostRPCTimings derives the spans from the instants schedd stamps. A zero
+// rpcEnded (no RPC on this path) leaves the timings unset.
+func NewPostRPCTimings(rpcEnded, preCommitDone, stampJoined, locked, published, finalized time.Time) PostRPCTimings {
+	if rpcEnded.IsZero() {
+		return PostRPCTimings{}
+	}
+	ms := func(from, to time.Time) int64 {
+		if to.Before(from) {
+			return 0
+		}
+		return to.Sub(from).Milliseconds()
+	}
+	return PostRPCTimings{
+		Set:         true,
+		PreCommitMs: ms(rpcEnded, preCommitDone),
+		StampJoinMs: ms(preCommitDone, stampJoined),
+		LockWaitMs:  ms(stampJoined, locked),
+		PublishMs:   ms(locked, published),
+		FinalizeMs:  ms(published, finalized),
+	}
 }
 
 func (e BootCompleted) Kind() string     { return WakeBootCompleted }
@@ -694,6 +733,13 @@ func (e BootCompleted) Payload() map[string]any {
 	}
 	if e.RestoreFallbackReason != "" {
 		p["restore_fallback_reason"] = e.RestoreFallbackReason
+	}
+	if e.PostRPC.Set {
+		p["post_rpc_pre_commit_ms"] = e.PostRPC.PreCommitMs
+		p["post_rpc_stamp_join_ms"] = e.PostRPC.StampJoinMs
+		p["post_rpc_lock_wait_ms"] = e.PostRPC.LockWaitMs
+		p["post_rpc_publish_ms"] = e.PostRPC.PublishMs
+		p["post_rpc_finalize_ms"] = e.PostRPC.FinalizeMs
 	}
 	return p
 }

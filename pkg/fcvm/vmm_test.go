@@ -145,6 +145,21 @@ func TestLayerCloneTempPatternCarriesDurableInstanceID(t *testing.T) {
 	}
 }
 
+func TestSnapshotTempPatternCarriesDurableInstanceID(t *testing.T) {
+	const instanceID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	if got, want := snapshotTempPattern(instanceID, ".mem"), "faas-snap-"+instanceID+"-*.mem"; got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	if got := snapshotTempPattern("not-an-instance-id", ".bin"); got != "faas-snap-*.bin" {
+		t.Fatalf("invalid-id pattern = %q, want legacy fallback", got)
+	}
+	// The read-only staging name ignores the per-instance temp name, so a
+	// restore sees the same in-jail file name as before.
+	if got := stableReadOnlyName("/srv/fc/base/faas-snap-"+instanceID+"-X.bin", "fallback.ext4"); got != "fallback.ext4" {
+		t.Fatalf("stableReadOnlyName = %q", got)
+	}
+}
+
 func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
 	v := &JailerVMM{readyTimeout: 30 * time.Second}
 	p := v.notReadyProblem(Lease{Instance: "inst-1"}, "", 1, 45*time.Second)

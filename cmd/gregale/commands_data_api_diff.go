@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,201 +14,26 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dataapi"
 )
 
-type dataAPIColumn struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	Nullable   bool   `json:"nullable"`
-	Optional   bool   `json:"optional"`
-	Insertable bool   `json:"insertable"`
-	Updatable  bool   `json:"updatable"`
-}
-type dataAPITable struct {
-	Schema        string          `json:"schema"`
-	Name          string          `json:"name"`
-	View          bool            `json:"view"`
-	Columns       []dataAPIColumn `json:"columns"`
-	Relationships json.RawMessage `json:"relationships"`
-}
-type dataAPIArgument struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Optional bool   `json:"optional"`
-}
-type dataAPIFunction struct {
-	Schema  string            `json:"schema"`
-	Name    string            `json:"name"`
-	Args    []dataAPIArgument `json:"args"`
-	Returns string            `json:"returns"`
-}
-type dataAPISnapshot struct {
-	Version   int                 `json:"version"`
-	Schemas   []string            `json:"schemas"`
-	Tables    []dataAPITable      `json:"tables"`
-	Functions []dataAPIFunction   `json:"functions"`
-	Enums     map[string][]string `json:"enums"`
-}
-type dataAPIContract struct {
-	Version     int             `json:"version"`
-	Fingerprint string          `json:"fingerprint"`
-	Snapshot    json.RawMessage `json:"snapshot"`
-	parsed      dataAPISnapshot
-}
+type dataAPIColumn = dataapi.Column
+type dataAPIArgument = dataapi.Argument
+type dataAPITable = dataapi.Table
+type dataAPIFunction = dataapi.Function
+type dataAPIComposite = dataapi.Composite
+type dataAPICompositeField = dataapi.CompositeField
+type dataAPISnapshot = dataapi.Snapshot
+type dataAPIContract = dataapi.Contract
+
 type dataAPIChange struct {
 	Path     string `json:"path"`
 	Breaking bool   `json:"breaking"`
 	Reason   string `json:"reason"`
+	Approved bool   `json:"approved,omitempty"`
 }
 
-func decodeDataAPIJSON(content []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(content))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return errors.New("invalid schema snapshot JSON")
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return errors.New("schema snapshot contains trailing data")
-	}
-	return nil
-}
-
-func parseDataAPIContract(content []byte) (dataAPIContract, error) {
-	var contract dataAPIContract
-	if len(content) > api.AppTaskDefaultMaxOutputBytes {
-		return contract, errors.New("schema snapshot exceeds output limit")
-	}
-	if err := decodeDataAPIJSON(content, &contract); err != nil {
-		return contract, err
-	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, contract.Snapshot); err != nil {
-		return contract, errors.New("invalid schema snapshot")
-	}
-	hash := sha256.Sum256(compact.Bytes())
-	if contract.Version != 1 || contract.Fingerprint != fmt.Sprintf("%x", hash) {
-		return contract, errors.New("unsupported snapshot version or fingerprint mismatch")
-	}
-	if err := decodeDataAPIJSON(contract.Snapshot, &contract.parsed); err != nil {
-		return contract, err
-	}
-	if err := validateDataAPIContractShape(contract.Snapshot); err != nil {
-		return contract, err
-	}
-	if err := validateDataAPISnapshot(contract.parsed); err != nil {
-		return contract, err
-	}
-	return contract, nil
-}
-
-// Require all normalized fields: omitted booleans must not silently become
-// false and turn an incomplete baseline into a compatible comparison.
-func dataAPIRequiredFields(raw json.RawMessage, fields ...string) (map[string]json.RawMessage, error) {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(raw, &object) != nil || object == nil {
-		return nil, errors.New("invalid normalized snapshot object")
-	}
-	for _, field := range fields {
-		value, ok := object[field]
-		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return nil, errors.New("normalized snapshot is missing required fields")
-		}
-	}
-	return object, nil
-}
-
-func validateDataAPIContractShape(raw json.RawMessage) error {
-	root, err := dataAPIRequiredFields(raw, "version", "schemas", "tables", "functions", "enums")
-	if err != nil {
-		return err
-	}
-	for _, group := range []struct {
-		key         string
-		fields      []string
-		children    string
-		childFields []string
-	}{
-		{"tables", []string{"schema", "name", "view", "columns", "relationships"}, "columns", []string{"name", "type", "nullable", "optional", "insertable", "updatable"}},
-		{"functions", []string{"schema", "name", "args", "returns"}, "args", []string{"name", "type", "optional"}},
-	} {
-		var entries []json.RawMessage
-		if json.Unmarshal(root[group.key], &entries) != nil {
-			return errors.New("invalid snapshot entries")
-		}
-		for _, rawEntry := range entries {
-			entry, err := dataAPIRequiredFields(rawEntry, group.fields...)
-			if err != nil {
-				return err
-			}
-			var children []json.RawMessage
-			if json.Unmarshal(entry[group.children], &children) != nil {
-				return errors.New("invalid snapshot fields")
-			}
-			for _, child := range children {
-				if _, err := dataAPIRequiredFields(child, group.childFields...); err != nil {
-					return err
-				}
-			}
-			if group.key == "tables" {
-				var relationships []json.RawMessage
-				if json.Unmarshal(entry["relationships"], &relationships) != nil {
-					return errors.New("invalid relationship metadata")
-				}
-				for _, relationship := range relationships {
-					if _, err := dataAPIRequiredFields(relationship, "foreignKeyName", "columns", "isOneToOne", "referencedRelation", "referencedColumns"); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func validateDataAPISnapshot(snapshot dataAPISnapshot) error {
-	invalid := errors.New("invalid normalized schema snapshot")
-	if snapshot.Version != 1 || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil {
-		return invalid
-	}
-	schemas := map[string]bool{}
-	for _, schema := range snapshot.Schemas {
-		if schema == "" || schemas[schema] {
-			return invalid
-		}
-		schemas[schema] = true
-	}
-	names := map[string]bool{}
-	for _, table := range snapshot.Tables {
-		key := table.Schema + "." + table.Name
-		if !schemas[table.Schema] || table.Name == "" || names[key] || len(table.Columns) == 0 || len(table.Relationships) == 0 {
-			return invalid
-		}
-		names[key] = true
-		columns := map[string]bool{}
-		for _, column := range table.Columns {
-			if column.Name == "" || column.Type == "" || columns[column.Name] {
-				return invalid
-			}
-			columns[column.Name] = true
-		}
-	}
-	names = map[string]bool{}
-	for _, fn := range snapshot.Functions {
-		key := fn.Schema + "." + fn.Name
-		if !schemas[fn.Schema] || fn.Name == "" || fn.Returns == "" || names[key] || fn.Args == nil {
-			return invalid
-		}
-		names[key] = true
-		args := map[string]bool{}
-		for _, arg := range fn.Args {
-			if arg.Name == "" || arg.Type == "" || args[arg.Name] {
-				return invalid
-			}
-			args[arg.Name] = true
-		}
-	}
-	return nil
-}
+func parseDataAPIContract(content []byte) (dataAPIContract, error) { return dataapi.Parse(content) }
 
 func generateDataAPIContract(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
 	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs", "--snapshot"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
@@ -223,20 +47,40 @@ func cmdDataAPIDiff(args []string) int {
 	fs := newFlagSet("data-api diff", flag.ContinueOnError)
 	baseline := fs.String("baseline", "", "saved JSON contract from data-api types --snapshot")
 	current := fs.String("current", "", "compare a saved current contract offline instead of inspecting an app")
-	check := fs.Bool("check", false, "fail if the database contract contains breaking changes")
+	check := fs.Bool("check", false, "fail if the database contract contains unapproved breaking changes")
+	checkCompatible := fs.Bool("check-compatible", false, "fail on unapproved breaking changes (alias of --check)")
+	approvalPath := fs.String("approval", "", "reviewed JSON approvals bound to baseline and current fingerprints")
+	acceptContract := fs.String("accept-contract", "", "write an owner runtime policy only when there are zero breaking changes")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum private inspection task wait")
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
 	validTarget := (*current == "" && fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))) || (*current != "" && fs.NArg() == 0)
 	if !validTarget || *baseline == "" || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check] [--timeout DURATION]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check | --check-compatible] [--approval FILE] [--accept-contract FILE] [--timeout DURATION]", "data-api")
 		return 1
+	}
+	if *acceptContract != "" {
+		for _, input := range []string{*baseline, *current, *approvalPath} {
+			if input != "" && dataAPIContractOutputAliases(*acceptContract, input) {
+				return printErr("Invalid accepted contract output", errors.New("output must not replace a comparison input"))
+			}
+		}
 	}
 	// Read and validate the baseline before starting any remote task.
 	before, err := readDataAPIContractFile(*baseline)
 	if err != nil {
 		return printErr("Invalid baseline", err)
+	}
+	var approval *dataAPIApproval
+	if *approvalPath != "" {
+		approval, err = readDataAPIApprovalFile(*approvalPath)
+		if err != nil {
+			return printErr("Invalid compatibility approval", err)
+		}
+		if approval.BaselineFingerprint != before.Fingerprint {
+			return printErr("Invalid compatibility approval", errors.New("baseline fingerprint does not match"))
+		}
 	}
 	var after dataAPIContract
 	var task api.AppTaskResponse
@@ -258,15 +102,31 @@ func cmdDataAPIDiff(args []string) int {
 	if err != nil {
 		return printErr("Invalid current contract", err)
 	}
-	changes := diffDataAPISnapshots(before.parsed, after.parsed)
+	changes := diffDataAPISnapshots(before.Parsed, after.Parsed)
+	if err := applyDataAPIApproval(approval, before.Fingerprint, after.Fingerprint, changes); err != nil {
+		return printErr("Invalid compatibility approval", err)
+	}
 	breaking := 0
+	approved := 0
 	for _, change := range changes {
 		if change.Breaking {
 			breaking++
+			if change.Approved {
+				approved++
+			}
+		}
+	}
+	if *acceptContract != "" {
+		policy, err := dataAPIAcceptedContractPolicy(before.Fingerprint, after.Fingerprint, changes)
+		if err != nil {
+			return printErr("Cannot accept older contract", err)
+		}
+		if err := writeDataAPITypes(*acceptContract, false, string(policy)); err != nil {
+			return printErr("Could not write accepted contract policy", err)
 		}
 	}
 	if jsonOutput {
-		if err := writeJSON(map[string]any{"app": fs.Arg(0), "task_id": task.ID, "deployment_id": task.DeploymentID, "baseline_fingerprint": before.Fingerprint, "current_fingerprint": after.Fingerprint, "breaking": breaking, "changes": changes}); err != nil {
+		if err := writeJSON(map[string]any{"app": fs.Arg(0), "task_id": task.ID, "deployment_id": task.DeploymentID, "baseline_fingerprint": before.Fingerprint, "current_fingerprint": after.Fingerprint, "breaking": breaking, "approved": approved, "unapproved": breaking - approved, "changes": changes}); err != nil {
 			return 1
 		}
 	} else {
@@ -275,15 +135,18 @@ func cmdDataAPIDiff(args []string) int {
 			if change.Breaking {
 				label = "breaking"
 			}
+			if change.Approved {
+				label = "approved breaking"
+			}
 			if _, err := fmt.Fprintf(osStdout, "%s %q: %s\n", label, change.Path, change.Reason); err != nil {
 				return printErr("Could not write diff", err)
 			}
 		}
-		if _, err := fmt.Fprintf(osStdout, "%d changes, %d breaking\n", len(changes), breaking); err != nil {
+		if _, err := fmt.Fprintf(osStdout, "%d changes, %d breaking, %d approved, %d unapproved\n", len(changes), breaking, approved, breaking-approved); err != nil {
 			return 1
 		}
 	}
-	if *check && breaking > 0 {
+	if (*check || *checkCompatible) && breaking > approved {
 		return 1
 	}
 	return 0
@@ -305,7 +168,7 @@ func readDataAPIContractFile(path string) (dataAPIContract, error) {
 func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 	changes := []dataAPIChange{}
 	add := func(path, reason string, breaking bool) {
-		changes = append(changes, dataAPIChange{path, breaking, reason})
+		changes = append(changes, dataAPIChange{Path: path, Breaking: breaking, Reason: reason})
 	}
 	tables := map[string]dataAPITable{}
 	for _, table := range after.Tables {
@@ -322,9 +185,7 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 		if old.View != current.View {
 			add(key, "relation changed between table and view", true)
 		}
-		if compactDataAPIJSON(old.Relationships) != compactDataAPIJSON(current.Relationships) {
-			add(key, "relationship metadata changed; review embedded queries", true)
-		}
+		changes = append(changes, diffDataAPIRelationships(before, old, current)...)
 		columns := map[string]dataAPIColumn{}
 		for _, column := range current.Columns {
 			columns[column.Name] = column
@@ -380,6 +241,9 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 		if old.Returns != current.Returns {
 			add(key, "RPC return type changed", true)
 		}
+		if !reflect.DeepEqual(old.Setof, current.Setof) {
+			add(key, "RPC result relationship metadata changed; review projections and computed embeds", old.Setof != nil)
+		}
 		args := map[string]dataAPIArgument{}
 		for _, arg := range current.Args {
 			args[arg.Name] = arg
@@ -432,12 +296,59 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 			add(key, "enum added", false)
 		}
 	}
+	changes = append(changes, diffDataAPIComposites(before.Composites, after.Composites)...)
 	sort.Slice(changes, func(i, j int) bool {
 		if changes[i].Path == changes[j].Path {
 			return changes[i].Reason < changes[j].Reason
 		}
 		return changes[i].Path < changes[j].Path
 	})
+	return changes
+}
+
+func diffDataAPIComposites(before, after []dataAPIComposite) []dataAPIChange {
+	changes := []dataAPIChange{}
+	add := func(path, reason string, breaking bool) {
+		changes = append(changes, dataAPIChange{Path: path, Breaking: breaking, Reason: reason})
+	}
+	types := map[string]dataAPIComposite{}
+	for _, composite := range after {
+		types[composite.Schema+"."+composite.Name] = composite
+	}
+	for _, old := range before {
+		key := old.Schema + "." + old.Name
+		current, ok := types[key]
+		if !ok {
+			add(key, "composite type removed; update readers, writes and RPC calls", true)
+			continue
+		}
+		delete(types, key)
+		fields := map[string]dataAPICompositeField{}
+		for _, field := range current.Fields {
+			fields[field.Name] = field
+		}
+		for _, field := range old.Fields {
+			next, ok := fields[field.Name]
+			path := key + "." + field.Name
+			if !ok {
+				add(path, "composite field removed", true)
+				continue
+			}
+			delete(fields, field.Name)
+			if field.Type != next.Type {
+				add(path, "composite field type changed; review nested values and RPCs", true)
+			}
+			if field.Nullable != next.Nullable {
+				add(path, "composite field nullability changed", true)
+			}
+		}
+		for name := range fields {
+			add(key+"."+name, "composite field added; generated objects now require this key", true)
+		}
+	}
+	for key := range types {
+		add(key, "composite type added", false)
+	}
 	return changes
 }
 

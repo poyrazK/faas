@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -2740,6 +2741,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	// ADR-978: order the warm-capacity queue by route priority. Rules are
+	// read only for requests that have to queue, through a 30 s cache.
+	if pgStore := deps.pgStore; pgStore != nil {
+		handler.SetRoutePrioritySource(func(ctx context.Context, accountID, appID string) ([]api.RoutePriorityRule, error) {
+			_, setting, err := state.EffectiveRoutePriorities(ctx, pgStore, accountID, appID)
+			return setting.Routes, err
+		})
+	}
 	if plans := newConsumerPlanStore(deps.pgStore); plans != nil {
 		handler.WithConsumerPlanStore(plans)
 	}
@@ -2823,6 +2832,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}, deps.edgeRulesAudit)
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
+	}
+	// ADR-831 — kind=waf. Rule sets compile lazily on first use, so a node
+	// with no WAF rules pays nothing. FAAS_EDGE_WAF_INLINE_DISABLED=1 is the
+	// operator kill switch for in-path checks: warn and block rules then
+	// behave like observe (amendment 4).
+	wafInspector := edgewaf.New(deps.metrics, log)
+	go wafInspector.Run(ctx)
+	handler.WithWAFInspector(wafInspector)
+	if os.Getenv("FAAS_EDGE_WAF_INLINE_DISABLED") != "1" {
+		handler.WithWAFInlineChecker(wafInspector)
+	} else {
+		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
@@ -3383,6 +3404,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		if cfg.NodeName != "" {
+			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
+		}
 		go manager.Run(ctx)
 	}
 
@@ -3540,10 +3564,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The order is httpsec.Nonce outer / httpsec.Static inner so the
 	// CSP can be set before Static runs (it doesn't matter for the
 	// static headers, but keeps the middleware chain readable).
-	publicHandler = httpsec.Static(httpsec.Nonce(
-		func(r *http.Request) bool { return isApidPath(r.URL.Path) },
-		publicHandler,
-	))
+	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
+	// hosts this hop sets nothing so the app's own value is the only copy
+	// gatewayd-public sees, and gatewayd-public fills defaults.
+	appsDomain := deps.appsDomain
+	publicHandler = httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		false,
+		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
+	)
 
 	// HSTS is seeded from the environment before the listener is built and
 	// then reconciled by the runtime-config watcher above. Do not re-read the
@@ -3746,6 +3775,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// the public path (H4-68), tuned per app by kind=circuit_breaker.
 		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
 		handler.WithCircuitBreaker(breaker)
+		// ADR-977: opt-in wake-ahead along service edges measured by this
+		// gateway. A prediction restores through the same wake path as a
+		// call, with its own trigger and below the fleet residency guard.
+		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		handler.SetWakeAhead(gateway.WakeAheadConfig{
+			Learner:   wakeAheadLearner,
+			Enabled:   pgStore.ServiceWakeAheadEnabled,
+			Residency: pgStore.ServiceWakeAheadFleetResidency,
+			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
+		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
@@ -3766,6 +3805,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {

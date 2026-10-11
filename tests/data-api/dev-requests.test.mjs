@@ -134,3 +134,23 @@ test('scenario collections preserve legacy files, select names and enforce scope
     { version: 2, scenarios: ['one', 'two'].map(name => ({ name, requests: Array.from({ length: 51 }, (_, i) => ({ ...request(), name: `${i}` })) })) }
   ]) assert.throws(() => validateRequests(invalid))
 })
+
+test('replay pins requests to reviewed contract routes without accepting path escapes or malformed hashes', async t => {
+  const http = await import('node:http')
+  const { replayRequest } = await import(runtime ? pathToFileURL(join(runtime, 'request-replay.mjs')) : '../../cmd/gregale/templates/data-api/request-replay.mjs')
+  const calls = []
+  const server = http.createServer((req, res) => { calls.push(req.url); res.setHeader('Content-Type','application/json'); res.end('[]') })
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve))
+  t.after(() => {server.closeAllConnections();server.close()})
+  const context = { url: `http://127.0.0.1:${server.address().port}`, identities: {bob:{token:'test-only'}} }
+  const pinned = { ...request(), expectedSchemaFingerprint: 'a'.repeat(64) }
+  validateRequests({ version:1,requests:[pinned] })
+  assert.equal((await replayRequest(pinned,context)).passed,true)
+  assert.deepEqual(calls,[`/__gregale/contract/${'a'.repeat(64)}/rest/v1/notes?subject=eq.alice`])
+  for (const hash of [null, '', 'A'.repeat(64), '{{current}}']) {
+    const invalid = {...pinned,expectedSchemaFingerprint:hash}
+    assert.throws(() => validateRequests({version:1,requests:[invalid]}))
+    assert.equal((await replayRequest(invalid,context)).passed,false)
+  }
+  assert.equal(calls.length,1)
+})

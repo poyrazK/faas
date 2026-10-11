@@ -142,6 +142,34 @@ gregale consumers set-plan my-api CONSUMER_ID --plan free
   so a request that later fails on Gregale's side still uses cap but is not
   billed.
 
+### Usage alerts
+
+Warn consumers before they reach their monthly cap. Give a plan up to five
+percentages of its monthly unit limit:
+
+```bash
+gregale consumers plan-create my-api --name free --max-units-per-month 1000 --alert-at 80,100
+gregale consumers plan-update my-api --plan free --alert-at 50,90
+gregale consumers usage-alerts my-api CONSUMER_ID
+```
+
+- **When it fires.** When a consumer's monthly usage reaches a threshold, Gregale
+  sends a `consumer.usage_threshold` app webhook. It fires once per consumer,
+  threshold and UTC month.
+- **Payload.** It carries the consumer's `external_ref`, the plan, the
+  threshold, the limit and the units used, so you can email your customer or
+  offer an upgrade.
+- **At 100%.** The 100% alert also fires when a request is refused for the
+  month before usage lands exactly on the limit, for example a weighted
+  request larger than what is left.
+- **Requirements.** Alerts need a monthly unit limit; a plan without one has
+  nothing to measure. Subscribe a webhook to `consumer.usage_threshold`, or to
+  all events, to receive them.
+- **Missed deliveries.** `usage-alerts` lists the last 100 crossings, so you
+  can catch up on webhooks you missed.
+- **Changing thresholds.** `plan-update --alert-at none` removes alerts.
+  Changing thresholds mid-month does not re-send alerts already recorded.
+
 ## 4. Bill with statements
 
 A statement snapshots one consumer's usage for a period and prices every
@@ -206,10 +234,26 @@ finalizing and stores nothing.
 To bill one customer across several apps, link their consumers to a
 [platform tenant](platform-tenants.md). You can then create cross-app
 statements and a customer-wide rate card with
-`gregale platform-tenants statement-draft` and `rate-card-create`. Tenant rate
-cards do not support free requests, tiers, route weights, or plans yet. A
-cross-app statement cannot price an app whose rate cards use them, so bill
-those consumers with app statements.
+`gregale platform-tenants statement-draft` and `rate-card-create`:
+
+```bash
+gregale platform-tenants rate-card-create --id TENANT_ID --currency EUR --price-millicents 20 --included-units 50000
+gregale platform-tenants rate-card-create --id TENANT_ID --currency EUR --tier 100000:0 --tier inf:15
+gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
+```
+
+- **Shared allowance and tiers.** A tenant card's free requests and tiers
+  count the customer's usage across all their apps, in minute order through
+  each UTC month.
+- **Monthly statements.** While such a card is in force, cross-app statements
+  must cover one calendar month. Late usage re-prices the month: the
+  adjustment bills only the difference, so a line can be negative when free
+  units move to an earlier minute, but the total never is.
+- **App cards underneath.** An app's own free requests, tiers, route weights
+  or plans don't block a cross-app statement for minutes a tenant card prices.
+  A minute only an app card prices still needs a flat app card; otherwise bill
+  those consumers with app statements.
+- **Not yet available.** Tenant cards don't take route weights or plans.
 
 ## Limits
 
@@ -217,6 +261,8 @@ those consumers with app statements.
   compute time or bytes is not available.
 - Tiers are graduated. Pricing every request in the month at the price of the
   step the month ends in is not available.
+- Customer-wide (platform tenant) cards support free requests and tiers but
+  not route weights or plans.
 - Usage is recorded when a request finishes. If the gateway crashes before the
   record is written to disk, that request can be lost. The completeness check
   finds such losses only while request telemetry still holds the period
@@ -229,8 +275,10 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-950](adr/950-api-consumer-monthly-allowances.md),
 [ADR-951](adr/951-api-consumer-graduated-tiers.md),
 [ADR-952](adr/952-api-consumer-route-weights.md),
-[ADR-953](adr/953-api-consumer-plans.md), and
-[ADR-954](adr/954-api-consumer-usage-completeness.md) for the billing rules.
+[ADR-953](adr/953-api-consumer-plans.md),
+[ADR-954](adr/954-api-consumer-usage-completeness.md),
+[ADR-849](adr/849-api-consumer-usage-alerts.md), and
+[ADR-975](adr/975-platform-tenant-allowances-and-tiers.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

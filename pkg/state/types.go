@@ -954,8 +954,21 @@ type PlatformTenantRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth are free units per tenant per UTC calendar month
+	// across every attributed app (ADR-975).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated ladder counted per tenant per UTC month
+	// across every attributed app (ADR-975); it replaces the flat price and
+	// allowance, and PriceMillicentsPerUnit records the last step's price.
+	Tiers         []APIConsumerRateCardTier
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// MonthlyPricing reports whether the card prices usage by its position in
+// the tenant's UTC month, so statements must re-price whole months.
+func (c PlatformTenantRateCard) MonthlyPricing() bool {
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
@@ -3356,14 +3369,24 @@ const (
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
 	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
 	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint                          AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct                              AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents                               AlertMetric = "daily_cost_cents"
-	AlertMetricWorkflowFailures                             AlertMetric = "workflow_failures"
-	AlertMetricWorkflowQuotaSkips                           AlertMetric = "workflow_schedule_quota_skips"
-	AlertMetricWorkflowPendingAge                           AlertMetric = "workflow_pending_age_seconds"
-	AlertMetricWorkflowWaitingAge                           AlertMetric = "workflow_waiting_age_seconds"
-	AlertMetricWorkflowDueAge                               AlertMetric = "workflow_due_age_seconds"
+	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
+	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
+	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
+	// 401/403/413/429 answers from the other edge gates;
+	// AlertMetricEdgeWAFDetections counts kind=waf detections (ADR-831).
+	// All are webhook-only.
+	AlertMetricPreAuthPressure        AlertMetric = "pre_auth_pressure"
+	AlertMetricEdgeValidationFailures AlertMetric = "edge_validation_failures"
+	AlertMetricEdgeRejections         AlertMetric = "edge_rejections"
+	AlertMetricEdgeWAFDetections      AlertMetric = "edge_waf_detections"
+	AlertMetricNewErrorFingerprint    AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct        AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents         AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures       AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips     AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3689,6 +3712,7 @@ const (
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
@@ -3755,6 +3779,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventConsumerUsageThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
@@ -7593,6 +7618,12 @@ const (
 	// existing invocation drain later delivers the original method, path, JSON
 	// body, and safe headers to the app.
 	EdgeRuleKindAsync EdgeRuleKind = "async"
+	// EdgeRuleKindWAF inspects matched requests with the OWASP Core Rule
+	// Set (ADR-831 step 1). Observe-only: inspection runs off the request
+	// path and reports detections without blocking. Quota via
+	// Limits.EdgeRulesWAFPerApp (Free 0 / Hobby 0 / Pro 5 / Scale 20). See
+	// migrations/20261009172820417_edge_rules_kind_waf.sql.
+	EdgeRuleKindWAF EdgeRuleKind = "waf"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -7605,7 +7636,8 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindIP, EdgeRuleKindValidate, EdgeRuleKindLimit,
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
-		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync:
+		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync,
+		EdgeRuleKindWAF:
 		return true
 	}
 	return false
@@ -7652,6 +7684,7 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	Template   bool              `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeaderOp is one mutation. Action ∈ {add,set,remove}; Value
@@ -7659,9 +7692,10 @@ type EdgeRuleRedirectAction struct {
 // blacklist (Host, Content-Length, Transfer-Encoding, Connection,
 // x-faas-*) at apply time.
 type EdgeRuleHeaderOp struct {
-	Name   string `json:"name"`
-	Value  string `json:"value,omitempty"`
-	Action string `json:"action"`
+	Name     string `json:"name"`
+	Value    string `json:"value,omitempty"`
+	Action   string `json:"action"`
+	Template bool   `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and
@@ -7762,6 +7796,9 @@ type EdgeRuleValidateAction struct {
 	// is intentionally permissive — the closed-set enforcement
 	// lives at the apid write boundary (pkg/api.Validate).
 	ValidateMode string `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values (ADR-091
+	// amendment: request parameters). Nil keeps body-only behaviour.
+	Parameters *api.EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleLimitAction carries the per-rule body caps for kind=limit.
@@ -8048,6 +8085,18 @@ type EdgeRuleAction struct {
 	CircuitBreaker *EdgeRuleCircuitBreakerAction `json:"circuit_breaker,omitempty"`
 	// Async marks a matching request for durable deferred execution.
 	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
+	// WAF carries the kind=waf scoring knobs (ADR-831 step 1).
+	WAF *EdgeRuleWAFAction `json:"waf,omitempty"`
+}
+
+// EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
+// are the effective ones written by api.EdgeRuleWAFAction.Validate.
+type EdgeRuleWAFAction struct {
+	Mode             string `json:"mode,omitempty"`
+	ParanoiaLevel    int    `json:"paranoia_level,omitempty"`
+	AnomalyThreshold int    `json:"anomaly_threshold,omitempty"`
+	ExcludeRuleIDs   []int  `json:"exclude_rule_ids,omitempty"`
+	InspectBodyBytes int    `json:"inspect_body_bytes,omitempty"`
 }
 
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).

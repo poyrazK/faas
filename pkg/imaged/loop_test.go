@@ -12,6 +12,7 @@ package imaged
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1761,5 +1762,58 @@ func TestDeleteSnapshotsAndFiles_TierAwareWarm(t *testing.T) {
 	}
 	if _, err := be.Get(context.Background(), state.SnapMemKey(dep.ID)); err != nil {
 		t.Errorf("init mem blob was incorrectly deleted — warm-tier evict must not touch init keys: %v", err)
+	}
+}
+
+// Hunt #9: a rollback moves an old superseded deployment back into
+// snapshotting. The reconciler aged rows from created_at, so it cancelled a
+// rollback to a 22-hour-old deployment six seconds after it started and left
+// the rollback target permanently cancelled. Age counts from the current
+// pipeline stage instead.
+func TestReconcileStaleDeploymentsAgesFromCurrentStage(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "stale-rollback@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 11, 9, 0, 30, 0, time.UTC)
+	makeSnapshotting := func(slug string, stageStarted time.Time) state.Deployment {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stages, err := json.Marshal(state.StageState{Current: "snapshot_prepare", CurrentStartedAt: &stageStarted})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeploySnapshotting,
+			CreatedAt: now.Add(-22 * time.Hour), StageState: stages,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	rollback := makeSnapshotting("stale-rollback", now.Add(-6*time.Second))
+	stuck := makeSnapshotting("stale-stuck", now.Add(-3*time.Hour))
+	ops := wire.NewOpsMetrics("imaged_stage_test")
+	loop := NewLoop(LoopConfig{
+		Handler: &Handler{ops: ops}, Store: store, Now: func() time.Time { return now },
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	loop.reconcileStaleDeployments(ctx)
+	if got, _ := store.DeploymentByID(ctx, rollback.ID); got.Status != state.DeploySnapshotting {
+		t.Fatalf("rollback target = %s (principal %q), want snapshotting", got.Status, got.CancelledByPrincipal)
+	}
+	got, _ := store.DeploymentByID(ctx, stuck.ID)
+	if got.Status != state.DeployCancelled || !strings.Contains(got.CancelledByPrincipal, "snapshotting:10800s") {
+		t.Fatalf("stuck = status %s principal %q, want cancelled after 10800s in stage", got.Status, got.CancelledByPrincipal)
+	}
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if want := "imaged_stage_test_stale_deployment_oldest_age_seconds 0"; !strings.Contains(recorder.Body.String(), want) {
+		t.Errorf("metrics missing %q: a rollback in progress is not stale backlog", want)
 	}
 }

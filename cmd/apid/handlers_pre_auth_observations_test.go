@@ -36,8 +36,13 @@ func TestAppPreAuthObservationsFreePlanAndPolicyScope(t *testing.T) {
 		{"metric":{"policy":"foreign","outcome":"would_block"},"value":[0,"999"]}
 	]}}`, key, key, key, key)
 	installPromFixture(t, &e, func(query string) string {
-		if !strings.Contains(query, `gateway_pre_auth_policy_shadow_total`) || !strings.Contains(query, `[5m]`) ||
-			!strings.Contains(query, fmt.Sprintf("app=%q", createdApp.ID)) {
+		if !strings.Contains(query, `[5m]`) || !strings.Contains(query, fmt.Sprintf("app=%q", createdApp.ID)) {
+			t.Errorf("unexpected PromQL query: %s", query)
+		}
+		if strings.Contains(query, `gateway_requests_total`) {
+			return `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[0,"50"]}]}}`
+		}
+		if !strings.Contains(query, `gateway_pre_auth_policy_shadow_total`) {
 			t.Errorf("unexpected PromQL query: %s", query)
 		}
 		return fixture
@@ -58,6 +63,12 @@ func TestAppPreAuthObservationsFreePlanAndPolicyScope(t *testing.T) {
 		out.Policies[2].PolicyID != "failures_"+key || out.Policies[2].Result4xx != 1 ||
 		out.Policies[3].PolicyID != "targets_"+key || out.Policies[3].TargetFailures != 7 || out.Policies[3].TargetThreshold != 2 {
 		t.Fatalf("policy mapping = %+v", out.Policies)
+	}
+	// A 5m window cannot judge enforcement; failures/targets policies are not
+	// decision policies, so only the app and route counts are summed.
+	if s := out.Suggestion; s == nil || s.Status != api.PreAuthSuggestionInsufficientData ||
+		s.Requests != 50 || s.WouldBlock != 4 || s.WouldBlockSucceeded != 2 {
+		t.Fatalf("suggestion = %+v", out.Suggestion)
 	}
 	if rec := e.do(t, "GET", "/v1/apps/protected-app/pre-auth-observations?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -123,7 +124,7 @@ func TestCPUProfileRegressionUnavailableAndDashboardCSRF(t *testing.T) {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.SetPathValue("slug", app.Slug)
 		r.SetPathValue("id", row.ID)
-		r = r.WithContext(context.WithValue(r.Context(), accountContextKey{}, e.acct))
+		r = r.WithContext(WithAccount(r.Context(), e.acct))
 		if cookie != "" {
 			r.AddCookie(&http.Cookie{Name: profileInvestigationCSRFCookie, Value: cookie})
 		}

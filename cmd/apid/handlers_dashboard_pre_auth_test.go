@@ -24,6 +24,9 @@ func TestDashboardPreAuthRendersScopedObservations(t *testing.T) {
 		t.Fatalf("create app: %d %s", rec.Code, rec.Body.String())
 	}
 	installPromFixture(t, &e, func(query string) string {
+		if strings.Contains(query, `gateway_requests_total`) && strings.Contains(query, `[15m]`) {
+			return `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[0,"40"]}]}}`
+		}
 		if !strings.Contains(query, `[15m]`) || !strings.Contains(query, `gateway_pre_auth_policy_shadow_total`) {
 			t.Errorf("unexpected query: %s", query)
 		}
@@ -47,6 +50,7 @@ func TestDashboardPreAuthRendersScopedObservations(t *testing.T) {
 		"Pre-auth protection", "Mode: <strong>observe</strong>", "POST /login", "Selected failures",
 		"Local fallback", "<option value=\"15m\" selected>", ">7</td>", ">2</td>",
 		"/dashboard/apps/protected-app#alert-presets",
+		"Enforce readiness: judge enforcement on a range of 24h or longer.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard missing %q", want)

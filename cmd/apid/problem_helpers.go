@@ -5,36 +5,26 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 )
+
+// Facades over pkg/apid/httpkit (ADR-982); new and lifted code calls httpkit
+// directly.
 
 // writeCustomerInternalProblem keeps dependency and storage error text in
 // logs while returning customer-safe recovery guidance.
 func writeCustomerInternalProblem(w http.ResponseWriter, r *http.Request, log *slog.Logger, operation, detail, hint string, cause error) {
-	api.WriteProblemForRequest(w, r, customerInternalProblem(log, operation, detail, hint, cause))
+	httpkit.WriteCustomerInternalProblem(w, r, log, operation, detail, hint, cause)
 }
 
 func customerInternalProblem(log *slog.Logger, operation, detail, hint string, cause error) *api.Problem {
-	if p := routeRemovalBlockedProblem(cause); p != nil {
-		return p
-	}
-	logCustomerFailure(log, operation, cause)
-	return api.ErrInternal(detail).WithHint(hint)
+	return httpkit.CustomerInternalProblem(log, operation, detail, hint, cause)
 }
 
 func customerCapacityProblem(log *slog.Logger, operation, title, detail, hint string, cause error) *api.Problem {
-	if p := routeRemovalBlockedProblem(cause); p != nil {
-		return p
-	}
-	logCustomerFailure(log, operation, cause)
-	return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, title, detail).
-		WithHeader("Retry-After", "5").
-		WithHint(hint).
-		WithDocs("https://gregale.dev/status")
+	return httpkit.CustomerCapacityProblem(log, operation, title, detail, hint, cause)
 }
 
 func logCustomerFailure(log *slog.Logger, operation string, cause error) {
-	if log != nil && cause != nil {
-		log.Error("customer request failed", "operation", logsanitize.Field(operation), "err", logsanitize.FieldAny(cause))
-	}
+	httpkit.LogCustomerFailure(log, operation, cause)
 }

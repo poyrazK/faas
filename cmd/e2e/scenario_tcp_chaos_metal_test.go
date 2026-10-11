@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 970 — native acceptance for run-scoped faults on private TCP streams.
+// adr: 981 — native acceptance for run-scoped faults on private TCP streams.
 package e2e_test
 
 import (

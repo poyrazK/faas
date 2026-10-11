@@ -760,6 +760,15 @@ type Engine struct {
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 
+	// workerScaleIn holds each worker pool's recent demand recommendations
+	// for the scale-in stabilization window. It is per schedd and in
+	// memory: a restart forgets it, and the pool then holds its size for
+	// one window before shrinking.
+	workerScaleIn *workerScaleInStabilizer
+	// workerStops tracks worker stops the pool reconciler runs in the
+	// background (see worker_stop.go).
+	workerStops *workerStopTracker
+
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
 	// the report's node_signature (ADR-053). Populated by the
@@ -904,6 +913,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
+		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
@@ -945,6 +956,14 @@ func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
 // counter. Returns the engine for builder-style wiring.
 func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
 	e.ops = ops
+	return e
+}
+
+// WithWorkerScaleInStabilization replaces the worker-pool scale-in window.
+// Zero or negative disables stabilization so computed demand shrinks a pool
+// on the tick that observes it.
+func (e *Engine) WithWorkerScaleInStabilization(window time.Duration) *Engine {
+	e.workerScaleIn = newWorkerScaleInStabilizer(window)
 	return e
 }
 
@@ -3561,7 +3580,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// CreateSnapshot guarantees non-empty; an empty value here
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
-		snapKey: snap.StorageKey,
+		snapKey:      snap.StorageKey,
+		snapMemBytes: snap.MemBytes,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -3803,6 +3823,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			StorageKey:        bootInput.snapKey,
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
+			MemBytes:          bootInput.snapMemBytes,
 		})
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
@@ -3925,9 +3946,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
+	var postRPC events.PostRPCTimings
+	tPreCommit := time.Now()
 	joinScaleOutStamp()
+	tStampJoined := time.Now()
 	release2 := e.lockApp(bootInput.appID)
 	defer release2()
+	tLocked := time.Now()
 
 	// Publish the runtime identity and RUNNING state in one conditional write.
 	// The old success path paid for InstanceByID, SetInstanceRuntime, another
@@ -3944,6 +3969,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
+	tPublished := time.Now()
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -4063,6 +4089,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// this is idempotent for deployments that never had a backoff row and does
 	// not need to delay the newly routable target.
 	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
+	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -4155,6 +4182,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			TriggerClass:          inboundCorr.TriggerClass,
 			QueuedCount:           bootInput.queuedCount,
 			ConcurrencyAtAdmit:    bootInput.concurrencyAtAdmit,
+			PostRPC:               postRPC,
 		})
 	}
 
@@ -4221,6 +4249,9 @@ type bootInput struct {
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
 	snapKey string
+	// snapMemBytes is the snap row's guest memory length; vmmd matches it
+	// against the requested guest memory before restoring a companion.
+	snapMemBytes int64
 	// nodeID is the chosen compute_node for this wake (issue #97 /
 	// ADR-025 axis 3). Captured under the Phase 2 lock alongside
 	// the rest of bootInput so the unlocked Phase 3 vmmd call can
