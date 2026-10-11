@@ -13,7 +13,7 @@ import (
 func (s *server) listBucketObjectVersions(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.objectStorageEnabled() {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return
 	}
 	b, _, p, ok := s.loadBucket(w, r, acct, true)
