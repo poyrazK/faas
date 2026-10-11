@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -33,6 +34,9 @@ type PreviewCohort struct {
 	AppID             string   `json:"app_id"`
 	Scope             string   `json:"scope"`
 	PlatformTenantIDs []string `json:"platform_tenant_ids"`
+	// Omitted kinds retain the legacy HTTP preview only. Native families
+	// require an explicit operator choice in this exact cohort.
+	ExecutionKinds []string `json:"execution_kinds,omitempty"`
 }
 
 // PreviewAdmission reads a small regular file on every admission. It retains
@@ -57,26 +61,66 @@ func NewPreviewAdmission(path string) (*PreviewAdmission, error) {
 }
 
 func (g *PreviewAdmission) AllowsDefinition(account, app, scope string) bool {
-	return g.allows(account, app, scope, "")
+	return g.AllowsDefinitionKinds(account, app, scope, []string{ExecutionHTTP})
 }
 
 func (g *PreviewAdmission) AllowsTenant(account, app, scope, tenant string) bool {
-	return tenant != "" && g.allows(account, app, scope, tenant)
+	return g.AllowsTenantKind(account, app, scope, tenant, ExecutionHTTP)
+}
+
+// AllowsDefinitionKinds checks a complete registration batch against one
+// policy snapshot, so mixed deployments cannot partially widen admission.
+func (g *PreviewAdmission) AllowsDefinitionKinds(account, app, scope string, kinds []string) bool {
+	if len(kinds) == 0 {
+		return false
+	}
+	observation := g.ObserveCohort(account, app, scope, "")
+	for _, kind := range kinds {
+		if !observation.ForExecutionKind(kind).Allowed {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *PreviewAdmission) AllowsTenantKind(account, app, scope, tenant, kind string) bool {
+	return tenant != "" && g.ObserveKind(account, app, scope, tenant, kind).Allowed
 }
 
 // PreviewObservation exposes only the selected cohort decision, never policy
 // contents, other tenant identities or filesystem failure details.
 type PreviewObservation struct {
-	Allowed    bool
-	Code       string
-	ObservedAt time.Time
+	Allowed        bool
+	Code           string
+	ObservedAt     time.Time
+	executionKinds []string
 }
 
-func (g *PreviewAdmission) allows(account, app, scope, tenant string) bool {
-	return g.Observe(account, app, scope, tenant).Allowed
+// ForExecutionKind preserves the observation's snapshot and time. Cohort
+// membership alone never grants admission for an execution family.
+func (o PreviewObservation) ForExecutionKind(kind string) PreviewObservation {
+	if !o.Allowed {
+		return o
+	}
+	if !validExecutionKind(kind) {
+		o.Allowed, o.Code = false, "preview_execution_kind_invalid"
+	} else if !slices.Contains(o.executionKinds, kind) {
+		o.Allowed, o.Code = false, "preview_execution_kind_excluded"
+	}
+	return o
 }
 
 func (g *PreviewAdmission) Observe(account, app, scope, tenant string) PreviewObservation {
+	return g.ObserveKind(account, app, scope, tenant, ExecutionHTTP)
+}
+
+func (g *PreviewAdmission) ObserveKind(account, app, scope, tenant, kind string) PreviewObservation {
+	return g.ObserveCohort(account, app, scope, tenant).ForExecutionKind(kind)
+}
+
+// ObserveCohort reads once for diagnostics that inspect several definitions.
+// Call ForExecutionKind before treating this as execution eligibility.
+func (g *PreviewAdmission) ObserveCohort(account, app, scope, tenant string) PreviewObservation {
 	now := time.Now().UTC()
 	if g != nil && g.Now != nil {
 		now = g.Now().UTC()
@@ -115,11 +159,13 @@ func (g *PreviewAdmission) Observe(account, app, scope, tenant string) PreviewOb
 		}
 		if tenant == "" {
 			result.Allowed, result.Code = true, "preview_cohort_observed"
+			result.executionKinds = cohort.executionKinds()
 			return result
 		}
 		for _, id := range cohort.PlatformTenantIDs {
 			if storedUUIDMatches(id, tenant) {
 				result.Allowed, result.Code = true, "preview_cohort_observed"
+				result.executionKinds = cohort.executionKinds()
 				return result
 			}
 		}
@@ -175,6 +221,9 @@ func (p PreviewPolicy) validate() error {
 			return fmt.Errorf("preview cohorts require unique exact account/app/scope bindings and bounded customer lists")
 		}
 		seen[key] = true
+		if err := cohort.validateExecutionKinds(); err != nil {
+			return err
+		}
 		tenants := map[string]bool{}
 		for _, tenant := range cohort.PlatformTenantIDs {
 			if !canonicalUUID(tenant) || tenants[tenant] {

@@ -798,6 +798,19 @@ func TestPickFirstJWTMatch_PriorityOrdering(t *testing.T) {
 	}
 }
 
+// adr: 091 — the MCP resource policy is stored with match_path=/**; the JWT gate must
+// cover every path on the resource host, not only single-segment ones.
+func TestPickFirstJWTMatch_DoubleStarCoversNestedPaths(t *testing.T) {
+	rule := sampleJWTRule("mcp", 0, "a.example.com")
+	rule.PathGlob = "/**"
+	rules := []EdgeRuleJWTResolved{rule}
+	for _, requestPath := range []string{"/", "/mcp", "/mcp/messages/7", "//mcp/x"} {
+		if got := PickFirstJWTMatch(rules, requestPath, http.MethodPost); got == nil || got.ID != "mcp" {
+			t.Errorf("PickFirstJWTMatch(/**, %q) = %v; want the MCP rule", requestPath, got)
+		}
+	}
+}
+
 func TestPickFirstIPMatch_PriorityOrdering(t *testing.T) {
 	rules := []EdgeRuleIPResolved{
 		sampleIPRule("high", 0, "a.example.com"),

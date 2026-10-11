@@ -76,6 +76,27 @@ func TestCustomerOperationDoctorExitStatesAndHumanRemediation(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomerOperationDoctorExecutionEligibility(t *testing.T) {
+	c, r := doctorCLIFixture()
+	r.Checks = append(r.Checks, api.OperationDoctorCheck{Check: "execution_preview", Status: "blocked", Impact: "submission", Code: "preview_execution_kind_excluded", Message: "Job admission is closed in this cohort.", DefinitionID: developerDefinitionID, Name: "export", ExecutionKind: "job"})
+	r.SubmissionState = r.ObservedSubmissionState()
+	var out bytes.Buffer
+	code, err := runCustomerOperationDoctor(t.Context(), &customerOperationDoctorFixture{report: r}, c, &out, false)
+	if err != nil || code != 1 || !strings.Contains(out.String(), "execution_preview/export [job]") {
+		t.Fatal("execution eligibility missing", code, err, out.String())
+	}
+	r.Checks[len(r.Checks)-1].ExecutionKind = "native"
+	if err := validateCustomerOperationDoctor(r, c); err == nil {
+		t.Fatal("unknown execution type accepted")
+	}
+	r.Checks[len(r.Checks)-1].ExecutionKind = ""
+	r.Checks[len(r.Checks)-1].Status = "observed"
+	r.SubmissionState = r.ObservedSubmissionState()
+	if err := validateCustomerOperationDoctor(r, c); err == nil {
+		t.Fatal("untyped execution grant accepted")
+	}
+}
 func TestCustomerOperationDoctorRejectsInvalidSelectorsAndReports(t *testing.T) {
 	c, r := doctorCLIFixture()
 	good := []string{"--app", c.app, "--deployment", c.deployment, "--tenant", c.tenant}

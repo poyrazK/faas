@@ -15,7 +15,9 @@ from ..models.service_binding_transport import ServiceBindingTransport, check_se
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.compose_healthcheck import ComposeHealthcheck
     from ..models.plan_detected_by import PlanDetectedBy
+    from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -37,9 +39,20 @@ class PlanWorkload:
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
     dockerfile: str | Unset = UNSET
+    image: str | Unset = UNSET
+    """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
+    before materialization; stateful images remain managed requirements. Image deployments return a deployment_id
+    without a build_id."""
+    image_healthcheck: ComposeHealthcheck | Unset = UNSET
+    """Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit
+    image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at
+    least 1ms."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
+    depends_on_conditions: PlanWorkloadDependsOnConditions | Unset = UNSET
+    """Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates
+    release on the captured same-project, same-environment dependency deployment."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
@@ -95,9 +108,19 @@ class PlanWorkload:
 
         dockerfile = self.dockerfile
 
+        image = self.image
+
+        image_healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.image_healthcheck, Unset):
+            image_healthcheck = self.image_healthcheck.to_dict()
+
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
             depends_on = self.depends_on
+
+        depends_on_conditions: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.depends_on_conditions, Unset):
+            depends_on_conditions = self.depends_on_conditions.to_dict()
 
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
@@ -163,8 +186,14 @@ class PlanWorkload:
             field_dict["platform_tenant_required"] = platform_tenant_required
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
+        if image is not UNSET:
+            field_dict["image"] = image
+        if image_healthcheck is not UNSET:
+            field_dict["image_healthcheck"] = image_healthcheck
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
+        if depends_on_conditions is not UNSET:
+            field_dict["depends_on_conditions"] = depends_on_conditions
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_reliability is not UNSET:
@@ -198,7 +227,9 @@ class PlanWorkload:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.compose_healthcheck import ComposeHealthcheck
         from ..models.plan_detected_by import PlanDetectedBy
+        from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -215,7 +246,23 @@ class PlanWorkload:
 
         dockerfile = d.pop("dockerfile", UNSET)
 
+        image = d.pop("image", UNSET)
+
+        _image_healthcheck = d.pop("image_healthcheck", UNSET)
+        image_healthcheck: ComposeHealthcheck | Unset
+        if isinstance(_image_healthcheck, Unset):
+            image_healthcheck = UNSET
+        else:
+            image_healthcheck = ComposeHealthcheck.from_dict(_image_healthcheck)
+
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
+
+        _depends_on_conditions = d.pop("depends_on_conditions", UNSET)
+        depends_on_conditions: PlanWorkloadDependsOnConditions | Unset
+        if isinstance(_depends_on_conditions, Unset):
+            depends_on_conditions = UNSET
+        else:
+            depends_on_conditions = PlanWorkloadDependsOnConditions.from_dict(_depends_on_conditions)
 
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: ServiceBindingPolicy | Unset
@@ -297,7 +344,10 @@ class PlanWorkload:
             ports=ports,
             platform_tenant_required=platform_tenant_required,
             dockerfile=dockerfile,
+            image=image,
+            image_healthcheck=image_healthcheck,
             depends_on=depends_on,
+            depends_on_conditions=depends_on_conditions,
             service_binding_policy=service_binding_policy,
             service_reliability=service_reliability,
             service_binding_transport=service_binding_transport,

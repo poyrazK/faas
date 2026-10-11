@@ -9,12 +9,14 @@ package flowcount
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // fakeRunner returns canned conntrack output (or an error) and records how
@@ -354,6 +356,25 @@ func TestReader_FailedWarmLatchesUntilSuccess(t *testing.T) {
 	}
 	if got != 6 {
 		t.Errorf("Open after recovered Warm = %d, want 6", got)
+	}
+}
+
+// A host without the binary (the split-box control plane) reports the
+// ErrUnavailable sentinel so schedd logs it once instead of every tick, and
+// still fails open (H5-15).
+func TestReader_MissingBinaryIsUnavailable(t *testing.T) {
+	r := NewReader(wire.ExecRunner{}, WithBinPath(filepath.Join(t.TempDir(), "conntrack")))
+	err := r.Warm(context.Background(), makeInstances([2]string{"10.100.0.5", "inst-A"}))
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Warm with a missing binary = %v, want ErrUnavailable", err)
+	}
+	if _, err := r.Open(context.Background(), "inst-A"); err == nil {
+		t.Fatal("Open after an unavailable Warm must fail open")
+	}
+
+	failing := NewReader(&fakeRunner{err: errors.New("conntrack timeout")})
+	if err := failing.Warm(context.Background(), makeInstances([2]string{"10.100.0.5", "inst-A"})); errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a failing conntrack run is not a missing binary: %v", err)
 	}
 }
 

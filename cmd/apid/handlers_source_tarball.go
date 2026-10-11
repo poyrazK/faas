@@ -266,7 +266,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		OperationDefinitions:      sourceOperationSpecs(manifest),
-		OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, rollout.Scope),
+		OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
 		AppID:                     app.ID,
 		Kind:                      state.DeploymentKindTarball,

@@ -197,15 +197,25 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	}
 	configuration, _ := json.Marshal(map[string]any{"sdk": "file://" + sdk, "api": owner.URL, "identity": identity.URL, "tokens": customerTokens, "artifact": artifact, "session": "file://" + sessionModule, "app": app.ID, "scope": def.Scope})
 	code := `import http from 'node:http';
+import {setTimeout as sleep} from 'node:timers/promises';
 const config=JSON.parse(process.env.GREGALE_OPERATIONS_TEST_CONFIG);
 const {GregaleOperations,GregaleOperationClient}=await import(config.sdk);
 const {ExportSession}=await import(config.session);
-const runtime=new GregaleOperations({apiURL:config.api,identityEndpoint:config.identity});
+let attachmentResponseLost=false,controlReads=0;
+const runtime=new GregaleOperations({apiURL:config.api,identityEndpoint:config.identity,fetch:async(url,init)=>{
+ if(String(url).endsWith('/control'))controlReads++;
+ const response=await fetch(url,init);
+ if(String(url).endsWith('/artifacts')&&response.ok&&!attachmentResponseLost){
+  attachmentResponseLost=true;await response.body?.cancel();throw Error('attachment response lost');
+ }
+ return response;
+}});
 const customers=config.tokens.map(token=>new GregaleOperationClient({apiURL:config.api,credential:()=>token}));
-let executions=0;
+let executions=0,effects=0,stopped=0;
 const server=http.createServer(async(req,res)=>{
  try {
   const url=new URL(req.url,'http://localhost');
+  if(url.pathname==='/control-evidence'){res.end(JSON.stringify({effects,stopped,controlReads}));return;}
   if(url.pathname==='/inspect'){
    const client=customers[Number(url.searchParams.get('customer')??0)], id=url.searchParams.get('id');
    // A brand-new client has no stored operation IDs. Discover from server history.
@@ -222,16 +232,36 @@ const server=http.createServer(async(req,res)=>{
    }
    session.close();res.end(JSON.stringify({status,events,frames,executions,downloaded,history}));return;
   }
-  await runtime.runRequest(req.headers,async()=>{
+  const chunks=[];for await(const chunk of req)chunks.push(chunk);
+  const input=JSON.parse(Buffer.concat(chunks).toString());
+  const result=await runtime.runCancellableRequest(req.headers,async scope=>{
    const context=runtime.context();if(!context)throw Error('missing context');executions++;
    await runtime.progress({report_id:'generated',stage:'generating',completed:1,total:1});
+   if(input.count===2){
+    // An observed abort cannot undo this already confirmed external effect.
+    effects++;
+    try{await sleep(30000,undefined,{signal:scope.signal});}
+    catch{stopped++;throw scope.signal.reason;}
+   }
    // Deliberately outlive the initial one-second scheduler claim. The next
    // authenticated report and final result require production lease renewal.
-   await new Promise(resolve=>setTimeout(resolve,1100));
+   await sleep(1100,undefined,{signal:scope.signal});
    await runtime.progress({report_id:'uploaded',stage:'uploading',completed:1,total:1});
-   const attachment=await runtime.artifact(config.artifact);
-   res.setHeader('Content-Type','application/json');res.end(JSON.stringify({file:attachment.artifacts[0].id,operation_id:context.id}));
+   const file=runtime.prepareArtifact({name:config.artifact.name,uri:config.artifact.uri,
+    report_id:config.artifact.report_id,data:'id,count\nalice,1\n',maxBytes:1024});
+   let writes=0;
+   // The managed object fixture supplies the bytes; exercise coordination with
+   // the real API, its private retained copy, and a deliberately lost response.
+   const write=async()=>{if(++writes>1)throw Error('source written twice');};
+   let attachment;
+   try{attachment=await file.uploadAndAttach(write);}catch(error){
+    if(error.message!=='attachment response lost')throw error;
+    attachment=await file.uploadAndAttach(write);
+   }
+   if(writes!==1||attachment.artifacts.length!==1)throw Error('attachment retry changed result');
+   return {file:attachment.artifacts[0].id,operation_id:context.id};
   });
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify(result));
  }catch(err){res.statusCode=err.status??500;res.end(JSON.stringify({error:err.code??err.message}));}
 });server.listen(0,'127.0.0.1',()=>console.log('127.0.0.1:'+server.address().port));`
 	childCtx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -323,7 +353,8 @@ const server=http.createServer(async(req,res)=>{
 	drain.Tick(ctx)
 	op, err = store.OperationByID(ctx, acct.ID, tenants[0].ID, receipt.ID)
 	if err != nil || op.State != api.OperationSucceeded || op.Progress == nil || op.Progress.Stage != "uploading" || op.CompletionDelivery.State != "pending" {
-		t.Fatalf("handler completion: %+v %v", op, err)
+		invocation, _ := store.InvocationByID(ctx, op.CurrentInvocationID)
+		t.Fatalf("handler completion: %+v %v; handler response: %s", op, err, invocation.Result)
 	}
 	inspect := func(customer int) (int, []byte) {
 		t.Helper()
@@ -384,6 +415,69 @@ const server=http.createServer(async(req,res)=>{
 	if err := json.Unmarshal(body, &view); err != nil || status != http.StatusOK || view.Executions != 1 || view.Status.State != api.OperationSucceeded {
 		t.Fatal("Go SDK replay changed business execution", err)
 	}
+	// Admit another ordinary HTTP operation, then close admission before it
+	// runs. Runtime cooperation must stay available through cancellation.
+	writeOperationPreviewPolicy(t, policyPath, acct.ID, app.ID, def.Scope, tenants[0].ID)
+	cancelRequest := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/customer-operations", strings.NewReader(`{"definition_id":"`+def.ID+`","input":{"count":2}}`))
+	cancelRequest.Header.Set("Authorization", "Bearer "+customerTokens[0])
+	cancelRequest.Header.Set("Idempotency-Key", "cancel-export")
+	cancelReceipt := httptest.NewRecorder()
+	srv.handler().ServeHTTP(cancelReceipt, cancelRequest)
+	if cancelReceipt.Code != http.StatusAccepted {
+		t.Fatalf("cancel-work admission: %d %s", cancelReceipt.Code, cancelReceipt.Body.String())
+	}
+	var cancelOp api.OperationAcceptedResponse
+	if err := json.Unmarshal(cancelReceipt.Body.Bytes(), &cancelOp); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(policyPath, []byte(`{"version":1,"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	evidence := func() (int, int, int) {
+		t.Helper()
+		response, err := http.Get("http://" + address + "/control-evidence")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var value struct{ Effects, Stopped, ControlReads int }
+		if err := json.NewDecoder(response.Body).Decode(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value.Effects, value.Stopped, value.ControlReads
+	}
+	done := make(chan struct{})
+	go func() { drain.Tick(ctx); close(done) }()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	startTimeout := time.NewTimer(5 * time.Second)
+	defer startTimeout.Stop()
+	for effects, _, _ := evidence(); effects == 0; effects, _, _ = evidence() {
+		select {
+		case <-ticker.C:
+		case <-done:
+			t.Fatal("cooperative handler exited before the external effect")
+		case <-startTimeout.C:
+			t.Fatal("cooperative handler did not start")
+		}
+	}
+	cancelled := call(http.MethodPost, cancelOp.StatusURL+"/cancel", customerTokens[0], api.OperationCancellationRequest{ExpectedGeneration: 1})
+	if cancelled.Code != http.StatusOK {
+		t.Fatalf("cancel intent: %d %s", cancelled.Code, cancelled.Body.String())
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not cooperate with cancellation")
+	}
+	settled, err := store.OperationByID(ctx, acct.ID, tenants[0].ID, cancelOp.ID)
+	if err != nil || settled.State != api.OperationRequiresReconciliation || !settled.CancellationRequested || len(settled.Result) != 0 || len(settled.Artifacts) != 0 {
+		t.Fatalf("cancellation erased uncertain work: %+v %v", settled, err)
+	}
+	drain.Tick(ctx)
+	if effects, stopped, reads := evidence(); effects != 1 || stopped != 1 || reads < 4 {
+		t.Fatalf("cancellation repeated effects or lost control polling: %d effects, %d stops, %d reads", effects, stopped, reads)
+	}
 }
 
 // The local transport substitutes for vmmd's HTTP bridge. Admission and the
@@ -419,6 +513,15 @@ func (d *operationsAcceptanceDispatcher) InvokeWithTargetStatus(ctx context.Cont
 	}
 	for k, v := range headers {
 		r.Header.Set(k, v)
+	}
+	// Match the trusted guest boundary: durable ownership supplies identity,
+	// and only the validated current execution proof survives header clearing.
+	proof := r.Header.Clone()
+	api.PlatformIdentity{AppID: inv.AppID, TenantID: inv.AccountID, PlatformTenantID: inv.PlatformTenantID, InstanceID: inv.InstanceID}.ApplyGuestHeaders(r.Header)
+	for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader, api.OperationTransactionVersionHeader, api.OperationResultMaxBytesHeader, api.OperationMilestoneVersionHeader} {
+		if value := proof.Get(name); value != "" {
+			r.Header.Set(name, value)
+		}
 	}
 	r.Header.Set(api.InvocationIDHeader, inv.ID)
 	res, err := http.DefaultClient.Do(r)

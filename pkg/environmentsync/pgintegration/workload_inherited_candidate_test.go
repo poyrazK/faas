@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -195,6 +196,151 @@ func TestEnvironmentGitOpsInheritedCandidateRequiresConsistentImmutableSource(t 
 					if row.EnvironmentWorkloadHeld() {
 						t.Fatal("unavailable adapter left a partially prepared candidate")
 					}
+				}
+			})
+		})
+	}
+}
+
+func TestEnvironmentGitOpsAdoptsInheritedGitHubBuildProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		appType    state.AppType
+		dockerfile string
+		codeload   bool
+		want       api.EnvironmentWorkloadSource
+	}{
+		{name: "source", appType: state.AppTypeApp, want: api.EnvironmentWorkloadSource{Kind: "source", Directory: "services/api"}},
+		{name: "source from existing codeload build", appType: state.AppTypeApp, codeload: true, want: api.EnvironmentWorkloadSource{Kind: "source", Directory: "services/api"}},
+		{name: "dockerfile", appType: state.AppTypeApp, dockerfile: "Dockerfile", want: api.EnvironmentWorkloadSource{Kind: "dockerfile", Directory: "services/api", Dockerfile: "Dockerfile"}},
+		{name: "function", appType: state.AppTypeFunction, want: api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22", Directory: "services/api"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stores(t, func(t *testing.T, basic gitOpsTestStore) {
+				store, source, desired, app, previous, _ := workloadIntentFixtureType(t, basic, "enforce", tc.appType)
+				if tc.dockerfile != "" {
+					manifest := app.Manifest
+					manifest.BuildDockerfile = tc.dockerfile
+					var err error
+					app, err = basic.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &manifest})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := basic.UpdateDeploymentStatus(t.Context(), previous.ID, state.DeploySuperseded, ""); err != nil {
+					t.Fatal(err)
+				}
+				commit := strings.Repeat("b", 40)
+				sourceURL := "github://example/shop@" + commit
+				if tc.codeload {
+					sourceURL = "https://codeload.github.com/example/shop/tar.gz/" + commit
+				}
+				live, err := basic.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindGitHub,
+					SourceURL: sourceURL, CommitSHA: commit, SourceRoot: "services/api"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := basic.UpdateDeploymentStatus(t.Context(), live.ID, state.DeployLive, ""); err != nil {
+					t.Fatal(err)
+				}
+				workload := desired.Definition.Workloads["api"]
+				workload.Source = &tc.want
+				desired.Definition.Workloads["api"] = workload
+				desired, err = environmentsync.Compile(desired.Definition)
+				if err != nil {
+					t.Fatal(err)
+				}
+				source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, commit))
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan, err := store.PreviewEnvironmentGitOpsAdoption(t.Context(), source.AccountID, source.ID)
+				if err != nil || !plan.CanApply() {
+					t.Fatalf("same-repository source adoption blocked: %+v %v", plan, err)
+				}
+				if err := store.AdoptEnvironmentGitOps(t.Context(), source.AccountID, source.ID, plan.Hash); err != nil {
+					t.Fatal(err)
+				}
+				intent := scopedWorkloadIntent(t, basic, source, app.ID, source.EnvironmentID)
+				if intent.Source == nil || *intent.Source != tc.want || intent.SourceRevision != commit {
+					t.Fatalf("inherited Git provenance was not adopted exactly: %+v", intent)
+				}
+			})
+		})
+	}
+}
+
+func TestEnvironmentGitOpsDoesNotAdoptUnsafeInheritedGitHubBuildProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		sourceURL  func(string) string
+		commit     func(string) string
+		appType    state.AppType
+		dockerfile string
+		wantReason string
+	}{
+		{name: "cross repository", sourceURL: func(commit string) string { return "github://other/repo@" + commit }, commit: func(commit string) string { return commit }},
+		{name: "mutable ref", sourceURL: func(string) string { return "https://codeload.github.com/example/shop/tar.gz/main" }, commit: func(commit string) string { return commit }},
+		{name: "wrong host", sourceURL: func(commit string) string { return "https://github.com/example/shop/archive/" + commit + ".tar.gz" }, commit: func(commit string) string { return commit }},
+		{name: "query alias", sourceURL: func(commit string) string {
+			return "https://codeload.github.com/example/shop/tar.gz/" + commit + "?download=1"
+		}, commit: func(commit string) string { return commit }},
+		{name: "escaped repository alias", sourceURL: func(commit string) string { return "https://codeload.github.com/%65xample/shop/tar.gz/" + commit }, commit: func(commit string) string { return commit }},
+		{name: "commit column mismatch", sourceURL: func(commit string) string { return "https://codeload.github.com/example/shop/tar.gz/" + commit }, commit: func(string) string { return strings.Repeat("d", 40) }},
+		{name: "function with conflicting Dockerfile metadata", sourceURL: func(commit string) string { return "https://codeload.github.com/example/shop/tar.gz/" + commit }, commit: func(commit string) string { return commit }, appType: state.AppTypeFunction, dockerfile: "Dockerfile", wantReason: "conflicting Dockerfile build metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stores(t, func(t *testing.T, basic gitOpsTestStore) {
+				appType := tc.appType
+				if appType == "" {
+					appType = state.AppTypeApp
+				}
+				store, source, desired, app, previous, _ := workloadIntentFixtureType(t, basic, "enforce", appType)
+				if tc.dockerfile != "" {
+					manifest := app.Manifest
+					manifest.BuildDockerfile = tc.dockerfile
+					var err error
+					app, err = basic.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &manifest})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := basic.UpdateDeploymentStatus(t.Context(), previous.ID, state.DeploySuperseded, ""); err != nil {
+					t.Fatal(err)
+				}
+				commit := strings.Repeat("c", 40)
+				live, err := basic.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindGitHub,
+					SourceURL: tc.sourceURL(commit), CommitSHA: tc.commit(commit), SourceRoot: "services/api"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := basic.UpdateDeploymentStatus(t.Context(), live.ID, state.DeployLive, ""); err != nil {
+					t.Fatal(err)
+				}
+				workload := desired.Definition.Workloads["api"]
+				if appType == state.AppTypeFunction {
+					workload.Source = &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22", Directory: "services/api"}
+				} else {
+					workload.Source = &api.EnvironmentWorkloadSource{Kind: "source", Directory: "services/api"}
+				}
+				desired.Definition.Workloads["api"] = workload
+				desired, err = environmentsync.Compile(desired.Definition)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, commit)); err != nil {
+					t.Fatal(err)
+				}
+				plan, err := store.PreviewEnvironmentGitOpsAdoption(t.Context(), source.AccountID, source.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantReason := tc.wantReason
+				if wantReason == "" {
+					wantReason = "provenance is incomplete"
+				}
+				if plan.CanApply() || !strings.Contains(strings.Join(plan.BlockingReasons, " "), wantReason) {
+					t.Fatalf("unsafe GitHub provenance was adoptable: %+v", plan)
 				}
 			})
 		})

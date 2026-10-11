@@ -72,11 +72,12 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 
 	limits := api.MustLimitsFor(acct.Plan)
 	data := dashboard.DebugPageData{
-		AppSlug:       app.Slug,
-		Plan:          string(acct.Plan),
-		PlanAllowed:   limits.DebugTelemetryEnabled,
-		Route:         strings.TrimSpace(r.URL.Query().Get("route")),
-		ActionMessage: dashboardDebugReplayActionFlash(r),
+		ProfilingAvailable: s.profileBackend != nil && limits.Profiling.Enabled,
+		AppSlug:            app.Slug,
+		Plan:               string(acct.Plan),
+		PlanAllowed:        limits.DebugTelemetryEnabled,
+		Route:              strings.TrimSpace(r.URL.Query().Get("route")),
+		ActionMessage:      dashboardDebugReplayActionFlash(r),
 	}
 	data.ActionError = r.URL.Query().Get("action") == "replay_error"
 	if s.sessions != nil {
@@ -140,6 +141,16 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	windowStart := now.Add(-since)
 	windowEnd := now
+	if r.URL.Query().Has("window_start") || r.URL.Query().Has("window_end") {
+		var valid bool
+		windowStart, windowEnd, valid = profileMixDebugWindow(r.URL.Query(), now, retention)
+		if !valid || decodedCursor.Version != 0 {
+			api.WriteProblem(w, api.ErrValidation("request window must be valid, within telemetry retention, and used without a cursor"))
+			return
+		}
+		since = windowEnd.Sub(windowStart)
+		sinceRaw = ""
+	}
 	if decodedCursor.Version != 0 {
 		if decodedCursor.WindowEnd.After(now.Add(time.Minute)) || decodedCursor.WindowStart.Before(now.Add(-retention)) {
 			api.WriteProblem(w, api.ErrValidation("cursor has expired; restart the request list"))

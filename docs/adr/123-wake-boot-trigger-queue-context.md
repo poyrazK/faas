@@ -69,8 +69,15 @@ const (
     TriggerCronSched  = "cron.schedule"    // pkg/sched/loop 60s tick
     TriggerCronManual = "cron.manual"      // POST /v1/crons/{id}/run (ADR-090)
     TriggerMeterd     = "meterd"           // legacy Engine.Wake
+    TriggerInvocation = "invocation"       // invocation drain (2026-10 amendment)
 )
 ```
+
+**Amendment (2026-10-09, production hunt #8):** the invocation drain
+(async invoke, managed operations, workflow steps, delayed tasks) stamped
+`meterd`, so `gregale wake-timeline` named an internal daemon as the wake
+cause. The drain now stamps `invocation`; `meterd` stays in the enum so
+historical events still decode.
 
 The `cron.schedule` / `cron.manual` values are distinct from the
 existing `CronDispatchTrigger` enum (`schedule` / `manual` at

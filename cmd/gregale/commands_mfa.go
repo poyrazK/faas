@@ -245,6 +245,9 @@ func cmdMfaDisable(args []string) int {
 		return printErr("Invalid flags", fmt.Errorf("--password and --recovery-code are mutually exclusive"))
 	}
 	if *password == "" && *recovery == "" {
+		if nonInteractive {
+			return printErr("MFA disable requires a credential", fmt.Errorf("supply --password or --recovery-code in non-interactive mode"))
+		}
 		// Interactive prompt: read the password from /dev/tty so
 		// it does not land in shell history or in `ps` output.
 		// Echo is suppressed via golang.org/x/term.

@@ -132,6 +132,10 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 // executable selected by its image config; this makes both Go runtimes
 // independent of the builder VM's base chain.
 func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePath string) ([]io.Reader, string, func(), error) {
+	return h.functionBuildArtifactForRef(ctx, runtime, archivePath, "")
+}
+
+func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, archivePath, recordedRef string) ([]io.Reader, string, func(), error) {
 	config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, archivePath)
 	if err != nil {
 		return nil, "", func() {}, fmt.Errorf("load built OCI image: %w", err)
@@ -163,7 +167,10 @@ func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePat
 		cleanup()
 		return nil, "", func() {}, errors.New("builder OCI function artifact requires a manifest-capable runtime base puller")
 	}
-	baseRef := h.deployBaseRefOverride
+	baseRef := recordedRef
+	if baseRef == "" {
+		baseRef = h.deployBaseRefOverride
+	}
 	if baseRef == "" {
 		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
 		if err != nil {
@@ -449,6 +456,18 @@ func localOCIBlobName(digest string) (string, error) {
 // layers from this content-verified local artifact are applied here. Content
 // verification alone does not establish an approved publisher's identity.
 func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
+	digest, err := localOCIManifestDigest(dep.RootfsPath)
+	if err != nil {
+		return fmt.Errorf("imaged: verify source build digest: %w", err)
+	}
+	pins, ok := h.store.(state.DeploymentBuildDigestStore)
+	if !ok {
+		return fmt.Errorf("imaged: source build digest store is unavailable")
+	}
+	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, dep.RootfsPath, digest); err != nil {
+		return fmt.Errorf("imaged: pin source build digest: %w", err)
+	}
+	dep.ImageDigest = digest
 	config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: load built OCI image: %w", err)

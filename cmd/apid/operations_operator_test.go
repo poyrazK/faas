@@ -65,7 +65,7 @@ func testOperationOperatorHTTP(t *testing.T, store operationOperatorTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def, err := store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, Scope: dep.Scope, DeploymentID: dep.ID, Spec: api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, ProgressStages: []string{"generating"}, InputSchema: []byte(`{"type":"object"}`), OutputSchema: []byte(`{"type":"object","required":["file"],"properties":{"file":{"type":"string"}},"additionalProperties":false}`), CompletionWebhookID: hook.ID}}})
+	def, err := store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, Scope: dep.Scope, DeploymentID: dep.ID, Spec: api.OperationDefinitionSpec{HTTPTransactionVersion: 1, Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, ProgressStages: []string{"generating"}, InputSchema: []byte(`{"type":"object"}`), OutputSchema: []byte(`{"type":"object","required":["file"],"properties":{"file":{"type":"string"}},"additionalProperties":false}`), CompletionWebhookID: hook.ID}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func testOperationOperatorHTTP(t *testing.T, store operationOperatorTestStore) {
 	if err := json.Unmarshal(discovery.Body.Bytes(), &definitions); err != nil {
 		t.Fatal(err)
 	}
-	if len(definitions.Definitions) != 2 || definitions.Definitions[0].Name != "alpha-export" || definitions.Definitions[1].ID != def.ID || definitions.Definitions[1].DeploymentID != dep.ID || definitions.Definitions[1].CompletionWebhookID != hook.ID {
+	if len(definitions.Definitions) != 2 || definitions.Definitions[0].Name != "alpha-export" || definitions.Definitions[1].ID != def.ID || definitions.Definitions[1].DeploymentID != dep.ID || definitions.Definitions[1].CompletionWebhookID != hook.ID || definitions.Definitions[1].HTTPTransactionVersion != 1 {
 		t.Fatalf("definition discovery: %s", discovery.Body.String())
 	}
 	if strings.Contains(discovery.Body.String(), "input_schema") || strings.Contains(discovery.Body.String(), "output_schema") {

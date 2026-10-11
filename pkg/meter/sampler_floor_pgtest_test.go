@@ -85,10 +85,18 @@ func TestPgScheduledFloorClosedMinuteReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 4, 9, 2, 0, 0, time.UTC)
+	// A healthy meterd recorded every earlier minute complete, so the tick
+	// rolls only the newest closed minute (ADR-790 catches up the rest).
+	newest := now.Add(-time.Minute)
+	for m := newest.Add(-api.MeterCatchUpWindow); m.Before(newest); m = m.Add(time.Minute) {
+		if err := store.RecordFinancialSamplingWindow(ctx, m, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
 	sampler := NewSampler(store, nil, func() time.Time { return now })
 	for range 2 {
 		rows, err := sampler.SampleAndRoll(ctx)
-		if err != nil || len(rows) != 1 || rows[0].MBSeconds != 7920 || !rows[0].Minute.Equal(now.Add(-time.Minute)) {
+		if err != nil || len(rows) != 1 || rows[0].MBSeconds != 7920 || !rows[0].Minute.Equal(newest) {
 			t.Fatalf("partial closed-minute floor: %+v, %v", rows, err)
 		}
 	}

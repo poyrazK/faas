@@ -1,0 +1,16 @@
+name: contact-sync
+trigger:
+  type: manual
+steps:
+  - name: lookup
+    outbound:
+      integration_id: 00000000-0000-0000-0000-000000000001
+      method: GET
+      path: "/v1/contacts/{{input.contact_id}}"
+      query:
+        source: automation
+  - name: sync
+    path: /sync-contact
+    depends_on: [lookup]
+    input:
+      contact: "{{steps.lookup.output.body}}"

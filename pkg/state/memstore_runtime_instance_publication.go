@@ -71,6 +71,30 @@ func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublicati
 			return Instance{}, ErrConflict
 		}
 	}
+	acceptance, err := m.prepareRuntimeUpgradeAcceptanceLocked(p)
+	if err != nil {
+		return Instance{}, err
+	}
+	prior := instance
+	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
+	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[p.InstanceID], instance); err != nil {
+		return Instance{}, err
+	}
+	m.instances[p.InstanceID] = instance
+	if p.Inputs != nil && p.targetState() == string(StateRunning) {
+		if err := m.recordInstanceRuntimeConfigReceiptLocked(p.InstanceID, p.WakeID, *p.Inputs); err != nil {
+			m.instances[p.InstanceID] = prior
+			return Instance{}, err
+		}
+	}
+	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
+	if acceptance != nil {
+		if m.runtimeUpgradeAcceptances == nil {
+			m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
+		}
+		m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
+	}
 	return instance, nil
 }
 

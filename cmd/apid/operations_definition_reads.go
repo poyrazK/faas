@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -29,7 +30,14 @@ func (s *server) listOperationDefinitions(w http.ResponseWriter, r *http.Request
 	page := api.OperationDefinitionsResponse{Definitions: []api.OperationDefinitionSummary{}}
 	for _, definition := range definitions {
 		d, spec := definition.OperationDefinitionResponse, definition.Spec
-		page.Definitions = append(page.Definitions, api.OperationDefinitionSummary{ID: d.ID, AppID: d.AppID, Scope: d.Scope, Revision: d.Revision, DeploymentID: d.DeploymentID, ReleaseID: d.ReleaseID, Name: spec.Name, Method: spec.Method, Path: spec.Path, Owner: spec.Owner, ProgressStages: spec.ProgressStages, CompletionWebhookID: spec.CompletionWebhookID, Recovery: spec.Recovery, CreatedAt: d.CreatedAt})
+		page.Definitions = append(page.Definitions, api.OperationDefinitionSummary{
+			ID: d.ID, AppID: d.AppID, Scope: d.Scope, Revision: d.Revision, DeploymentID: d.DeploymentID, ReleaseID: d.ReleaseID,
+			Name: spec.Name, Job: spec.Job, Workflow: spec.Workflow, TransactionReceipt: spec.TransactionReceipt,
+			Method: spec.Method, Path: spec.Path, Owner: spec.Owner, ProgressStages: spec.ProgressStages,
+			CompletionWebhookID: spec.CompletionWebhookID, Recovery: spec.Recovery, CreatedAt: d.CreatedAt,
+			Milestones: operations.MilestoneNames(spec.Milestones), WorkflowSteps: spec.WorkflowSteps, Subject: spec.Subject,
+			HTTPTransactionVersion: spec.HTTPTransactionVersion,
+		})
 	}
 	sort.Slice(page.Definitions, func(i, j int) bool { return page.Definitions[i].Name < page.Definitions[j].Name })
 	writeJSON(w, http.StatusOK, page)

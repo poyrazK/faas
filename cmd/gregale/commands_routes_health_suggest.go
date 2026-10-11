@@ -10,7 +10,6 @@ import (
 	"math"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -409,12 +408,6 @@ func buildRouteHealthSuggestionReport(usage api.RouteCustomerUsageResponse, slug
 		!from.Before(until) || until.After(asOf) {
 		return routeHealthSuggestionReport{}, errors.New("route usage identity, coverage, time window or bounds are invalid")
 	}
-	type candidate struct {
-		row           api.RouteCustomerUsage
-		path          string
-		customerCount int64
-	}
-	candidates := make([]candidate, 0, len(usage.Routes))
 	seen := map[string]bool{}
 	zero := int64(0)
 	for _, row := range usage.Routes {
@@ -442,24 +435,9 @@ func buildRouteHealthSuggestionReport(usage api.RouteCustomerUsageResponse, slug
 				return routeHealthSuggestionReport{}, errors.New("route usage has invalid customer counts")
 			}
 		}
-		customerCount := row.PlatformTenantCount
-		if groupBy == "consumer" {
-			customerCount = row.ConsumerCount
-		}
-		candidates = append(candidates, candidate{row: row, path: path, customerCount: customerCount})
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].customerCount != candidates[j].customerCount {
-			return candidates[i].customerCount > candidates[j].customerCount
-		}
-		if candidates[i].row.Requests != candidates[j].row.Requests {
-			return candidates[i].row.Requests > candidates[j].row.Requests
-		}
-		if candidates[i].row.Method != candidates[j].row.Method {
-			return candidates[i].row.Method < candidates[j].row.Method
-		}
-		return candidates[i].path < candidates[j].path
-	})
+	// Validated rows rank identically to apid's default seeding (ADR-844).
+	candidates := routehealth.RankRouteUsage(usage.Routes, groupBy)
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
 	}
@@ -477,17 +455,17 @@ func buildRouteHealthSuggestionReport(usage api.RouteCustomerUsageResponse, slug
 	}
 	for i, item := range candidates {
 		assessment := "window_distribution_unknown"
-		if item.row.Requests < api.RouteHealthMinRequests*int64(api.RouteHealthWindows) {
+		if item.Usage.Requests < api.RouteHealthMinRequests*int64(api.RouteHealthWindows) {
 			assessment = "below_historical_two_window_request_floor"
 		}
-		selector := api.RouteHealthRoute{Method: item.row.Method, Path: item.path}
+		selector := item.Selector
 		report.Selectors = append(report.Selectors, selector)
 		report.Suggestions = append(report.Suggestions, routeHealthSuggestion{
-			Rank: i + 1, Selector: selector, Requests: item.row.Requests, CustomerGroupBy: groupBy,
-			CustomerCount: item.customerCount, IdentifiedRequests: item.row.IdentifiedRequests,
-			AnonymousRequests: item.row.AnonymousRequests, UnresolvedIdentityRequests: item.row.UnresolvedIdentityRequests,
-			LastObservedAt: item.row.LastObservedAt, CustomerDetailsTruncated: item.row.CustomersTruncated,
-			OtherCustomerRequests: item.row.OtherCustomerRequests, SampleAssessment: assessment,
+			Rank: i + 1, Selector: selector, Requests: item.Usage.Requests, CustomerGroupBy: groupBy,
+			CustomerCount: item.CustomerCount, IdentifiedRequests: item.Usage.IdentifiedRequests,
+			AnonymousRequests: item.Usage.AnonymousRequests, UnresolvedIdentityRequests: item.Usage.UnresolvedIdentityRequests,
+			LastObservedAt: item.Usage.LastObservedAt, CustomerDetailsTruncated: item.Usage.CustomersTruncated,
+			OtherCustomerRequests: item.Usage.OtherCustomerRequests, SampleAssessment: assessment,
 		})
 	}
 	return report, nil

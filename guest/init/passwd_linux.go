@@ -158,14 +158,15 @@ func searchPasswdTable(body []byte, name string) (int, bool) {
 	}
 	records := make([]record, 0, 16)
 	for off := 0; off < len(body); {
-		if off+recordHeader > len(body) {
+		remaining := body[off:]
+		if len(remaining) < recordHeader {
 			return 0, false
 		}
-		nameLen := int(body[off+8])
+		nameLen := int(remaining[8])
+		if nameLen > len(remaining)-recordHeader {
+			return 0, false
+		}
 		end := off + recordHeader + nameLen
-		if end > len(body) {
-			return 0, false
-		}
 		records = append(records, record{off: off, name: body[off+9 : end]})
 		off = end
 	}

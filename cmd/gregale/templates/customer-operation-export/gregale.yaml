@@ -1,0 +1,13 @@
+hosting:
+  start: npm start
+  port: 8080
+  health: /healthz
+operations:
+  - name: customer-export
+    method: POST
+    path: /exports
+    owner: platform_tenant
+    input_schema: schemas/export-input.json
+    output_schema: schemas/export-output.json
+    progress_stages: [generating]
+    recovery: reconcile_on_unknown

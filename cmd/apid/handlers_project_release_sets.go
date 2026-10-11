@@ -50,6 +50,10 @@ func (s *server) publishProjectReleaseSet(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("project release sets are unavailable"))
 		return
 	}
+	if err := s.checkProjectValidatorMembers(r.Context(), members); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("validator artifact preflight blocked project publication"))
+		return
+	}
 	release, err := store.PublishProjectReleaseSet(r.Context(), acct.ID, project.ID, environment, req.TTLSeconds, members)
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "project environment not found")

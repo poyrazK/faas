@@ -38,6 +38,9 @@ func routeGateFixture(t *testing.T, store state.Store) (state.Account, state.App
 	if err := store.MarkDeploymentLive(t.Context(), candidate.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.UpsertDeploymentOpenAPIDoc(t.Context(), stable.ID, acct.ID, app.ID, []byte(gateContract), "manual_upload", false); err != nil {
+		t.Fatal(err)
+	}
 	return acct, app, stable, candidate
 }
 
@@ -87,7 +90,7 @@ func TestCanaryRouteGateEvidenceAndRecovery(t *testing.T) {
 					}
 				}
 				if scenario != "missing" && scenario != "pending" {
-					claim, err := queue.ClaimAutomaticRouteCheck(t.Context(), api.RouteCheckClaimLease)
+					claim, err := claimCandidateRouteCheck(t, store, candidate.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -148,7 +151,7 @@ func TestCanaryRouteGateEvidenceAndRecovery(t *testing.T) {
 					if !decision.CheckQueued {
 						t.Fatal("fresh evidence was not durably requested")
 					}
-					claim, err := queue.ClaimAutomaticRouteCheck(t.Context(), api.RouteCheckClaimLease)
+					claim, err := claimCandidateRouteCheck(t, store, candidate.ID)
 					if err != nil || claim.DeploymentID != candidate.ID {
 						t.Fatalf("refresh handoff lost: %+v %v", claim, err)
 					}
@@ -250,18 +253,18 @@ func TestCanaryRouteGateSerializesConcurrentChanges(t *testing.T) {
 				if err := store.UpsertDeploymentOpenAPIDoc(t.Context(), candidate.ID, acct.ID, app.ID, []byte(gateContract), "manual_upload", false); err != nil {
 					t.Fatal(err)
 				}
-				claim, err := store.(state.AutomaticRouteCheckStore).ClaimAutomaticRouteCheck(t.Context(), api.RouteCheckClaimLease)
+				claim, err := claimCandidateRouteCheck(t, store, candidate.ID)
 				if err != nil || !finishAutomaticCheck(t, store, claim) {
 					t.Fatal("initial check")
 				}
 				entered, release := make(chan struct{}), make(chan struct{})
-				var once sync.Once
+				var once, enteredOnce sync.Once
 				unblock := func() { once.Do(func() { close(release) }) }
 				t.Cleanup(unblock)
 				advanceDone := make(chan error, 1)
 				go func() {
 					fingerprint := func(snapshot state.RoutePolicySnapshot) string {
-						close(entered)
+						enteredOnce.Do(func() { close(entered) })
 						<-release
 						return automaticCheckFingerprint(snapshot)
 					}
@@ -322,6 +325,20 @@ func TestCanaryRouteGateSerializesConcurrentChanges(t *testing.T) {
 					t.Fatalf("later advance reused pre-edit evidence: %v", err)
 				}
 			})
+		}
+	}
+}
+
+// Baseline captures also enqueue checks; target the evidence under test.
+func claimCandidateRouteCheck(t *testing.T, store state.Store, deploymentID string) (state.AutomaticRouteCheckClaim, error) {
+	t.Helper()
+	for {
+		claim, err := store.(state.AutomaticRouteCheckStore).ClaimAutomaticRouteCheck(t.Context(), api.RouteCheckClaimLease)
+		if err != nil || claim.DeploymentID == "" || claim.DeploymentID == deploymentID {
+			return claim, err
+		}
+		if !finishAutomaticCheck(t, store, claim) {
+			t.Fatal("baseline check completion")
 		}
 	}
 }

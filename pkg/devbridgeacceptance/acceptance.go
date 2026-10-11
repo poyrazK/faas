@@ -341,7 +341,7 @@ func (p *laptop) reconnect(ctx context.Context) error {
 	}
 	target, _ := url.Parse(p.local.URL)
 	go func() {
-		_ = devbridge.ServeLocal(ctx, devbridge.NewWebSocketConn(socket), target, api.DevBridgeMaxConcurrentRequests)
+		_ = devbridge.ServeLocal(ctx, devbridge.NewWebSocketConn(socket), target, api.DevBridgeMaxConcurrentRequests+api.DevBridgeMaxUpgradedConnections)
 	}()
 	ready, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

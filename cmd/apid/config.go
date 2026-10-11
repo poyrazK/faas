@@ -105,7 +105,8 @@ type Config struct {
 	AppsDomain string `toml:"apps_domain"`
 
 	// CLIAuthURLBase is the public web origin for the browser half of the
-	// CLI device-code flow. The public edge must forward /cli-auth to apid;
+	// CLI device-code flow and the default GitHub App OAuth callback.
+	// The public edge must forward /cli-auth and /oauth/code-callback to apid;
 	// keeping this separate from AppsDomain lets an installation use a
 	// dedicated console host. Mirrors FAAS_CLI_AUTH_URL_BASE. Bare
 	// hostnames are normalized to HTTPS.

@@ -41,26 +41,7 @@ type executionManifest struct {
 // listenExecutionHook binds AF_VSOCK on VMADDR_CID_ANY and returns a regular
 // net.Listener so the protocol path can be tested without a vsock device.
 func listenExecutionHook() (net.Listener, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("execution vsock socket: %w", err)
-	}
-	addr := &unix.SockaddrVM{CID: VsockExecutionBindCID, Port: VsockExecutionPort}
-	if err := unix.Bind(fd, addr); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("execution vsock bind port %d: %w", VsockExecutionPort, err)
-	}
-	if err := unix.Listen(fd, 1); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("execution vsock listen: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), "execution-vsock")
-	ln, err := net.FileListener(f)
-	_ = f.Close()
-	if err != nil {
-		return nil, fmt.Errorf("execution vsock listener: %w", err)
-	}
-	return ln, nil
+	return listenGuestVsock(VsockExecutionPort)
 }
 
 // serveExecutionOnce accepts exactly one host connection and never reuses
@@ -114,6 +95,7 @@ func runExecutionGuest(log *slog.Logger) error {
 	}
 	ln, err := listenExecutionHook()
 	if err != nil {
+		log.Warn("execution listener unavailable", "err", err)
 		_ = poweroffExecution()
 		return err
 	}

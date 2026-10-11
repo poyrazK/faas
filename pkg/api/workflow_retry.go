@@ -28,9 +28,9 @@ func WorkflowStepMaxAttempts(spec WorkflowStepSpec) int {
 func EvaluateWorkflowRetry(spec WorkflowStepSpec, httpStatus int, hasError bool, attemptNumber int) WorkflowRetryDecision {
 	maxAttempts := WorkflowStepMaxAttempts(spec)
 	isDead := hasError || httpStatus >= 500
-	retryable := isDead
+	retryable := isDead || httpStatus == 408 || httpStatus == 425 || httpStatus == 429
 	if spec.Outbound != nil {
-		retryable = spec.Outbound.SafeToRepeat() && (retryable || httpStatus == 408 || httpStatus == 425 || httpStatus == 429)
+		retryable = spec.Outbound.SafeToRepeat() && retryable
 	}
 
 	return WorkflowRetryDecision{

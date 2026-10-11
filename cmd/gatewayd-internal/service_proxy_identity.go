@@ -108,7 +108,7 @@ func (r *serviceProxyCallerResolver) resolveIdentity(ctx context.Context, remote
 	byIP := make(map[string]serviceProxyInstanceIdentity, len(instances))
 	ambiguous := make(map[string]struct{})
 	for _, instance := range instances {
-		if instance.AppID == "" || r.nodeID != "" && instance.NodeID != r.nodeID {
+		if r.nodeID != "" && instance.NodeID != r.nodeID {
 			continue
 		}
 		if instance.State != "" && instance.State != string(state.StateRunning) && instance.State != string(state.StateDraining) {
@@ -120,6 +120,15 @@ func (r *serviceProxyCallerResolver) resolveIdentity(ctx context.Context, remote
 		}
 		key := address.String()
 		if _, ok := ambiguous[key]; ok {
+			continue
+		}
+		// Every live instance on the source address participates in
+		// disambiguation. An unattributed Job cannot be ignored when another
+		// row claims the same address; doing so would authenticate whichever
+		// row happened to carry an app ID.
+		if instance.AppID == "" {
+			delete(byIP, key)
+			ambiguous[key] = struct{}{}
 			continue
 		}
 		if previous, ok := byIP[key]; ok {
@@ -143,14 +152,19 @@ func (r *serviceProxyCallerResolver) resolveIdentity(ctx context.Context, remote
 
 func identityForHostIP(instances []state.Instance, nodeID, hostIP string) serviceProxyInstanceIdentity {
 	var identity serviceProxyInstanceIdentity
+	matched := false
 	for _, instance := range instances {
-		if instance.AppID == "" || nodeID != "" && instance.NodeID != nodeID ||
+		if nodeID != "" && instance.NodeID != nodeID ||
 			(instance.State != "" && instance.State != string(state.StateRunning) && instance.State != string(state.StateDraining)) ||
 			strings.TrimSpace(instance.HostIP) != hostIP {
 			continue
 		}
+		if instance.AppID == "" {
+			return serviceProxyInstanceIdentity{}
+		}
 		if identity.appID == "" {
 			identity = serviceProxyInstanceIdentity{appID: instance.AppID, deploymentID: instance.DeploymentID}
+			matched = true
 			continue
 		}
 		if identity.appID != instance.AppID {
@@ -159,6 +173,9 @@ func identityForHostIP(instances []state.Instance, nodeID, hostIP string) servic
 		if identity.deploymentID != instance.DeploymentID {
 			identity.deploymentID = ""
 		}
+	}
+	if !matched {
+		return serviceProxyInstanceIdentity{}
 	}
 	return identity
 }

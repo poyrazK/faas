@@ -151,7 +151,7 @@ func TestCmdEventsPublish_JSONOutput(t *testing.T) {
 
 func TestCmdEventsSubscriptions_RendersReconciledManifest(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[{"id":"sub-1","app_id":"app-1","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}},"enabled":true,"created_at":"2026-09-19T12:00:00Z","updated_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[{"id":"sub-1","app_id":"app-1","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}},"ordered":true,"enabled":true,"created_at":"2026-09-19T12:00:00Z","updated_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
 	stdout, restore := swapStdout(t)
 	defer restore()
 	if code := cmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
@@ -161,7 +161,7 @@ func TestCmdEventsSubscriptions_RendersReconciledManifest(t *testing.T) {
 		t.Fatalf("route=%s %s, want GET /v1/apps/invoice-worker/event-subscriptions", f.sawMethod, f.sawPath)
 	}
 	out := stdout.String()
-	for _, want := range []string{"ID\tSOURCE\tTYPE\tFILTER\tENABLED\tUPDATED", "sub-1\tbilling.*\tinvoice.paid", `"$gt":100`, "true"} {
+	for _, want := range []string{"ID\tSOURCE\tTYPE\tFILTER\tORDERED\tENABLED\tUPDATED", "sub-1\tbilling.*\tinvoice.paid", `"$gt":100`, "true\ttrue"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q: %s", want, out)
 		}

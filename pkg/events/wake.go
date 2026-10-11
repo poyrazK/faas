@@ -897,7 +897,9 @@ func (e ParkCompleted) Payload() map[string]any {
 
 // ParkFailed closes a ParkStarted timeline when terminal init capture fails
 // or its result is discarded. Reason is the closed set
-// {before_checkpoint_failed, snapshot_failed, runtime_config_changed}.
+// {before_checkpoint_failed, snapshot_failed, runtime_config_changed,
+// dev_source_diverged}. dev_source_diverged (ADR-740) means the instance had
+// a developer live patch applied, so it was destroyed instead of snapshotted.
 // The guest log retains callback details; this event is customer-safe.
 type ParkFailed struct {
 	EmitAt       time.Time
@@ -918,7 +920,7 @@ func (e ParkFailed) Payload() map[string]any {
 	// The API returns event data verbatim. Keep the closed reason boundary
 	// here even if a future emitter accidentally passes err.Error().
 	reason := "snapshot_failed"
-	if e.Reason == "before_checkpoint_failed" || e.Reason == "runtime_config_changed" {
+	if e.Reason == "before_checkpoint_failed" || e.Reason == "runtime_config_changed" || e.Reason == "dev_source_diverged" {
 		reason = e.Reason
 	}
 	p := map[string]any{

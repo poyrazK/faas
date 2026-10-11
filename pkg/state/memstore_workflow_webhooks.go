@@ -150,6 +150,9 @@ func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified I
 		}
 		return WebhookAutomationReceipt{}, true, err
 	}
+	if m.automationFailureGuards[endpoint.AppID+"/"+binding.WorkflowName].PausedAt != nil {
+		reason = "automation_failure_paused"
+	}
 	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, reason, eventID, eventType, body, time.Now().UTC())
 	if err != nil {
 		return receipt, true, err
@@ -163,6 +166,12 @@ func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified I
 		if err := m.validateWorkflowOutboundLocked(endpoint.AppID, endpoint.AccountID, *spec); err != nil {
 			return receipt, true, ErrWebhookAutomationUnavailable
 		}
+	}
+	for i := range recipients {
+		recipients[i].DeploymentID = dep.ID
+	}
+	if err := m.pinWorkflowEventRecipientsLocked(recipients); err != nil {
+		return receipt, true, err
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {

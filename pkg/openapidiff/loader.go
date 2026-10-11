@@ -18,10 +18,10 @@
 //     noise stripped. A focused walker makes the noise rules
 //     explicit and the differ trivially testable without spinning
 //     up a $ref-resolver.
-//   - OpenAPI 3.1 features outside this narrow surface (oneOf
-//     discriminators, allOf composition, link objects, webhooks)
-//     are deliberately out of scope for PR-2 and would be added
-//     behind a feature flag if a customer demand surfaces.
+//   - OpenAPI 3.1 features outside this narrow surface (allOf
+//     composition, link objects, webhooks) are deliberately out of
+//     scope. Changes to unsupported response-schema facets are surfaced
+//     as unknown rather than being misclassified as compatible.
 //
 // The loader reads the embedded `pkg/apid/openapi.yaml` directly via
 // the existing [apid.OpenAPIYAML] seam — do NOT add a second
@@ -33,6 +33,9 @@ package openapidiff
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -42,10 +45,11 @@ import (
 )
 
 // SchemaKind is the categorisation we emit on a [SchemaBreak].
-// Mirrors the four noise-tolerant categories the handoff requires:
-// a type change, a removed field, an added required, or a
-// nullability flip. Anything more exotic (oneOf discriminator
-// change, etc.) is intentionally out of scope for PR-2.
+// Mirrors the noise-tolerant categories used for response contracts:
+// a type change, a removed field, an added or removed required guarantee, or a
+// nullability flip. Changed oneOf / anyOf schemas and unsupported
+// response-schema facets are emitted as [SchemaUnknown] because their
+// compatibility is not classified.
 type SchemaKind string
 
 const (
@@ -58,11 +62,12 @@ const (
 	// baseline schema is absent from the proposed schema. Clients
 	// that read that field will get null/undefined.
 	SchemaKindFieldRemoved SchemaKind = "field_removed"
-	// SchemaKindRequiredAdded fires when a property that was
-	// optional on the baseline is required on the proposed. The
-	// inverse (required → optional) is NOT a break — clients
-	// sending extra fields are tolerant.
+	// SchemaKindRequiredAdded fires when a response property that was
+	// optional on the baseline is guaranteed by the proposed contract.
 	SchemaKindRequiredAdded SchemaKind = "required_added"
+	// SchemaKindRequiredRemoved fires when a response property that was
+	// guaranteed by the baseline becomes optional in the proposed contract.
+	SchemaKindRequiredRemoved SchemaKind = "required_removed"
 	// SchemaKindNullabilityChange fires when the nullable facet
 	// flips: baseline schema was `nullable: true` (or `[T, 'null']`
 	// per OpenAPI 3.1) but the proposed is not, or vice versa. Per
@@ -71,6 +76,51 @@ const (
 	// real flip.
 	SchemaKindNullabilityChange SchemaKind = "nullability_change"
 )
+
+// SchemaUnknownCode identifies a response-schema difference the structural
+// comparator cannot classify safely.
+type SchemaUnknownCode string
+
+const (
+	// SchemaUnknownUnsupportedUnionChange means a OneOf / AnyOf union changed.
+	// The comparator reports the affected contract location without claiming
+	// that the change is breaking or additive.
+	SchemaUnknownUnsupportedUnionChange SchemaUnknownCode = "unsupported_union_change"
+	// SchemaUnknownUnionBaselineIncomplete means a snapshot predates opaque
+	// facet fingerprints, so a union's raw schema changes cannot be excluded.
+	SchemaUnknownUnionBaselineIncomplete SchemaUnknownCode = "union_baseline_incomplete"
+	// SchemaUnknownUnsupportedSchemaChange means a response schema changed in
+	// a facet the structural comparator does not classify (for example enum,
+	// format, numeric constraints, or composition keywords).
+	SchemaUnknownUnsupportedSchemaChange SchemaUnknownCode = "unsupported_schema_change"
+	// SchemaUnknownSchemaBaselineIncomplete means a snapshot predates opaque
+	// facet fingerprints, so the comparator cannot establish that unsupported
+	// facets were absent or unchanged.
+	SchemaUnknownSchemaBaselineIncomplete SchemaUnknownCode = "schema_baseline_incomplete"
+)
+
+// emptyUnsupportedFacetsSHA256 is the SHA-256 of JSON null, the canonical
+// encoding produced for a schema with no unsupported facets.
+const emptyUnsupportedFacetsSHA256 = "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+
+// SchemaUnknown is one response-schema finding that the supported checks
+// cannot classify. Promotion checks must treat unknowns as blocking while
+// keeping them separate from confirmed SchemaBreak rows.
+type SchemaUnknown struct {
+	Path         string
+	Method       string
+	Status       string
+	PathInSchema string
+	Code         SchemaUnknownCode
+}
+
+// SchemaComparison is the detailed result from [CompareDetailed]. Breaks
+// are confirmed contract regressions; Unknowns are unsupported schema
+// changes or incomplete baselines whose compatibility cannot be established.
+type SchemaComparison struct {
+	Breaks   []SchemaBreak
+	Unknowns []SchemaUnknown
+}
 
 // SchemaBreak is one row emitted by [Compare]. The wire form
 // piggybacks on [pkg/deploydiff.Break] — the engine converts each
@@ -102,7 +152,8 @@ type SchemaBreak struct {
 	// Before is the baseline value the kind is anchored to. For
 	// SchemaKindFieldRemoved it is the field name; for
 	// SchemaKindTypeChange it is the baseline type string; for
-	// SchemaKindRequiredAdded it is the new required field name.
+	// SchemaKindRequiredAdded it is the new required field name; for
+	// SchemaKindRequiredRemoved it is the field no longer guaranteed.
 	// Exposed as `any` so callers can render as they wish — the
 	// engine wraps it in anyJSON for the wire.
 	Before any
@@ -179,8 +230,8 @@ type Response struct {
 }
 
 // Schema is a normalised JSON Schema view. The differ walks
-// recursively through Properties, Items, and OneOf/AnyOf when
-// present.
+// recursively through Properties and Items. Changed OneOf / AnyOf unions and
+// other unsupported schema facets are reported as unknown.
 //
 // Required is the unsorted set declared on the schema. The
 // loader sorts it on read so the differ sees stable ordering.
@@ -197,6 +248,10 @@ type Schema struct {
 	// Raw preserves JSON Schema facets outside the focused structural differ
 	// (format, enum, constraints, allOf, additionalProperties, and extensions).
 	Raw map[string]any `json:"-"`
+	// UnsupportedFacetsSHA256 preserves an opaque, non-reversible marker in
+	// deployment snapshots so raw-only response-schema changes remain
+	// detectable without storing examples or other raw facet values.
+	UnsupportedFacetsSHA256 string `json:"-"`
 	// Type is the JSON Schema type string ("object", "string",
 	// "integer", "number", "boolean", "array", "null"). Empty
 	// for oneOf/anyOf unions.
@@ -213,9 +268,8 @@ type Schema struct {
 	// 'null']` form per the noise rule.
 	Nullable bool `json:"nullable,omitempty"`
 	// OneOf / AnyOf hold union alternatives. Nil when not a
-	// union. PR-2 does not walk into these for break detection
-	// (kept for completeness; the differ treats any non-nil
-	// union as opaque).
+	// union. The differ keeps them opaque and emits an unknown
+	// finding when their observable schema shape changes.
 	OneOf []*Schema `json:"oneOf,omitempty"`
 	AnyOf []*Schema `json:"anyOf,omitempty"`
 	// Ref is the unresolved $ref string ("#/components/schemas/Foo").
@@ -373,6 +427,12 @@ func parseSchema(raw any) (*Schema, error) {
 		return &Schema{}, nil
 	}
 	sch := &Schema{Raw: cloneOpenAPIMap(m)}
+	opaque, err := json.Marshal(schemaUnsupportedFacets(sch))
+	if err != nil {
+		return nil, fmt.Errorf("unsupported facets: %w", err)
+	}
+	opaqueHash := sha256.Sum256(opaque)
+	sch.UnsupportedFacetsSHA256 = hex.EncodeToString(opaqueHash[:])
 	// $ref short-circuits — the differ resolves it later.
 	if ref, ok := m["$ref"].(string); ok {
 		sch.Ref = ref

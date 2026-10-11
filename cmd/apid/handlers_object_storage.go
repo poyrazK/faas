@@ -169,9 +169,9 @@ func bucketProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrObjectBucketWriteFenced):
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
-		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new URLs are blocked."
+		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectBudget):
-		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new URLs are blocked."
+		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectCapacity):
 		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):

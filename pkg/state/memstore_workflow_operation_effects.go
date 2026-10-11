@@ -26,6 +26,12 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 	if !ok {
 		return ErrWorkflowRunNotFound
 	}
+	if !WorkflowRunGenerationMatches(ctx, run.ID, run.ResumeCount) {
+		return ErrWorkflowOutboundAttemptExpired
+	}
+	if _, linked := m.operationForWorkflowLocked(run.ID); linked && !m.workflowRunLeases[run.ID].After(time.Now()) {
+		return ErrWorkflowOutboundAttemptExpired
+	}
 	if run.Status != WorkflowRunStatusRunning {
 		return ErrWorkflowNotRunning
 	}
@@ -149,7 +155,7 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 	run.CurrentStep = &step.StepName
 	run.UpdatedAt = now
 	m.workflowRuns[commit.RunID] = run
-	return nil
+	return m.syncOperationWorkflowLocked(run.ID)
 }
 
 func apiOperationEffectRecord(id string, effect exclusivework.Effect, generation int64, webhookID string) api.OperationEffectRecord {

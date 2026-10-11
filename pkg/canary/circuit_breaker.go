@@ -22,18 +22,21 @@ const (
 	// require a smaller but still useful denominator before comparing rates.
 	CircuitBreakerMinDependencyCalls int64 = 10
 
-	circuitBreakerErrorRateFloorPct       = 5.0
-	circuitBreakerErrorRateDeltaPct       = 5.0
-	circuitBreakerErrorRateFactor         = 3.0
-	circuitBreakerLatencyFactor           = 2.0
-	circuitBreakerLatencyDeltaMS          = 100.0
-	circuitBreakerColdLatencyFactor       = 2.0
-	circuitBreakerColdLatencyDeltaMS      = 250.0
-	circuitBreakerCPUPerRequestFactor     = 3.0
-	circuitBreakerCPUPerRequestDeltaUsec  = 10_000.0
-	circuitBreakerDependencyErrorFloorPct = 20.0
-	circuitBreakerDependencyErrorDeltaPct = 10.0
-	circuitBreakerDependencyErrorFactor   = 3.0
+	circuitBreakerErrorRateFloorPct      = 5.0
+	circuitBreakerErrorRateDeltaPct      = 5.0
+	circuitBreakerErrorRateFactor        = 3.0
+	circuitBreakerLatencyFactor          = 2.0
+	circuitBreakerLatencyDeltaMS         = 100.0
+	circuitBreakerColdLatencyFactor      = 2.0
+	circuitBreakerColdLatencyDeltaMS     = 250.0
+	circuitBreakerCPUPerRequestFactor    = 3.0
+	circuitBreakerCPUPerRequestDeltaUsec = 10_000.0
+	// circuitBreakerCPUComparableLoadDivisor: CPU/request is compared only
+	// once the candidate served at least 1/divisor of the stable requests.
+	circuitBreakerCPUComparableLoadDivisor = 2
+	circuitBreakerDependencyErrorFloorPct  = 20.0
+	circuitBreakerDependencyErrorDeltaPct  = 10.0
+	circuitBreakerDependencyErrorFactor    = 3.0
 )
 
 type CircuitBreakerAction string
@@ -141,7 +144,8 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 	}
 	candidateCPUPerRequest := float64(o.Candidate.CPUUsec) / float64(o.Candidate.CPURequests)
 	stableCPUPerRequest := float64(o.Stable.CPUUsec) / float64(o.Stable.CPURequests)
-	if candidateCPUPerRequest >= stableCPUPerRequest*circuitBreakerCPUPerRequestFactor &&
+	if cpuLoadComparable(o) &&
+		candidateCPUPerRequest >= stableCPUPerRequest*circuitBreakerCPUPerRequestFactor &&
 		candidateCPUPerRequest-stableCPUPerRequest >= circuitBreakerCPUPerRequestDeltaUsec {
 		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
 			"CPU/request regression (candidate %.0fµs, stable %.0fµs; %d vs %d requests)",
@@ -175,4 +179,18 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 		}
 	}
 	return CircuitBreakerDecision{Action: CircuitBreakerAdvance}
+}
+
+// cpuLoadComparable reports whether the candidate carried enough of the
+// load for a CPU/request comparison to mean anything. An instance also
+// spends CPU while it waits for requests (about 1.2 s per minute for a Node
+// app on production-us), and that idle CPU is divided by the minute's
+// requests. At a 5% canary step the stable instance spread it over 140-250
+// requests a minute and the candidate over 4-10, so an unchanged release
+// read as a 5.7x "CPU/request regression" and was aborted (hunt #7, H5-61).
+// At comparable load both sides carry the same idle share. Every preset but
+// "slow" reaches 50% before 100%, where the comparison still runs; the
+// latency, 5xx, cold-boot, OOM and dependency signals apply at every step.
+func cpuLoadComparable(o CircuitBreakerObservation) bool {
+	return o.Candidate.CPURequests*circuitBreakerCPUComparableLoadDivisor >= o.Stable.CPURequests
 }

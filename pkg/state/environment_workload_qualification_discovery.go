@@ -27,7 +27,19 @@ type EnvironmentGitOpsQualificationDispatchStore interface {
 	ClaimEnvironmentWorkloadQualificationForNode(context.Context, string, string, string, time.Duration) (EnvironmentWorkloadQualificationRequest, error)
 }
 
+// Binding graphs execute as one private cohort. Discovery and claim use a
+// graph cursor and an all-members lease so a caller cannot boot while a
+// dependency is owned by another worker or has no current attempt.
+type EnvironmentGitOpsQualificationGraphDispatchStore interface {
+	ListEnvironmentWorkloadQualificationGraphsForDispatch(context.Context, string, string, int) ([]string, error)
+	ClaimEnvironmentWorkloadQualificationGraphForNode(context.Context, string, string, string, time.Duration) ([]EnvironmentWorkloadQualificationRequest, error)
+}
+
 func qualificationDispatchPageValid(nodeID, afterRequestID string, limit int) bool {
 	return qualificationRecoveryUUIDValid(nodeID) && (afterRequestID == "" || qualificationRecoveryUUIDValid(afterRequestID)) &&
 		limit > 0 && limit <= api.EnvironmentGitOpsQualificationDispatchBatchMax
+}
+
+func qualificationGraphDispatchPageValid(nodeID, afterGraphID string, limit int) bool {
+	return qualificationDispatchPageValid(nodeID, afterGraphID, limit)
 }

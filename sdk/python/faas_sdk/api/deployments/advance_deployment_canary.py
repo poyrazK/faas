@@ -107,7 +107,13 @@ def sync_detailed(
     Enforced route gates require complete, current, satisfied evidence for
     this candidate under policy, intent and capture locks. Missing or stale
     evidence durably requests a fresh check without increasing traffic.
-    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
+    A blocked route gate returns 409 `route_gate_blocked` with reason codes in detail.
+    An opt-in profiling gate returns 409 `profile_gate_blocked` while evidence
+    is collecting, regressed or timed out with hold configured. Customer
+    overrides require a current profile policy revision and bounded reason;
+    other rollout gates still apply. Worker-only opt-in profiling rollback
+    atomically aborts the candidate and restores the exact stable predecessor
+    after lease, stage, policy, evidence and binding checks.
 
     Args:
         id (str):
@@ -153,7 +159,13 @@ def sync(
     Enforced route gates require complete, current, satisfied evidence for
     this candidate under policy, intent and capture locks. Missing or stale
     evidence durably requests a fresh check without increasing traffic.
-    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
+    A blocked route gate returns 409 `route_gate_blocked` with reason codes in detail.
+    An opt-in profiling gate returns 409 `profile_gate_blocked` while evidence
+    is collecting, regressed or timed out with hold configured. Customer
+    overrides require a current profile policy revision and bounded reason;
+    other rollout gates still apply. Worker-only opt-in profiling rollback
+    atomically aborts the candidate and restores the exact stable predecessor
+    after lease, stage, policy, evidence and binding checks.
 
     Args:
         id (str):
@@ -194,7 +206,13 @@ async def asyncio_detailed(
     Enforced route gates require complete, current, satisfied evidence for
     this candidate under policy, intent and capture locks. Missing or stale
     evidence durably requests a fresh check without increasing traffic.
-    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
+    A blocked route gate returns 409 `route_gate_blocked` with reason codes in detail.
+    An opt-in profiling gate returns 409 `profile_gate_blocked` while evidence
+    is collecting, regressed or timed out with hold configured. Customer
+    overrides require a current profile policy revision and bounded reason;
+    other rollout gates still apply. Worker-only opt-in profiling rollback
+    atomically aborts the candidate and restores the exact stable predecessor
+    after lease, stage, policy, evidence and binding checks.
 
     Args:
         id (str):
@@ -238,7 +256,13 @@ async def asyncio(
     Enforced route gates require complete, current, satisfied evidence for
     this candidate under policy, intent and capture locks. Missing or stale
     evidence durably requests a fresh check without increasing traffic.
-    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
+    A blocked route gate returns 409 `route_gate_blocked` with reason codes in detail.
+    An opt-in profiling gate returns 409 `profile_gate_blocked` while evidence
+    is collecting, regressed or timed out with hold configured. Customer
+    overrides require a current profile policy revision and bounded reason;
+    other rollout gates still apply. Worker-only opt-in profiling rollback
+    atomically aborts the candidate and restores the exact stable predecessor
+    after lease, stage, policy, evidence and binding checks.
 
     Args:
         id (str):

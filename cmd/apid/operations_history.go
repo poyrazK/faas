@@ -19,12 +19,12 @@ func operationHistoryOptions(r *http.Request) (api.OperationListOptions, error) 
 			return api.OperationListOptions{}, state.ErrInvalidArgument
 		}
 		switch key {
-		case "app_id", "scope", "name", "state", "limit", "cursor":
+		case "app_id", "scope", "name", "state", "limit", "cursor", "subject_type", "subject_id":
 		default:
 			return api.OperationListOptions{}, state.ErrInvalidArgument
 		}
 	}
-	opts := api.OperationListOptions{AppID: query.Get("app_id"), Scope: query.Get("scope"), Name: query.Get("name"), State: api.OperationState(query.Get("state")), Cursor: query.Get("cursor")}
+	opts := api.OperationListOptions{SubjectType: query.Get("subject_type"), SubjectID: query.Get("subject_id"), AppID: query.Get("app_id"), Scope: query.Get("scope"), Name: query.Get("name"), State: api.OperationState(query.Get("state")), Cursor: query.Get("cursor")}
 	if query.Has("limit") {
 		opts.Limit, err = strconv.Atoi(query.Get("limit"))
 		if err != nil || opts.Limit < 1 {

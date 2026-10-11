@@ -74,6 +74,7 @@ func (s *server) getObjectBucketObjectLock(w http.ResponseWriter, r *http.Reques
 		bucketProblem(w, err)
 		return
 	}
+	svc.BeforeRequest = s.customerObjectRequestRecorder(b)
 	j, _, err = svc.Read(r.Context(), b)
 	if err != nil {
 		latest, storedErr := st.GetObjectBucketObjectLock(r.Context(), acct.ID, b.AppID, b.ID)
@@ -113,6 +114,7 @@ func (s *server) putObjectBucketObjectLock(w http.ResponseWriter, r *http.Reques
 		bucketProblem(w, err)
 		return
 	}
+	svc.BeforeRequest = s.customerObjectRequestRecorder(b)
 	j, err := svc.Request(r.Context(), b, configuration)
 	if err != nil {
 		bucketProblem(w, err)

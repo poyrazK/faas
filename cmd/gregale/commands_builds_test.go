@@ -188,7 +188,7 @@ func TestCmdBuildList_NextBeforeHint(t *testing.T) {
 	}
 	out := cmdBuildListText(t, page, nil)
 	// Byte-for-byte em-dash (U+2014) check.
-	const wantHint = "... more — pass --before 2026-08-10T12:00:00Z|b00000000000000000000000000000001\n"
+	const wantHint = "... more — pass --cursor 2026-08-10T12:00:00Z|b00000000000000000000000000000001\n"
 	if !strings.Contains(out, wantHint) {
 		t.Errorf("missing em-dash cursor hint %q\nfull: %s", wantHint, out)
 	}
@@ -218,7 +218,7 @@ func TestCmdBuildList_NextBeforeHint_QueuedTail(t *testing.T) {
 	}
 	out := cmdBuildListText(t, page, nil)
 	// Quoted to make the empty-string segment visually obvious.
-	const wantHint = "... more — pass --before |b00000000000000000000000000000001\n"
+	const wantHint = "... more — pass --cursor |b00000000000000000000000000000001\n"
 	if !strings.Contains(out, wantHint) {
 		t.Errorf("missing queued-tail cursor hint %q\nfull: %s", wantHint, out)
 	}

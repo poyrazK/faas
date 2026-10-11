@@ -1,0 +1,7 @@
+{
+  "name": "gregale-durable-entity-counter",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.10.0" },
+  "scripts": { "start": "node server.mjs" }
+}

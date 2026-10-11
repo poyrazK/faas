@@ -86,21 +86,22 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
 	}
 	return fcvm.JobBootRequest{
-		Instance:       req.GetInstance(),
-		AccountID:      req.GetAccountId(),
-		NodeID:         req.GetNodeId(),
-		Plan:           plan,
-		RunID:          req.GetRunId(),
-		TaskIndex:      int(req.GetTaskIndex()),
-		ImageRef:       req.GetImageRef(),
-		KernelKey:      req.GetKernelKey(),
-		BaseKey:        req.GetBaseKey(),
-		Command:        append([]string(nil), req.GetCommand()...),
-		Env:            cloneStringMap(req.GetEnv()),
-		VcpuCount:      int(req.GetVcpuCount()),
-		MemSizeMiB:     int(req.GetMemSizeMib()),
-		TaskTimeoutSec: int(req.GetTaskTimeoutSec()),
-		LeaseToken:     req.GetLeaseToken(),
+		Instance:         req.GetInstance(),
+		AccountID:        req.GetAccountId(),
+		NodeID:           req.GetNodeId(),
+		Plan:             plan,
+		RunID:            req.GetRunId(),
+		TaskIndex:        int(req.GetTaskIndex()),
+		ImageRef:         req.GetImageRef(),
+		KernelKey:        req.GetKernelKey(),
+		BaseKey:          req.GetBaseKey(),
+		Command:          append([]string(nil), req.GetCommand()...),
+		Env:              cloneStringMap(req.GetEnv()),
+		SealedEnvEntries: sealedFromProto(req.GetSealedEnv()),
+		VcpuCount:        int(req.GetVcpuCount()),
+		MemSizeMiB:       int(req.GetMemSizeMib()),
+		TaskTimeoutSec:   int(req.GetTaskTimeoutSec()),
+		LeaseToken:       req.GetLeaseToken(),
 	}, nil
 }
 
@@ -165,6 +166,7 @@ func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.Ex
 			DeploymentID: ref.GetDeploymentId(), VMStatePath: ref.GetVmstatePath(),
 			FCVersion: ref.GetFcVersion(), StorageKey: ref.GetStorageKey(),
 			VMStateStorageKey: ref.GetVmstateStorageKey(), Networkless: true,
+			MemBytes: ref.GetMemBytes(),
 		}
 	}
 	return fcvm.ExecutionWakeRequest{
@@ -350,10 +352,12 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		Port: int(app.GetPort()),
 		// Per-deployment HTTP or gRPC readiness selection. Both
 		// probe modes target <HostIP>:8080.
-		HealthcheckPath:        app.GetHealthcheckPath(),
-		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
-		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
-		ReadinessProbe:         json.RawMessage(app.GetReadinessProbeJson()),
+		HealthcheckPath:          app.GetHealthcheckPath(),
+		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
+		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
+		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
+		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -407,6 +411,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			FCVersion:         snap.GetFcVersion(),
 			StorageKey:        snap.GetStorageKey(),
 			VMStateStorageKey: snap.GetVmstateStorageKey(),
+			MemBytes:          snap.GetMemBytes(),
 		}
 	}
 	return wr, nil
@@ -510,10 +515,12 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// toWakeRequest. Cold-boot mirrors the healthcheck
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
-		HealthcheckPath:        app.GetHealthcheckPath(),
-		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
-		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
-		ReadinessProbe:         json.RawMessage(app.GetReadinessProbeJson()),
+		HealthcheckPath:          app.GetHealthcheckPath(),
+		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
+		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
+		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
+		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
@@ -736,15 +743,18 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 // is inherited from the apps row captured in the original cold boot).
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
-		SupportsSecretAliases: true,
-		Instance:              instance,
-		LeaseUid:              int32(inst.Lease.UID),
-		HostIp:                addrOrEmpty(inst.Lease.HostIP),
-		Netns:                 inst.Net.Netns,
-		VethHost:              inst.Net.VethHost,
-		VethPeer:              inst.Net.VethPeer,
-		Method:                wakeMethodFrom(inst.Method),
-		RequestedMethod:       requestMethod,
+		SupportsSecretAliases:              true,
+		SupportsImageHealthcheck:           true,
+		SupportsImageHealthcheckMonitoring: true,
+		ImageHealthcheckVerified:           req.ImageHealthcheckRequired && inst.ImageHealthcheckRequired && !inst.Paused,
+		Instance:                           instance,
+		LeaseUid:                           int32(inst.Lease.UID),
+		HostIp:                             addrOrEmpty(inst.Lease.HostIP),
+		Netns:                              inst.Net.Netns,
+		VethHost:                           inst.Net.VethHost,
+		VethPeer:                           inst.Net.VethPeer,
+		Method:                             wakeMethodFrom(inst.Method),
+		RequestedMethod:                    requestMethod,
 		// ADR-098 C11: phase-decomposed wake timings. RestoreMs is
 		// 0 on cold boot (no /snapshot/load ran) and on any restore
 		// that errored before /snapshot/load returned. NetnsTapMs

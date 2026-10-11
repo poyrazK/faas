@@ -76,7 +76,7 @@ func dialSpansWriterBufconn(t *testing.T, store spansWriterStore, ops spansWrite
 	const bufSize = 1 << 20
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	registerSpansWriterReceiver(srv, store, ops, limiter, enabled)
+	registerSpansWriterReceiver(srv, store, ops, limiter, enabled, nil)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
 

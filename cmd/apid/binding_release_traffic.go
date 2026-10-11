@@ -55,6 +55,11 @@ func (s *server) bindingReleaseTrafficObservations(r *http.Request, acct state.A
 		if proposed[d.ID] <= d.TrafficPercent {
 			continue
 		}
+		contractCtx, problem := s.contractTrafficContext(r.Context(), app, d)
+		if problem != nil {
+			return nil, problem
+		}
+		*r = *r.WithContext(contractCtx)
 		p, err := store.GetBindingReleasePolicy(r.Context(), acct.ID, app.ID, d.Scope)
 		if err != nil {
 			return nil, api.ErrCapacity("binding release policy could not be read")
@@ -94,6 +99,9 @@ func (s *server) withBindingReleaseObservations(r *http.Request, acct state.Acco
 		}
 		first := observations[0]
 		err = s.managedPostgresBindings.GuardPromotion(r.Context(), acct.ID, app.ID, first.domain, first.store.BindingPromotionBackend(), func(ctx context.Context) error { return write(state.WithBindingReleaseFences(ctx, fences)) })
+	}
+	if p := routeRemovalBlockedProblem(err); p != nil {
+		return p, err
 	}
 	if errors.Is(err, state.ErrCheckedRollbackRequired) {
 		return api.NewProblem(http.StatusConflict, "rollback_operation_required", "Checked rollback in progress", "Wait for the exact rollback operation to publish traffic; generic promotion cannot complete its handoff."), err

@@ -46,6 +46,16 @@ func TestEvaluateCircuitBreaker(t *testing.T) {
 		{name: "cpu per request regression aborts", mutate: func(o *CircuitBreakerObservation) {
 			o.Candidate.CPUUsec = 80_000_000 // 800ms per request vs 100ms stable.
 		}, want: CircuitBreakerAbort},
+		// production-us hunt #7 (H5-61): an unchanged release at a 5% step.
+		// Idle CPU divided by the candidate's few requests is not a regression.
+		{name: "cpu per request is not compared while the candidate carries little load", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate.CPURequests, o.Candidate.CPUUsec = 23, 23*53_890
+			o.Stable.CPURequests, o.Stable.CPUUsec = 462, 462*9_447
+		}, want: CircuitBreakerAdvance},
+		{name: "cpu per request regression at comparable load aborts", mutate: func(o *CircuitBreakerObservation) {
+			o.Candidate.CPURequests, o.Candidate.CPUUsec = 60, 60*800_000
+			o.Stable.CPURequests, o.Stable.CPUUsec = 100, 100*100_000
+		}, want: CircuitBreakerAbort},
 		{name: "small cpu per request change does not abort", mutate: func(o *CircuitBreakerObservation) {
 			o.Candidate.CPUUsec = 19_000_000 // 190ms per request; below 3x stable.
 		}, want: CircuitBreakerAdvance},

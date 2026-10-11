@@ -73,6 +73,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -98,10 +103,12 @@ def sync_detailed(
     body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[APIConsumerUsageStatementResponse | Problem]:
-    """Snapshot an API consumer usage quote.
+    """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
-    returns the original snapshot.
+     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
+    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
+    draft revision is created. After finalization, new units create the next revision containing only
+    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
 
     Args:
         slug (str):
@@ -140,10 +147,12 @@ def sync(
     body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> APIConsumerUsageStatementResponse | Problem | None:
-    """Snapshot an API consumer usage quote.
+    """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
-    returns the original snapshot.
+     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
+    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
+    draft revision is created. After finalization, new units create the next revision containing only
+    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
 
     Args:
         slug (str):
@@ -177,10 +186,12 @@ async def asyncio_detailed(
     body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[APIConsumerUsageStatementResponse | Problem]:
-    """Snapshot an API consumer usage quote.
+    """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
-    returns the original snapshot.
+     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
+    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
+    draft revision is created. After finalization, new units create the next revision containing only
+    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
 
     Args:
         slug (str):
@@ -217,10 +228,12 @@ async def asyncio(
     body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> APIConsumerUsageStatementResponse | Problem | None:
-    """Snapshot an API consumer usage quote.
+    """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
-    returns the original snapshot.
+     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
+    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
+    draft revision is created. After finalization, new units create the next revision containing only
+    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
 
     Args:
         slug (str):

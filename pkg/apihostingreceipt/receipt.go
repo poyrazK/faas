@@ -3,6 +3,7 @@
 package apihostingreceipt
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +21,16 @@ const (
 	SmokeSkipped                    = "skipped"
 	VerificationHTTPHealth          = "http_health"
 	VerificationRouteConnectivity   = "route_connectivity"
+	VerificationAPIRouteContract    = "api_route_contract"
 	AuthenticationPlatformChallenge = "platform_challenge"
+)
+
+const (
+	RouteCheckSetVerified    = "verified"
+	RouteCheckSetFailed      = "failed"
+	RouteCheckSetUnavailable = "unavailable"
+	RouteCheckSourceOpenAPI  = "app_openapi"
+	MaxAPIRouteChecks        = 10
 )
 
 // Source contains non-sensitive provenance. It intentionally excludes source
@@ -42,16 +52,75 @@ type SmokeResult struct {
 	// health contract. Connectivity does not establish endpoint health.
 	Verification string `json:"verification,omitempty"`
 	// Authentication describes probe access, not customer/anonymous access.
-	Authentication string    `json:"authentication,omitempty"`
-	Status         string    `json:"status"`
-	Path           string    `json:"path,omitempty"`
-	DeploymentID   string    `json:"deployment_id,omitempty"`
-	StatusCode     int       `json:"status_code,omitempty"`
-	LatencyMS      int64     `json:"latency_ms,omitempty"`
-	VerifiedAt     time.Time `json:"verified_at,omitempty"`
-	RequestID      string    `json:"request_id,omitempty"`
-	ErrorCode      string    `json:"error_code,omitempty"`
-	Error          string    `json:"error,omitempty"`
+	Authentication string         `json:"authentication,omitempty"`
+	Status         string         `json:"status"`
+	Path           string         `json:"path,omitempty"`
+	DeploymentID   string         `json:"deployment_id,omitempty"`
+	StatusCode     int            `json:"status_code,omitempty"`
+	LatencyMS      int64          `json:"latency_ms,omitempty"`
+	VerifiedAt     time.Time      `json:"verified_at,omitempty"`
+	RequestID      string         `json:"request_id,omitempty"`
+	ErrorCode      string         `json:"error_code,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	RouteChecks    *RouteCheckSet `json:"route_checks,omitempty"`
+}
+
+// APIRouteProbe is a bounded, read-only request selected from an app's
+// explicitly annotated OpenAPI operations.
+type APIRouteProbe struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
+// RouteCheckSet records the source contract and individual candidate results.
+// DocumentSHA256 binds the check to the exact imported OpenAPI document.
+type RouteCheckSet struct {
+	Source         string             `json:"source"`
+	DocumentSHA256 string             `json:"document_sha256,omitempty"`
+	Status         string             `json:"status"`
+	Checks         []RouteCheckResult `json:"checks"`
+}
+
+// RouteCheckResult contains only bounded, non-secret evidence from one
+// authenticated candidate response. Request and response bodies are omitted.
+type RouteCheckResult struct {
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Status     string    `json:"status"`
+	StatusCode int       `json:"status_code,omitempty"`
+	LatencyMS  int64     `json:"latency_ms,omitempty"`
+	VerifiedAt time.Time `json:"verified_at,omitempty"`
+	RequestID  string    `json:"request_id,omitempty"`
+	ErrorCode  string    `json:"error_code,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+
+func (checks RouteCheckSet) Validate() error {
+	if checks.Source != RouteCheckSourceOpenAPI {
+		return fmt.Errorf("invalid route check source %q", checks.Source)
+	}
+	if decoded, err := hex.DecodeString(checks.DocumentSHA256); err != nil || len(decoded) != 32 {
+		return errors.New("route check document_sha256 must be a SHA-256 digest")
+	}
+	switch checks.Status {
+	case RouteCheckSetVerified, RouteCheckSetFailed, RouteCheckSetUnavailable:
+	default:
+		return fmt.Errorf("invalid route check set status %q", checks.Status)
+	}
+	if len(checks.Checks) == 0 || len(checks.Checks) > MaxAPIRouteChecks {
+		return fmt.Errorf("route check count must be between 1 and %d", MaxAPIRouteChecks)
+	}
+	for i, check := range checks.Checks {
+		if err := ValidateAPIRouteProbe(APIRouteProbe{Method: check.Method, Path: check.Path}); err != nil {
+			return fmt.Errorf("route check %d needs a GET method and path", i)
+		}
+		switch check.Status {
+		case SmokeVerified, SmokeFailed, SmokeSkipped:
+		default:
+			return fmt.Errorf("invalid route check %d status %q", i, check.Status)
+		}
+	}
+	return nil
 }
 
 type Receipt struct {
@@ -97,6 +166,11 @@ func (r Receipt) Validate() error {
 	}
 	if r.Smoke.Authentication != "" && r.Smoke.Authentication != AuthenticationPlatformChallenge {
 		return fmt.Errorf("invalid smoke authentication %q", r.Smoke.Authentication)
+	}
+	if checks := r.Smoke.RouteChecks; checks != nil {
+		if err := checks.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

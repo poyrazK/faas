@@ -17,7 +17,15 @@ type wakeEnvironment struct {
 	app        state.App
 	deployment state.Deployment
 	owner      state.RuntimeScalingState
+	account    state.Account
 	limits     api.Limits
+}
+
+// reusableFor reports whether admission may reuse this selection's app,
+// account and owner reads. The live deployment is still re-resolved at
+// admission, so a cutover between selection and admission stays detected.
+func (w wakeEnvironment) reusableFor(appID string) bool {
+	return w.app.ID == appID && w.account.ID != "" && w.deployment.ID != ""
 }
 
 type wakeEnvironmentKey struct{}
@@ -64,6 +72,7 @@ func (e *Engine) resolveWakeEnvironmentForDeployment(ctx context.Context, appID 
 	if !account.Active() {
 		return selected, errors.Join(ErrPermanentWake, account.InactiveProblem())
 	}
+	selected.account = account
 	var ok bool
 	if selected.limits, ok = api.LimitsFor(account.Plan); !ok {
 		return selected, fmt.Errorf("sched: wake environment: unknown plan %q", account.Plan)

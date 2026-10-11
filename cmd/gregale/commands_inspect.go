@@ -26,10 +26,11 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cmdInspect is the verb-level dispatcher for
@@ -46,10 +47,10 @@ import (
 // inspectUsage is the single source of truth for the verb's
 // usage line. The dispatcher prints it on bad-args paths, and the
 // test file pins this exact wording.
-const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--json]"
+const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--watch [--interval 5s] [--timeout DURATION]] [--json]"
 
 func cmdInspect(args []string) int {
-	flags, positional := splitArgsForFlags(args, "upstreams", "errors")
+	flags, positional := splitArgsForFlags(args, "upstreams", "errors", "watch")
 	fs := newFlagSet("inspect", flag.ContinueOnError)
 	upstreams := fs.Bool("upstreams", false, "list data upstreams captured for this app (ADR-098 §9.A)")
 	scope := fs.String("scope", "", "filter upstreams by scope (forwarded as ?scope=<scope>)")
@@ -59,12 +60,26 @@ func cmdInspect(args []string) int {
 	// Auth required; no scope filter (errors are per-deployment).
 	app := fs.String("app", "", appSlugFlagUsage)
 	errorsFlag := fs.Bool("errors", false, "show the latest failed deployment's persisted error explanation (Hint/Why/Fix/RelevantLogs)")
+	watch := fs.Bool("watch", false, "watch summary changes with read-only polling")
+	interval := fs.Duration("interval", api.InspectWatchIntervalDefault, "watch interval (1s..1h)")
+	timeout := fs.Duration("timeout", 0, "watch duration (0 watches until Ctrl-C)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	watchOptions := inspectWatchOptions{interval: *interval, timeout: *timeout}
+	if err := validateInspectWatchOptions(fs, *watch, *upstreams || *errorsFlag, watchOptions); err != nil {
+		return printErr("Invalid watch flags", err)
 	}
 	if len(positional) > 1 {
 		PrintUsage(os.Stderr, inspectUsage, "inspect")
 		return 1
+	}
+	// Validate leaf combinations before resolving an app or opening a picker.
+	if !*upstreams && *scope != "" {
+		return printErr("Invalid flags", fmt.Errorf("--scope requires --upstreams"))
+	}
+	if *upstreams && *errorsFlag {
+		return printErr("Invalid flags", fmt.Errorf("--upstreams and --errors are mutually exclusive"))
 	}
 	slug := ""
 	if merged, mergeErr := mergeAppFlag(positional, *app, 1); mergeErr != nil {
@@ -74,34 +89,21 @@ func cmdInspect(args []string) int {
 		slug = merged[0]
 	} else {
 		var resolveErr error
-		slug, resolveErr = resolveRequiredAppSlug("")
+		slug, resolveErr = resolveReadAppTarget("")
 		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, inspectUsage+" (or run `gregale link <project-slug>`)", "inspect")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
+			return readAppTargetError(resolveErr)
 		}
 	}
 	if !validCLISlug(slug) {
 		fmt.Fprintf(os.Stderr, "invalid slug %q (3..40 chars, lowercase alnum + dash, no leading/trailing dash)\n", slug)
 		return 1
 	}
-	// The bare form is the application-intelligence summary. A scope
-	// only has meaning for the explicit upstream table, so reject it
-	// before auth/network rather than silently ignoring the filter.
+	// The bare form is the application-intelligence summary.
 	if !*upstreams && !*errorsFlag {
-		if *scope != "" {
-			return printErr("Invalid flags", fmt.Errorf("--scope requires --upstreams"))
+		if *watch {
+			return cmdInspectWatch(slug, watchOptions)
 		}
 		return cmdInspectSummary(slug)
-	}
-	// Mutually exclusive: --upstreams hits /v1/apps/{slug}/upstreams;
-	// --errors hits the latest deployment via the deployments list.
-	// Mixing them would force two server calls and the customer's
-	// intent is ambiguous.
-	if *upstreams && *errorsFlag {
-		return printErr("Invalid flags", fmt.Errorf("--upstreams and --errors are mutually exclusive"))
 	}
 	if *errorsFlag {
 		return cmdInspectErrors(slug)

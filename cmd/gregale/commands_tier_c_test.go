@@ -67,7 +67,7 @@ func TestTierC_InvocationsList_HumanShowsCursor(t *testing.T) {
 	if code := cmdInvocationsList(nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if !strings.Contains(out.String(), "--before i-1") {
+	if !strings.Contains(out.String(), "--cursor i-1") {
 		t.Fatalf("human output missing continuation hint: %q", out.String())
 	}
 }
@@ -578,6 +578,20 @@ func TestTierC_OrgsInvitationsListAll_HappyPath(t *testing.T) {
 	}
 	if f.sawMethod != "GET" || f.sawPath != "/v1/orgs/acme/invitations" {
 		t.Errorf("route = %s %s, want GET /v1/orgs/acme/invitations", f.sawMethod, f.sawPath)
+	}
+}
+
+// hunt #8: an org with no pending invitations printed nothing at all.
+func TestTierC_OrgsInvitationsList_EmptySaysSo(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"invitations":[],"next_before":""}`, http.StatusOK)
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdOrgsInvitationsLs([]string{"--org", "acme"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "(no invitations)") {
+		t.Fatalf("empty list output = %q", out.String())
 	}
 }
 

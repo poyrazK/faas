@@ -17,10 +17,11 @@ var operationName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // Contract is compiled once per immutable definition revision. Compiled JSON
 // schemas are safe for concurrent input/output validation.
 type Contract struct {
-	Spec     api.OperationDefinitionSpec
-	Revision string
-	Input    *jsonschema.Schema
-	Output   *jsonschema.Schema
+	Spec       api.OperationDefinitionSpec
+	Revision   string
+	Input      *jsonschema.Schema
+	Output     *jsonschema.Schema
+	Milestones map[string]*jsonschema.Schema
 }
 
 func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (*Contract, error) {
@@ -33,6 +34,12 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	if spec.Method != "POST" && spec.Method != "PUT" && spec.Method != "PATCH" && spec.Method != "DELETE" {
 		return nil, fmt.Errorf("operation method must be POST, PUT, PATCH, or DELETE")
 	}
+	if spec.Workflow != "" && (len(spec.Workflow) > api.OperationNameMaxBytes || !operationName.MatchString(spec.Workflow) || spec.Method != "POST" || spec.Recovery == api.OperationRecoverySafeRetry) {
+		return nil, fmt.Errorf("workflow operations require a bounded workflow name, POST ingress and reconciliation recovery")
+	}
+	if spec.Job != "" && (spec.Workflow != "" || len(spec.Job) > api.OperationNameMaxBytes || !operationName.MatchString(spec.Job) || spec.Method != "POST" || spec.Recovery == api.OperationRecoverySafeRetry) {
+		return nil, fmt.Errorf("job operations require a bounded job name, POST ingress and reconciliation recovery")
+	}
 	u, err := url.ParseRequestURI(spec.Path)
 	if err != nil || !strings.HasPrefix(spec.Path, "/") || strings.HasPrefix(spec.Path, "//") || len(spec.Path) > api.OperationPathMaxBytes || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("operation path must be an absolute application path without a query")
@@ -40,11 +47,24 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	if spec.Owner != api.OperationOwnerPlatformTenant {
 		return nil, fmt.Errorf("operation owner must be platform_tenant")
 	}
+	if spec.Subject != nil {
+		if err := validateSubjectSpec(*spec.Subject); err != nil {
+			return nil, err
+		}
+		subject := *spec.Subject
+		spec.Subject = &subject
+	}
+	if spec.HTTPTransactionVersion != 0 && spec.HTTPTransactionVersion != api.OperationHTTPTransactionVersion {
+		return nil, fmt.Errorf("unsupported HTTP operation transaction version")
+	}
 	if spec.Recovery == "" {
 		spec.Recovery = api.OperationRecoveryReconcile
 	}
 	if spec.Recovery != api.OperationRecoveryReconcile && spec.Recovery != api.OperationRecoverySafeRetry {
 		return nil, fmt.Errorf("unsupported operation recovery policy")
+	}
+	if spec.TransactionReceipt != "" && (spec.TransactionReceipt != api.OperationTransactionPostgres || spec.Workflow != "" || spec.Job != "" || spec.Recovery != api.OperationRecoveryReconcile) {
+		return nil, fmt.Errorf("transaction receipts require postgres_v1, an ordinary HTTP handler and reconciliation recovery")
 	}
 	if len(spec.ProgressStages) == 0 || len(spec.ProgressStages) > limits.ProgressStages {
 		return nil, fmt.Errorf("operation progress stages exceed plan limit or are empty")
@@ -65,6 +85,13 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 		return nil, fmt.Errorf("operation output schema: %w", err)
 	}
 	spec.InputSchema, spec.OutputSchema = canonicalInput, canonicalOutput
+	milestones, err := compileMilestones(&spec, limits)
+	if err != nil {
+		return nil, err
+	}
+	if err := compileWorkflowSteps(&spec); err != nil {
+		return nil, err
+	}
 	spec.ProgressStages = append([]string(nil), spec.ProgressStages...)
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -74,7 +101,7 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	if err != nil {
 		return nil, err
 	}
-	return &Contract{Spec: spec, Revision: revision, Input: input, Output: output}, nil
+	return &Contract{Spec: spec, Revision: revision, Input: input, Output: output, Milestones: milestones}, nil
 }
 
 type closedSchemaLoader struct{}

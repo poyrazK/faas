@@ -41,7 +41,10 @@ for the warm slot from the moment they configure it"). The floor
 continues while a deployment is live or progressing toward live.
 Once no live replacement exists and the latest deployment is terminal
 (`failed | superseded | cancelled`), schedd cannot provide the configured
-capacity and synthetic billing stops.
+capacity and synthetic billing stops. The same holds while the app is not
+`active`: schedd does not hold the floor of an explicitly parked
+(`evicted_cold`) app (hunt #5, H5-54), so the sampler bills no synthetic
+floor for it either. Both sides read `state.App.FloorServed`.
 Sampler emits unconditionally for serviceable/in-flight deployments — no
 opt-out flag in v1.
 

@@ -81,6 +81,7 @@ func Run(t *testing.T, open Open) {
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
+		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
@@ -2132,6 +2133,11 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at attempt 1", steps, err)
 	}
 
+	// production-us hunt #5 (H5-45): cancelling while a step's handler runs
+	// must close that step's attempt, not leave it running forever.
+	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 1, []byte(`{}`)); err != nil {
+		t.Fatalf("StartWorkflowStep: %v", err)
+	}
 	const reason = "cancelled by conformance"
 	cancelled, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, reason)
 	if err != nil || cancelled.Status != state.WorkflowRunStatusFailed || cancelled.LastError == nil || *cancelled.LastError != reason || cancelled.FinishedAt == nil {
@@ -2140,6 +2146,10 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 	steps, err = fx.Store.GetWorkflowSteps(fx.Ctx, run.ID)
 	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusSkipped || steps[1].Status != state.WorkflowStepStatusSkipped {
 		t.Fatalf("GetWorkflowSteps(cancelled) = (%#v, %v), want both skipped", steps, err)
+	}
+	attempts, err := fx.Store.GetWorkflowStepAttempts(fx.Ctx, run.ID, "first")
+	if err != nil || len(attempts) != 1 || attempts[0].Status != state.WorkflowAttemptStatusFailed || attempts[0].FinishedAt == nil {
+		t.Fatalf("GetWorkflowStepAttempts(cancelled) = (%+v, %v), want the in-flight attempt failed and finished", attempts, err)
 	}
 	unchanged, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, "replacement reason")
 	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {
@@ -3608,22 +3618,30 @@ func testGitHubDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 }
 
 func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	testLatestDeploymentPromotionFence(t, fx, state.DeploymentKindGitHub)
+}
+
+func testImageDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	testLatestDeploymentPromotionFence(t, fx, state.DeploymentKindImage)
+}
+
+func testLatestDeploymentPromotionFence(t *testing.T, fx *Fixture, kind state.DeploymentKind) {
 	older, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "staging",
-		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AppID: fx.App.ID, Kind: kind, Scope: "staging",
+		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ImageDigest: "sha256:older",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(older staging): %v", err)
 	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(older staging): %v", err)
+	}
 	newer, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "staging",
-		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		AppID: fx.App.ID, Kind: kind, Scope: "staging",
+		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", ImageDigest: "sha256:newer",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(newer staging): %v", err)
-	}
-	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
-		t.Fatalf("UpdateDeploymentStatus(older staging): %v", err)
 	}
 	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, newer.ID, state.DeployBuilding, ""); err != nil {
 		t.Fatalf("UpdateDeploymentStatus(newer staging): %v", err)
@@ -3632,12 +3650,12 @@ func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 		t.Fatalf("staging deployment revisions older=%d newer=%d; want monotonic increase", older.Revision, newer.Revision)
 	}
 	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "production",
-		CommitSHA: "cccccccccccccccccccccccccccccccccccccccc",
+		AppID: fx.App.ID, Kind: kind, Scope: "production",
+		CommitSHA: "cccccccccccccccccccccccccccccccccccccccc", ImageDigest: "sha256:production",
 	}); err != nil {
 		t.Fatalf("CreateDeployment(newer production): %v", err)
 	}
-	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+	if err := fx.Store.MarkDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
 		t.Fatalf("older staging promotion = %v, want ErrDeploymentSuperseded", err)
 	}
 	oldRow, err := fx.Store.DeploymentByID(fx.Ctx, older.ID)
@@ -3648,7 +3666,7 @@ func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
 	if err != nil || stable.Status != state.DeployLive {
 		t.Fatalf("existing live deployment = (%+v, %v), want live", stable, err)
 	}
-	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
+	if err := fx.Store.MarkDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
 		t.Fatalf("newest staging promotion was blocked by a different scope: %v", err)
 	}
 	newRow, err := fx.Store.DeploymentByID(fx.Ctx, newer.ID)

@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/qualificationwire"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -233,6 +234,7 @@ func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRe
 			DeploymentId: req.Snapshot.DeploymentID, VmstatePath: req.Snapshot.VMStatePath,
 			FcVersion: req.Snapshot.FCVersion, StorageKey: req.Snapshot.StorageKey,
 			VmstateStorageKey: req.Snapshot.VMStateStorageKey, Networkless: true,
+			MemBytes: req.Snapshot.MemBytes,
 		}
 	}
 	resp, err := c.cli.RestoreExecution(ctx, wireReq)
@@ -500,10 +502,15 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
 	// readiness policy. It is separate from HealthcheckPath/GRPC, which
 	// only gate startup admission.
 	ReadinessProbeJSON string
+	// LivenessProbeJSON carries the deployment's primary-app liveness_probe
+	// override (ADR-078). Empty keeps the plan defaults.
+	LivenessProbeJSON string
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -566,6 +573,9 @@ type SnapshotRef struct {
 	// default-local; populated on remote compute nodes.
 	VMStateStorageKey string
 	Networkless       bool
+	// MemBytes is the snapshot's recorded guest memory length; vmmd needs it
+	// to restore companion snapshots.
+	MemBytes int64
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -680,6 +690,9 @@ func (c *VMMClient) Close() error {
 }
 
 func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return nil, err
 	}
@@ -704,35 +717,88 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
 	}
+	if err := c.confirmImageHealthcheck(ctx, app, instance, resp, false); err != nil {
+		return nil, err
+	}
 	return outcomeFromProto(resp), nil
 }
 
 // JobColdBoot starts one claimed job task through vmmd. The job path is kept
 // separate from AppSpec because it has no readiness probe or snapshot shape.
 func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
-	fields, _ := wire.FromContext(ctx)
-	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.JobColdBoot(ctx, &vmmdpb.JobColdBootRequest{
-		Instance:       spec.InstanceID,
-		AccountId:      spec.AccountID,
-		NodeId:         spec.NodeID,
-		Plan:           string(spec.Plan),
-		RunId:          spec.RunID,
-		TaskIndex:      int32(spec.TaskIndex),
-		ImageRef:       spec.ImageRef,
-		KernelKey:      spec.KernelKey,
-		BaseKey:        spec.BaseKey,
-		Command:        append([]string(nil), spec.Command...),
-		Env:            spec.Env,
-		VcpuCount:      int32(spec.VcpuCount),
-		MemSizeMib:     int32(spec.RAMMB),
-		TaskTimeoutSec: int32(spec.TaskTimeoutSec),
-		LeaseToken:     spec.LeaseToken,
-	})
+	var execution *vmmdpb.EnvironmentQualificationExecution
+	if spec.QualificationExecution != nil {
+		encoded, err := qualificationwire.ExecutionToProto(*spec.QualificationExecution)
+		if err != nil {
+			return JobVmmResult{}, err
+		}
+		execution = encoded
+		ctx, err = qualificationOutgoing(ctx, *spec.QualificationExecution)
+		if err != nil {
+			return JobVmmResult{}, err
+		}
+	} else {
+		fields, _ := wire.FromContext(ctx)
+		ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	}
+	request := &vmmdpb.JobColdBootRequest{
+		Instance:               spec.InstanceID,
+		AccountId:              spec.AccountID,
+		NodeId:                 spec.NodeID,
+		Plan:                   string(spec.Plan),
+		RunId:                  spec.RunID,
+		TaskIndex:              int32(spec.TaskIndex),
+		ImageRef:               spec.ImageRef,
+		KernelKey:              spec.KernelKey,
+		BaseKey:                spec.BaseKey,
+		Command:                append([]string(nil), spec.Command...),
+		Env:                    spec.Env,
+		VcpuCount:              int32(spec.VcpuCount),
+		MemSizeMib:             int32(spec.RAMMB),
+		TaskTimeoutSec:         int32(spec.TaskTimeoutSec),
+		LeaseToken:             spec.LeaseToken,
+		QualificationExecution: execution,
+		SealedEnv:              sealedSecretsToProto(spec.SealedEnvEntries),
+	}
+	var resp *vmmdpb.JobColdBootResponse
+	var err error
+	if spec.StartHeld {
+		resp, err = c.cli.JobColdBootHeld(ctx, request)
+	} else {
+		resp, err = c.cli.JobColdBoot(ctx, request)
+	}
 	if err != nil {
 		return JobVmmResult{}, liftErr(err)
 	}
-	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId()}, nil
+	if resp.GetStartHeld() != spec.StartHeld {
+		return JobVmmResult{}, fmt.Errorf("sched: vmmd job held-start contract mismatch: requested=%t returned=%t", spec.StartHeld, resp.GetStartHeld())
+	}
+	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId(), Netns: resp.GetNetns(),
+		HostIP: resp.GetHostIp(), GuestUID: int(resp.GetGuestUid()), StartHeld: resp.GetStartHeld()}, nil
+}
+
+func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]*vmmdpb.SealedSecret, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey})
+	}
+	return out
+}
+
+func (c *VMMClient) ReleaseJobStart(ctx context.Context, spec JobStartSpec) error {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	resp, err := c.cli.ReleaseJobStart(ctx, &vmmdpb.ReleaseJobStartRequest{Instance: spec.InstanceID})
+	if err != nil {
+		return liftErr(err)
+	}
+	if resp.GetInstance() != spec.InstanceID || !resp.GetReleased() {
+		return fmt.Errorf("sched: vmmd job start release contract mismatch")
+	}
+	return nil
 }
 
 // ExecuteExecution sends one request to an already restored disposable VM.
@@ -1000,6 +1066,9 @@ func (c *VMMClient) CreatePausedFromSnapshot(ctx context.Context, instance strin
 }
 
 func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef, keepPaused bool) (*WakeOutcome, error) {
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return nil, err
 	}
@@ -1018,6 +1087,7 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			StorageKey:        snap.StorageKey,
 			VmstateStorageKey: snap.VMStateStorageKey,
 			Networkless:       snap.Networkless,
+			MemBytes:          snap.MemBytes,
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,
@@ -1026,6 +1096,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 		return nil, liftErr(err)
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
+	}
+	if err := c.confirmImageHealthcheck(ctx, app, instance, resp, keepPaused); err != nil {
 		return nil, err
 	}
 	return outcomeFromProto(resp), nil
@@ -1441,12 +1514,27 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 // wrote at Phase 1 and returns the new instance's network
 // identifiers.
 func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID string, app AppSpec, memKey, vmstateKey, leaseToken string) (LiveMigrationAdopt, error) {
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return LiveMigrationAdopt{}, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return LiveMigrationAdopt{}, err
 	}
 	fields, _ := wire.FromContext(ctx)
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
+	}
+	// The destination's boot emits wake timeline events, which vmmd rejects
+	// without the app identity (H5-18: every migration lost its readiness and
+	// boot breakdown rows).
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instanceID
 	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
@@ -1466,6 +1554,9 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instanceID, resp.GetSupportsSecretAliases()); err != nil {
 		return LiveMigrationAdopt{}, err
+	}
+	if app.ImageHealthcheckRequired && (!resp.GetImageHealthcheckVerified() || !resp.GetSupportsImageHealthcheckMonitoring()) {
+		return LiveMigrationAdopt{}, c.rejectUnverifiedImageHealthcheck(ctx, instanceID)
 	}
 	return LiveMigrationAdopt{
 		HostIP:   resp.GetHostIp(),
@@ -1719,10 +1810,12 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
-		HealthcheckPath:        a.HealthcheckPath,
-		HealthcheckGrpc:        a.HealthcheckGRPC,
-		HealthcheckGrpcService: a.HealthcheckGRPCService,
-		ReadinessProbeJson:     a.ReadinessProbeJSON,
+		HealthcheckPath:          a.HealthcheckPath,
+		HealthcheckGrpc:          a.HealthcheckGRPC,
+		HealthcheckGrpcService:   a.HealthcheckGRPCService,
+		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
+		ReadinessProbeJson:       a.ReadinessProbeJSON,
+		LivenessProbeJson:        a.LivenessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

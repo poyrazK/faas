@@ -82,15 +82,6 @@ func (r *deploymentFilterFakeVMM) dialed() []recordedDial {
 	return out
 }
 
-func (r *deploymentFilterFakeVMM) setStream(nodeID, instanceID string, stream LogStream) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.perInstanceStream == nil {
-		r.perInstanceStream = make(map[string]LogStream)
-	}
-	r.perInstanceStream[nodeID+"/"+instanceID] = stream
-}
-
 func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string, AppSpec) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
@@ -482,12 +473,18 @@ func TestEngineStreamAppLogs_AttachesInstanceCreatedAfterFollowStarts(t *testing
 	// A follow stream can begin while the app is parked. A later wake creates
 	// a new instance ID; schedd must discover its vmmd ring without requiring
 	// the customer to restart `gregale logs --follow`.
+	stream := newProgrammableLogStream(LogLine{Seq: 1, Stream: "stderr", Line: "after wake", WrittenAt: time.Now()})
+	// A cold-booting instance is already discoverable. Hold the fake's dial
+	// lock until its ring is registered so an early reader cannot get the
+	// fake's default EOF stream and permanently miss the real fixture stream.
+	vmm.mu.Lock()
 	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateColdBooting), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
+		vmm.mu.Unlock()
 		t.Fatalf("CreateInstance: %v", err)
 	}
-	stream := newProgrammableLogStream(LogLine{Seq: 1, Stream: "stderr", Line: "after wake", WrittenAt: time.Now()})
-	vmm.setStream(state.DefaultLocalNodeName, ins.ID, stream)
+	vmm.perInstanceStream[state.DefaultLocalNodeName+"/"+ins.ID] = stream
+	vmm.mu.Unlock()
 	if err := store.UpdateInstanceState(ctx, ins.ID, string(state.StateRunning)); err != nil {
 		t.Fatalf("UpdateInstanceState: %v", err)
 	}

@@ -540,3 +540,49 @@ func TestVerifyTestProfileUsesCompletedWakeMethod(t *testing.T) {
 		})
 	}
 }
+
+// production-us hunt #8: the gateway answers GET /healthz at the edge without
+// the VM, and `test init` puts it first, so every real-VM lifecycle profile
+// failed. Wake evidence comes from the first request the app served.
+func TestTestProxySkipsEdgeHealthAnswersForWakeEvidence(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.Header().Set("X-Faas-Health-Source", "edge")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("X-Faas-Wake", "restored")
+		w.Header().Set("X-Faas-Wake-ID", "wake-456")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, recorder := newTestProxy(target)
+	defer proxy.Close()
+	for _, path := range []string{"/healthz", "/time"} {
+		response, err := http.Get(proxy.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+	}
+	got := recorder.snapshot()
+	if got.Requests != 2 || got.EdgeAnswered != 1 || got.Header != "restored" || got.WakeID != "wake-456" {
+		t.Fatalf("evidence = %+v; want the /time wake", got)
+	}
+
+	recorder.reset()
+	response, err := http.Get(proxy.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	only := recorder.snapshot()
+	err = verifyTestProfile(context.Background(), api.NewClient(upstream.URL, "token"), "api", "restored", &only)
+	if err == nil || !strings.Contains(err.Error(), "answered at the edge") {
+		t.Fatalf("edge-only run error = %v", err)
+	}
+}

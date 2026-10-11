@@ -16,7 +16,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|oom|contract")
+		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|oom|contract|customer-operation|customer-workflow")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -51,6 +51,16 @@ func main() {
 		runtime.KeepAlive(chunks)
 	case "contract":
 		runContract()
+	case "customer-operation":
+		if err := customerOperationFromEnv(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "customer-workflow":
+		if err := serveCustomerWorkflow(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown job fixture mode %q\n", os.Args[1])
 		os.Exit(2)

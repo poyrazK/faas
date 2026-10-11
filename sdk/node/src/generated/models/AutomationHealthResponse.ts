@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AutomationHealthRun } from './AutomationHealthRun.js';
 import type { AutomationHealthStepFailure } from './AutomationHealthStepFailure.js';
+import type { AutomationQueueHealth } from './AutomationQueueHealth.js';
 /**
  * Bounded aggregate automation health. Customer payloads and error strings are never returned.
  */
@@ -22,6 +23,7 @@ export type AutomationHealthResponse = {
    * Current pending runs that have not started; independent of the requested health window.
    */
   queued_run_count: number;
+  queue?: AutomationQueueHealth;
   /**
    * Succeeded runs divided by succeeded, failed and dead runs; zero when none completed.
    */

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.automation_health_response_status_counts import AutomationHealthResponseStatusCounts
     from ..models.automation_health_run import AutomationHealthRun
     from ..models.automation_health_step_failure import AutomationHealthStepFailure
+    from ..models.automation_queue_health import AutomationQueueHealth
 
 
 T = TypeVar("T", bound="AutomationHealthResponse")
@@ -36,6 +37,10 @@ class AutomationHealthResponse:
     """Succeeded runs divided by succeeded, failed and dead runs; zero when none completed."""
     status_counts: AutomationHealthResponseStatusCounts
     failed_steps: list[AutomationHealthStepFailure]
+    queue: AutomationQueueHealth | Unset = UNSET
+    """Current app-owned queue diagnostics independent of the historical health window. Each waiting run has one
+    primary reason; future wakes take precedence followed by app, tenant and workflow capacity. No payloads or
+    tenant identities, global worker occupancy or completion estimates are returned."""
     p50_duration_ms: int | Unset = UNSET
     """Median duration of completed runs with start and finish timestamps; omitted when no samples exist."""
     p95_duration_ms: int | Unset = UNSET
@@ -73,6 +78,10 @@ class AutomationHealthResponse:
             failed_steps_item = failed_steps_item_data.to_dict()
             failed_steps.append(failed_steps_item)
 
+        queue: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue, Unset):
+            queue = self.queue.to_dict()
+
         p50_duration_ms = self.p50_duration_ms
 
         p95_duration_ms = self.p95_duration_ms
@@ -106,6 +115,8 @@ class AutomationHealthResponse:
                 "failed_steps": failed_steps,
             }
         )
+        if queue is not UNSET:
+            field_dict["queue"] = queue
         if p50_duration_ms is not UNSET:
             field_dict["p50_duration_ms"] = p50_duration_ms
         if p95_duration_ms is not UNSET:
@@ -124,6 +135,7 @@ class AutomationHealthResponse:
         from ..models.automation_health_response_status_counts import AutomationHealthResponseStatusCounts
         from ..models.automation_health_run import AutomationHealthRun
         from ..models.automation_health_step_failure import AutomationHealthStepFailure
+        from ..models.automation_queue_health import AutomationQueueHealth
 
         d = dict(src_dict)
         app_slug = d.pop("app_slug")
@@ -152,6 +164,13 @@ class AutomationHealthResponse:
             failed_steps_item = AutomationHealthStepFailure.from_dict(failed_steps_item_data)
 
             failed_steps.append(failed_steps_item)
+
+        _queue = d.pop("queue", UNSET)
+        queue: AutomationQueueHealth | Unset
+        if isinstance(_queue, Unset):
+            queue = UNSET
+        else:
+            queue = AutomationQueueHealth.from_dict(_queue)
 
         p50_duration_ms = d.pop("p50_duration_ms", UNSET)
 
@@ -190,6 +209,7 @@ class AutomationHealthResponse:
             success_rate=success_rate,
             status_counts=status_counts,
             failed_steps=failed_steps,
+            queue=queue,
             p50_duration_ms=p50_duration_ms,
             p95_duration_ms=p95_duration_ms,
             last_run=last_run,

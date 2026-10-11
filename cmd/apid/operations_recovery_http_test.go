@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,13 @@ import (
 )
 
 func TestOperationsHTTPAccountRecoveryBoundary(t *testing.T) {
+	testOperationsHTTPAccountRecoveryBoundary(t, false)
+}
+func TestOperationsHTTPRecoveryReceiptBoundary(t *testing.T) {
+	testOperationsHTTPAccountRecoveryBoundary(t, true)
+}
+
+func testOperationsHTTPAccountRecoveryBoundary(t *testing.T, receipt bool) {
 	ctx := t.Context()
 	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "recovery-owner@example.com", api.PlanPro)
@@ -77,6 +85,9 @@ func TestOperationsHTTPAccountRecoveryBoundary(t *testing.T) {
 	}
 	handler := srv.handler()
 	path := "/v1/apps/" + app.Slug + "/operations/" + op.ID + "/recover"
+	if receipt {
+		path += "-receipt"
+	}
 	recovery := api.OperationRecoveryRequest{RecoveryID: "checked-export", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "verified provider ledger and output storage: no external effect exists"}
 	call := func(bearer string, body api.OperationRecoveryRequest) *httptest.ResponseRecorder {
 		t.Helper()
@@ -116,7 +127,16 @@ func TestOperationsHTTPAccountRecoveryBoundary(t *testing.T) {
 		t.Fatalf("account recovery: %d %s", w.Code, w.Body.String())
 	}
 	var got api.OperationResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+	if receipt {
+		var d api.OperationRecoveryDecision
+		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.RecoveryID != recovery.RecoveryID || d.InvocationID == inv.ID || d.ExpectedGeneration != 1 || d.RequestFingerprint == "" {
+			t.Fatal("invalid decision", d)
+		}
+		got = api.OperationResponse{ID: d.OperationID, State: d.State, Generation: d.Generation}
+	} else if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
 	current, err := store.OperationByID(ctx, account.ID, tenant.ID, op.ID)
@@ -126,6 +146,7 @@ func TestOperationsHTTPAccountRecoveryBoundary(t *testing.T) {
 	if repeat := call(ownerKey, recovery); repeat.Code != http.StatusOK || repeat.Body.String() != w.Body.String() {
 		t.Fatalf("recovery replay: %d %s", repeat.Code, repeat.Body.String())
 	}
+	acceptedRequest := recovery
 	recovery.RecoveryID = "another-check"
 	if stale := call(ownerKey, recovery); stale.Code != http.StatusConflict {
 		t.Fatalf("stale generation created another execution: %d %s", stale.Code, stale.Body.String())
@@ -133,4 +154,23 @@ func TestOperationsHTTPAccountRecoveryBoundary(t *testing.T) {
 	if err := store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, []byte(`{}`)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("abandoned execution replaced recovered work: %v", err)
 	}
+	if receipt {
+		claimed, err := store.ClaimInvocation(ctx, current.CurrentInvocationID, "", 60)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CompleteKeyedInvocation(ctx, claimed.ID, claimed.Attempts, []byte(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+		if repeated := call(ownerKey, acceptedRequest); repeated.Code != http.StatusOK || repeated.Body.String() != w.Body.String() {
+			t.Fatal("advanced work changed receipt", repeated.Code, repeated.Body.String())
+		}
+		path = strings.TrimSuffix(path, "-receipt")
+		repeated := call(ownerKey, acceptedRequest)
+		var current api.OperationResponse
+		if json.Unmarshal(repeated.Body.Bytes(), &current) != nil || current.State != api.OperationSucceeded || repeated.Code != http.StatusOK {
+			t.Fatal("legacy response stopped reporting current state", repeated.Code, repeated.Body.String())
+		}
+	}
+
 }

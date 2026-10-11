@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -152,5 +153,32 @@ func TestProjectDeployRejectsExecutionConfigurationBeforeRequest(t *testing.T) {
 				t.Fatalf("API requests = %d, want zero", got)
 			}
 		})
+	}
+}
+
+// Every other command names the app with --app <slug>; deploy's --app is the
+// shape selector, so `deploy --app my-app` used to answer only "unexpected
+// positional arguments" (production-us hunt #5, H5-26).
+func TestRunDeployAppSlugMistakePointsAtName(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_positional_guard")
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = oldErr })
+
+	if code := run([]string{"deploy", "--app", "my-app", "--no-doctor"}); code == 0 {
+		t.Fatal("deploy accepted a slug after --app")
+	}
+	if !strings.Contains(stderr.String(), "--name my-app") {
+		t.Fatalf("stderr = %q, want a pointer to --name my-app", stderr.String())
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("API requests = %d, want zero", got)
 	}
 }

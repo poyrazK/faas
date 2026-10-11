@@ -25,6 +25,7 @@ Public surface:
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
 * Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
+* `GregaleOperations` and Customer Operation transaction support for async HTTP handlers.
 """
 
 from ._rfc7807 import (
@@ -45,6 +46,16 @@ from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
 from .commit import CommitEventRouting, insert_commit_event
+from .customer_operations import (
+    CustomerOperationConflictError,
+    CustomerOperationPublicationError,
+    CustomerOperationRequest,
+    CustomerOperationTransaction,
+    awith_customer_operation_transaction,
+    customer_operation_receipt_schema,
+    customer_operation_request_digest,
+    customer_operation_request_from_headers,
+)
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -78,18 +89,25 @@ from .idempotency import (
 )
 from .issues import IssueReporter
 from .operations import (
+    CustomerOperationRequest,
     OperationCommitUnknownError,
     OperationConflictError,
     OperationEffect,
     OperationOutcome,
     OperationRequest,
     OperationTransactionResult,
+    awith_customer_operation_transaction,
     awith_operation_transaction,
+    customer_operation_receipt_schema,
+    customer_operation_request_digest,
+    customer_operation_request_from_headers,
     operation_receipt_schema,
     operation_request_digest,
     operation_request_from_headers,
+    with_customer_operation_transaction,
     with_operation_transaction,
 )
+from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
@@ -183,6 +201,12 @@ __all__ = (
     "with_dev_bridge_context",
     "insert_commit_event",
     "CommitEventRouting",
+    "CustomerOperationRequest",
+    "customer_operation_request_from_headers",
+    "customer_operation_request_digest",
+    "customer_operation_receipt_schema",
+    "with_customer_operation_transaction",
+    "awith_customer_operation_transaction",
     "OperationCommitUnknownError",
     "OperationConflictError",
     "OperationEffect",
@@ -194,4 +218,47 @@ __all__ = (
     "operation_request_digest",
     "operation_request_from_headers",
     "with_operation_transaction",
+    "CustomerOperationConflictError",
+    "CustomerOperationPublicationError",
+    "CustomerOperationRequest",
+    "CustomerOperationTransaction",
+    "OperationWorkflowBlockerResolution",
+    "OperationWorkflowBlocker",
+    "awith_customer_operation_transaction",
+    "customer_operation_receipt_schema",
+    "customer_operation_request_digest",
+    "customer_operation_request_from_headers",
+    "GregaleOperations",
+    "OperationExecutionContext",
+    "OperationHTTPError",
 )
+
+from .models.operation_workflow_blocker import OperationWorkflowBlocker
+
+from .models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+
+from .models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
+
+from .models.operation_workflow_attention_group import OperationWorkflowAttentionGroup
+
+from .models.operation_workflow_attention_summary import OperationWorkflowAttentionSummary
+
+__all__ += ("OperationWorkflowAttentionStats", "OperationWorkflowAttentionGroup", "OperationWorkflowAttentionSummary")
+
+from .models.operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
+__all__ += ("OperationWorkflowOutcomeEntry",)
+
+from .models.operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+__all__ += ("OperationWorkflowOutcomesResponse",)
+
+from .models.operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+__all__ += ("OperationWorkflowOutcomeGroup",)
+
+from .models.operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
+__all__ += ("OperationWorkflowOutcomeSummary",)
+
+from .models.operation_workflow_dependency import OperationWorkflowDependency
+__all__ += ("OperationWorkflowDependency",)
+
+from .models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+__all__ += ("OperationWorkflowRelatedInstance",)

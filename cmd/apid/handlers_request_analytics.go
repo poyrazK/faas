@@ -96,6 +96,7 @@ func (s *server) getAppRequestAnalytics(w http.ResponseWriter, r *http.Request, 
 	}
 	response, err := s.requestAnalyticsResponse(r.Context(), app, acct, window, groupBy)
 	if err != nil {
+		s.log.Warn("request analytics read failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("request analytics"))
 		return
 	}
@@ -138,6 +139,7 @@ func (s *server) getAppRequestAnalyticsTimeseries(w http.ResponseWriter, r *http
 	}
 	response, err := s.requestAnalyticsTimeseriesResponse(r.Context(), app, acct, window, groupBy, route, method)
 	if err != nil {
+		s.log.Warn("request analytics timeseries read failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("request analytics timeseries"))
 		return
 	}

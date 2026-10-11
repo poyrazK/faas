@@ -76,11 +76,42 @@ func (h *testChannelHooks) AuthorizeChannel(_ context.Context, event Event) (boo
 	return h.allowed, nil
 }
 
+type testChannelRouteReport struct {
+	endpointID string
+	channel    string
+	subscribed bool
+}
+
+type testChannelRouteReporter struct {
+	mu      sync.Mutex
+	reports []testChannelRouteReport
+	err     error
+}
+
+func (r *testChannelRouteReporter) ReportChannelRoute(_ context.Context, endpointID, channel string, subscribed bool) error {
+	r.mu.Lock()
+	r.reports = append(r.reports, testChannelRouteReport{endpointID: endpointID, channel: channel, subscribed: subscribed})
+	err := r.err
+	r.mu.Unlock()
+	return err
+}
+
+func (r *testChannelRouteReporter) snapshot() []testChannelRouteReport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]testChannelRouteReport(nil), r.reports...)
+}
+
 func newResumeTestManager(t *testing.T, history *testResumeHistory, hooks *testChannelHooks) (*Manager, *httptest.Server) {
+	return newResumeTestManagerWithReporter(t, history, hooks, nil)
+}
+
+func newResumeTestManagerWithReporter(t *testing.T, history *testResumeHistory, hooks *testChannelHooks, reporter ManagedRealtimeChannelRouteReporter) (*Manager, *httptest.Server) {
 	t.Helper()
 	m := NewManager(Config{
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
 		HistoryReader: history, ResumePollInterval: 15 * time.Millisecond,
+		ChannelRouteReporter: reporter,
 	}, hooks)
 	if err := m.RegisterEndpoint(Endpoint{
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
@@ -95,6 +126,123 @@ func newResumeTestManager(t *testing.T, history *testResumeHistory, hooks *testC
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { server.Close(); _ = m.Close() })
 	return m, server
+}
+
+func newSyntheticResumeTestManager(t *testing.T, history *testResumeHistory, hooks *testChannelHooks, reporter ManagedRealtimeChannelRouteReporter) *Manager {
+	t.Helper()
+	m := NewManager(Config{
+		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
+		HistoryReader: history, ResumePollInterval: 15 * time.Millisecond,
+		ChannelRouteReporter: reporter,
+	}, hooks)
+	if err := m.RegisterEndpoint(Endpoint{
+		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: AuthPolicy{
+			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		m.cancel()
+		m.mu.RLock()
+		connections := make([]*connection, 0, len(m.conns))
+		for _, c := range m.conns {
+			connections = append(connections, c)
+		}
+		m.mu.RUnlock()
+		for _, c := range connections {
+			c.closeOutboundQueue()
+		}
+	})
+	return m
+}
+
+func addSyntheticResumeTestConnection(t *testing.T, m *Manager) *connection {
+	t.Helper()
+	value, ok := m.endpoints.Load("resume-endpoint")
+	if !ok {
+		t.Fatal("resume endpoint is not registered")
+	}
+	endpointState := value.(*endpointState)
+	return m.addConnectionWithProtocol(endpointState, *endpointState.config.Load(), "user-123", nil, true)
+}
+
+func waitForResumeTestWorkers(t *testing.T, m *Manager) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if m.resumeCount.Load() == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("resume workers did not stop; active reservations = %d", m.resumeCount.Load())
+}
+
+func TestResumeRouteReportsOnlyFirstAndLastLocalSubscriber(t *testing.T) {
+	history := &testResumeHistory{}
+	hooks := &testChannelHooks{allowed: true}
+	reporter := &testChannelRouteReporter{}
+	m := newSyntheticResumeTestManager(t, history, hooks, reporter)
+	first, second := addSyntheticResumeTestConnection(t, m), addSyntheticResumeTestConnection(t, m)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	m.resumeSubscribe(firstCtx, first, resumeClientFrame{Type: "subscribe", Channel: "updates"})
+	m.resumeSubscribe(secondCtx, second, resumeClientFrame{Type: "subscribe", Channel: "updates"})
+	if got := reporter.snapshot(); len(got) != 1 || got[0] != (testChannelRouteReport{endpointID: "resume-endpoint", channel: "updates", subscribed: true}) {
+		t.Fatalf("reports after two subscribes = %+v, want one route add", got)
+	}
+
+	m.resumeUnsubscribe(firstCtx, first, "updates")
+	if got := reporter.snapshot(); len(got) != 1 {
+		t.Fatalf("reports while second subscriber remains = %+v, want no removal", got)
+	}
+
+	m.resumeUnsubscribe(secondCtx, second, "updates")
+	want := []testChannelRouteReport{
+		{endpointID: "resume-endpoint", channel: "updates", subscribed: true},
+		{endpointID: "resume-endpoint", channel: "updates", subscribed: false},
+	}
+	got := reporter.snapshot()
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("route reports = %+v, want %+v", got, want)
+	}
+	if routes := m.ChannelRouteSnapshot(); len(routes) != 0 {
+		t.Fatalf("routes after last unsubscribe = %+v, want empty", routes)
+	}
+	waitForResumeTestWorkers(t, m)
+}
+
+func TestResumeRouteReportFailureKeepsSubscriptionAndRevision(t *testing.T) {
+	history := &testResumeHistory{}
+	hooks := &testChannelHooks{allowed: true}
+	reporter := &testChannelRouteReporter{err: errors.New("route directory unavailable")}
+	m := newSyntheticResumeTestManager(t, history, hooks, reporter)
+	client := addSyntheticResumeTestConnection(t, m)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.resumeSubscribe(ctx, client, resumeClientFrame{Type: "subscribe", Channel: "updates"})
+	if routes := m.ChannelRouteSnapshot(); len(routes) != 1 || routes[0] != (ChannelRoute{EndpointID: "resume-endpoint", Channel: "updates"}) {
+		t.Fatalf("local route after report failure = %+v, want updates route", routes)
+	}
+	if revision := m.ChannelRouteRevision(); revision.InstanceID == "" || revision.Revision != 1 {
+		t.Fatalf("route revision after report failure = %+v, want revision 1", revision)
+	}
+	if reports := reporter.snapshot(); len(reports) != 1 || !reports[0].subscribed {
+		t.Fatalf("route reports = %+v, want one attempted add", reports)
+	}
+
+	// Restore reporting before cleanup so the test leaves no stale test route.
+	reporter.mu.Lock()
+	reporter.err = nil
+	reporter.mu.Unlock()
+	m.resumeUnsubscribe(ctx, client, "updates")
+	waitForResumeTestWorkers(t, m)
 }
 
 func TestResumeBrowserBearerSubprotocol(t *testing.T) {
@@ -248,6 +396,9 @@ func TestResumeReplayAckAndPollAcrossConnections(t *testing.T) {
 	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" || frame.LatestSequence != 3 {
 		t.Fatalf("subscribe = %+v", frame)
 	}
+	if frame := readResumeTestFrame(t, client); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("initial presence snapshot = %+v", frame)
+	}
 	for _, want := range []struct {
 		sequence int64
 		data     string
@@ -278,6 +429,9 @@ func TestResumeReplayAckAndPollAcrossConnections(t *testing.T) {
 	sendResumeTestFrame(t, next, resumeClientFrame{Type: "subscribe", Channel: "updates", After: 3})
 	if frame := readResumeTestFrame(t, next); frame.Type != "subscribed" {
 		t.Fatalf("resubscribe = %+v", frame)
+	}
+	if frame := readResumeTestFrame(t, next); frame.Type != "presence" || frame.Event != "snapshot" || frame.Channel != "updates" || !frame.Complete || len(frame.Members) != 0 {
+		t.Fatalf("reconnect presence snapshot = %+v", frame)
 	}
 	if frame := readResumeTestFrame(t, next); frame.Type != "message" || frame.Sequence != 4 || frame.MessageID != live.MessageID {
 		t.Fatalf("reconnect replay = %+v", frame)
@@ -371,8 +525,12 @@ func TestResumeHistoryFailureClosesWithRetryableCode(t *testing.T) {
 	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" {
 		t.Fatalf("subscribe = %+v", frame)
 	}
-	for range 2 {
-		_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	// Presence/control frames may be queued before the retryable close.
+	// Bound the whole wait instead of assuming a fixed frame count.
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	for {
 		_, _, err := client.ReadMessage()
 		var closeErr *websocket.CloseError
 		if errors.As(err, &closeErr) && closeErr.Code == websocket.CloseTryAgainLater {
@@ -382,5 +540,4 @@ func TestResumeHistoryFailureClosesWithRetryableCode(t *testing.T) {
 			t.Fatalf("history failure close = %v", err)
 		}
 	}
-	t.Fatal("history failure did not close v2 connection")
 }

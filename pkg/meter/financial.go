@@ -128,5 +128,14 @@ func (l *Loop) recordFinancialSample(ctx context.Context, sampler *Sampler, now 
 	}
 	// Interface observations have delayed/missing-source semantics. A successful
 	// compute sampler alone cannot establish complete transfer coverage.
-	return store.RecordFinancialSamplingWindow(ctx, minute, sampleErr == nil, false)
+	// Earlier minutes this tick caught up in full (H5-55) are complete for
+	// compute now; compute_complete only ever turns true.
+	var errs []error
+	for _, caught := range sampler.CaughtUpMinutes() {
+		if err := store.RecordFinancialSamplingWindow(ctx, caught, true, false); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	errs = append(errs, store.RecordFinancialSamplingWindow(ctx, minute, sampleErr == nil, false))
+	return errors.Join(errs...)
 }

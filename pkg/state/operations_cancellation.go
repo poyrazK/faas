@@ -39,6 +39,12 @@ func (m *MemStore) CancelOperation(_ context.Context, accountID, tenantID, opera
 	if op.State.Terminal() || op.CancellationRequested {
 		return cloneOperation(m.operationDeliveryLocked(op)), nil
 	}
+	if op.WorkflowRunID != "" {
+		return m.cancelOperationWorkflowLocked(op, generation)
+	}
+	if op.JobRunID != "" {
+		return m.cancelOperationJobLocked(op)
+	}
 	inv := m.invocations[op.CurrentInvocationID]
 	switch inv.State {
 	case InvocationDispatching:
@@ -66,6 +72,12 @@ func (s *PgStore) CancelOperation(ctx context.Context, accountID, tenantID, oper
 	snapshot, err := s.OperationByID(ctx, accountID, tenantID, operationID)
 	if err != nil {
 		return Operation{}, err
+	}
+	if snapshot.WorkflowRunID != "" {
+		return s.cancelOperationWorkflow(ctx, snapshot, generation)
+	}
+	if snapshot.JobRunID != "" {
+		return s.cancelOperationJob(ctx, snapshot, generation)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

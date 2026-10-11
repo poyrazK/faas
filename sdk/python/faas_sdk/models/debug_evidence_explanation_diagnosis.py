@@ -1,11 +1,18 @@
 from typing import Literal
 
 DebugEvidenceExplanationDiagnosis = Literal[
-    "cold_start", "insufficient_evidence", "no_issue_observed", "performance_regression", "request_failure", "slow_path"
+    "cold_start",
+    "dependency_regression",
+    "insufficient_evidence",
+    "no_issue_observed",
+    "performance_regression",
+    "request_failure",
+    "slow_path",
 ]
 
 DEBUG_EVIDENCE_EXPLANATION_DIAGNOSIS_VALUES: set[DebugEvidenceExplanationDiagnosis] = {
     "cold_start",
+    "dependency_regression",
     "insufficient_evidence",
     "no_issue_observed",
     "performance_regression",

@@ -10,10 +10,11 @@ type Subscription = eventcontract.Subscription
 type MatchReason = eventcontract.MatchReason
 
 const (
-	MatchReasonWouldDeliver    = eventcontract.MatchReasonWouldDeliver
-	MatchReasonTenantMismatch  = eventcontract.MatchReasonTenantMismatch
-	MatchReasonPatternMismatch = eventcontract.MatchReasonPatternMismatch
-	MatchReasonFilterMismatch  = eventcontract.MatchReasonFilterMismatch
+	MatchReasonSchemaVersionMismatch = eventcontract.MatchReasonSchemaVersionMismatch
+	MatchReasonWouldDeliver          = eventcontract.MatchReasonWouldDeliver
+	MatchReasonTenantMismatch        = eventcontract.MatchReasonTenantMismatch
+	MatchReasonPatternMismatch       = eventcontract.MatchReasonPatternMismatch
+	MatchReasonFilterMismatch        = eventcontract.MatchReasonFilterMismatch
 )
 
 func ValidatePattern(pattern string) error        { return eventcontract.ValidatePattern(pattern) }

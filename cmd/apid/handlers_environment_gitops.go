@@ -219,7 +219,29 @@ func (s *server) getEnvironmentGitOps(w http.ResponseWriter, r *http.Request, ac
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
+	response.WorkloadEvidence, err = s.currentEnvironmentGitOpsWorkloadEvidence(r.Context(), acct.ID, source)
+	if err != nil {
+		writeEnvironmentGitOpsError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) currentEnvironmentGitOpsWorkloadEvidence(ctx context.Context, accountID string, source state.EnvironmentGitSource) (*api.EnvironmentWorkloadActivationEvidence, error) {
+	store, ok := s.store.(state.EnvironmentGitOpsCurrentWorkloadEvidenceStore)
+	if !ok || source.Suspended || source.Detached || source.ApprovedRevisionID == "" {
+		return nil, nil
+	}
+	evidence, err := store.CurrentEnvironmentGitOpsWorkloadEvidence(ctx, accountID, source.ID)
+	if err != nil || evidence == nil {
+		return evidence, err
+	}
+	if evidence.SourceID != source.ID || evidence.EnvironmentID != source.EnvironmentID ||
+		evidence.RevisionID != source.ApprovedRevisionID || evidence.Generation != source.Generation ||
+		evidence.IntentVersion != source.IntentVersion {
+		return nil, nil
+	}
+	return evidence, nil
 }
 
 func (s *server) previewEnvironmentGitOpsAdoption(w http.ResponseWriter, r *http.Request, acct state.Account) {

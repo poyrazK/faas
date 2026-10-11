@@ -31,7 +31,7 @@ func TestOperationBuildRetryRetainsDefinition(t *testing.T) {
 	if err := os.WriteFile(source, []byte("retained source"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	spec := api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: []byte(`true`), OutputSchema: []byte(`true`), ProgressStages: []string{"generating"}}
+	spec := api.OperationDefinitionSpec{HTTPTransactionVersion: 1, Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: []byte(`true`), OutputSchema: []byte(`true`), ProgressStages: []string{"generating"}}
 	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: source, SourceBytes: 15})
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestOperationBuildRetryRetainsDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	installed, err := store.OperationDefinitionsForDeployment(ctx, acct.ID, app.ID, retried.ID)
-	if err != nil || len(installed) != 1 || installed[0].Revision != def.Revision || installed[0].ID == def.ID || installed[0].Scope != retried.Scope {
+	if err != nil || len(installed) != 1 || installed[0].Revision != def.Revision || installed[0].ID == def.ID || installed[0].Scope != retried.Scope || installed[0].Spec.HTTPTransactionVersion != 1 {
 		t.Fatalf("retry contract: %+v %v", installed, err)
 	}
 	if _, err := store.BuildByDeployment(ctx, retried.ID); err != nil {

@@ -23,12 +23,16 @@ T = TypeVar("T", bound="APIConsumerUsageStatementResponse")
 
 @_attrs_define
 class APIConsumerUsageStatementResponse:
-    """Immutable, auditable API consumer usage snapshot."""
+    """Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is
+    superseded by the next revision, and every revision after a finalized one carries only usage that arrived later.
+
+    """
 
     id: UUID
     consumer_id: UUID
     period_start: datetime.datetime
     period_end: datetime.datetime
+    revision: int
     status: APIConsumerUsageStatementResponseStatus
     billable_units: int
     unpriced_units: int
@@ -49,6 +53,8 @@ class APIConsumerUsageStatementResponse:
         period_start = self.period_start.isoformat()
 
         period_end = self.period_end.isoformat()
+
+        revision = self.revision
 
         status: str = self.status
 
@@ -87,6 +93,7 @@ class APIConsumerUsageStatementResponse:
                 "consumer_id": consumer_id,
                 "period_start": period_start,
                 "period_end": period_end,
+                "revision": revision,
                 "status": status,
                 "billable_units": billable_units,
                 "unpriced_units": unpriced_units,
@@ -116,6 +123,8 @@ class APIConsumerUsageStatementResponse:
         period_start = datetime.datetime.fromisoformat(d.pop("period_start"))
 
         period_end = datetime.datetime.fromisoformat(d.pop("period_end"))
+
+        revision = d.pop("revision")
 
         status = check_api_consumer_usage_statement_response_status(d.pop("status"))
 
@@ -162,6 +171,7 @@ class APIConsumerUsageStatementResponse:
             consumer_id=consumer_id,
             period_start=period_start,
             period_end=period_end,
+            revision=revision,
             status=status,
             billable_units=billable_units,
             unpriced_units=unpriced_units,

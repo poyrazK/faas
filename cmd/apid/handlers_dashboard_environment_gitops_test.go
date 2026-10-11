@@ -69,6 +69,26 @@ func TestEnvironmentGitOpsDashboardShowsStaleSourceEvidence(t *testing.T) {
 	}
 }
 
+func TestEnvironmentGitOpsDashboardShowsQualificationBlockersWithoutGrantingAuthority(t *testing.T) {
+	srv, _, _, _, _ := newProjectLifecycleFixture(t)
+	data := dashboard.EnvironmentGitOpsData{Project: "shop", Environment: "production", Status: &api.EnvironmentGitOpsStatusResponse{
+		Source: api.EnvironmentGitSource{CreatedAt: time.Now().UTC()},
+		WorkloadEvidence: &api.EnvironmentWorkloadActivationEvidence{
+			GraphPhase: "preparing", Candidates: 1, RetainedWorkloadsRecorded: 2, CapturesRecorded: 0, BlockingReasons: []string{"environment_capture_evidence_missing"},
+		},
+	}}
+	rec := httptest.NewRecorder()
+	if err := dashboard.Render(rec, srv.log, "", dashboard.Page{Title: "GitOps", Body: "environment_gitops", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Candidate qualification and activation", "Graph phase: <strong>preparing</strong>",
+		"environment_capture_evidence_missing", "retained workloads 2", "activation: not recorded", "do not authorize candidate activation or serving traffic"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("qualification status missing %q: %s", want, rec.Body.String())
+		}
+	}
+}
+
 func gitOpsDashboardHidden(t *testing.T, page string, name string) string {
 	t.Helper()
 	match := regexp.MustCompile(`name="` + regexp.QuoteMeta(name) + `" value="([^"]*)"`).FindStringSubmatch(page)
@@ -135,7 +155,7 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	get = dashboardGet(handler, target, cookie)
-	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "converged") || !strings.Contains(get.Body.String(), sha) {
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "partial") || !strings.Contains(get.Body.String(), sha) {
 		t.Fatalf("history page: %d %s", get.Code, get.Body.String())
 	}
 	for _, suspended := range []bool{true, false} {
@@ -152,7 +172,7 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 			t.Fatalf("suspended=%v controls: %d %s", suspended, post.Code, post.Body.String())
 		}
 		get = dashboardGet(handler, target, cookie)
-		if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "converged") || !strings.Contains(get.Body.String(), `name="suspended"`) {
+		if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "partial") || !strings.Contains(get.Body.String(), `name="suspended"`) {
 			t.Fatalf("suspended=%v status and controls unavailable: %d %s", suspended, get.Code, get.Body.String())
 		}
 		if strings.Contains(get.Body.String(), "Git checks are suspended.") != suspended {

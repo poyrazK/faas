@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func definition() api.EnvironmentDefinition {
@@ -30,12 +31,13 @@ func TestCompileQueueNamesUseCatalogContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, bindingName := range []bool{true, false} {
 				d := definition()
+				disabled := false
 				key, destination := "orders", tc.name
 				if bindingName {
 					key, destination = tc.name, "orders"
 				}
 				w := d.Workloads["api"]
-				w.QueueBindings = map[string]api.EnvironmentQueueBinding{key: {QueueName: destination, WorkloadClass: "worker"}}
+				w.QueueBindings = map[string]api.EnvironmentQueueBinding{key: {QueueName: destination, WorkloadClass: "worker", Enabled: &disabled}}
 				d.Workloads["api"] = w
 				_, err := Compile(d)
 				if (err == nil) != tc.valid {
@@ -94,6 +96,18 @@ func TestCompileRejectsUnsafeOrUnsupportedIntent(t *testing.T) {
 		{"source backslash", setWorkload(func(w *api.EnvironmentWorkload) { w.Source = &api.EnvironmentWorkloadSource{Directory: `api\outside`} })},
 		{"mutable image", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry/api:latest"}
+		})},
+		{"function missing runner", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "function"}
+		})},
+		{"function unsupported runner", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node99"}
+		})},
+		{"function Dockerfile", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22", Dockerfile: "Dockerfile"}
+		})},
+		{"source function runner", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "source", Runtime: "node22"}
 		})},
 		{"image plus directory", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry/api@sha256:" + strings.Repeat("a", 64), Directory: "api"}
@@ -170,6 +184,7 @@ func TestCompileGraphNormalizesAndRejectsDependencyCycles(t *testing.T) {
 	d.Workloads["worker"] = api.EnvironmentWorkload{
 		Runtime:         json.RawMessage(`{"execution_mode":"worker"}`),
 		QueueBindings:   map[string]api.EnvironmentQueueBinding{"orders": {QueueName: "orders", WorkloadClass: "worker"}},
+		QueueSmoke:      map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"qualification"}`)}},
 		ServiceBindings: map[string]api.EnvironmentServiceBinding{"api": {Workload: "api", EnvKey: "API_URL"}},
 	}
 	compiled, err := Compile(d)
@@ -207,6 +222,7 @@ func TestCompileQueueBindingContractLimitsAndDefaults(t *testing.T) {
 			d := definition()
 			w := d.Workloads["api"]
 			w.QueueBindings = map[string]api.EnvironmentQueueBinding{"orders": {QueueName: "orders", WorkloadClass: "worker", MaxConcurrency: tc.cap, RetryPolicy: tc.retry}}
+			w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"qualification"}`)}}
 			d.Workloads["api"] = w
 			desired, err := Compile(d)
 			if (err == nil) != tc.valid {
@@ -225,6 +241,269 @@ func TestCompileQueueBindingContractLimitsAndDefaults(t *testing.T) {
 			next, err := Compile(desired.Definition)
 			if err != nil || next.Digest != desired.Digest {
 				t.Fatalf("queue contract is not stable: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileWorkerQueueSmokeRequiresAndCanonicalizesReviewedPayload(t *testing.T) {
+	worker := definition()
+	workload := worker.Workloads["api"]
+	workload.Runtime = json.RawMessage(`{"execution_mode":"worker"}`)
+	workload.QueueBindings = map[string]api.EnvironmentQueueBinding{
+		"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "worker"},
+	}
+	workload.QueueSmoke = map[string]api.EnvironmentQueueSmoke{
+		"orders": {Payload: json.RawMessage(`{"z":2,"a":1}`)},
+	}
+	worker.Workloads["api"] = workload
+
+	compiled, err := Compile(worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(compiled.Definition.Workloads["api"].QueueSmoke["orders"].Payload); got != `{"a":1,"z":2}` {
+		t.Fatalf("queue smoke payload = %s, want canonical JSON", got)
+	}
+	second, err := Compile(compiled.Definition)
+	if err != nil || compiled.Digest != second.Digest {
+		t.Fatalf("queue smoke normalization was not stable: %v", err)
+	}
+
+	changedDefinition := compiled.Definition
+	changedWorkload := changedDefinition.Workloads["api"]
+	changedWorkload.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"a":2}`)}}
+	changedDefinition.Workloads["api"] = changedWorkload
+	changedCompiled, err := Compile(changedDefinition)
+	if err != nil || changedCompiled.Digest == compiled.Digest {
+		t.Fatalf("reviewed queue smoke payload did not affect definition digest: %v", err)
+	}
+}
+
+func TestCompileFunctionQueueSmokeRequiresHTTPPushFunction(t *testing.T) {
+	functionDefinition := func() api.EnvironmentDefinition {
+		d := definition()
+		w := d.Workloads["api"]
+		w.Source = &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22", Directory: "functions/api"}
+		w.QueueBindings = map[string]api.EnvironmentQueueBinding{
+			"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "http"},
+		}
+		w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"idempotency_key":"qualification"}`)}}
+		d.Workloads["api"] = w
+		return d
+	}
+	d := functionDefinition()
+	compiled, err := Compile(d)
+	if err != nil {
+		t.Fatalf("compile function queue smoke: %v", err)
+	}
+	if got := compiled.Definition.Workloads["api"].QueueBindings["orders"].WorkloadClass; got != "http" {
+		t.Fatalf("function queue workload class = %q", got)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*api.EnvironmentWorkload)
+	}{
+		{"HTTP pull", func(w *api.EnvironmentWorkload) {
+			binding := w.QueueBindings["orders"]
+			binding.Mode = "pull"
+			w.QueueBindings["orders"] = binding
+		}},
+		{"HTTP image", func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/api@sha256:" + strings.Repeat("a", 64)}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := functionDefinition()
+			workload := candidate.Workloads["api"]
+			tc.mutate(&workload)
+			candidate.Workloads = map[string]api.EnvironmentWorkload{"api": workload}
+			if _, err := Compile(candidate); err == nil {
+				t.Fatal("unsupported HTTP queue binding was accepted")
+			}
+		})
+	}
+}
+
+func TestCompileRejectsUnsafeWorkerQueueSmoke(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*api.EnvironmentWorkload)
+	}{
+		{"missing input", func(w *api.EnvironmentWorkload) {}},
+		{"wrong workload class", func(w *api.EnvironmentWorkload) {
+			w.QueueBindings["orders"] = api.EnvironmentQueueBinding{QueueName: "orders", Mode: "push", WorkloadClass: "job"}
+			w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{}`)}}
+		}},
+		{"unknown binding", func(w *api.EnvironmentWorkload) {
+			w.QueueBindings = nil
+			w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{}`)}}
+		}},
+		{"invalid json", func(w *api.EnvironmentWorkload) {
+			w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"x":`)}}
+		}},
+		{"oversized input", func(w *api.EnvironmentWorkload) {
+			w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`"` + strings.Repeat("x", api.EnvironmentGitOpsMaxQueueSmokePayloadBytes) + `"`)}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := definition()
+			workload := d.Workloads["api"]
+			workload.Runtime = json.RawMessage(`{"execution_mode":"worker"}`)
+			workload.QueueBindings = map[string]api.EnvironmentQueueBinding{
+				"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "worker"},
+			}
+			tc.change(&workload)
+			d.Workloads["api"] = workload
+			if _, err := Compile(d); err == nil {
+				t.Fatal("unsafe worker queue smoke was accepted")
+			}
+		})
+	}
+}
+
+func TestCompileWorkerPullQueueSmokeRequiresReviewedInput(t *testing.T) {
+	d := definition()
+	w := d.Workloads["api"]
+	w.Runtime = json.RawMessage(`{"execution_mode":"worker"}`)
+	w.QueueBindings = map[string]api.EnvironmentQueueBinding{
+		"orders": {QueueName: "orders", Mode: "pull", WorkloadClass: "worker"},
+	}
+	w.QueueSmoke = map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"idempotency_key":"qualification"}`)}}
+	d.Workloads["api"] = w
+	compiled, err := Compile(d)
+	if err != nil {
+		t.Fatalf("compile reviewed pull worker smoke: %v", err)
+	}
+	if got := compiled.Definition.Workloads["api"].QueueBindings["orders"].Mode; got != "pull" {
+		t.Fatalf("pull worker mode = %q", got)
+	}
+	w = compiled.Definition.Workloads["api"]
+	w.QueueSmoke = nil
+	d.Workloads["api"] = w
+	if _, err := Compile(d); err == nil {
+		t.Fatal("enabled pull worker binding compiled without reviewed queue_smoke")
+	}
+}
+
+func TestCompileJobSmokeFreezesBoundedArgvAndTimeout(t *testing.T) {
+	d := definition()
+	w := d.Workloads["api"]
+	w.Runtime = json.RawMessage(`{"execution_mode":"job"}`)
+	w.JobSmoke = &api.EnvironmentJobSmoke{Command: []string{"node", "scripts/smoke.js", "--once"}, TimeoutSeconds: 30}
+	d.Workloads["api"] = w
+	compiled, err := Compile(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := compiled.Definition.Workloads["api"].JobSmoke
+	if got == nil || strings.Join(got.Command, " ") != "node scripts/smoke.js --once" || got.TimeoutSeconds != 30 {
+		t.Fatalf("job smoke contract was not retained: %+v", got)
+	}
+	replayed, err := Compile(compiled.Definition)
+	if err != nil || replayed.Digest != compiled.Digest {
+		t.Fatalf("job smoke contract is not canonical across replay: %v", err)
+	}
+	changed := compiled.Definition
+	changedWorkload := changed.Workloads["api"]
+	changedWorkload.JobSmoke = &api.EnvironmentJobSmoke{Command: []string{"node", "scripts/other.js"}, TimeoutSeconds: 30}
+	changed.Workloads["api"] = changedWorkload
+	changedPlan, err := Compile(changed)
+	if err != nil || changedPlan.Digest == compiled.Digest {
+		t.Fatalf("job smoke command did not change the reviewed definition digest: %v", err)
+	}
+}
+
+func TestCompileRejectsIncompleteJobSmokeContract(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime json.RawMessage
+		smoke   *api.EnvironmentJobSmoke
+	}{
+		{name: "mode omitted", smoke: &api.EnvironmentJobSmoke{Command: []string{"node", "job.js"}, TimeoutSeconds: 30}},
+		{name: "wrong mode", runtime: json.RawMessage(`{"execution_mode":"service"}`), smoke: &api.EnvironmentJobSmoke{Command: []string{"node", "job.js"}, TimeoutSeconds: 30}},
+		{name: "empty command", runtime: json.RawMessage(`{"execution_mode":"job"}`), smoke: &api.EnvironmentJobSmoke{TimeoutSeconds: 30}},
+		{name: "empty executable", runtime: json.RawMessage(`{"execution_mode":"job"}`), smoke: &api.EnvironmentJobSmoke{Command: []string{" "}, TimeoutSeconds: 30}},
+		{name: "NUL argument", runtime: json.RawMessage(`{"execution_mode":"job"}`), smoke: &api.EnvironmentJobSmoke{Command: []string{"node", "bad\x00arg"}, TimeoutSeconds: 30}},
+		{name: "timeout missing", runtime: json.RawMessage(`{"execution_mode":"job"}`), smoke: &api.EnvironmentJobSmoke{Command: []string{"node", "job.js"}}},
+		{name: "timeout over preview cap", runtime: json.RawMessage(`{"execution_mode":"job"}`), smoke: &api.EnvironmentJobSmoke{Command: []string{"node", "job.js"}, TimeoutSeconds: api.EnvironmentGitOpsJobSmokeMaxTimeoutSeconds + 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := definition()
+			w := d.Workloads["api"]
+			w.Runtime = tc.runtime
+			w.JobSmoke = tc.smoke
+			d.Workloads["api"] = w
+			if _, err := Compile(d); err == nil {
+				t.Fatal("incomplete job smoke contract was accepted")
+			}
+		})
+	}
+}
+
+func TestCompileJobScheduleUsesCanonicalDurableContract(t *testing.T) {
+	d := definition()
+	w := d.Workloads["api"]
+	w.Runtime = json.RawMessage(`{"execution_mode":"job"}`)
+	w.Schedule = &api.EnvironmentJobSchedule{
+		Cron: " 0   3 * * * ", Timezone: "",
+		SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "skip", MissedRuns: "coalesce_latest", StartDeadlineSeconds: 300},
+		FailureRules:   &workpolicy.FailureRules{Version: workpolicy.Version, Rules: []workpolicy.FailureRule{}, UnmatchedFailure: "retry", UncertainOutcome: "hold"},
+	}
+	d.Workloads["api"] = w
+	compiled, err := Compile(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := compiled.Definition.Workloads["api"].Schedule
+	if got == nil || got.Cron != "0 3 * * *" || got.Timezone != "UTC" || got.SchedulePolicy == nil || got.SchedulePolicy.Overlap != "skip" {
+		t.Fatalf("job schedule was not normalized: %+v", got)
+	}
+	managed := false
+	for _, field := range compiled.Fields {
+		managed = managed || field.Resource == "workload/api" && field.Path == "schedule"
+	}
+	if !managed {
+		t.Fatal("schedule did not become an owned desired field")
+	}
+	replayed, err := Compile(compiled.Definition)
+	if err != nil || replayed.Digest != compiled.Digest {
+		t.Fatalf("job schedule is not canonical across replay: %v", err)
+	}
+	changed := compiled.Definition
+	changedWorkload := changed.Workloads["api"]
+	changedSchedule := *changedWorkload.Schedule
+	changedSchedule.Timezone = "Europe/Istanbul"
+	changedWorkload.Schedule = &changedSchedule
+	changed.Workloads["api"] = changedWorkload
+	changedPlan, err := Compile(changed)
+	if err != nil || changedPlan.Digest == compiled.Digest {
+		t.Fatalf("job schedule timezone did not change the reviewed digest: %v", err)
+	}
+}
+
+func TestCompileRejectsIncompleteJobScheduleContract(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		runtime  json.RawMessage
+		schedule *api.EnvironmentJobSchedule
+	}{
+		{name: "mode omitted", schedule: &api.EnvironmentJobSchedule{Cron: "0 3 * * *"}},
+		{name: "wrong mode", runtime: json.RawMessage(`{"execution_mode":"service"}`), schedule: &api.EnvironmentJobSchedule{Cron: "0 3 * * *"}},
+		{name: "empty cron", runtime: json.RawMessage(`{"execution_mode":"job"}`), schedule: &api.EnvironmentJobSchedule{}},
+		{name: "invalid cron", runtime: json.RawMessage(`{"execution_mode":"job"}`), schedule: &api.EnvironmentJobSchedule{Cron: "not cron"}},
+		{name: "invalid timezone", runtime: json.RawMessage(`{"execution_mode":"job"}`), schedule: &api.EnvironmentJobSchedule{Cron: "0 3 * * *", Timezone: "Mars/Olympus"}},
+		{name: "invalid overlap policy", runtime: json.RawMessage(`{"execution_mode":"job"}`), schedule: &api.EnvironmentJobSchedule{Cron: "0 3 * * *", SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "surprise", MissedRuns: "skip"}}},
+		{name: "invalid failure policy", runtime: json.RawMessage(`{"execution_mode":"job"}`), schedule: &api.EnvironmentJobSchedule{Cron: "0 3 * * *", FailureRules: &workpolicy.FailureRules{Version: workpolicy.Version, UnmatchedFailure: "retry", UncertainOutcome: "discard"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := definition()
+			w := d.Workloads["api"]
+			w.Runtime, w.Schedule = tc.runtime, tc.schedule
+			d.Workloads["api"] = w
+			if _, err := Compile(d); err == nil {
+				t.Fatal("invalid job schedule contract was accepted")
 			}
 		})
 	}

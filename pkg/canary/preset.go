@@ -292,6 +292,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				}
 			}
 		}
+		if !p.profileGateRecoveryReady(ctx, row, &stats) {
+			continue
+		}
 		if !p.routeHealthRecoveryReady(ctx, row, &stats) {
 			continue
 		}
@@ -312,9 +315,10 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		// Advance through APID's atomic state transition. The endpoint
 		// derives nextStage.Percent from the persisted preset, so the
 		// runtime cannot apply a stale or caller-invented traffic value.
-		if _, err := p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep); err != nil {
+		response, err := p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep)
+		if err != nil {
 			var problem *api.Problem
-			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked) {
+			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked || problem.Code == api.CodeProfileGateBlocked) {
 				stats.SkippedRouteGate++
 				continue
 			}
@@ -326,6 +330,10 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 					c.Inc()
 				}
 			}
+			continue
+		}
+		if response.ProfileGate != nil && response.ProfileGate.Status == "rolled_back" {
+			stats.Aborted++
 			continue
 		}
 		stats.Advanced++

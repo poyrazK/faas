@@ -20,7 +20,7 @@ func cmdRoutesGate(args []string) int {
 	var mode string
 	var revision int64
 	if action == "set" {
-		fs.StringVar(&mode, "mode", "", "report findings or enforce them before a canary advance")
+		fs.StringVar(&mode, "mode", "", "report or enforce lifecycle traffic checks and canary route requirements")
 		fs.Int64Var(&revision, "expected-revision", -1, "current gate revision; use 0 initially")
 	}
 	if err := fs.Parse(flags); err != nil {

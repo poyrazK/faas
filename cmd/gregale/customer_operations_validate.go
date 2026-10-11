@@ -163,7 +163,7 @@ func renderCustomerOperationValidation(out io.Writer, report customerOperationVa
 		return json.NewEncoder(out).Encode(report)
 	}
 	for _, d := range report.Definitions {
-		if _, err := fmt.Fprintf(out, "Validated %s\trevision=%s\t%s %s\tsample_input=%t\n", d.Name, d.Revision, d.Spec.Method, d.Spec.Path, d.InputValidated); err != nil {
+		if _, err := fmt.Fprintf(out, "Validated %s\trevision=%s\t%s %s\tsample_input=%t\thttp_transaction_version=%d\n", d.Name, d.Revision, d.Spec.Method, d.Spec.Path, d.InputValidated, d.Spec.HTTPTransactionVersion); err != nil {
 			return err
 		}
 	}

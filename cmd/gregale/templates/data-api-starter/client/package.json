@@ -1,0 +1,25 @@
+{
+  "name": "gregale-data-api-starter-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.browser.json",
+    "build": "tsc",
+    "example": "npm run build && node example.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:authorization": "npm run build && node test/authorization.mjs",
+    "build:browser": "tsc -p tsconfig.browser.json && node tools/build-browser.mjs",
+    "serve:browser": "node tools/serve-browser.mjs"
+  },
+  "dependencies": {
+    "@gregale/data": "file:vendor/gregale-data.tgz"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "esbuild": "0.25.12"
+  }
+}

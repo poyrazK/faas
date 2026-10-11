@@ -12,7 +12,7 @@ export type PlatformTenantInvocationResponse = {
   path: string;
   attempts: number;
   /**
-   * JSON result returned by the guest
+   * JSON result returned by the guest, when available.
    */
   result?: any;
   last_error?: string;

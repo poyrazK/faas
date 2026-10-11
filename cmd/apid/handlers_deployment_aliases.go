@@ -25,7 +25,13 @@ func (s *server) listDeploymentAliases(w http.ResponseWriter, r *http.Request, a
 	}
 	resp := api.DeploymentAliasListResponse{Items: make([]api.DeploymentAliasResponse, 0, len(rows))}
 	for _, row := range rows {
-		resp.Items = append(resp.Items, deploymentAliasResponse(row, app.ID, s.domain))
+		item := deploymentAliasResponse(row, app.ID, s.domain)
+		// hunt #8: an alias to a superseded deployment stops serving; say so
+		// in the list instead of leaving the customer to find it by a 409.
+		if dep, err := s.store.DeploymentByID(r.Context(), row.DeploymentID); err == nil {
+			item.DeploymentStatus = string(dep.Status)
+		}
+		resp.Items = append(resp.Items, item)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

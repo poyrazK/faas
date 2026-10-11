@@ -8,6 +8,8 @@ package builderd
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // VM is the small builder-VM surface the orchestrator consumes.
@@ -131,6 +133,8 @@ type BuildOutcome struct {
 	// actually ran inside the builder VM.
 	BuildkitVer string
 	RailpackVer string
+	// DevPatch is guest-init's ADR-740 source map for a successful build.
+	DevPatch *api.DevPatchSourceMap
 	// Dependency-cache publication is best-effort and never changes the build
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool

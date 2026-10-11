@@ -22,17 +22,26 @@ var (
 // The victim is removed from the staging tree first because it may have been
 // introduced by an earlier app layer; the marker then hides the same name from
 // the shared base drive after guest-init mounts the upper filesystem.
-func applyOverlayWhiteout(parent, victimName string) error {
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+func applyOverlayWhiteout(parent, victimName string, markerPaths ...string) error {
+	if err := mkdirImageDirectories(parent, 0o755); err != nil {
 		return fmt.Errorf("create parent: %w", err)
 	}
 	victim := filepath.Join(parent, victimName)
 	if err := os.RemoveAll(victim); err != nil {
 		return fmt.Errorf("remove upper victim: %w", err)
 	}
+	marker := victim
+	if len(markerPaths) > 0 && markerPaths[0] != "" {
+		marker = markerPaths[0]
+	}
+	if marker != victim {
+		if err := os.RemoveAll(marker); err != nil {
+			return fmt.Errorf("replace existing marker: %w", err)
+		}
+	}
 	// A whiteout is metadata, so keep it inaccessible even if an artifact is
 	// accidentally inspected outside an overlay mount.
-	if err := overlayMknod(victim, unix.S_IFCHR|0o600, int(unix.Mkdev(0, 0))); err != nil {
+	if err := overlayMknod(marker, unix.S_IFCHR|0o600, int(unix.Mkdev(0, 0))); err != nil {
 		return fmt.Errorf("create overlay character device: %w", err)
 	}
 	return nil
@@ -44,7 +53,7 @@ func applyOverlayWhiteout(parent, victimName string) error {
 // form used by guest-init, which does not mount with userxattr. Refuse when
 // the current owner cannot create that metadata; another namespace is not proof.
 func applyOverlayOpaque(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mkdirImageDirectories(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 	if err := clearDir(dir); err != nil {

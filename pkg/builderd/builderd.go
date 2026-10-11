@@ -151,6 +151,7 @@ type Config struct {
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
 	buildPublisher buildpublisher.Signer
+	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
 	notif          Notifier
 	vm             VM
@@ -503,6 +504,8 @@ type BuildResult struct {
 	BuildkitVer       string
 	RailpackVer       string
 	BuilderBaseDigest string
+	RuntimeBaseRef    string
+	DevPatch          *api.DevPatchSourceMap
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -777,6 +780,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 
+	if b.validatorBuild != nil {
+		if err := b.validatorBuild(ctx, app.ID, dep.ID, dep.SourcePath, dep.SourceRoot); err != nil {
+			b.markFailed(ctx, build, state.FailureInfra, "validator artifact unavailable", buildStart)
+			return BuildResult{}, err
+		}
+	}
+
 	var fw Framework
 	var ver string
 	frozen, _ := dep.ScopedWorkloadRuntime()
@@ -818,7 +828,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// Railpack starts from railpack-runtime and imaged correctly rejects the
 	// resulting OCI chain as incompatible with the Gregale runner base.
 	runtimeName := app.Runtime
-	runtimeBaseRef, baseErr := resolveBuildRuntimeBaseRef(runtimeName, fw, os.Getenv)
+	runtimeBaseRef, baseErr := resolveDeploymentRuntimeBaseRef(ctx, b.store, app, dep, fw, os.Getenv)
 	if baseErr != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
@@ -864,7 +874,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
-				BuilderBaseDigest: buildEnvironment.BaseDigest}, buildStart)
+				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+				DevPatch: cached.Toolchain.DevPatch}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
 		}
@@ -1191,7 +1202,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
 			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
-			BuilderBaseDigest: buildEnvironment.BaseDigest}, buildStart)
+			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef,
+			DevPatch: out.DevPatch}, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
@@ -1202,6 +1214,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
 			BuildkitVer: result.BuildkitVer,
 			RailpackVer: result.RailpackVer,
+			DevPatch:    result.DevPatch,
 		}); err != nil {
 			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 		}
@@ -1360,7 +1373,9 @@ func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.F
 	// status flip above. The deployment lookup matches the one
 	// in emitBuildSucceeded (line 619) so we don't have a second
 	// store reader.
-	if _, serr := b.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), msg); serr != nil {
+	// ErrNotFound means no stage was in flight (the build failed after its
+	// last stage closed, e.g. during artifact export): nothing to stamp.
+	if _, serr := b.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), msg); serr != nil && !errors.Is(serr, state.ErrNotFound) {
 		b.log.Warn("builderd: stamp failed stage", "deployment", depID, "err", serr)
 	}
 	// ADR-048 §4: builder-time metering on terminal build
@@ -1508,8 +1523,9 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,
 		BuildkitVer: result.BuildkitVer, RailpackVer: result.RailpackVer,
-		BaseDigest: result.BuilderBaseDigest,
-		StartedAt:  build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
+		BaseDigest: result.BuilderBaseDigest, RuntimeBaseRef: result.RuntimeBaseRef,
+		StartedAt: build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
+		DevPatch: result.DevPatch,
 	}
 	if err := retryStateMutation(ctx, func() error {
 		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
@@ -1811,4 +1827,11 @@ func defaultCacheDir(cfg Config) string {
 		return cfg.CacheDir
 	}
 	return "/var/cache/faas/builds"
+}
+
+// WithValidatorBuild installs publication from the verified source archive,
+// before cache lookup, VM build and deployment priming.
+func (b *Builderd) WithValidatorBuild(build func(context.Context, string, string, string, string) error) *Builderd {
+	b.validatorBuild = build
+	return b
 }

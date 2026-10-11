@@ -61,6 +61,9 @@ func (s *PgStore) prepareServiceBinding(ctx context.Context, tx pgx.Tx, target D
 	}
 	// Explicit worker grants are rechecked even when an abort recipient
 	// already serves all traffic. A scheduler's later drain cleanup has no grant.
+	if err := s.authorizeProductionLifecycle(ctx, tx, recipientID, action == "abort"); err != nil {
+		return target, err
+	}
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return target, err
 	}

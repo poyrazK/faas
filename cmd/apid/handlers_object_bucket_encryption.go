@@ -18,7 +18,7 @@ func (s *server) bucketEncryptionService(w http.ResponseWriter, r *http.Request,
 	}
 	st, stored := s.store.(state.ObjectBucketEncryptionStore)
 	native, supported := p.(objectstorage.BucketEncryptionProvider)
-	metrics, measured := s.store.(state.ObjectStorageProviderUsageStore)
+	_, measured := s.store.(state.ObjectStorageProviderUsageStore)
 	if !stored || !supported || !measured {
 		bucketProblem(w, objectstorage.ErrUnsupported)
 		return b, objectstorage.BucketEncryptionService{}, false
@@ -27,7 +27,7 @@ func (s *server) bucketEncryptionService(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return b, objectstorage.BucketEncryptionService{}, false
 	}
-	return b, objectstorage.BucketEncryptionService{Store: st, Provider: native, BeforeRequest: objectstorage.VersioningRequestRecorder(metrics, b.ID)}, true
+	return b, objectstorage.BucketEncryptionService{Store: st, Provider: native, BeforeRequest: s.customerObjectRequestRecorder(b)}, true
 }
 
 func (s *server) getObjectBucketEncryption(w http.ResponseWriter, r *http.Request, acct state.Account) {

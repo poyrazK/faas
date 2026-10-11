@@ -179,11 +179,15 @@ func cmdDLQReplay(args []string) int {
 }
 
 func cmdDLQPurge(args []string) int {
-	flags, pos := splitArgsForFlags(args, "all")
-	usage := "usage: gregale dlq purge <app> [<event-id> | --all] [--limit N]"
+	flags, pos := splitArgsForFlags(args, "all", "yes", "quiet")
+	usage := "usage: gregale dlq purge <app> [<event-id> | --all [--yes]] [--limit N]"
 	fs := dlqFlagSet("dlq purge", usage)
 	all := fs.Bool("all", false, "purge all events, repeating until the app is empty")
 	limit := fs.Int("limit", 200, "page size while purging all (1..200)")
+	// hunt #8: --all permanently deleted every dead letter with no prompt and
+	// rejected the --yes other destructive commands accept (H8-22).
+	yes := fs.Bool("yes", false, "skip the --all confirmation (for scripts)")
+	quiet := fs.Bool("quiet", false, "alias of --yes")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -199,6 +203,17 @@ func cmdDLQPurge(args []string) int {
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
+	}
+	if *all {
+		if code := requireAutomationConfirmation(*yes || *quiet, "--yes"); code != 0 {
+			return code
+		}
+	}
+	if *all && !*yes && !*quiet {
+		_, _ = fmt.Fprintf(osStderr, "About to permanently delete every dead-letter event for %s; they cannot be replayed afterwards.\n", pos[0])
+		if !requireTyped("purge dead letters") {
+			return 1
+		}
 	}
 	client, err := authedClient()
 	if err != nil {

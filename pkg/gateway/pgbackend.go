@@ -302,6 +302,8 @@ type PGBackend struct {
 	// row's traffic_percent change invalidates the in-memory cache
 	// without restarting the edge. Tests inject a fake Store.
 	store deploymentWeightsStore
+	// ADR-693: serialize read/install/receipt; striped locks bound memory.
+	weightsRefresh [64]weightsRefreshLock
 
 	// certIssuer (ADR-100 / issue #879) is the per-surface
 	// cert-remint seam. nil = feature dark; the notify subscriber
@@ -419,6 +421,10 @@ type PGBackend struct {
 
 	smokeMu         sync.Mutex
 	smokeChallenges map[string][]deploymentSmokeChallenge
+	// probeMu/probeChallenges hold ADR-847 route probe tokens, separate
+	// from smoke tokens so a probe never authorizes the smoke bypass.
+	probeMu         sync.Mutex
+	probeChallenges map[string][]deploymentSmokeChallenge
 }
 
 type deploymentSmokeChallenge struct {
@@ -1084,6 +1090,21 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	return app, true
 }
 
+// PrepareRouteTarget gives a kind=route target the routing state Lookup
+// gives a host it resolves: production deployment weights and the cached App.
+func (b *PGBackend) PrepareRouteTarget(ctx context.Context, app App) bool {
+	if app.PinnedDeploymentID != "" || app.DynamicRoute || app.EnvironmentNotReady {
+		return true
+	}
+	if !b.prepareProductionWeights(ctx, app) {
+		return false
+	}
+	if _, cached := b.getApp(app.ID); !cached {
+		b.putApp(app)
+	}
+	return true
+}
+
 // prepareProductionWeights hydrates weights once before an ordinary route can
 // use targets learned from any scope. Exact deployment routes use their own
 // target sets and do not require production to exist.
@@ -1356,9 +1377,49 @@ func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstance
 	return PickResult{Target: t, OK: true, Picked: chosen}
 }
 
+// PinnedDeployment is the gateway-side projection of the deployment an alias
+// pins: only what the not-serving refusal renders.
+type PinnedDeployment struct {
+	ID       string
+	Revision int
+	Status   string
+	Live     bool
+}
+
+// PinnedDeploymentLookup reads one deployment's lifecycle state. The
+// production weights store (cmd/gatewayd-internal weightsStoreAdapter)
+// implements it; the picker itself never needs it.
+type PinnedDeploymentLookup interface {
+	PinnedDeployment(ctx context.Context, deploymentID string) (PinnedDeployment, error)
+}
+
+// The handler consults the production backend through this optional
+// interface; keep the wiring a compile error rather than a silent fallback.
+var _ pinnedDeploymentStatusReader = (*PGBackend)(nil)
+
+// PinnedDeploymentStatus reports whether an alias-pinned deployment still
+// serves, with a vN label and its status for the refusal message. ok is
+// false when the store cannot answer.
+func (b *PGBackend) PinnedDeploymentStatus(ctx context.Context, deploymentID string) (bool, string, string, bool) {
+	lookup, isLookup := b.store.(PinnedDeploymentLookup)
+	if !isLookup {
+		return false, "", "", false
+	}
+	dep, err := lookup.PinnedDeployment(ctx, deploymentID)
+	if err != nil {
+		return false, "", "", false
+	}
+	label := dep.ID
+	if dep.Revision > 0 {
+		label = fmt.Sprintf("v%d", dep.Revision)
+	}
+	return dep.Live, label, dep.Status, true
+}
+
 // PickForDeployment selects only from deploymentID's routable target set.
 // It is intentionally separate from the weighted customer picker: an
 // authenticated promotion smoke must never verify a stable sibling by chance.
+
 func (b *PGBackend) PickForDeployment(appID, deploymentID string) PickResult {
 	if b == nil || appID == "" || deploymentID == "" {
 		return PickResult{}
@@ -2037,13 +2098,18 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		// cmd/gatewayd-internal so this branch is a test seam.
 		return nil
 	}
-	rows, err := b.store.LiveDeployments(ctx, appID)
+	unlock, err := b.lockWeightsRefresh(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	snapshot, err := readDeploymentWeightsSnapshot(ctx, b.store, appID)
 	if err != nil {
 		return fmt.Errorf("gatewayd-internal: refresh deployment weights app=%s: %w", appID, err)
 	}
+	rows := snapshot.Rows
 	next := buildDeploymentWeights(rows)
 	b.tgtMu.Lock()
-	defer b.tgtMu.Unlock()
 	picker, ok := b.appsPicker[appID]
 	if !ok {
 		picker = &appPicker{sets: map[string]*targetSet{}}
@@ -2067,6 +2133,18 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 	for id, set := range picker.sets {
 		if len(set.entries) == 0 && !pickerHasDeploymentByID(next, id) {
 			delete(picker.sets, id)
+		}
+	}
+	b.tgtMu.Unlock()
+	if observer, ok := b.store.(InstalledWeightsSnapshotObserver); ok {
+		if err := observer.DeploymentWeightsSnapshotInstalled(ctx, appID, snapshot); err != nil {
+			return fmt.Errorf("confirm installed deployment snapshot: %w", err)
+		}
+		return nil
+	}
+	if observer, ok := b.store.(InstalledWeightsObserver); ok {
+		if err := observer.DeploymentWeightsInstalled(ctx, appID, rows); err != nil {
+			return fmt.Errorf("confirm installed deployment weights: %w", err)
 		}
 	}
 	return nil
@@ -2499,17 +2577,31 @@ func (b *PGBackend) ResetEdgeRules() {
 	b.edgeRules.Reset()
 }
 
+// InvalidateEdgeRuleHosts drops only the cached rule sets a mutation's
+// match_host patterns can reach. Matchers without host-scoped invalidation
+// fall back to the wholesale Reset.
+func (b *PGBackend) InvalidateEdgeRuleHosts(patterns []string) {
+	if b.edgeRules == nil {
+		return
+	}
+	if matcher, ok := b.edgeRules.(interface{ InvalidateHosts([]string) }); ok {
+		matcher.InvalidateHosts(patterns)
+		return
+	}
+	b.edgeRules.Reset()
+}
+
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
-func (b *PGBackend) BeginEdgeRuleConvergence(hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ BeginConvergence([]string, int64) }); ok {
-		matcher.BeginConvergence(hosts, generation)
+func (b *PGBackend) BeginEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ BeginConvergence(string, []string, int64) }); ok {
+		matcher.BeginConvergence(accountID, hosts, generation)
 	}
 }
 
-func (b *PGBackend) EndEdgeRuleConvergence(hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ EndConvergence([]string, int64) }); ok {
-		matcher.EndConvergence(hosts, generation)
+func (b *PGBackend) EndEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface{ EndConvergence(string, []string, int64) }); ok {
+		matcher.EndConvergence(accountID, hosts, generation)
 	}
 }
 

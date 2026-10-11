@@ -21,11 +21,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// resolvedTempDir returns t.TempDir() with symlinks resolved. On macOS
+// /var is a symlink to /private/var, and gregale start keys its session by
+// filepath.Abs of the working directory, which resolves through it.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func startTestEnvironment(t *testing.T) (*bytes.Buffer, func() string) {
 	t.Helper()
 	resetJSONOut(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_TOKEN", "start-test-token")
 	oldTTY := testOnlyTTY
 	tty := true
@@ -38,7 +52,7 @@ func startTestEnvironment(t *testing.T) (*bytes.Buffer, func() string) {
 
 func startTestSource(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "first-app")
+	dir := filepath.Join(resolvedTempDir(t), "first-app")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +242,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 
 func TestCmdStartResumeDoesNotDeploy(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
-	scope := t.TempDir()
+	scope := resolvedTempDir(t)
 	withCwd(t, scope)
 	var mutations atomic.Int32
 	var reads atomic.Int32
@@ -279,7 +293,7 @@ func TestCmdStartResumeRejectsIdentityMismatch(t *testing.T) {
 	for _, mismatch := range []string{"API", "account", "app"} {
 		t.Run(mismatch, func(t *testing.T) {
 			_, stderr := startTestEnvironment(t)
-			scope := t.TempDir()
+			scope := resolvedTempDir(t)
 			withCwd(t, scope)
 			var mutations atomic.Int32
 			startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -386,7 +400,7 @@ func TestStartPromptEOFNeverConfirmsAndCancellationReturns(t *testing.T) {
 
 func TestStartSessionProtectionAndLock(t *testing.T) {
 	startTestEnvironment(t)
-	scope := t.TempDir()
+	scope := resolvedTempDir(t)
 	path, err := startSessionPath(scope)
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +430,7 @@ func TestStartSessionProtectionAndLock(t *testing.T) {
 
 func TestStartStarterRefusesExistingFiles(t *testing.T) {
 	startTestEnvironment(t)
-	source := t.TempDir()
+	source := resolvedTempDir(t)
 	file := filepath.Join(source, "server.js")
 	if err := os.WriteFile(file, []byte("customer work"), 0o600); err != nil {
 		t.Fatal(err)
@@ -462,7 +476,11 @@ func TestStartBrowserLoginKeepsPromptInputAndCredentialSeparate(t *testing.T) {
 
 func TestStartSelectsWorkspaceService(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
-	root := t.TempDir()
+	// The runner reports the resolved working directory (macOS: /private/var).
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["packages/*"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

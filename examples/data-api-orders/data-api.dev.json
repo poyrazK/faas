@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "migrations": "migrations",
+  "seed": "seed.sql",
+  "output": "database.types.ts",
+  "identities": {
+    "buyer": { "subject": "customer-a", "claims": { "tenant": "shop-a" } },
+    "other": { "subject": "customer-b", "claims": { "tenant": "shop-b" } }
+  },
+  "verify": { "collection": "data-api.requests.json", "scenarios": ["orders-isolation"] }
+}

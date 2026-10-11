@@ -425,3 +425,37 @@ func TestStepToPercentAndSiblingAdapter(t *testing.T) {
 		t.Fatalf("toHelperSiblings = %#v, want copied IDs and weights", got)
 	}
 }
+
+// production-us hunt #7 (H5-62): a canary aborted at its 5% step for 96% 5xx
+// was offered by the release summary as the rollback target, and a bare
+// `gregale rollback` would have restored it. A candidate aborted before it
+// ever completed is never an implicit rollback target.
+func TestMemStore_AbortedCanaryIsNotAnImplicitRollbackTarget(t *testing.T) {
+	m, ctx, _, app, fixture := memDeploymentFixture(t)
+	now := time.Now().UTC()
+	stable := fixture
+	stable.ID = uuid.NewString()
+	stable.Status = DeployLive
+	stable.Scope = "production"
+	stable.RolloutState = "complete"
+	stable.TrafficPercent = 95
+	stable.CreatedAt = now.Add(-time.Minute)
+	seedCanaryDeployment(m, stable)
+
+	candidate := fixture
+	candidate.ID = uuid.NewString()
+	candidate.Status = DeployLive
+	candidate.Scope = "production"
+	candidate.RolloutState = "rolling_out"
+	candidate.CanaryTotalSteps = 3
+	candidate.TrafficPercent = 5
+	candidate.CreatedAt = now
+	seedCanaryDeployment(m, candidate)
+
+	if _, _, err := m.RecoverRolloutForDeployment(ctx, app.ID, candidate.ID, stable.ID, "abort", "circuit breaker: 5xx error rate regression"); err != nil {
+		t.Fatalf("RecoverRolloutForDeployment: %v", err)
+	}
+	if target, err := m.LatestSupersededDeployment(ctx, app.ID); err == nil && target.ID == candidate.ID {
+		t.Fatalf("aborted canary %s offered as the rollback target", candidate.ID)
+	}
+}

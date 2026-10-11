@@ -110,6 +110,44 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	}, nil
 }
 
+// describeDevPostgres returns the safe state of the automatically named
+// database whose DATABASE_URL binding belongs to this developer app, without
+// creating or changing anything. A same-named database without that binding
+// is not reported, matching cleanupDevPostgres's ownership rule.
+func (s *server) describeDevPostgres(ctx context.Context, app state.App) (*api.DevPostgresResponse, error) {
+	if s.managedPostgres == nil || s.managedPostgresBindings == nil {
+		return nil, nil
+	}
+	databases, err := s.managedPostgres.List(ctx, app.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	for _, database := range databases {
+		if database.Name != app.Slug {
+			continue
+		}
+		bindings, listErr := s.managedPostgresBindings.List(ctx, app.AccountID, database.ID)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, binding := range bindings {
+			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || binding.EnvironmentKey != devPostgresEnvironmentKey {
+				continue
+			}
+			return &api.DevPostgresResponse{
+				DatabaseID:     database.ID,
+				Name:           database.Name,
+				State:          string(database.State),
+				BindingID:      binding.ID,
+				BindingState:   string(binding.State),
+				EnvironmentKey: binding.EnvironmentKey,
+			}, nil
+		}
+		return nil, nil
+	}
+	return nil, nil
+}
+
 // cleanupDevPostgres removes only the automatically named database when its
 // DATABASE_URL binding belongs to this developer app. A database with the
 // same name but no matching binding is never touched, which keeps explicit

@@ -27,6 +27,14 @@ func TestRenderUsesEveryPlanAndCanonicalValues(t *testing.T) {
 				t.Errorf("plan %q missing canonical value %q", plan, want)
 			}
 		}
+		leaseRow := fmt.Sprintf("| **%s** | %d | %dh |", titlePlan(plan), limits.DeveloperApps, limits.DeveloperLeaseMaxHours)
+		if !strings.Contains(out, leaseRow) {
+			t.Errorf("plan %q missing developer lease row %q", plan, leaseRow)
+		}
+	}
+	// ErrPlanLimitDeveloperApps/Lease link to this anchor.
+	if !strings.Contains(out, "## Developer environments") {
+		t.Errorf("render missing the developer-environments section")
 	}
 }
 

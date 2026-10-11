@@ -275,9 +275,18 @@ func TestCSP_HeaderMatchesDashboardSpec(t *testing.T) {
 		"connect-src 'self'; " +
 		"frame-ancestors 'none'; " +
 		"base-uri 'none'; " +
-		"form-action 'self' https://*.stripe.com'"
+		"form-action 'self' https://*.stripe.com"
 	if got != want {
 		t.Errorf("CSP wire mismatch:\n got:  %s\n want: %s", got, want)
+	}
+}
+
+// TestCSP_HostSourcesAreUnquoted pins CSP3 source grammar: only keywords and
+// nonces are quoted, so the header never carries an odd number of quotes.
+func TestCSP_HostSourcesAreUnquoted(t *testing.T) {
+	got := httpsec.BuildCSPForTest("abc123XYZ-_abc123XYZ")
+	if strings.Count(got, "'")%2 != 0 || strings.Contains(got, ".com'") {
+		t.Fatalf("CSP has a stray quote: %s", got)
 	}
 }
 

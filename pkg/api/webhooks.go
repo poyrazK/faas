@@ -75,20 +75,33 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
+	"realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped",
+	"realtime.notification.sent",
+	"realtime.notification.failed",
+	"realtime.notification.expired",
+	"realtime.notification.cancelled",
+	"realtime.notification.superseded",
+
+	"realtime.message.read",
+	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
+	"profile.route_regressed", "profile.route_recovered",
 	"operation.effect",
 	"app.parked", "app.woken",
+	"app.health.changed",
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
 	"job.finished",
 	"operation.finished",
 	"usage_statement.finalized",
+	"consumer.usage_threshold",
 	"debug.regression.detected", "debug.regression.resolved",
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
-	"routes.monitor.violated", "routes.monitor.recovered",
+	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
-	"workflow.finished",
+	"workflow.finished", "automation.paused",
+	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 }
 
 // Account receivers intentionally cannot use the app-level all-events

@@ -173,6 +173,9 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if !s.checkEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
+		return
+	}
 	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -200,6 +203,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		Comparison:                      state.AlertComparison(req.Comparison),
 		Threshold:                       req.Threshold,
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
+		EventSubscriptionID:             req.EventSubscriptionID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
@@ -688,6 +692,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		Comparison:                      string(r.Comparison),
 		Threshold:                       r.Threshold,
 		WindowSpec:                      string(r.WindowSpec),
+		EventSubscriptionID:             r.EventSubscriptionID,
 		FailureSource:                   string(r.FailureSource),
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
@@ -772,6 +777,9 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
+	if p := validateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
+		return p
+	}
 	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
 		return p
 	}
@@ -832,6 +840,9 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // create path. Cooldown is optional on update so a nil merge is
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
+	if p := validateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
+		return p
+	}
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
 		return api.ErrAlertRuleInvalid("post-deploy rollback requires an app-scoped rule")
 	}
@@ -943,6 +954,9 @@ func validateFailureSourceFamily(req api.CreateAlertRuleRequest) *api.Problem {
 // every other metric needs it empty. Used by the metric-family
 // swap check in updateAlertRule.
 func alertRuleFamily(m state.AlertMetric) string {
+	if api.IsEventConsumerAlertMetric(string(m)) {
+		return "event_consumer"
+	}
 	if m == state.AlertMetricFailedInvocs {
 		return alertRuleMetricFailedInvocations
 	}

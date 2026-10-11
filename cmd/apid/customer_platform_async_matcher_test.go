@@ -15,7 +15,7 @@ func (m starterAsyncMatcher) MatchAsync(_ context.Context, _, path, method strin
 	}
 	return &gateway.EdgeRuleAsyncResolved{ID: "starter-documents-async", AppID: m.appID, AccountID: m.accountID}
 }
-func (starterAsyncMatcher) Converging(host string) bool { return false }
+func (starterAsyncMatcher) Converging(string, string) bool { return false }
 func (starterAsyncMatcher) MatchRoute(ctx context.Context, host, path, method string) *gateway.EdgeRuleResolved {
 	return nil
 }

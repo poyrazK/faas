@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -117,6 +119,17 @@ func (c *Client) Send(ctx context.Context, connectionID string, message Message)
 	}, nil)
 }
 
+// SendToPrincipal queues a live-only message for every active connection
+// matching the endpoint and verified principal on this realtime node.
+func (c *Client) SendToPrincipal(ctx context.Context, endpointID string, request api.ManagedRealtimePrincipalMessageRequest, message Message) (PrincipalSendStatus, error) {
+	var status PrincipalSendStatus
+	err := c.do(ctx, http.MethodPost, "/internal/endpoints/"+pathPart(endpointID)+"/principals:send", api.ManagedRealtimePrincipalMessageRequest{
+		Principal: request.Principal, DataBase64: encodeMessage(message), Binary: message.Binary,
+		MessageID: request.MessageID, RequestReceipt: request.RequestReceipt, Delivery: request.Delivery,
+	}, &status)
+	return status, err
+}
+
 // CloseConnection closes one live connection.
 func (c *Client) CloseConnection(ctx context.Context, connectionID, reason string) error {
 	return c.do(ctx, http.MethodPost, "/internal/connections/"+pathPart(connectionID)+":close", struct {
@@ -156,14 +169,64 @@ func (c *Client) UnsubscribeWithRouteState(ctx context.Context, connectionID, ch
 // Publish queues a message to all subscribed local connections. The returned
 // count is the number of connections that accepted the message into a queue.
 func (c *Client) Publish(ctx context.Context, endpointID, channel string, message Message) (int, error) {
+	status, err := c.PublishWithStatus(ctx, endpointID, channel, message)
+	return status.Queued, err
+}
+
+// PublishWithStatus reports local subscriber queue outcomes. Queued means
+// admitted to an in-memory output queue, not acknowledged by the client.
+func (c *Client) PublishWithStatus(ctx context.Context, endpointID, channel string, message Message) (PublishStatus, error) {
 	var response struct {
-		Queued int `json:"queued"`
+		Subscribers *int `json:"subscribers"`
+		Queued      int  `json:"queued"`
+		QueueFull   int  `json:"queue_full"`
+		Failed      int  `json:"failed"`
 	}
 	err := c.do(ctx, http.MethodPost, "/internal/endpoints/"+pathPart(endpointID)+"/channels/"+pathPart(channel)+":publish", messageRequest{
 		DataBase64: encodeMessage(message),
 		Binary:     message.Binary,
 	}, &response)
-	return response.Queued, err
+	status := PublishStatus{Queued: response.Queued, QueueFull: response.QueueFull, Failed: response.Failed}
+	if response.Subscribers != nil {
+		status.Subscribers = *response.Subscribers
+	} else {
+		// Older realtime nodes returned only queued. In that case, the exact
+		// subscriber count and any dropped recipients were not reported.
+		status.Subscribers = response.Queued
+	}
+	return status, err
+}
+
+// PublishRetainedWithStatus fans out the live message and wakes resumable
+// subscribers after the caller has committed sequence to the durable channel
+// log. Resume clients still read bytes and order from that log.
+func (c *Client) PublishRetainedWithStatus(ctx context.Context, endpointID, channel string, message Message, sequence int64) (PublishStatus, error) {
+	var response struct {
+		Subscribers *int `json:"subscribers"`
+		Queued      int  `json:"queued"`
+		QueueFull   int  `json:"queue_full"`
+		Failed      int  `json:"failed"`
+	}
+	err := c.do(ctx, http.MethodPost, "/internal/endpoints/"+pathPart(endpointID)+"/channels/"+pathPart(channel)+":publish", messageRequest{
+		DataBase64:       encodeMessage(message),
+		Binary:           message.Binary,
+		RetainedSequence: sequence,
+	}, &response)
+	status := PublishStatus{Queued: response.Queued, QueueFull: response.QueueFull, Failed: response.Failed}
+	if response.Subscribers != nil {
+		status.Subscribers = *response.Subscribers
+	} else {
+		status.Subscribers = response.Queued
+	}
+	return status, err
+}
+
+// BroadcastEphemeral queues one transient v2 presence or signal event to local
+// v2 subscribers. The frame is not written to retained channel history.
+func (c *Client) BroadcastEphemeral(ctx context.Context, endpointID, channel string, frame EphemeralFrame) error {
+	return c.do(ctx, http.MethodPost, "/internal/endpoints/"+pathPart(endpointID)+"/channels/"+pathPart(channel)+":ephemeral", struct {
+		Frame EphemeralFrame `json:"frame"`
+	}{Frame: frame}, nil)
 }
 
 // Connections returns the local connection registry.

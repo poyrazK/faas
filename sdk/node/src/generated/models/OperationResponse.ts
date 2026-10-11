@@ -5,10 +5,12 @@
 import type { OperationDeliveryResponse } from './OperationDeliveryResponse.js';
 import type { OperationProgress } from './OperationProgress.js';
 import type { OperationResultArtifact } from './OperationResultArtifact.js';
+import type { OperationSubject } from './OperationSubject.js';
 /**
  * Customer business work; execution recovery and delivery retain independent semantics.
  */
 export type OperationResponse = {
+  subject?: OperationSubject;
   id: string;
   name: string;
   generation: number;

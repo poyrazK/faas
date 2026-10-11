@@ -50,6 +50,7 @@ func (s *server) managedRealtimeHistoryStore(w http.ResponseWriter) (state.Manag
 
 func retainedMessageResponse(message state.ManagedRealtimeChannelMessage) api.ManagedRealtimeRetainedMessageResponse {
 	return api.ManagedRealtimeRetainedMessageResponse{
+		Metadata: message.Metadata, TargetMessageID: message.TargetMessageID, Version: message.Version, Event: message.MessageEvent, Deleted: message.Deleted,
 		Sequence: message.Sequence, DataBase64: base64.StdEncoding.EncodeToString(message.Data),
 		Binary: message.Binary, CreatedAt: message.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
 	}
@@ -83,7 +84,22 @@ func (s *server) appendManagedRealtimeRetainedMessage(w http.ResponseWriter, r *
 		api.WriteProblem(w, api.ErrRealtimeInvalid("retained message requires valid base64 data of at most 4096 bytes and an idempotency key of at most 128 bytes"))
 		return
 	}
-	message, err := store.AppendManagedRealtimeChannelMessage(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey)
+	var message state.ManagedRealtimeChannelMessage
+	if request.ExpectedSequence != nil {
+		if conditional, ok := s.store.(state.ManagedRealtimeConditionalStore); ok {
+			message, err = conditional.AppendManagedRealtimeChannelConditional(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata, request.ExpectedSequence)
+		} else {
+			err = state.ErrManagedRealtimeHistoryInvalid
+		}
+	} else if len(request.Metadata) > 0 {
+		if metadataStore, ok := s.store.(state.ManagedRealtimeMetadataStore); ok {
+			message, err = metadataStore.AppendManagedRealtimeChannelMetadata(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata)
+		} else {
+			err = state.ErrManagedRealtimeHistoryInvalid
+		}
+	} else {
+		message, err = store.AppendManagedRealtimeChannelMessage(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey)
+	}
 	if err != nil {
 		s.writeManagedRealtimeHistoryError(w, r, err)
 		return
@@ -148,6 +164,56 @@ func (s *server) readManagedRealtimeRetainedMessages(w http.ResponseWriter, r *h
 }
 
 func (s *server) writeManagedRealtimeHistoryError(w http.ResponseWriter, r *http.Request, err error) {
+	var conditionConflict *state.ManagedRealtimeConditionConflict
+	if errors.As(err, &conditionConflict) {
+		problem := api.NewProblem(http.StatusConflict, api.CodeRealtimeConditionConflict, "Entity field condition failed", conditionConflict.Error())
+		problem.EntityKey = conditionConflict.Key
+		problem.ConditionField = conditionConflict.Field
+		problem.ConditionIndex = &conditionConflict.Condition
+		problem.MessageIndex = &conditionConflict.Item
+		problem.CurrentVersion = &conditionConflict.CurrentVersion
+		problem.EntityExists = &conditionConflict.EntityExists
+		problem.FieldExists = &conditionConflict.FieldExists
+		api.WriteProblem(w, problem)
+		return
+	}
+	var entityConflict *state.ManagedRealtimeEntityVersionConflict
+	if errors.As(err, &entityConflict) {
+		problem := api.NewProblem(http.StatusConflict, api.CodeRealtimeEntityVersionConflict, "Entity version changed", entityConflict.Error())
+		problem.EntityKey = entityConflict.Key
+		problem.ExpectedVersion = &entityConflict.Expected
+		problem.CurrentVersion = &entityConflict.Current
+		problem.EntityExists = &entityConflict.Exists
+		problem.MessageIndex = &entityConflict.Item
+		api.WriteProblem(w, problem)
+		return
+	}
+	var sequenceConflict *state.ManagedRealtimeSequenceConflict
+	if errors.As(err, &sequenceConflict) {
+		problem := api.NewProblem(http.StatusConflict, api.CodeRealtimeSequenceConflict, "Channel sequence changed", sequenceConflict.Error())
+		problem.ExpectedSequence = &sequenceConflict.Expected
+		problem.CurrentSequence = &sequenceConflict.Current
+		api.WriteProblem(w, problem)
+		return
+	}
+	var reducerError *state.ManagedRealtimeReducerError
+	if errors.As(err, &reducerError) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(reducerError.Error()))
+		return
+	}
+	if errors.Is(err, state.ErrManagedRealtimeReducerActive) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Reducer manages channel state", "publish compensating reducer events or disable the reducer before editing events or snapshots"))
+		return
+	}
+	var schemaError *state.ManagedRealtimeEventSchemaError
+	if errors.As(err, &schemaError) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(schemaError.Error()))
+		return
+	}
+	if errors.Is(err, state.ErrManagedRealtimeEventSchemaLimit) {
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached", "an endpoint can register 64 immutable schema versions"))
+		return
+	}
 	switch {
 	case errors.Is(err, state.ErrManagedRealtimeHistoryInvalid):
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid channel, cursor, payload, or idempotency key"))

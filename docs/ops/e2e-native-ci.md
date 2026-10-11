@@ -148,6 +148,7 @@ Two mechanisms, because the tally alone is not enough:
   `TestSourceDeployWakeMetal`, `TestBuildMetal`, `TestWakeTimelineMetal`,
   `TestDeployHealthcheckMetal`, `TestCatalogRuntimeParityMetal`,
   `TestFeatureFlagsNativeParkRestoreMetal`,
+  `TestDurableEntityNativeParkRestoreMetal`,
   `TestSec11_MemoryMaxFenceEnforced_CrossProcess` and
   `TestSec11_SeccompFilterEnforced_CrossProcess` must actually execute. If any
   of them *skips*, the gate fails and names it. The Flags test publishes a new
@@ -164,6 +165,19 @@ below 15 tests, if the derivation stops keying on `//go:build metal`, if the
 required-test list shrinks, if a required test name stops existing in
 `cmd/e2e`, if the Postgres hard-fail is removed, or if the wrapper stops
 restoring services.
+
+The durable entity test belongs to the `wake` phase. It deploys a static pure
+counter through the normal imaged/schedd/Firecracker path, verifies two snapshot
+restores using their wake records, and kills/replaces only its harness-owned
+apid. Durable receipt replay must leave the guest parked and create no new
+invocation-ledger row; a subsequent transition must restore the supplied count.
+A changed payload conflicts, and a failed guest response cannot change state.
+Its private bucket is an S3 wire fixture owned by the test process, independent
+of the replaced apid. The emitted JSON explicitly reports this provider type
+and `live_provider_qualified:false`; passing it supplies native integration
+evidence, while a live bucket still needs the separate
+[durable entity qualification](../../examples/durable-entities/README.md#qualify-a-live-provider).
+It does not exercise takeover of an in-flight owner or native alarm wake-ups.
 
 The `exclusive-operations-only` dispatch lane uses the same dedicated-host
 runner but selects only `TestExclusiveOperationFencesRestoredKVMOwnerMetal`.

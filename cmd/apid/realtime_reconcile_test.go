@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type reconcileRealtimeRegistrar struct {
@@ -59,6 +60,58 @@ func TestNodeChannelRouteSnapshotFallsBackForOlderNode(t *testing.T) {
 	}
 	if op.routeReads != 1 || op.connReads != 1 {
 		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 1)", op.routeReads, op.connReads)
+	}
+}
+
+type revisionedRealtimeNode struct {
+	*fakeRealtimeNode
+	revision realtime.ChannelRouteRevision
+}
+
+func (n *revisionedRealtimeNode) ChannelRouteRevision(context.Context) (realtime.ChannelRouteRevision, error) {
+	return n.revision, nil
+}
+
+func TestReconcileManagedRealtimeChannelRouteRevisionRepairsMissedReport(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("find local compute node: %v", err)
+	}
+	generation, err := store.CurrentManagedRealtimeChannelRouteGeneration(ctx)
+	if err != nil {
+		t.Fatalf("read initial route generation: %v", err)
+	}
+	if err := store.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, node.ID, generation, nil,
+		&state.ManagedRealtimeChannelRouteSnapshotRevision{InstanceID: "realtimed-process", Revision: 0}); err != nil {
+		t.Fatalf("store initial empty snapshot: %v", err)
+	}
+	local := &revisionedRealtimeNode{
+		fakeRealtimeNode: &fakeRealtimeNode{channelRoutes: []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "updates"}}},
+		revision:         realtime.ChannelRouteRevision{InstanceID: "realtimed-process", Revision: 1},
+	}
+	owner := newLeasedRealtimeOwner(store, store, node.ID, local, discardLogger())
+	owner.channelRoutes = store
+	owner.channelRouteMetrics = newManagedRealtimeChannelRouteMetrics(prometheus.NewRegistry(), "apid")
+	owner.clientFor = func(state.ComputeNode) (realtimeNodeOperator, error) { return local, nil }
+
+	if err := reconcileManagedRealtimeChannelRouteRevisions(ctx, owner, []state.ComputeNode{node}); err != nil {
+		t.Fatalf("reconcile changed route revision: %v", err)
+	}
+	view, err := store.ListManagedRealtimeChannelRouteView(ctx, "endpoint", "updates")
+	if err != nil {
+		t.Fatalf("list repaired route view: %v", err)
+	}
+	if len(view.NodeIDs) != 1 || view.NodeIDs[0] != node.ID {
+		t.Fatalf("repaired route nodes = %v, want [%s]", view.NodeIDs, node.ID)
+	}
+	revisions, err := store.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, []string{node.ID})
+	if err != nil {
+		t.Fatalf("list repaired snapshot revision: %v", err)
+	}
+	if got := revisions[node.ID]; got.InstanceID != "realtimed-process" || got.Revision != 1 {
+		t.Fatalf("repaired snapshot revision = %+v, want process revision 1", got)
 	}
 }
 

@@ -33,7 +33,8 @@ without per-target metering, provided its source usage response accounts for
 all descendants.
 
 Run the provider qualification with
-`FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and save its JSON output in an
+`FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and
+`FAAS_MANAGED_POSTGRES_QUALIFY_DURABLE=true`, using the fixture below, and save its JSON output in an
 operator-owned path. The output includes a versioned approval envelope and the
 exact `approval_env` values for the staging gate. Verify the saved artifact
 before applying those values:
@@ -55,11 +56,13 @@ branch identity, with exact source and timestamp validation before adoption
 or cleanup. Fractional timestamps that Neon cannot report exactly remain
 unqualified; timestamp tolerance is not a lineage proof.
 
-Live PostgreSQL 18 tests on 2026-10-06 also observed a whole-second restore
-request whose ready branch reported the earlier WAL commit's timestamp. This
-still blocks restore qualification: waiting for metadata or rounding the test
-point does not establish a verified timestamp-to-LSN mapping. Snapshot creation
-acknowledgements can omit both timestamp and expiry while work is pending; read
+Live PostgreSQL 18 tests on 2026-10-06 observed a whole-second restore
+request whose ready branch reported the earlier WAL commit's timestamp.
+ADR-677 adds independent historical-source WAL verification for that case;
+[the recovery evidence](ops/evidence/20261007-managed-postgres-recovery/REPORT.md)
+records normal, restarted, and lost-response recovery. Waiting for metadata or
+rounding the test point still cannot establish a timestamp-to-LSN mapping.
+Snapshot creation acknowledgements can omit both timestamp and expiry; read
 the accepted snapshot until its complete metadata is available before adopting
 it or changing retention. Missing or conflicting final metadata remains a
 blocker. These diagnostics do not authorize enabling the production service.
@@ -98,7 +101,7 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 7
+passes; rerun qualification instead of extending it by hand. Version 8
 artifacts require runtime DML and RLS enforcement, denied DDL/administration,
 stable migration ownership, and preserved data after migration login retirement.
 When read-only access is advertised, approval also requires actual existing and
@@ -108,7 +111,8 @@ and fresh logins. A capability declaration alone is insufficient.
 They also require a restore timestamp inside the disposable source's lifetime,
 exact source and point lineage on creation and readiness, and same-target
 restore replay. Earlier committed data, rejection of source credentials on
-the target, and completed deletion. Versions 1–6 cannot authorize this release.
+the target, and completed deletion. Version 8 also requires durable SQL restart
+and encrypted credential delivery evidence. Versions 1–7 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
@@ -116,9 +120,77 @@ the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
 valid. Those variables are a fallback only when no approval path is set and
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7` matches the current contract.
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=8` matches the current contract.
 Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
+
+## Durable lifecycle fixture
+
+Use a fresh run UUID and a private, disposable PostgreSQL catalog. Apply the
+normal Gregale migrations and seed one test account and app using the existing
+test-fixture or staging API tooling. The app must belong to the supplied
+account. The qualifier neither runs migrations nor creates these intent rows.
+Do not point it at a customer or production catalog.
+
+Before running, mark **only this disposable database**, using its database
+owner/admin connection. Substitute the actual database identifier and run UUID:
+
+```sql
+ALTER DATABASE qualification_catalog
+  SET faas.qualification_run TO '11111111-1111-4111-8111-111111111111';
+```
+
+The qualifier reads the stored database-level setting directly; `SET`,
+`set_config`, connection options and `PGOPTIONS` cannot bypass this guard.
+Each reconstructed pool must still see the same marker and catalog identity.
+Use a fresh UUID and catalog for each run; deleted lifecycle tombstones remain
+for audit. Provisioning stays disabled in the configured deployment.
+
+Create a disposable X25519 age identity and at least 32 bytes of random HMAC
+key material in private regular files (0400 or 0600, no symlinks). Use the same
+files throughout this run. Pass the private catalog connection URL through the
+environment without putting it in reports or shell history. Add these inputs
+to the existing staging/live provider qualification environment:
+
+```sh
+export FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true
+export FAAS_MANAGED_POSTGRES_QUALIFY_DURABLE=true
+export FAAS_MANAGED_POSTGRES_QUALIFY_RUN_ID=11111111-1111-4111-8111-111111111111
+export FAAS_MANAGED_POSTGRES_QUALIFY_ACCOUNT_ID=22222222-2222-4222-8222-222222222222
+export FAAS_MANAGED_POSTGRES_QUALIFY_APP_ID=33333333-3333-4333-8333-333333333333
+export FAAS_MANAGED_POSTGRES_QUALIFY_AGE_IDENTITY_FILE=/private/qualification/identity.age
+export FAAS_MANAGED_POSTGRES_QUALIFY_HMAC_KEY_FILE=/private/qualification/hmac.key
+# FAAS_MANAGED_POSTGRES_QUALIFY_CATALOG_URL is supplied privately.
+go run ./cmd/managed-postgres-qualify > /private/qualification/report.json
+```
+
+Catalog/key/ownership preflight happens before provider mutation. After the
+provider probes pass, the durable stage uses the configured adapter with real
+SQL and app-secret stores. It deliberately loses successful acknowledgements,
+reconstructs the services, verifies credentials and SQL data through rotation,
+then deletes bindings and the provider project with provisioning closed.
+The fault disconnects the catalog before the saga can persist its error; each
+restart waits for the unfinished lease to expire. Allow at least 20 minutes for
+the durable stage (four default two-minute leases plus provider operations).
+An independently reconstructed final session verifies tombstones and absence
+of encrypted secrets. Failed cleanup blocks approval; recover retained resources
+before dropping the catalog. Keep the sanitized report, then remove the
+disposable catalog and private age/HMAC files. Revoke temporary provider keys
+after checking the provider inventory for leaked resources.
+
+Local acceptance uses:
+
+```sh
+FAAS_PGTEST_TEMPLATE_DATABASE=1 go test ./pkg/managedpostgres ./pkg/managedpostgres/credentialdelivery ./cmd/managed-postgres-qualify ./cmd/apid
+```
+
+Supply `DATABASE_URL` privately to an isolated PostgreSQL cluster with CREATEDB
+and role administration for the test-only customer role fixture. The cluster
+must enable TLS and password authentication for fixture roles. Without a
+database URL, SQL integration tests skip and do not establish acceptance.
+These tests simulate provider management; fresh live Neon v8 qualification is
+still required. Guest injection, native egress, deployment and retirement of
+old credentials require a disposable app canary on a supported native KVM host.
 
 ## Staging canary rollout
 
@@ -231,11 +303,14 @@ settle missing windows, final corrections, budget headroom, or provider invoices
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
 using `migration` bindings. Keep the staging provisioning gate closed until a
-fresh version 7 live Neon qualification passes. Local PostgreSQL tests establish
+fresh version 8 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
 
-Version 7 replaces prior approvals, including version 6; keep provisioning
-closed until the new disposable live run and lifecycle smoke pass. Inspect
+Version 7 replaces prior approvals, including version 6. The
+[2026-10-07 live acceptance](ops/evidence/20261007-managed-postgres-qualification/REPORT.md)
+passed the core provider and lifecycle contract for PostgreSQL 18. Snapshot
+capture and native copy remain unqualified. Keep production provisioning closed;
+review the exact artifact and staging canary before changing rollout gates. Inspect
 `gregale postgres capabilities --json` before adoption: `read_only` is configured
 support, while `provisioning_enabled` reflects the current rollout gate.
 After qualification, attach a distinct `READ_DATABASE_URL` binding with
@@ -296,7 +371,7 @@ and rollout gates; local PostgreSQL evidence does not replace them.
 
 ## Compute resize recovery (ADR-623)
 
-Use a fresh version 7 qualification approval before allowing new Neon intents.
+Use a fresh version 8 qualification approval before allowing new Neon intents.
 The qualification changes the disposable primary's class and restores it,
 checking data, existing logins and read-only permissions after both changes.
 Existing pending resizes remain reconciled when provisioning is disabled.

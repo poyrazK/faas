@@ -858,7 +858,8 @@ func shipOnce(payload []byte) bool {
 		if readErr == unix.EINTR {
 			continue
 		}
-		return readErr == nil && n == len(ack) && ack[0] == 0
+		ackValue := ack[0]
+		return readErr == nil && n == len(ack) && ackValue == 0
 	}
 }
 

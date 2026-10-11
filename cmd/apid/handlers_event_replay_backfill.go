@@ -39,6 +39,40 @@ func (s *server) createEventReplayBackfill(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
 		return
 	}
+	if req.AllowExpired {
+		s.audit.Emit(ctx, "event.subscription.delivery_age.overridden", &acct.ID, map[string]any{"app_id": app.ID, "subscription_id": subscriptionID.String(), "backfill_job_id": job.ID})
+	}
+	w.Header().Set("Location", "/v1/event-replays/"+job.ID)
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (s *server) createWorkflowEventReplayBackfill(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventReplayBackfillRequestTimeout)
+	defer cancel()
+	var req api.WorkflowEventReplayBackfillRequest
+	if err := decodeJSONSized(r, &req, 4<<10); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if err := req.Validate(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.store.(state.EventReplayBackfillStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
+		return
+	}
+	job, err := store.CreateWorkflowEventReplayBackfill(ctx, acct.ID, state.WorkflowEventReplayBackfillQuery{AppID: app.ID, WorkflowEventReplayBackfillRequest: req})
+	if err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
 	w.Header().Set("Location", "/v1/event-replays/"+job.ID)
 	writeJSON(w, http.StatusAccepted, job)
 }

@@ -57,6 +57,7 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestCatalogRuntimeParityMetal
   TestManagedOperationWorkflowMetal
   TestFeatureFlagsNativeParkRestoreMetal
+  TestDurableEntityNativeParkRestoreMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess
 )

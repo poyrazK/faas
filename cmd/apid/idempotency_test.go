@@ -13,6 +13,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestIdempotentReplayCannotBeSniffedAsHTML(t *testing.T) {
+	body := []byte(`{"value":"<script>alert(1)</script>"}`)
+	w := httptest.NewRecorder()
+	replayIdempotent(w, http.StatusCreated, body)
+	if w.Code != http.StatusCreated || w.Body.String() != string(body) {
+		t.Fatalf("replay changed status or cached body: %d %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Content-Type") != "application/json" || w.Header().Get("X-Content-Type-Options") != "nosniff" || w.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("replay lost its JSON security headers: %v", w.Header())
+	}
+}
+
 // TestIdempotent_ConcurrentRetryRunsOnce — the middleware checked for a
 // cached response, ran the handler, then stored the response, so a client
 // retrying after a timeout while the first request was still running

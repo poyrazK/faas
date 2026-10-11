@@ -198,9 +198,12 @@ func (s *server) inventoryRequestRecorder(b state.ObjectBucket) func(context.Con
 	}
 }
 
+// Customer dispatch reserves gateway request usage atomically. Recovery uses
+// inventoryRequestRecorder instead so ceilings cannot strand accepted work.
 func (s *server) customerObjectRequestRecorder(b state.ObjectBucket) func(context.Context) error {
 	if !s.objectStorage.Accounting.GatewaySafety() {
-		return s.inventoryRequestRecorder(b)
+		metrics, _ := s.store.(state.ObjectStorageProviderUsageStore)
+		return objectstorage.VersioningRequestRecorder(metrics, b.ID)
 	}
 	return func(ctx context.Context) error {
 		metrics, ok := s.store.(state.ObjectStorageGatewayRequestStore)

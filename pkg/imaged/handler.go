@@ -2232,6 +2232,8 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 	ref, digest := prepared.Reference, prepared.Digest
+	// Keep scan and source metadata aligned with the immutable platform child.
+	dep.ImageDigest = prepared.Reference
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -2965,7 +2967,11 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		// OCI export. Re-applying dep.SourcePath here would silently throw
 		// away Railpack's installed dependencies and, for Go, leave the
 		// runner looking for /app/handler while Railpack emits /app/server.
-		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifact(ctx, runtime, dep.RootfsPath)
+		recordedRef := ""
+		if pinnedRelease != nil {
+			recordedRef = pinnedRelease.SourceRef
+		}
+		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifactForRef(ctx, runtime, dep.RootfsPath, recordedRef)
 		if artifactErr != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, artifactErr, "select function build artifact")
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
@@ -3869,7 +3875,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {

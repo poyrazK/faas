@@ -216,10 +216,19 @@ type statusAwareSynthDispatcher struct{ fakeSynthDispatcher }
 
 type targetStatusAwareSynthDispatcher struct{ fakeSynthDispatcher }
 
+type deploymentAwareSynthDispatcher struct{ fakeSynthDispatcher }
+
+func (f *deploymentAwareSynthDispatcher) InvokeWithStatus(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
+	inv.ResolvedDeploymentID = "selected-deployment"
+	inv.State = state.InvocationState(batchDispatchStatusSucceeded)
+	return inv, http.StatusOK, nil
+}
+
 func (f *statusAwareSynthDispatcher) InvokeWithStatus(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
 	f.invs = append(f.invs, inv)
 	inv.State = state.InvocationDispatching
 	inv.Result = json.RawMessage(`{"ok":true}`)
+	inv.ResponseRetryAfter = "120"
 	return inv, http.StatusCreated, nil
 }
 
@@ -260,6 +269,23 @@ func newSynthServer(t *testing.T) (*SynthServer, *fakeSynthDispatcher) {
 		_ = srv.Stop(ctx)
 	})
 	return srv, d
+}
+
+func TestDispatchBatchRecordReturnsResolvedDeployment(t *testing.T) {
+	dispatcher := &deploymentAwareSynthDispatcher{}
+	srv := NewSynthServer("/tmp/faas-synth-deployment-test.sock", dispatcher, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Stop(ctx)
+	})
+	id := "33333333-3333-4333-8333-333333333333"
+	result := srv.dispatchBatchRecord(context.Background(), batchDispatchRequest{
+		InvocationID: "trigger-dispatch", AppID: "app", Source: "esm", TriggerID: "queue-consumer",
+	}, batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 1, PayloadB64: "e30="})
+	if result.Status != batchDispatchStatusSucceeded || result.DeploymentID != "selected-deployment" {
+		t.Fatalf("queue result did not retain selected deployment: %+v", result)
+	}
 }
 
 // --- handleHealthz ----------------------------------------------
@@ -392,10 +418,14 @@ func TestHandleInvocationDispatch_UsesOptionalDownstreamStatus(t *testing.T) {
 		t.Fatalf("code = %d, want 200 transport response", w.Code)
 	}
 	var response struct {
-		StatusCode int `json:"status_code"`
+		StatusCode int    `json:"status_code"`
+		RetryAfter string `json:"retry_after"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+	if response.RetryAfter != "120" {
+		t.Fatalf("retry_after = %q", response.RetryAfter)
 	}
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("status_code = %d, want 201", response.StatusCode)

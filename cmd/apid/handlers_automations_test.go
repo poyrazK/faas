@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -87,7 +89,20 @@ func TestAutomationAPI(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("CAS=%d %s", response.Code, response.Body.String())
 	}
-	response = e.do(t, "POST", base+"/invoice/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, map[string]string{"Idempotency-Key": "publish-invoice"})
+	checkedSnapshot, _ := json.Marshal(draft.Draft)
+	evidence := &api.AutomationCheckEvidence{DefinitionHash: fmt.Sprintf("%x", sha256.Sum256(checkedSnapshot)), CheckedVersion: draft.Version, CheckedAt: time.Now().UTC(), CoveragePassed: true, Scenarios: []api.AutomationCheckScenario{{Name: "success", Passed: true, DefinitionValid: true, Complete: true}}, Exclusions: []api.AutomationCheckExclusion{}}
+	bad := *evidence
+	bad.DefinitionHash = "mismatch"
+	response = e.do(t, "POST", base+"/invoice/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version, CheckEvidence: &bad}, nil)
+	if response.Code != http.StatusBadRequest && response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("mismatched checks accepted: %d %s", response.Code, response.Body.String())
+	}
+	response = e.do(t, "POST", base+"/invoice/publish", map[string]any{"expected_version": draft.Version, "check_evidence": map[string]any{"sample_payload": "private"}}, nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown evidence payload accepted: %d", response.Code)
+	}
+	publishRequest := api.PublishAutomationRequest{ExpectedVersion: draft.Version, CheckEvidence: evidence}
+	response = e.do(t, "POST", base+"/invoice/publish", publishRequest, map[string]string{"Idempotency-Key": "publish-invoice"})
 	var published api.AutomationResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &published) != nil || published.PublishedVersion == 0 || published.Source != "dashboard" {
 		t.Fatalf("publish=%d %s", response.Code, response.Body.String())
@@ -95,7 +110,7 @@ func TestAutomationAPI(t *testing.T) {
 	if published.Published == nil || published.Published.Steps[0].When == nil || published.Published.Steps[0].When.Ref != "input.invoice_id" {
 		t.Fatal("publication lost guard")
 	}
-	replay := e.do(t, "POST", base+"/invoice/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, map[string]string{"Idempotency-Key": "publish-invoice"})
+	replay := e.do(t, "POST", base+"/invoice/publish", publishRequest, map[string]string{"Idempotency-Key": "publish-invoice"})
 	if replay.Code != http.StatusOK || replay.Body.String() != response.Body.String() {
 		t.Fatalf("publish replay=%d %s", replay.Code, replay.Body.String())
 	}
@@ -105,6 +120,9 @@ func TestAutomationAPI(t *testing.T) {
 		t.Fatalf("revision list=%d %s", response.Code, response.Body.String())
 	}
 	firstRevision := revisionPage.Revisions[0]
+	if firstRevision.CheckEvidence == nil || firstRevision.CheckEvidence.DefinitionHash != firstRevision.DefinitionHash || firstRevision.CheckEvidence.Scenarios[0].Name != "success" {
+		t.Fatalf("evidence not retained: %+v", firstRevision)
+	}
 	if firstRevision.Version != published.PublishedVersion || firstRevision.LegacySnapshot || len(firstRevision.DefinitionHash) != 64 || firstRevision.PublishedByAccountID != app.AccountID {
 		t.Fatalf("revision metadata=%+v", firstRevision)
 	}
@@ -222,8 +240,23 @@ func TestAutomationHealthSummaryIsBoundedAndOmitsRunData(t *testing.T) {
 	if health.WindowEnd.Sub(health.WindowStart) != api.WorkflowAutomationHealthDefaultRange {
 		t.Fatalf("default health window = %s", health.WindowEnd.Sub(health.WindowStart))
 	}
+	if health.Queue == nil || health.Queue.WaitingRunCount != 0 || health.Queue.AppRunningCount != 0 || len(health.Queue.ReasonCounts) != 7 {
+		t.Fatalf("empty current queue = %+v", health.Queue)
+	}
+	initialBody := response.Body.String()
+	queued := &state.WorkflowRun{AppID: app.ID, WorkflowName: "invoice", Input: json.RawMessage(`{"private_input":"health-secret"}`), DefinitionSnapshot: json.RawMessage(`{"name":"invoice","steps":[]}`)}
+	if err := e.store.CreateWorkflowRun(ctx, queued); err != nil {
+		t.Fatal(err)
+	}
+	after := url.QueryEscape(time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano))
+	before := url.QueryEscape(time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano))
+	response = e.do(t, http.MethodGet, base+"/invoice/health?created_after="+after+"&created_before="+before, nil, nil)
+	health = api.AutomationHealthResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &health) != nil || health.RunCount != 0 || health.Queue == nil || health.Queue.WaitingRunCount != 1 || health.Queue.ReasonCounts[api.AutomationQueueReady] != 1 {
+		t.Fatalf("historical window hid current queue: %d %s", response.Code, response.Body.String())
+	}
 	for _, secret := range []string{"health-secret", "health-output-secret", "health-private-error"} {
-		if strings.Contains(response.Body.String(), secret) {
+		if strings.Contains(initialBody+response.Body.String(), secret) {
 			t.Fatalf("health endpoint leaked %q: %s", secret, response.Body.String())
 		}
 	}
@@ -236,6 +269,18 @@ func TestAutomationHealthSummaryIsBoundedAndOmitsRunData(t *testing.T) {
 	response = e.do(t, http.MethodGet, base+"/missing/health", nil, nil)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unknown automation health: %d %s", response.Code, response.Body.String())
+	}
+	other, err := e.store.CreateAccount(ctx, "queue-owner@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := e.store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "foreign-queue", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = e.do(t, http.MethodGet, "/v1/apps/"+foreign.Slug+"/automations/invoice/health", nil, nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("foreign automation health exposed: %d %s", response.Code, response.Body.String())
 	}
 }
 

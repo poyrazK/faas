@@ -70,9 +70,23 @@ func assertEventWorkBinding(t *testing.T, ctx context.Context, store eventWorkSt
 	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, policy.Name, "data.order_id"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.SetEventWorkBinding(ctx, appID, sub.ID, policy.Name, "data.order_id",
+		state.EventWorkBindingOptions{Ordered: true}); err != nil {
+		t.Fatalf("set ordered binding: %v", err)
+	}
 	bindings, err := store.EventWorkBindingsByIDs(ctx, []string{sub.ID})
-	if err != nil || bindings[sub.ID].KeySelector != "data.order_id" {
+	if err != nil || bindings[sub.ID].KeySelector != "data.order_id" || !bindings[sub.ID].Ordered {
 		t.Fatalf("bindings = %+v, %v", bindings, err)
+	}
+	for _, changed := range []workpolicy.Policy{
+		{Name: policy.Name, MaxRunningPerKey: 2},
+		{Name: policy.Name, MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingKeepLatest},
+		{Name: policy.Name, MaxRunningPerKey: 1, Debounce: time.Second},
+		{Name: policy.Name, MaxRunningPerKey: 1, ExpiresAfter: time.Minute},
+	} {
+		if _, err := store.UpsertAppWorkPolicy(ctx, accountID, appID, changed); err == nil {
+			t.Fatalf("incompatible ordered policy update %+v = %v", changed, err)
+		}
 	}
 	if err := store.DeleteAppWorkPolicy(ctx, accountID, appID, policy.Name); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("delete bound policy = %v", err)
@@ -87,7 +101,7 @@ func assertEventWorkBinding(t *testing.T, ctx context.Context, store eventWorkSt
 		t.Fatal(err)
 	}
 	bindings, err = store.EventWorkBindingsByIDs(ctx, []string{sub.ID})
-	if err != nil || bindings[sub.ID].Action != state.EventWorkCancelPending ||
+	if err != nil || bindings[sub.ID].Action != state.EventWorkCancelPending || bindings[sub.ID].Ordered ||
 		bindings[sub.ID].FairnessSelector != "data.tenant_id" {
 		t.Fatalf("cancel action = %+v, %v", bindings, err)
 	}

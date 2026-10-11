@@ -469,6 +469,7 @@ func secretRuntimeReloadTargetsLabel(currentVersion int64, targets []api.SecretR
 func secretsSet(args []string) int {
 	fs := newFlagSet("secrets set", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	interactive := fs.Bool("interactive", false, "enter secrets with hidden values and review before saving")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (defaults to linked project environment)")
 	secretClass := fs.String("class", "", "snapshot retention (persistent or ephemeral; omitted updates preserve the class)")
@@ -488,6 +489,12 @@ func secretsSet(args []string) int {
 	if *secretClass != "" && *secretClass != api.SecretClassPersistent && *secretClass != api.SecretClassEphemeral {
 		fmt.Fprintln(os.Stderr, "secret set: --class must be persistent or ephemeral")
 		return 1
+	}
+	if *interactive {
+		if *fromStdin || fs.NArg() != 0 || *restart {
+			return printErr("Invalid interactive secret flags", errors.New("--interactive takes no KEY=VALUE pairs, --from-stdin, or --restart; the flow offers a restart after saving"))
+		}
+		return secretsSetInteractive(*app, *scope, *secretClass)
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
@@ -551,14 +558,18 @@ func secretsSet(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
+	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart)
+}
+
+func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []secretsPair, scope, secretClass string, restart bool) int {
 	keys := make([]string, 0, len(pairs))
 	for _, p := range pairs {
-		if err := client.SetSecretWithScopeAndClass(context.Background(), *app, p.Key, p.Value, *scope, *secretClass); err != nil {
+		if err := client.SetSecretWithScopeAndClass(ctx, app, p.Key, p.Value, scope, secretClass); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
 		}
 		keys = append(keys, p.Key)
 		if !jsonOutput {
-			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(*scope))
+			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
 		}
 	}
 	// Move 1 PR-A: post-write quota stamp. After every successful
@@ -582,16 +593,16 @@ func secretsSet(args []string) int {
 	// scopes posture — pkg/api/limits.go::SecretCountMax doc). Pass
 	// scope="" to ListSecretsWithScope for the cross-scope total.
 	if !jsonOutput {
-		printSecretsQuotaStamp(client, *app, *scope)
+		printSecretsQuotaStamp(ctx, client, app, scope)
 	}
-	if *restart {
-		out, err := client.RestartAppFresh(context.Background(), *app)
+	if restart {
+		out, err := client.RestartAppFresh(ctx, app)
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(secretsSetReceipt{
-				App: *app, Status: "updated", Scope: scopeOrDefault(*scope), Keys: keys,
+				App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
 				RestartRequested: true, WakeID: out.WakeID,
 			}))
 		}
@@ -600,7 +611,7 @@ func secretsSet(args []string) int {
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(secretsSetReceipt{
-			App: *app, Status: "updated", Scope: scopeOrDefault(*scope), Keys: keys,
+			App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
 			Warnings: []string{"Updated secrets apply on the next cold wake; running instances keep their current environment. Use --restart to apply now."},
 		}))
 	}
@@ -648,6 +659,8 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
 			strings.HasPrefix(a, "--class=") || strings.HasPrefix(a, "-class=") ||
 			strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "-timeout=") ||
+			a == "--interactive" || a == "-interactive" ||
+			strings.HasPrefix(a, "--interactive=") || strings.HasPrefix(a, "-interactive=") ||
 			a == "--from-stdin" || a == "-from-stdin" ||
 			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin=") ||
 			a == "--restart" || a == "-restart" ||
@@ -680,15 +693,15 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 // (handlers_secrets.go::listSecrets calls CountAppSecrets across
 // every scope). Using `len(list.Secrets)` would under-report for
 // any customer with non-default-scope rows.
-func printSecretsQuotaStamp(client *api.Client, app, scope string) {
+func printSecretsQuotaStamp(ctx context.Context, client *api.Client, app, scope string) {
 	_ = scope // accepted for symmetry with secretsSet; the stamp itself
 	// always reads the cross-scope total.
-	list, err := client.ListSecretsWithScope(context.Background(), app, "")
+	list, err := client.ListSecretsWithScope(ctx, app, "")
 	if err != nil {
 		return
 	}
 	used := list.Count
-	if acct, err := client.Whoami(context.Background()); err == nil {
+	if acct, err := client.Whoami(ctx); err == nil {
 		if l, ok := api.LimitsFor(api.Plan(acct.Plan)); ok && l.SecretCountMax > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%s: %d/%d secrets\n", app, used, l.SecretCountMax)
 			return
@@ -808,6 +821,7 @@ func setProjectDeploySecretsWithScope(ctx context.Context, client *Client, workl
 
 func secretsUnset(args []string) int {
 	fs := newFlagSet("secrets unset", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose a secret and confirm removal")
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (defaults to linked project environment)")
 	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
@@ -821,9 +835,21 @@ func secretsUnset(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
-	if *app == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> KEY [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
+	if *app == "" || (!*interactive && fs.NArg() != 1) || (*interactive && fs.NArg() != 0) {
+		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> (KEY|--interactive) [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
 		return 1
+	}
+	if *interactive {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" && f.Name != "scope" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive removal flags", fmt.Errorf("--interactive accepts --app and --scope; choose restart and acknowledgement options in the flow"))
+		}
+		return secretsUnsetInteractive(*app, *scope)
 	}
 	if *timeout <= 0 {
 		fmt.Fprintln(os.Stderr, "secret unset: --timeout must be greater than zero")
@@ -849,37 +875,41 @@ func secretsUnset(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	revocation, err := client.UnsetSecretWithScopeAndStatus(context.Background(), *app, key, *scope)
+	return executeSecretsUnset(context.Background(), client, *app, key, *scope, *restart, *waitForAck, *timeout)
+}
+
+func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope string, restart, waitForAck bool, timeout time.Duration) int {
+	revocation, err := client.UnsetSecretWithScopeAndStatus(ctx, app, key, scope)
 	if err != nil {
 		return printErr("Unset failed", err)
 	}
 	// Running instances keep the environment they booted with; like
 	// `secrets set --restart`, a restart applies the removal now.
 	wakeID := ""
-	if *restart {
-		out, err := client.RestartAppFresh(context.Background(), *app)
+	if restart {
+		out, err := client.RestartAppFresh(ctx, app)
 		if err != nil {
-			return printErr("Restart failed", err)
+			return printErr("Secret removed, but restart failed", err)
 		}
 		wakeID = out.WakeID
 	}
 	if jsonOutput {
 		receipt := map[string]any{
-			"app": *app, "status": "deleted", "scope": scopeOrDefault(*scope), "key": key,
+			"app": app, "status": "deleted", "scope": scopeOrDefault(scope), "key": key,
 			"deleted": true, "revocation_id": revocation.ID,
 			"revocation_status":  revocation.Status,
 			"target_count":       revocation.TargetCount,
 			"acknowledged_count": revocation.AcknowledgedCount,
 			"pending_count":      revocation.PendingCount,
 		}
-		if *restart {
+		if restart {
 			receipt["restart_requested"] = true
 			receipt["wake_id"] = wakeID
 		}
-		if *waitForAck {
-			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		if waitForAck {
+			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			progress, err := waitForSecretRevocationAck(ctx, client, *app, revocation.ID)
+			progress, err := waitForSecretRevocationAck(ctx, client, app, revocation.ID)
 			if err != nil {
 				return printErr("Secret revocation acknowledgement incomplete", err)
 			}
@@ -890,16 +920,16 @@ func secretsUnset(args []string) int {
 		}
 		return jsonOut(writeJSON(receipt))
 	}
-	PrintOK(osStdout, "%s unset (scope=%s, revocation=%s)", key, scopeOrDefault(*scope), revocation.ID)
-	if *restart {
+	PrintOK(osStdout, "%s unset (scope=%s, revocation=%s)", key, scopeOrDefault(scope), revocation.ID)
+	if restart {
 		PrintOK(osStdout, "Restart requested after secret removal (wake_id=%s)", wakeID)
 	} else {
 		PrintWarn(osStdout, "Running instances keep the removed secret until their next cold wake. Use --restart to apply now.")
 	}
-	if *waitForAck {
-		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	if waitForAck {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		progress, err := waitForSecretRevocationAck(ctx, client, *app, revocation.ID)
+		progress, err := waitForSecretRevocationAck(ctx, client, app, revocation.ID)
 		if err != nil {
 			return printErr("Secret revocation acknowledgement incomplete", err)
 		}

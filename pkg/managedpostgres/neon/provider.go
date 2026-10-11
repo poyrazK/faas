@@ -160,11 +160,15 @@ type createdProjectResponse struct {
 }
 
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
+	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.dataAPIEnabled {
+		access = append(access, managedpostgres.CredentialDataAPI)
+	}
 	return managedpostgres.Capabilities{
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		CredentialAccess:             access,
 		ClassResize:                  true,
 		ScaleToZeroUpdate:            true,
 		ScaleToZero:                  true,

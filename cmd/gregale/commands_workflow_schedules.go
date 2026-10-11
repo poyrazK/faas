@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdWorkflowSchedules(args []string) int {
+	if len(args) > 0 && args[0] == "preview" {
+		return cmdWorkflowSchedulePreview(args[1:])
+	}
 	flags := newFlagSet("workflows-schedules", flag.ContinueOnError)
 	app := flags.String("app", "", "app slug")
 	if flags.Parse(args) != nil || rejectUnexpectedFlagArgs(flags) {
@@ -35,12 +40,16 @@ func cmdWorkflowSchedules(args []string) int {
 		}
 	}
 	writer := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "WORKFLOW\tSCHEDULE\tTIMEZONE\tENABLED\tNEXT\tLAST STATUS\tLAST RUN"); err != nil {
+	if _, err := fmt.Fprintln(writer, "WORKFLOW\tSCHEDULE\tTIMEZONE\tENABLED\tCATCH UP\tWINDOW\tNEXT\tLAST STATUS\tLAST RUN"); err != nil {
 		return printErr("Output failed", err)
 	}
 	for _, schedule := range response.Schedules {
-		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\t%s\t%s\n", schedule.WorkflowName,
-			schedule.Schedule, schedule.Timezone, schedule.Enabled, schedule.NextFireAt, schedule.LastStatus, schedule.LastRunID); err != nil {
+		if schedule.CatchUp == "" {
+			schedule.CatchUp = api.WorkflowScheduleCatchUpSkip
+		}
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\t%s\t%s\t%s\t%s\n", schedule.WorkflowName,
+			schedule.Schedule, schedule.Timezone, schedule.Enabled, schedule.CatchUp, schedule.CatchUpWindow,
+			schedule.NextFireAt, schedule.LastStatus, schedule.LastRunID); err != nil {
 			return printErr("Output failed", err)
 		}
 	}

@@ -68,13 +68,13 @@ import (
 func RecoveryCodeBurnedBody(email string, remaining int, burnedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := burnedAt.UTC().Format("2006-01-02 15:04 UTC")
-	subject = "Recovery code used on your faas account"
+	subject = "Recovery code used on your Gregale account"
 
 	switch {
 	case remaining <= 1:
 		body = fmt.Sprintf(`Hi,
 
-A recovery code for your faas account (%s) was used at %s.
+A recovery code for your Gregale account (%s) was used at %s.
 
 This was your second-to-last code. The next time a recovery code is
 used, your account will have NO codes left — you would then need to
@@ -88,12 +88,12 @@ re-enroll fresh.
 If this was not you, change your password immediately and contact
 support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, atStr)
 	case remaining == 2:
 		body = fmt.Sprintf(`Hi,
 
-A recovery code for your faas account (%s) was used at %s.
+A recovery code for your Gregale account (%s) was used at %s.
 
 You have 2 recovery codes left. If you also lose access to your
 authenticator device, the next recovery-code burn will be the last
@@ -103,18 +103,18 @@ MFA → Disable) and re-enroll to get a fresh set of 10 codes.
 If this was not you, change your password immediately and contact
 support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, atStr)
 	default:
 		body = fmt.Sprintf(`Hi,
 
-A recovery code for your faas account (%s) was used at %s. You have
+A recovery code for your Gregale account (%s) was used at %s. You have
 %d recovery codes remaining.
 
 If this was not you, change your password immediately and contact
 support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, atStr, remaining)
 	}
 	return
@@ -138,10 +138,10 @@ func MFADisableEmailRequestedBody(email, confirmURL string, requestedAt time.Tim
 	email = safeRecipient(email)
 	atStr := requestedAt.UTC().Format("2006-01-02 15:04 UTC")
 	confirmAfter := requestedAt.UTC().Add(24 * time.Hour).Format("2006-01-02 15:04 UTC")
-	subject = "Confirm MFA disable on your faas account (24h wait)"
+	subject = "Confirm MFA disable on your Gregale account (24h wait)"
 	body = fmt.Sprintf(`Hi,
 
-Someone — hopefully you — requested to disable MFA on your faas
+Someone — hopefully you — requested to disable MFA on your Gregale
 account (%s) at %s.
 
 This is the only path that works when you've lost BOTH your
@@ -158,7 +158,7 @@ If you did not request this, do nothing — the request expires after
 24 hours and no action is taken. You should also change your
 password and contact support@gregale.dev so we can investigate.
 
-— onebox faas
+— Gregale
 `, email, atStr, confirmAfter, confirmURL)
 	return
 }

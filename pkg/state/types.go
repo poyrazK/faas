@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"strings"
 	"time"
@@ -768,11 +769,15 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
-	DiscoveredAt    time.Time
-	WindowStart     time.Time
-	RequestCount    int64
-	ErrorCount      int64
-	BillableUnits   int64
+	// BillingRoute is the bounded "METHOD /template" label of
+	// consumer-attributed traffic; its billable units are also kept per route
+	// so rate cards can weight routes (ADR-952).
+	BillingRoute  string
+	DiscoveredAt  time.Time
+	WindowStart   time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	BillableUnits int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -823,6 +828,29 @@ type APIConsumerUsageBucket struct {
 	BillableUnits          int64
 }
 
+// APIConsumerRouteUsageBucket is one consumer's billable units on one
+// bounded route label in one UTC minute (ADR-952). The per-minute totals in
+// APIConsumerUsageBucket stay authoritative; a minute's route units never
+// exceed them, and routes missing here count at weight 1.
+type APIConsumerRouteUsageBucket struct {
+	WindowStart   time.Time
+	Route         string
+	BillableUnits int64
+}
+
+// MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
+const MaxBillingRouteBytes = 256
+
+// ValidBillingRoute reports whether label is a storable billing route: an
+// HTTP method, one space, and a path, without control characters.
+func ValidBillingRoute(label string) bool {
+	method, path, ok := strings.Cut(label, " ")
+	if !ok || method == "" || len(method) > 16 || !strings.HasPrefix(path, "/") || len(label) > MaxBillingRouteBytes {
+		return false
+	}
+	return !strings.ContainsAny(label, "\x00\r\n\t?#")
+}
+
 // APIConsumerRateCard is an immutable, versioned price for one request unit
 // emitted by an app. A later EffectiveFrom supersedes an earlier card for
 // future usage; historical cards remain readable so quotes are auditable.
@@ -834,8 +862,86 @@ type APIConsumerRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-950).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated price ladder (ADR-951). When set it
+	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
+	Tiers []APIConsumerRateCardTier
+	// RouteWeights counts each request on a listed route label as that many
+	// units (ADR-952); unlisted routes count 1. Weighted units feed the
+	// allowance and tiers.
+	RouteWeights map[string]int64
+	// PlanID names the consumer plan whose price history this card belongs
+	// to (ADR-953); empty is the app default plan.
+	PlanID        string
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// Route weight bounds: a card weights at most this many route labels, each
+// counting 1..MaxAPIConsumerRouteWeight units per request.
+const (
+	MaxAPIConsumerRouteWeights = 50
+	MaxAPIConsumerRouteWeight  = 1000
+)
+
+// ValidateAPIConsumerRouteWeights checks a card's route weights.
+func ValidateAPIConsumerRouteWeights(weights map[string]int64) error {
+	if len(weights) > MaxAPIConsumerRouteWeights {
+		return fmt.Errorf("rate card route weights: at most %d routes", MaxAPIConsumerRouteWeights)
+	}
+	for route, weight := range weights {
+		if !ValidBillingRoute(route) {
+			return fmt.Errorf("rate card route weights: %q is not a \"METHOD /template\" route", route)
+		}
+		if weight < 1 || weight > MaxAPIConsumerRouteWeight {
+			return fmt.Errorf("rate card route weights: weight for %q must be 1..%d", route, MaxAPIConsumerRouteWeight)
+		}
+	}
+	return nil
+}
+
+// APIConsumerRateCardTier is one step of a graduated ladder: units whose
+// position in the consumer's UTC month falls below UpTo (and at or above the
+// previous step's UpTo) cost PriceMillicentsPerUnit. A nil UpTo is unbounded
+// and only valid on the last step.
+type APIConsumerRateCardTier struct {
+	UpTo                   *int64 `json:"up_to"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+}
+
+// MaxAPIConsumerRateCardTiers bounds a ladder; the column CHECK mirrors it.
+const MaxAPIConsumerRateCardTiers = 10
+
+// ValidateAPIConsumerRateCardTiers checks a graduated ladder: 2..10 steps,
+// strictly increasing positive bounds, an unbounded last step, non-negative
+// prices, and only the first step free so charged units never shrink as a
+// month's usage grows.
+func ValidateAPIConsumerRateCardTiers(tiers []APIConsumerRateCardTier) error {
+	if len(tiers) == 0 {
+		return nil
+	}
+	if len(tiers) < 2 || len(tiers) > MaxAPIConsumerRateCardTiers {
+		return fmt.Errorf("rate card tiers: need 2 to %d steps", MaxAPIConsumerRateCardTiers)
+	}
+	var previous int64
+	for i, tier := range tiers {
+		last := i == len(tiers)-1
+		if last != (tier.UpTo == nil) {
+			return fmt.Errorf("rate card tiers: only the last step is unbounded")
+		}
+		if !last && *tier.UpTo <= previous {
+			return fmt.Errorf("rate card tiers: up_to must increase strictly from a positive value")
+		}
+		if tier.PriceMillicentsPerUnit < 0 || (i > 0 && tier.PriceMillicentsPerUnit == 0) {
+			return fmt.Errorf("rate card tiers: prices must be non-negative and only the first step may be free")
+		}
+		if !last {
+			previous = *tier.UpTo
+		}
+	}
+	return nil
 }
 
 // PlatformTenantRateCard is an immutable, versioned customer-facing request
@@ -848,17 +954,33 @@ type PlatformTenantRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth are free units per tenant per UTC calendar month
+	// across every attributed app (ADR-975).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated ladder counted per tenant per UTC month
+	// across every attributed app (ADR-975); it replaces the flat price and
+	// allowance, and PriceMillicentsPerUnit records the last step's price.
+	Tiers         []APIConsumerRateCardTier
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// MonthlyPricing reports whether the card prices usage by its position in
+// the tenant's UTC month, so statements must re-price whole months.
+func (c PlatformTenantRateCard) MonthlyPricing() bool {
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
-// snapshot. Draft statements can be finalized once all usage is priced.
+// snapshot. Draft statements can be finalized once all usage is priced. A
+// draft whose quote changed before finalization is superseded by the next
+// revision and can never be finalized or handed off.
 type APIConsumerUsageStatementStatus string
 
 const (
-	APIConsumerUsageStatementDraft     APIConsumerUsageStatementStatus = "draft"
-	APIConsumerUsageStatementFinalized APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementDraft      APIConsumerUsageStatementStatus = "draft"
+	APIConsumerUsageStatementFinalized  APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementSuperseded APIConsumerUsageStatementStatus = "superseded"
 )
 
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
@@ -869,12 +991,36 @@ type APIConsumerUsageStatementBucket struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units this bucket bills at its price
+	// (ADR-950). Nil on buckets written before allowances existed, where
+	// every priced unit was charged; read it through Charged. An adjustment
+	// may charge more units than it adds when late usage used allowance
+	// that later minutes had consumed.
+	ChargedUnits *int64 `json:"charged_units,omitempty"`
+	// TierUnits splits BillableUnits across a tiered card's ladder steps
+	// (ADR-951); AmountMillicents is the sum of each step's units times its
+	// price. In an adjustment, entries can be negative when late usage moved
+	// already-billed units into another step.
+	TierUnits        []int64 `json:"tier_units,omitempty"`
+	AmountMillicents int64   `json:"amount_millicents"`
+}
+
+// Charged returns the units this bucket bills at its price.
+func (b APIConsumerUsageStatementBucket) Charged() int64 {
+	if b.RateCardID == "" {
+		return 0
+	}
+	if b.ChargedUnits == nil {
+		return b.BillableUnits
+	}
+	return *b.ChargedUnits
 }
 
 // APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's
 // usage quote for one period. Once created, its buckets and totals never
-// change; finalization only records the payable lifecycle transition.
+// change; finalization only records the payable lifecycle transition. One
+// period can hold several revisions: every revision after a finalized one
+// carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
 	ID               string
 	AccountID        string
@@ -882,6 +1028,7 @@ type APIConsumerUsageStatement struct {
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
 	Status           APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
@@ -921,13 +1068,17 @@ type APIConsumerUsageStatementHandoffInput struct {
 }
 
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
-// builds it from the usage ledger and immutable rate-card versions.
+// builds it from the usage ledger and immutable rate-card versions. Revision
+// and PriorStatus name the latest revision the quote was planned against, so
+// a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
 	AccountID        string
 	AppID            string
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
+	PriorStatus      APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
 	UnpricedUnits    int64
@@ -1685,6 +1836,14 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	// ProjectImage preserves declared image intent (including a mutable tag).
+	// Each deployment resolves and pins its own immutable source. Command
+	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
+	ProjectImage                string                  `json:"project_image,omitempty"`
+	ProjectImageCommand         []string                `json:"project_image_command,omitempty"`
+	ProjectImagePort            int                     `json:"project_image_port,omitempty"`
+	ProjectImageHealthcheck     *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	ProjectDependencyConditions map[string]string       `json:"project_dependency_conditions,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -1715,6 +1874,8 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *api.ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *api.TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                       `json:"max_retries,omitempty"`
 	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
@@ -1776,9 +1937,9 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -1787,8 +1948,16 @@ func (m AppManifest) IsZero() bool {
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
+	if existing.ExecutionMode == "" && desired.ProjectImage != "" {
+		existing.ExecutionMode = desired.ExecutionMode
+	}
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
+	existing.ProjectImage = desired.ProjectImage
+	existing.ProjectImageCommand = desired.ProjectImageCommand
+	existing.ProjectImagePort = desired.ProjectImagePort
+	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
@@ -2125,16 +2294,21 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
-	// GitOps candidate. It is internal metadata, never an activation receipt.
+	// GitOps candidate. It remains attached after activation so serving runtime
+	// configuration is preserved; it is internal metadata, never a receipt.
 	EnvironmentWorkloadRuntime string `json:"-"`
-	ID                         string
-	AppID                      string
-	BuildID                    string // empty when an image deploy has no build pipeline
-	ImageDigest                string
-	Kind                       DeploymentKind
-	SourcePath                 string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes                int64
-	SourceRoot                 string // repository-relative build root inside SourcePath; empty = archive root
+	// EnvironmentWorkloadHeldValue is nil only for legacy in-memory values, in
+	// which case the presence of frozen workload inputs retains the old held
+	// behavior. Persistent rows always carry the explicit flag.
+	EnvironmentWorkloadHeldValue *bool `json:"-"`
+	ID                           string
+	AppID                        string
+	BuildID                      string // empty when an image deploy has no build pipeline
+	ImageDigest                  string
+	Kind                         DeploymentKind
+	SourcePath                   string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes                  int64
+	SourceRoot                   string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.
@@ -2752,6 +2926,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
 	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
 	RetryRestartReason  string                       `json:"retry_restart_reason,omitempty"`
@@ -2852,6 +3027,8 @@ type Build struct {
 // nullable columns. sbom_storage_key is empty in this PR — Phase 3's
 // syft populator fills it.
 type BuildProvenance struct {
+	// RuntimeBaseRef is the host-resolved deploy base used by this build.
+	RuntimeBaseRef string
 	ID             string
 	BuildID        string
 	BuildkitVer    string
@@ -2876,6 +3053,9 @@ type BuildProvenance struct {
 	// DEPLOY-PROV-5 / ADR-087). Empty when no version file is found
 	// or any parser fails — best-effort, never an error.
 	FrameworkVer string
+	// DevPatch is the builder's ADR-740 source map. Nil for builds whose
+	// guest did not report one.
+	DevPatch *api.DevPatchSourceMap
 }
 
 // CustomDomainCertStatus is the durable TLS lifecycle for a legacy custom
@@ -3146,24 +3326,57 @@ type OperatorIntent struct {
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate                 AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50                AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95                AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99                AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount              AlertMetric = "request_count"
-	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
-	AlertMetricAPIUp                     AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds         AlertMetric = "cert_expiry_seconds"
-	AlertMetricCertIssuanceFailed        AlertMetric = "cert_issuance_failed"
-	AlertMetricQueueDepth                AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint       AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct           AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents            AlertMetric = "daily_cost_cents"
+	AlertMetricEventExecutionDeadLetters                    AlertMetric = "event_execution_dead_letters"
+	AlertMetricEventExecutionDeadLetterRatePerSecond        AlertMetric = "event_execution_dead_letter_rate_per_second"
+	AlertMetricEventHandlerFailurePct                       AlertMetric = "event_handler_failure_pct"
+	AlertMetricEventCompletionLatencyP95Seconds             AlertMetric = "event_completion_latency_p95_seconds"
+	AlertMetricEventRetentionExpiringReceipts               AlertMetric = "event_retention_expiring_receipts"
+	AlertMetricEventStorageUtilizationPct                   AlertMetric = "event_storage_utilization_pct"
+	AlertMetricRecoveryNotificationAdmissionOverdueJobs     AlertMetric = "event_recovery_notification_admission_overdue_jobs"
+	AlertMetricRecoveryNotificationAdmissionDeadJobs        AlertMetric = "event_recovery_notification_admission_dead_jobs"
+	AlertMetricRecoveryNotificationAdmissionUnknownJobs     AlertMetric = "event_recovery_notification_admission_unknown_jobs"
+	AlertMetricRecoveryNotificationAdmissionNoReceiversJobs AlertMetric = "event_recovery_notification_admission_no_receivers_jobs"
+	AlertMetricRecoveryNotificationExecutionOverdueJobs     AlertMetric = "event_recovery_notification_execution_overdue_jobs"
+	AlertMetricRecoveryNotificationExecutionDeadJobs        AlertMetric = "event_recovery_notification_execution_dead_jobs"
+	AlertMetricRecoveryNotificationExecutionUnknownJobs     AlertMetric = "event_recovery_notification_execution_unknown_jobs"
+	AlertMetricRecoveryNotificationExecutionNoReceiversJobs AlertMetric = "event_recovery_notification_execution_no_receivers_jobs"
+	AlertMetricEventRecoveryExecutionWaitingJobs            AlertMetric = "event_recovery_execution_waiting_jobs"
+	AlertMetricEventRecoveryExecutionProlongedWaitJobs      AlertMetric = "event_recovery_execution_prolonged_wait_jobs"
+	AlertMetricEventRecoveryExecutionUnknownJobs            AlertMetric = "event_recovery_execution_unknown_jobs"
+	AlertMetricEventRecoveryExecutionRetentionRiskJobs      AlertMetric = "event_recovery_execution_retention_risk_jobs"
+	AlertMetricEventRecoveryCapacityWaitJobs                AlertMetric = "event_recovery_capacity_wait_jobs"
+	AlertMetricEventRecoveryStalledJobs                     AlertMetric = "event_recovery_stalled_jobs"
+	AlertMetricEventRecoveryExpiringJobs                    AlertMetric = "event_recovery_expiring_jobs"
+	AlertMetricEventPendingRecipients                       AlertMetric = "event_pending_recipients"
+	AlertMetricEventOldestPendingSeconds                    AlertMetric = "event_oldest_pending_seconds"
+	AlertMetricEventRetryRatePerSecond                      AlertMetric = "event_retry_rate_per_second"
+	AlertMetricEventTerminalFailurePct                      AlertMetric = "event_terminal_failure_pct"
+	AlertMetricEventRoutingLatencyP95Seconds                AlertMetric = "event_routing_latency_p95_seconds"
+	AlertMetricEventPausedSeconds                           AlertMetric = "event_paused_seconds"
+	AlertMetricEventDrainRatePerSecond                      AlertMetric = "event_drain_rate_per_second"
+	AlertMetricErrorRate                                    AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50                                   AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95                                   AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99                                   AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct                                 AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount                                 AlertMetric = "request_count"
+	AlertMetricFailedInvocs                                 AlertMetric = "failed_invocations"
+	AlertMetricAPIUp                                        AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR                              AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments                            AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
+	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
+	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	AlertMetricNewErrorFingerprint                          AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct                              AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents                               AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures                             AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips                           AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge                           AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge                           AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge                               AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3344,6 +3557,7 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
+	EventSubscriptionID             string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AccountID                       string
@@ -3446,7 +3660,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means all eligible events for that subscription scope;
+// An empty filter ([]) means standard eligible events for that subscription scope;
+// app.health.changed requires an explicit filter.
 // non-empty filters accept events whose name appears in the array. The delivery
 // ledger also stores bounded custom event names from explicitly addressed
 // application-outbox calls; those names never participate in subscription
@@ -3454,6 +3669,18 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
+	AppWebhookEventRealtimeSchedulePublished        AppWebhookEvent = "realtime.schedule.published"
+	AppWebhookEventRealtimeScheduleFailed           AppWebhookEvent = "realtime.schedule.failed"
+	AppWebhookEventRealtimeScheduleSkipped          AppWebhookEvent = "realtime.schedule.skipped"
+	AppWebhookEventRealtimeNotificationSent         AppWebhookEvent = "realtime.notification.sent"
+	AppWebhookEventRealtimeNotificationFailed       AppWebhookEvent = "realtime.notification.failed"
+	AppWebhookEventRealtimeNotificationExpired      AppWebhookEvent = "realtime.notification.expired"
+	AppWebhookEventRealtimeNotificationCancelled    AppWebhookEvent = "realtime.notification.cancelled"
+	AppWebhookEventRealtimeNotificationSuperseded   AppWebhookEvent = "realtime.notification.superseded"
+	AppWebhookEventRealtimeMessageRead              AppWebhookEvent = "realtime.message.read"
+	AppWebhookEventRealtimeInboxFallbackRequired    AppWebhookEvent = "realtime.inbox.fallback_required"
+	AppWebhookEventRealtimeInboxAcknowledged        AppWebhookEvent = "realtime.inbox.acknowledged"
+	AppWebhookEventRealtimeInboxGap                 AppWebhookEvent = "realtime.inbox.gap"
 	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
 	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
 	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
@@ -3462,6 +3689,7 @@ const (
 	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
 	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
 	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventAppHealthChanged                 AppWebhookEvent = "app.health.changed"
 	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
 	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
@@ -3474,14 +3702,18 @@ const (
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
 	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorEscalated            AppWebhookEvent = "routes.monitor.escalated"
 	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
 	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
 	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
 	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
+	AppWebhookEventProfileRouteRegressed            AppWebhookEvent = "profile.route_regressed"
+	AppWebhookEventProfileRouteRecovered            AppWebhookEvent = "profile.route_recovered"
 	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
@@ -3492,6 +3724,11 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
+	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
+	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
+	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
+	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
@@ -3499,6 +3736,18 @@ const (
 // emitters, tests, and adapters. Keep the order stable: it is also the
 // order used in validation error messages and generated documentation.
 var AllAppWebhookEvents = []AppWebhookEvent{
+	AppWebhookEventRealtimeSchedulePublished, AppWebhookEventRealtimeScheduleFailed, AppWebhookEventRealtimeScheduleSkipped,
+	AppWebhookEventRealtimeNotificationSent,
+	AppWebhookEventRealtimeNotificationFailed,
+	AppWebhookEventRealtimeNotificationExpired,
+	AppWebhookEventRealtimeNotificationCancelled,
+	AppWebhookEventRealtimeNotificationSuperseded,
+
+	AppWebhookEventRealtimeMessageRead,
+	AppWebhookEventRealtimeInboxFallbackRequired,
+	AppWebhookEventRealtimeInboxAcknowledged,
+	AppWebhookEventRealtimeInboxGap,
+	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
@@ -3507,6 +3756,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppScaled,
 	AppWebhookEventAppParked,
 	AppWebhookEventAppWoken,
+	AppWebhookEventAppHealthChanged,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
 	AppWebhookEventDeploymentLive,
@@ -3519,10 +3769,12 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventConsumerUsageThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
 	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorEscalated,
 	AppWebhookEventRouteMonitorRecovered,
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
@@ -3534,7 +3786,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventWorkflowFinished,
+	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -3971,6 +4224,12 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
+	// WorkflowRunID is set only after authenticated durable workflow admission.
+	// It authorizes private code routing and is never guest-authored or persisted.
+	WorkflowRunID string `json:"-"`
+	// ResponseRetryAfter is transient gateway response metadata, never persisted
+	// or accepted from the customer invocation envelope.
+	ResponseRetryAfter string `json:"-"`
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
@@ -3990,11 +4249,12 @@ type Invocation struct {
 	// contract; the ledger keeps the routing field internal.
 	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
-	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
-	InstanceID       string           `json:"instance_id,omitempty"`
-	Source           InvocationSource `json:"source"`
-	// EnvironmentID is authenticated operational ownership, never request
-	// intent. Production remains NULL; stage admission persists the UUID.
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	InstanceID       string `json:"instance_id,omitempty"`
+	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	ResolvedDeploymentID string           `json:"-"`
+	Source               InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request intent.
 	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
@@ -7410,6 +7670,7 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	Template   bool              `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeaderOp is one mutation. Action ∈ {add,set,remove}; Value
@@ -7417,9 +7678,10 @@ type EdgeRuleRedirectAction struct {
 // blacklist (Host, Content-Length, Transfer-Encoding, Connection,
 // x-faas-*) at apply time.
 type EdgeRuleHeaderOp struct {
-	Name   string `json:"name"`
-	Value  string `json:"value,omitempty"`
-	Action string `json:"action"`
+	Name     string `json:"name"`
+	Value    string `json:"value,omitempty"`
+	Action   string `json:"action"`
+	Template bool   `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and
@@ -7476,6 +7738,7 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
+	RequireExp                     bool                   `json:"require_exp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =
@@ -7705,6 +7968,9 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// ADR-965: composite keys and response-status counting.
+	KeyFields     []string `json:"key_fields,omitempty"`
+	CountStatuses []int    `json:"count_statuses,omitempty"`
 }
 
 // EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
@@ -7874,8 +8140,34 @@ type EdgeRule struct {
 	// release per ADR-128 §D2 so legacy JSONB-only rows
 	// preserve the customer's intended mode.
 	ValidateMode string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Name and Description are operator-facing labels ("" = unset).
+	Name        string
+	Description string
+	// ExpiresAt, when set, is the instant after which the gateway stops
+	// applying the rule. Expired rows are kept for the listing.
+	ExpiresAt *time.Time
+	// Match (ADR-962) is the optional structured condition ANDed with the
+	// fixed selectors; nil applies the rule to every selected request.
+	Match *api.EdgeRuleMatchExpr
+	// MatchLists holds the account lists Match references (ADR-963),
+	// resolved by gatewayd when it loads a host. Never persisted.
+	MatchLists api.EdgeRuleLists
+	// Mode (ADR-960) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
+	// rule is matched and counted but never acts.
+	Mode      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Edge-rule modes (ADR-960).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
+
+// EdgeRuleExpired reports whether the rule's expiry has passed at now.
+func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
+	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -8016,6 +8308,11 @@ type CreateEdgeRuleParams struct {
 	// re-validates via MergeCorsPresetIntoRule).
 	CorsPresetID *string
 	ValidateMode string
+	Name         string
+	Description  string
+	ExpiresAt    *time.Time
+	Match        *api.EdgeRuleMatchExpr
+	Mode         string // "" = enforce
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8039,6 +8336,15 @@ type UpdateEdgeRuleParams struct {
 	Action       *EdgeRuleAction
 	CorsPresetID **string
 	ValidateMode *string
+	// Name / Description: non-nil sets the value ("" clears it).
+	Name        *string
+	Description *string
+	// ExpiresAt: non-nil sets the expiry; a non-nil pointer to nil clears it.
+	ExpiresAt **time.Time
+	// Match: non-nil replaces the condition; ClearMatch removes it.
+	Match      *api.EdgeRuleMatchExpr
+	ClearMatch bool
+	Mode       *string
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

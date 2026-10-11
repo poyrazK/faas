@@ -28,6 +28,8 @@ class WorkflowRunResponse:
     resume_count: int | Unset = UNSET
     """Number of accepted resumptions; send this value when requesting continuation."""
     cancelled_at: datetime.datetime | Unset = UNSET
+    deployment_id: UUID | Unset = UNSET
+    """Immutable deployment used by this run's app handlers. Absent for legacy unpinned runs."""
     platform_tenant_id: None | Unset | UUID = UNSET
     """Platform tenant authorized for this workflow run"""
     current_step: None | str | Unset = UNSET
@@ -58,6 +60,10 @@ class WorkflowRunResponse:
         cancelled_at: str | Unset = UNSET
         if not isinstance(self.cancelled_at, Unset):
             cancelled_at = self.cancelled_at.isoformat()
+
+        deployment_id: str | Unset = UNSET
+        if not isinstance(self.deployment_id, Unset):
+            deployment_id = str(self.deployment_id)
 
         platform_tenant_id: None | str | Unset
         if isinstance(self.platform_tenant_id, Unset):
@@ -116,6 +122,8 @@ class WorkflowRunResponse:
             field_dict["resume_count"] = resume_count
         if cancelled_at is not UNSET:
             field_dict["cancelled_at"] = cancelled_at
+        if deployment_id is not UNSET:
+            field_dict["deployment_id"] = deployment_id
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
         if current_step is not UNSET:
@@ -158,6 +166,13 @@ class WorkflowRunResponse:
             cancelled_at = UNSET
         else:
             cancelled_at = datetime.datetime.fromisoformat(_cancelled_at)
+
+        _deployment_id = d.pop("deployment_id", UNSET)
+        deployment_id: UUID | Unset
+        if isinstance(_deployment_id, Unset):
+            deployment_id = UNSET
+        else:
+            deployment_id = UUID(_deployment_id)
 
         def _parse_platform_tenant_id(data: object) -> None | Unset | UUID:
             if data is None:
@@ -242,6 +257,7 @@ class WorkflowRunResponse:
             updated_at=updated_at,
             resume_count=resume_count,
             cancelled_at=cancelled_at,
+            deployment_id=deployment_id,
             platform_tenant_id=platform_tenant_id,
             current_step=current_step,
             input_=input_,

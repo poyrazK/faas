@@ -80,7 +80,9 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	if err := buildV6BaseExt4(base, repoRoot(t)); err != nil {
 		t.Fatalf("build base fixture: %v", err)
 	}
-	if err := buildV6LayerExt4Size(layer, 64); err != nil {
+	// Production pads every app layer to its plan cap (Scale: 2 GiB) and the
+	// reflink clone's cost follows the image, so the size must be settable.
+	if err := buildV6LayerExt4Size(layer, benchLayerMiB(t)); err != nil {
 		t.Fatalf("build layer fixture: %v", err)
 	}
 
@@ -326,6 +328,7 @@ var restoreTimingPhases = []string{
 	"tun_setup_jail_work_us",
 	"cgroup_fence_ms",
 	"start_jailer_ms",
+	"network_wait_ms",
 	"chroot_ms",
 	"helper_ms",
 	"materialize_mem_ms",
@@ -495,6 +498,21 @@ func benchAPIEnvEntries(t *testing.T) []APIEnvEntry {
 // benchMemMiB sizes the guest. Default 128 MiB keeps earlier runs comparable;
 // set FAAS_RESTORE_BENCH_MEM_MIB=1024 to match a production app when the
 // question is about the page-fault-bound phases.
+// benchLayerMiB sizes drive1. FAAS_RESTORE_BENCH_LAYER_MIB=2048 matches a
+// Scale-plan production layer; the default keeps earlier runs comparable.
+func benchLayerMiB(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("FAAS_RESTORE_BENCH_LAYER_MIB")
+	if raw == "" {
+		return 64
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 16 || n > 4096 {
+		t.Fatalf("FAAS_RESTORE_BENCH_LAYER_MIB=%q must be an integer in [16,4096]", raw)
+	}
+	return n
+}
+
 func benchMemMiB(t *testing.T) int {
 	t.Helper()
 	raw := os.Getenv("FAAS_RESTORE_BENCH_MEM_MIB")

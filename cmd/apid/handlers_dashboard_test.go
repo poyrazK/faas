@@ -1575,6 +1575,15 @@ func TestDashboardHostingReceipt_ProjectsReadinessEvidence(t *testing.T) {
 			Path:       "/healthz",
 			StatusCode: 200,
 			LatencyMS:  42,
+			RouteChecks: &apihostingreceipt.RouteCheckSet{
+				Source:         apihostingreceipt.RouteCheckSourceOpenAPI,
+				DocumentSHA256: strings.Repeat("a", 64),
+				Status:         apihostingreceipt.RouteCheckSetVerified,
+				Checks: []apihostingreceipt.RouteCheckResult{{
+					Method: "GET", Path: "/v1/health", Status: apihostingreceipt.SmokeVerified,
+					StatusCode: 204, LatencyMS: 18, VerifiedAt: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC),
+				}},
+			},
 		},
 	}
 	raw, err := apihostingreceipt.Encode(want)
@@ -1590,6 +1599,22 @@ func TestDashboardHostingReceipt_ProjectsReadinessEvidence(t *testing.T) {
 	}
 	if got.AppURL != want.AppURL || got.Framework != want.Profile.Framework || got.HealthPath != want.Profile.HealthPath || got.SmokeStatus != want.Smoke.Status {
 		t.Fatalf("projection = %+v, want app=%q framework=%q path=%q status=%q", got, want.AppURL, want.Profile.Framework, want.Profile.HealthPath, want.Smoke.Status)
+	}
+	if got.RouteCheckSetStatus != want.Smoke.RouteChecks.Status || got.RouteCheckDocumentSHA256 != want.Smoke.RouteChecks.DocumentSHA256 ||
+		len(got.RouteChecks) != 1 || got.RouteChecks[0].Method != "GET" || got.RouteChecks[0].Path != "/v1/health" ||
+		got.RouteChecks[0].Status != apihostingreceipt.SmokeVerified || got.RouteChecks[0].StatusCode != 204 ||
+		got.RouteChecks[0].LatencyMS != 18 || got.RouteChecks[0].VerifiedAt != "2026-10-03T12:00:00Z" {
+		t.Fatalf("route checks projection = %+v, want receipt route evidence %+v", got, want.Smoke.RouteChecks)
+	}
+	legacy := want
+	legacy.Smoke.RouteChecks = nil
+	legacyRaw, err := apihostingreceipt.Encode(legacy)
+	if err != nil {
+		t.Fatalf("encode legacy receipt: %v", err)
+	}
+	legacyView, err := dashboardHostingReceipt(legacyRaw)
+	if err != nil || legacyView == nil || len(legacyView.RouteChecks) != 0 || legacyView.RouteCheckSetStatus != "" {
+		t.Fatalf("legacy route check projection = (%+v, %v), want empty route evidence", legacyView, err)
 	}
 	if empty, err := dashboardHostingReceipt(json.RawMessage(`{}`)); err != nil || empty != nil {
 		t.Fatalf("empty receipt = (%v, %v), want (nil, nil)", empty, err)

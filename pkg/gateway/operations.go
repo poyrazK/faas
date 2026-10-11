@@ -99,7 +99,7 @@ func (d DurableOperationRoutes) ResolveOperationRoute(ctx context.Context, app A
 }
 
 func (d DurableOperationRoutes) EnqueueOperationRoute(ctx context.Context, route OperationRoute, tenant, key string, input []byte) (state.Operation, error) {
-	if !d.Admission.AllowsTenant(route.Definition.AccountID, route.Definition.AppID, route.Definition.Scope, tenant) {
+	if !d.Admission.AllowsTenantKind(route.Definition.AccountID, route.Definition.AppID, route.Definition.Scope, tenant, operations.DefinitionExecutionKind(route.Definition.Spec)) {
 		return state.Operation{}, operations.ErrAdmissionClosed
 	}
 	op, _, err := d.Store.AdmitOperation(ctx, state.OperationAdmission{AccountID: route.Definition.AccountID, DefinitionID: route.Definition.ID,

@@ -158,6 +158,10 @@ func TestCreateWorkflowRun_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetWorkflowRun: %v", err)
 	}
+	dep, err := e.store.LiveDeploymentForScope(t.Context(), app.ID, "default")
+	if err != nil || resp.DeploymentID != dep.ID || stored.DeploymentID != dep.ID {
+		t.Fatalf("response=%+v stored=%+v deployment=%+v err=%v", resp, stored, dep, err)
+	}
 	if !strings.Contains(string(stored.DefinitionSnapshot), "/process-order") {
 		t.Fatalf("definition snapshot = %s, want live deployment definition", stored.DefinitionSnapshot)
 	}

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "reconciliation"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "gregale.workflow-reconciliation.v1"
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow",
+        "instance_id",
+        "authoritative_state",
+        "source_revision",
+        "expected_report_revision",
+        "contract_version",
+        "observed_report_revision",
+        "observed_contract_version",
+        "status"
+      ],
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        },
+        "instance_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "authoritative_state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "source_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Opaque application business revision; distinct from the SDK report counter. UTF-8 byte bound."
+        },
+        "expected_report_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "contract_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "observed_state": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "observed_report_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "observed_contract_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "in_sync",
+            "report_missing",
+            "report_behind",
+            "report_ahead",
+            "state_mismatch",
+            "contract_version_mismatch"
+          ]
+        }
+      }
+    }
+  }
+}

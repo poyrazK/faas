@@ -24,8 +24,6 @@ package main
 import (
 	"fmt"
 	"os"
-
-	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 // cmdConnectRepo implements `gregale connect repo <owner>/<name>`.
@@ -62,7 +60,7 @@ func cmdConnectRepo(args []string) int {
 	fmt.Printf("Opening %s\n  to bind this repo to a Gregale app…\n", target)
 	fmt.Fprintf(os.Stderr, "  (you'll be asked to authorize GitHub if you haven't already)\n")
 	fmt.Fprintf(os.Stderr, "Next:\n  gregale deploy --repo %s --ref main\n", repo)
-	if err := browser.Open(target); err != nil {
+	if err := openBrowser(target); err != nil {
 		// Mirror cmdConnect github: a soft failure — the URL is
 		// the value the customer came for, missing the launch is
 		// not worth a non-zero exit.

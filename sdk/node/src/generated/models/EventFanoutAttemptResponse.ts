@@ -6,6 +6,14 @@
  * Immutable routing outcome or explicit operator replay request for one event recipient.
  */
 export type EventFanoutAttemptResponse = {
+  /**
+   * Why routing was filtered without consuming a routing attempt.
+   */
+  filter_reason?: 'schema_version_mismatch';
+  /**
+   * Why automatic routing retries stopped; failure_code retains the underlying cause.
+   */
+  retry_stop_reason?: 'non_retryable' | 'max_attempts' | 'max_duration' | 'delivery_expired';
   subscription_id: string;
   action: 'fanout_attempt' | 'operator_replay';
   state: 'pending' | 'filtered' | 'enqueued' | 'failed';

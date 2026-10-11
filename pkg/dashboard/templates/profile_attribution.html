@@ -1,0 +1,14 @@
+{{define "profile_attribution_quality"}}
+{{if .Available}}<p>Labeled CPU: {{with .AttributedPercent}}{{printf "%.2f" .}}{{end}}%; unattributed: {{with .UnattributedPercent}}{{printf "%.2f" .}}{{end}}%. Total sampled CPU: {{printf "%.6f" .TotalCPUSeconds}} s.</p>
+{{if .Reasons}}<ul>{{range .Reasons}}<li>{{if eq .Reason "unlabeled"}}No route label (includes background work and unsupported collectors){{else if eq .Reason "invalid_label"}}Invalid or ambiguous route label{{else if eq .Reason "route_not_admitted"}}Route not admitted by the host contract or allowlist{{else if eq .Reason "encoding_limit"}}Attribution encoding limit{{else}}Unknown discard reason (legacy or incomplete diagnostics){{end}}: {{printf "%.6f" .CPUSeconds}} CPU seconds</li>{{end}}</ul>{{end}}
+{{if not .DiagnosticsComplete}}<p>Discard diagnostics are incomplete. Unknown CPU is not classified as background work.</p>{{end}}{{else}}<p>Attribution quality unavailable: no sampled CPU in the capture window.</p>{{end}}
+{{end}}
+{{define "profile_attribution_comparison"}}
+<section aria-label="Route attribution quality"><h3>Route attribution quality</h3>
+<p>Shares cover all sampled CPU in each window, including when viewing one route. They do not measure VM CPU or complete request instrumentation.</p>
+{{with .Baseline}}<h4>Stable / baseline</h4>{{template "profile_attribution_quality" .}}{{end}}{{with .Candidate}}<h4>Canary / candidate</h4>{{template "profile_attribution_quality" .}}{{end}}
+{{if .Available}}{{with .DeltaPercentagePoints}}<p>Labeled share change: {{printf "%+.2f" .}} percentage points.</p>{{end}}{{end}}
+{{range .Warnings}}<p class="notice">{{.}}</p>{{end}}
+<p>Advisory route checks require attribution to change by less than {{printf "%.0f" .MaximumChangePercentagePoints}} percentage points in either direction. Changes can reflect background CPU or traffic as well as instrumentation.</p>
+</section>
+{{end}}

@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -31,16 +36,197 @@ type realtimePublishStatus interface {
 	PublishWithStatus(context.Context, string, string, realtime.Message) (api.ManagedRealtimePublishResponse, error)
 }
 
+type realtimeRetainedPublishStatus interface {
+	PublishRetainedWithStatus(context.Context, string, string, realtime.Message, int64) (api.ManagedRealtimePublishResponse, error)
+}
+
 type realtimeConnectionInventory interface {
 	ListConnectionInventory(context.Context) (realtime.ConnectionInventory, error)
 }
 
+type realtimePrincipalPublisher interface {
+	SendToPrincipal(context.Context, string, api.ManagedRealtimePrincipalMessageRequest, realtime.Message) (api.ManagedRealtimePrincipalSendResponse, error)
+}
+
 const (
-	managedRealtimeConnectionsLimitDefault = 100
-	managedRealtimeConnectionsLimitMax     = 1000
-	managedRealtimeDrainConnectionIDsMax   = 100
-	managedRealtimeDrainAllMax             = 10000
+	managedRealtimeConnectionsLimitDefault      = 100
+	managedRealtimeConnectionsLimitMax          = 1000
+	managedRealtimeDrainConnectionIDsMax        = 100
+	managedRealtimeDrainAllMax                  = 10000
+	managedRealtimePublishIdempotencyMaxBytes   = 128
+	managedRealtimePublishIdempotencySweepEvery = 1024
+	managedRealtimePublishIdempotencySweepBatch = 4096
 )
+
+func managedRealtimeDeliveryFromRequest(r *http.Request) (api.ManagedRealtimeDelivery, bool) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", false
+	}
+	values := query["delivery"]
+	if len(values) == 0 {
+		return api.ManagedRealtimeDeliveryLive, true
+	}
+	if len(values) != 1 {
+		return "", false
+	}
+	delivery := api.ManagedRealtimeDelivery(values[0])
+	switch delivery {
+	case api.ManagedRealtimeDeliveryLive, api.ManagedRealtimeDeliveryRetained:
+		return delivery, true
+	default:
+		return "", false
+	}
+}
+
+func managedRealtimePublishFingerprint(r *http.Request) ([32]byte, bool) {
+	var zero [32]byte
+	delivery, validDelivery := managedRealtimeDeliveryFromRequest(r)
+	if !validDelivery {
+		return zero, false
+	}
+	if r.Body == nil {
+		return zero, false
+	}
+	const maxRequestBytes = 2 << 20
+	originalBody := r.Body
+	body, err := io.ReadAll(io.LimitReader(originalBody, maxRequestBytes+1))
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), originalBody))
+	if err != nil || len(body) > maxRequestBytes {
+		return zero, false
+	}
+	probe := r.Clone(r.Context())
+	probe.Body = io.NopCloser(bytes.NewReader(body))
+	message, problem := decodeManagedRealtimeMessage(probe)
+	if problem != nil {
+		return zero, false
+	}
+	if delivery == api.ManagedRealtimeDeliveryRetained && len(message.Metadata) > 0 {
+		canonical, _ := json.Marshal(struct {
+			Data     []byte
+			Binary   bool
+			Metadata map[string]string
+		}{message.Data, message.Binary, message.Metadata})
+		return sha256.Sum256(append([]byte("retained_metadata\x00"), canonical...)), true
+	}
+	// Keep the original live fingerprint so a rolling deployment can replay
+	// existing live receipts. Retained delivery gets a distinct domain prefix.
+	canonical := make([]byte, 0, len("retained\x00")+1+len(message.Data))
+	if delivery == api.ManagedRealtimeDeliveryRetained {
+		canonical = append(canonical, "retained\x00"...)
+	}
+	messageOffset := len(canonical)
+	canonical = append(canonical, 0)
+	if message.Binary {
+		canonical[messageOffset] = 1
+	}
+	canonical = append(canonical, message.Data...)
+	return sha256.Sum256(canonical), true
+}
+
+// idempotentManagedRealtimePublish binds a stable publish key to the decoded
+// payload. An in-flight publish is not run a second time while its outcome
+// could be unknown after a control-plane crash.
+func (s *server) idempotentManagedRealtimePublish(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		keys := r.Header.Values("Idempotency-Key")
+		if len(keys) > 1 {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("send exactly one Idempotency-Key header"))
+			return
+		}
+		key := ""
+		if len(keys) == 1 {
+			key = keys[0]
+		}
+		if key == "" {
+			next(w, r, acct)
+			return
+		}
+		if len(key) > managedRealtimePublishIdempotencyMaxBytes ||
+			strings.IndexFunc(key, func(r rune) bool { return r < 0x21 || r > 0x7e }) >= 0 {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("Idempotency-Key must contain 1 to 128 printable ASCII bytes with no whitespace"))
+			return
+		}
+		fingerprint, validPayload := managedRealtimePublishFingerprint(r)
+		if !validPayload {
+			// Let the endpoint handler return its normal bounded-body or JSON
+			// validation problem without consuming an idempotency key.
+			next(w, r, acct)
+			return
+		}
+		store, ok := s.store.(state.ManagedRealtimePublishIdempotencyStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("managed realtime publish idempotency unavailable"))
+			return
+		}
+		// Sweep four times the observed keyed request rate in a bounded batch,
+		// keeping expired receipts from accumulating under sustained publishing.
+		if s.managedRealtimePublishIdempotencySweep.Add(1)%managedRealtimePublishIdempotencySweepEvery == 0 {
+			if reaper, ok := s.store.(state.ManagedRealtimePublishIdempotencyReaper); ok {
+				if _, err := reaper.ReapManagedRealtimePublishIdempotency(r.Context(), managedRealtimePublishIdempotencySweepBatch); err != nil && s.log != nil && !errors.Is(err, context.Canceled) {
+					s.log.WarnContext(r.Context(), "managed realtime publish idempotency cleanup failed", "error", err)
+				}
+			}
+		}
+		scopedKey := "managed-realtime-publish\n" + r.Method + " " + r.URL.EscapedPath() + "\n" + key
+		reservation, err := store.ReserveManagedRealtimePublish(r.Context(), acct.ID, scopedKey, fingerprint[:])
+		if err != nil {
+			if s.log != nil {
+				s.log.WarnContext(r.Context(), "managed realtime publish idempotency reservation failed", "error", err)
+			}
+			api.WriteProblem(w, api.ErrCapacity("managed realtime publish idempotency unavailable"))
+			return
+		}
+		if reservation.Conflict {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Idempotency key conflict", "this Idempotency-Key was already used with a different realtime message"))
+			return
+		}
+		if reservation.InFlight {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Publish outcome pending", "a publish with this Idempotency-Key is still in progress or its outcome is unknown; retry the same request later").
+				WithHeader("Retry-After", "1"))
+			return
+		}
+		if !reservation.Reserved {
+			replayManagedRealtimePublish(w, reservation.Status, reservation.Body)
+			return
+		}
+
+		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
+		next(cap, r, acct)
+		if managedRealtimePublishReplayable(cap.status) {
+			if err := s.store.PutIdempotent(context.WithoutCancel(r.Context()), acct.ID, scopedKey, cap.status, cap.body.Bytes()); err != nil {
+				// Keep the reservation in-flight: a repeat must not publish again
+				// when the first outcome could not be durably recorded.
+				if s.log != nil {
+					s.log.WarnContext(r.Context(), "managed realtime publish receipt persistence failed", "error", err)
+				}
+			}
+			return
+		}
+		if reserver, ok := s.store.(idempotencyReserver); ok {
+			_ = reserver.ReleaseIdempotent(context.WithoutCancel(r.Context()), acct.ID, scopedKey)
+		}
+	}
+}
+
+func replayManagedRealtimePublish(w http.ResponseWriter, status int, body []byte) {
+	contentType := "application/json"
+	if status >= 400 {
+		contentType = "application/problem+json"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Idempotent-Replayed", "true")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func managedRealtimePublishReplayable(status int) bool {
+	// A 5xx or rate-limit response can follow an ambiguous owner RPC. Replay
+	// that result rather than risk enqueueing a message twice.
+	return status >= 200 && status < 300 || status == http.StatusTooManyRequests || status >= 500
+}
 
 type managedRealtimeConnectionCursor struct {
 	Version   int    `json:"v"`
@@ -137,6 +323,42 @@ func (o localRealtimeOwner) Publish(ctx context.Context, endpointID, channel str
 	return o.client.Publish(ctx, endpointID, channel, message)
 }
 
+func (o localRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message) (api.ManagedRealtimePublishResponse, error) {
+	status, err := o.client.PublishWithStatus(ctx, endpointID, channel, message)
+	return api.ManagedRealtimePublishResponse{
+		Queued: status.Queued, Subscribers: status.Subscribers, QueueFull: status.QueueFull, Failed: status.Failed,
+		NodesQueried: 1, Partial: status.QueueFull > 0 || status.Failed > 0,
+	}, err
+}
+
+func (o localRealtimeOwner) SendToPrincipal(ctx context.Context, endpointID string, request api.ManagedRealtimePrincipalMessageRequest, message realtime.Message) (api.ManagedRealtimePrincipalSendResponse, error) {
+	status, err := o.client.SendToPrincipal(ctx, endpointID, request, message)
+	return api.ManagedRealtimePrincipalSendResponse{
+		MessageID: request.MessageID, ReceiptRequested: request.RequestReceipt,
+		Recipients: status.Recipients, Queued: status.Queued, Unsupported: status.Unsupported,
+		QueueFull: status.QueueFull, Failed: status.Failed, NodesQueried: 1,
+		Partial: status.Unsupported > 0 || status.QueueFull > 0 || status.Failed > 0,
+	}, err
+}
+
+func (o localRealtimeOwner) PublishRetainedWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message, sequence int64) (api.ManagedRealtimePublishResponse, error) {
+	status, err := o.client.PublishRetainedWithStatus(ctx, endpointID, channel, message, sequence)
+	var managementErr *realtime.ManagementError
+	if errors.As(err, &managementErr) && (managementErr.StatusCode == http.StatusBadRequest || managementErr.StatusCode == http.StatusNotFound) {
+		return o.PublishWithStatus(ctx, endpointID, channel, message)
+	}
+	return api.ManagedRealtimePublishResponse{
+		Queued: status.Queued, Subscribers: status.Subscribers, QueueFull: status.QueueFull, Failed: status.Failed,
+		NodesQueried: 1, Partial: status.QueueFull > 0 || status.Failed > 0,
+	}, err
+}
+
+// RelayEphemeral is a no-op in single-node mode because realtimed has already
+// delivered the event to every local v2 subscriber.
+func (o localRealtimeOwner) RelayEphemeral(context.Context, string, string, string, realtime.EphemeralFrame) error {
+	return nil
+}
+
 func (s *server) managedRealtimeOwner(w http.ResponseWriter) (realtimeOwner, bool) {
 	if s.realtimeOwner == nil {
 		api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
@@ -159,7 +381,16 @@ func decodeManagedRealtimeMessage(r *http.Request) (realtime.Message, *api.Probl
 	if len(data) > api.RealtimeMessageMaxBytes {
 		return realtime.Message{}, api.ErrRealtimeInvalid(fmt.Sprintf("message exceeds %d bytes", api.RealtimeMessageMaxBytes))
 	}
-	return realtime.Message{Data: data, Binary: request.Binary}, nil
+	if request.ExpectedSequence != nil {
+		delivery, valid := managedRealtimeDeliveryFromRequest(r)
+		if *request.ExpectedSequence < 0 || r.PathValue("channel") == "" || !valid || delivery != api.ManagedRealtimeDeliveryRetained {
+			return realtime.Message{}, api.ErrRealtimeInvalid("expected_sequence must be nonnegative and requires retained channel publishing")
+		}
+	}
+	if api.ValidateRealtimeMetadata(request.Metadata) != nil {
+		return realtime.Message{}, api.ErrRealtimeInvalid("invalid message metadata")
+	}
+	return realtime.Message{ExpectedSequence: request.ExpectedSequence, Metadata: request.Metadata, Data: data, Binary: request.Binary}, nil
 }
 
 func validateManagedRealtimeChannel(channel string) *api.Problem {
@@ -530,6 +761,321 @@ func (s *server) sendManagedRealtimeConnection(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusAccepted)
 }
 
+func (s *server) sendManagedRealtimePrincipal(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
+	if !ok {
+		return
+	}
+	if realtimeAuthMode(row) != api.RealtimeAuthModeOIDCJWT {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "OIDC authentication required", "principal delivery requires an endpoint configured with oidc_jwt authentication"))
+		return
+	}
+	var request api.ManagedRealtimePrincipalMessageRequest
+	if err := decodeJSONSized(r, &request, 16<<10); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if err := api.ValidateRealtimePrincipal(request.Principal); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(request.DataBase64)
+	if err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("data_base64 must be valid standard base64"))
+		return
+	}
+	if len(data) > api.RealtimePrincipalMessageMaxBytes {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("principal messages are limited to %d decoded bytes", api.RealtimePrincipalMessageMaxBytes)))
+		return
+	}
+	if row.MaxMessageBytes > 0 && int64(len(data)) > row.MaxMessageBytes {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("message exceeds this endpoint's max_message_bytes"))
+		return
+	}
+	if request.Delivery != "" && request.Delivery != api.ManagedRealtimeDeliveryLive && request.Delivery != api.ManagedRealtimeDeliveryRetained {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("delivery must be live or retained"))
+		return
+	}
+	retained := request.Delivery == api.ManagedRealtimeDeliveryRetained
+	if _, err := api.ParseRealtimeNotificationNotBefore(request.NotificationNotBefore, time.Now().UTC()); err != nil || request.NotificationNotBefore != "" && request.FallbackAfterSeconds == 0 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("notification_not_before requires fallback, an RFC3339 timestamp, and at most 48 hours ahead"))
+		return
+	}
+	if api.ValidateRealtimeNotificationGroup(request.NotificationCollapseKey, "") != nil || request.NotificationCollapseKey != "" && request.FallbackAfterSeconds == 0 {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("notification_collapse_key requires fallback and must be at most 128 bytes without whitespace edges or control delimiters"))
+		return
+	}
+	if request.NotificationTTLSeconds < 0 || request.NotificationTTLSeconds > 259200 || request.NotificationTTLSeconds > 0 && (request.FallbackAfterSeconds == 0 || request.NotificationTTLSeconds <= request.FallbackAfterSeconds) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("notification_ttl_seconds must be 1..259200, exceed the fallback deadline, and requires fallback; omit or use 0 for default"))
+		return
+	}
+	if api.ValidateRealtimeNotificationPriority(request.NotificationPriority) != nil || (request.NotificationPriority != "" && request.FallbackAfterSeconds == 0) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("notification_priority requires a fallback and must be low, normal or urgent"))
+		return
+	}
+	if api.ValidateRealtimeNotificationGroup(request.NotificationGroupKey, request.NotificationGroupLabel) != nil || ((request.NotificationGroupKey != "" || request.NotificationGroupLabel != "") && request.FallbackAfterSeconds == 0) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("notification grouping requires a fallback, a group key and valid group metadata"))
+		return
+	}
+	if request.NotificationCategory != "" && (request.FallbackAfterSeconds == 0 || api.ValidateRealtimeNotificationCategory(request.NotificationCategory) != nil) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("notification_category requires a fallback and must be 1..64 lowercase letters, digits, dots, underscores or hyphens"))
+		return
+	}
+	if request.FallbackAfterSeconds < 0 || request.FallbackAfterSeconds > 86400 || (request.FallbackAfterSeconds > 0 && !retained) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("fallback_after_seconds requires retained delivery and must be between 1 and 86400; omit or use zero to disable"))
+		return
+	}
+	if retained && request.RequestReceipt {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("retained delivery uses device checkpoints; request_receipt is only available for live sends"))
+		return
+	}
+	if request.MessageID == "" {
+		if request.RequestReceipt || retained {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("message_id is required for receipt-enabled or retained sends"))
+			return
+		}
+	} else if !request.RequestReceipt && !retained {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("message_id requires request_receipt or retained delivery"))
+		return
+	} else if err := api.ValidateRealtimeDirectMessageID(request.MessageID); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if retained {
+		s.sendManagedRealtimePrincipalInbox(w, r, acct, row, request, data)
+		return
+	}
+	// Preserve the ordinary-send wire shape while realtime nodes upgrade.
+	request.Delivery = ""
+	owner, ok := s.managedRealtimeOwner(w)
+	if !ok {
+		return
+	}
+	publisher, ok := owner.(realtimePrincipalPublisher)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime principal delivery unavailable"))
+		return
+	}
+	message := realtime.Message{Data: data, Binary: request.Binary}
+	if request.RequestReceipt {
+		receipts, ok := s.store.(state.ManagedRealtimeDirectMessageReceiptStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("managed realtime direct message receipt storage unavailable"))
+			return
+		}
+		dispatch, inFlight, err := receipts.BeginManagedRealtimeDirectMessageReceipt(r.Context(), row.ID, request.MessageID, managedRealtimeDirectMessageFingerprint(request.Principal, message))
+		if err != nil {
+			s.writeManagedRealtimeDirectMessageReceiptError(w, err)
+			return
+		}
+		if !dispatch {
+			receipt, err := receipts.GetManagedRealtimeDirectMessageReceipt(r.Context(), row.ID, request.MessageID)
+			if err != nil {
+				s.writeManagedRealtimeDirectMessageReceiptError(w, err)
+				return
+			}
+			response := managedRealtimePrincipalSendResponseFromReceipt(receipt)
+			status := http.StatusOK
+			if inFlight || !receipt.DispatchComplete {
+				status = http.StatusAccepted
+			}
+			writeJSON(w, status, response)
+			return
+		}
+	}
+	result, sendErr := publisher.SendToPrincipal(r.Context(), row.ID, request, message)
+	result.MessageID = request.MessageID
+	result.ReceiptRequested = request.RequestReceipt
+	if request.RequestReceipt {
+		receipts := s.store.(state.ManagedRealtimeDirectMessageReceiptStore)
+		summary := state.ManagedRealtimeDirectMessageSummary{
+			Recipients: result.Recipients, Queued: result.Queued, Unsupported: result.Unsupported,
+			QueueFull: result.QueueFull, Failed: result.Failed, NodesQueried: result.NodesQueried,
+			NodesUnavailable: result.NodesUnavailable, Partial: result.Partial || sendErr != nil,
+		}
+		if err := receipts.CompleteManagedRealtimeDirectMessageReceipt(context.WithoutCancel(r.Context()), row.ID, request.MessageID, summary); err != nil {
+			s.log.WarnContext(r.Context(), "managed realtime direct message receipt completion failed", "endpoint_id", row.ID, "message_id", request.MessageID, "err", err)
+		}
+		receipt, receiptErr := receipts.GetManagedRealtimeDirectMessageReceipt(r.Context(), row.ID, request.MessageID)
+		if receiptErr == nil {
+			result = managedRealtimePrincipalSendResponseFromReceipt(receipt)
+		} else {
+			result.ReceiptStatus = "pending"
+		}
+	} else if sendErr != nil {
+		s.writeManagedRealtimeOwnerError(w, r, "send to principal", sendErr)
+		return
+	}
+	if sendErr != nil {
+		result.Partial = true
+	}
+	result.Partial = result.Partial || result.NodesUnavailable > 0 || result.Unsupported > 0 || result.QueueFull > 0 || result.Failed > 0
+	s.audit.Emit(r.Context(), "realtime.principal_message_sent", &acct.ID, map[string]any{
+		"endpoint_id": row.ID, "message_id": request.MessageID, "receipt_requested": request.RequestReceipt,
+		"recipients": result.Recipients, "queued": result.Queued,
+		"unsupported": result.Unsupported, "queue_full": result.QueueFull,
+		"failed": result.Failed, "partial": result.Partial, "nodes_unavailable": result.NodesUnavailable,
+	})
+	statusCode := http.StatusOK
+	if request.RequestReceipt {
+		statusCode = http.StatusAccepted
+	}
+	writeJSON(w, statusCode, result)
+}
+
+func managedRealtimeDirectMessageFingerprint(principal string, message realtime.Message) []byte {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(principal))
+	_, _ = hash.Write([]byte{0})
+	if message.Binary {
+		_, _ = hash.Write([]byte{1})
+	} else {
+		_, _ = hash.Write([]byte{0})
+	}
+	_, _ = hash.Write(message.Data)
+	return hash.Sum(nil)
+}
+
+func managedRealtimePrincipalSendResponseFromReceipt(receipt state.ManagedRealtimeDirectMessageReceipt) api.ManagedRealtimePrincipalSendResponse {
+	response := api.ManagedRealtimePrincipalSendResponse{
+		MessageID: receipt.MessageID, ReceiptRequested: true,
+		Recipients: receipt.Summary.Recipients, Queued: receipt.Summary.Queued,
+		Unsupported: receipt.Summary.Unsupported, QueueFull: receipt.Summary.QueueFull,
+		Failed: receipt.Summary.Failed, NodesQueried: receipt.Summary.NodesQueried,
+		NodesUnavailable: receipt.Summary.NodesUnavailable, Partial: receipt.Summary.Partial,
+	}
+	knownRecipients, knownQueued, knownUnsupported, knownQueueFull, knownFailed := 0, 0, 0, 0, 0
+	if !receipt.DispatchComplete {
+		response.ReceiptStatus = "dispatching"
+	} else if len(receipt.Deliveries) == 0 {
+		if receipt.Summary.Partial {
+			response.ReceiptStatus = "partial"
+		} else {
+			response.ReceiptStatus = "no_recipients"
+		}
+	}
+	for _, delivery := range receipt.Deliveries {
+		knownRecipients++
+		if delivery.QueueStatus == state.ManagedRealtimeDirectQueueQueued || delivery.Status == state.ManagedRealtimeDirectStatusAcknowledged {
+			knownQueued++
+		}
+		switch delivery.Status {
+		case state.ManagedRealtimeDirectStatusAcknowledged:
+			response.Acknowledged++
+		case state.ManagedRealtimeDirectStatusPending:
+			response.Pending++
+		case state.ManagedRealtimeDirectStatusTimedOut:
+			response.TimedOut++
+		case state.ManagedRealtimeDirectStatusUnsupported:
+			knownUnsupported++
+		case state.ManagedRealtimeDirectStatusQueueFull:
+			knownQueueFull++
+		case state.ManagedRealtimeDirectStatusFailed:
+			knownFailed++
+		}
+	}
+	if knownRecipients > response.Recipients {
+		response.Recipients = knownRecipients
+	}
+	if knownQueued > response.Queued {
+		response.Queued = knownQueued
+	}
+	if knownUnsupported > response.Unsupported {
+		response.Unsupported = knownUnsupported
+	}
+	if knownQueueFull > response.QueueFull {
+		response.QueueFull = knownQueueFull
+	}
+	if knownFailed > response.Failed {
+		response.Failed = knownFailed
+	}
+	response.Partial = response.Partial || response.TimedOut > 0 || response.Unsupported > 0 || response.QueueFull > 0 || response.Failed > 0 || response.NodesUnavailable > 0
+	if receipt.DispatchComplete && len(receipt.Deliveries) > 0 {
+		switch {
+		case response.Pending > 0:
+			response.ReceiptStatus = "pending"
+		case response.TimedOut > 0:
+			response.ReceiptStatus = "timed_out"
+		case response.Partial:
+			response.ReceiptStatus = "partial"
+		case response.Acknowledged == len(receipt.Deliveries):
+			response.ReceiptStatus = "acknowledged"
+		default:
+			response.ReceiptStatus = "partial"
+		}
+	}
+	return response
+}
+
+func (s *server) getManagedRealtimePrincipalReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
+	if !ok {
+		return
+	}
+	messageID := r.PathValue("message_id")
+	if err := api.ValidateRealtimeDirectMessageID(messageID); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	receipts, ok := s.store.(state.ManagedRealtimeDirectMessageReceiptStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime direct message receipt storage unavailable"))
+		return
+	}
+	receipt, err := receipts.GetManagedRealtimeDirectMessageReceipt(r.Context(), row.ID, messageID)
+	if err != nil {
+		s.writeManagedRealtimeDirectMessageReceiptError(w, err)
+		return
+	}
+	response := managedRealtimePrincipalReceiptResponse(receipt)
+	writeJSON(w, http.StatusOK, response)
+}
+
+func managedRealtimePrincipalReceiptResponse(receipt state.ManagedRealtimeDirectMessageReceipt) api.ManagedRealtimePrincipalReceiptResponse {
+	send := managedRealtimePrincipalSendResponseFromReceipt(receipt)
+	response := api.ManagedRealtimePrincipalReceiptResponse{
+		EndpointID: receipt.EndpointID, MessageID: receipt.MessageID, Status: send.ReceiptStatus,
+		DispatchComplete: receipt.DispatchComplete,
+		CreatedAt:        receipt.CreatedAt.UTC().Format(time.RFC3339Nano), ExpiresAt: receipt.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		Recipients: send.Recipients, Queued: send.Queued, Acknowledged: send.Acknowledged,
+		Pending: send.Pending, TimedOut: send.TimedOut, Unsupported: send.Unsupported,
+		QueueFull: send.QueueFull, Failed: send.Failed, NodesQueried: send.NodesQueried,
+		NodesUnavailable: send.NodesUnavailable, Partial: send.Partial,
+		Deliveries: make([]api.ManagedRealtimePrincipalReceiptDelivery, 0, len(receipt.Deliveries)),
+	}
+	for _, delivery := range receipt.Deliveries {
+		item := api.ManagedRealtimePrincipalReceiptDelivery{
+			ConnectionID: delivery.ConnectionID, Status: delivery.Status,
+			QueueStatus: delivery.QueueStatus, AckSupported: delivery.AckSupported,
+			CreatedAt: delivery.CreatedAt.UTC().Format(time.RFC3339Nano),
+		}
+		if delivery.QueuedAt != nil {
+			item.QueuedAt = delivery.QueuedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if delivery.AcknowledgedAt != nil {
+			item.AcknowledgedAt = delivery.AcknowledgedAt.UTC().Format(time.RFC3339Nano)
+		}
+		response.Deliveries = append(response.Deliveries, item)
+	}
+	return response
+}
+
+func (s *server) writeManagedRealtimeDirectMessageReceiptError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Realtime receipt not found", "the receipt may have expired or the message ID does not exist for this endpoint"))
+	case errors.Is(err, state.ErrManagedRealtimeDirectMessageConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Message ID conflict", "this message_id was already used with different principal or payload data"))
+	case errors.Is(err, state.ErrManagedRealtimeDirectMessageLimit):
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Receipt capacity reached", "the endpoint has reached its short-lived direct message receipt limit"))
+	case errors.Is(err, state.ErrManagedRealtimeDirectMessageInvalid):
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+	default:
+		s.log.Warn("managed realtime direct message receipt operation failed", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("managed realtime direct message receipt unavailable"))
+	}
+}
+
 func (s *server) closeManagedRealtimeConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	row, owner, ok := s.managedRealtimeEndpointAction(w, r, acct)
 	if !ok {
@@ -619,20 +1165,92 @@ func (s *server) publishManagedRealtimeChannel(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	delivery, validDelivery := managedRealtimeDeliveryFromRequest(r)
+	if !validDelivery {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("delivery must be live or retained, and may be specified once"))
+		return
+	}
+	var retainedSequence int64
+	if delivery == api.ManagedRealtimeDeliveryRetained {
+		if !s.realtimeHistoryPreviewEnabled {
+			s.notFound(w, "retained realtime publishing unavailable")
+			return
+		}
+		keys := r.Header.Values("Idempotency-Key")
+		if len(keys) != 1 || keys[0] == "" {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("delivery=retained requires exactly one Idempotency-Key header"))
+			return
+		}
+		if len(message.Data) > state.ManagedRealtimeHistoryMaxPayloadBytes {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("retained messages are limited to 4096 decoded bytes"))
+			return
+		}
+		if row.MaxMessageBytes > 0 && int64(len(message.Data)) > row.MaxMessageBytes {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("message exceeds this endpoint's max_message_bytes"))
+			return
+		}
+		store, ok := s.managedRealtimeHistoryStore(w)
+		if !ok {
+			return
+		}
+		var retained state.ManagedRealtimeChannelMessage
+		var err error
+		if message.ExpectedSequence != nil {
+			if conditional, ok := s.store.(state.ManagedRealtimeConditionalStore); ok {
+				retained, err = conditional.AppendManagedRealtimeChannelConditional(r.Context(), row.ID, channel, message.Data, message.Binary, keys[0], message.Metadata, message.ExpectedSequence)
+			} else {
+				err = state.ErrManagedRealtimeHistoryInvalid
+			}
+		} else if len(message.Metadata) > 0 {
+			if metadataStore, ok := s.store.(state.ManagedRealtimeMetadataStore); ok {
+				retained, err = metadataStore.AppendManagedRealtimeChannelMetadata(r.Context(), row.ID, channel, message.Data, message.Binary, keys[0], message.Metadata)
+			} else {
+				err = state.ErrManagedRealtimeHistoryInvalid
+			}
+		} else {
+			retained, err = store.AppendManagedRealtimeChannelMessage(r.Context(), row.ID, channel, message.Data, message.Binary, keys[0])
+		}
+		if err != nil {
+			s.writeManagedRealtimeHistoryError(w, r, err)
+			return
+		}
+		retainedSequence = retained.Sequence
+	}
 	result := api.ManagedRealtimePublishResponse{NodesQueried: 1}
 	var err error
-	if publisher, ok := owner.(realtimePublishStatus); ok {
+	if delivery == api.ManagedRealtimeDeliveryRetained {
+		if publisher, ok := owner.(realtimeRetainedPublishStatus); ok {
+			result, err = publisher.PublishRetainedWithStatus(r.Context(), row.ID, channel, message, retainedSequence)
+		} else if publisher, ok := owner.(realtimePublishStatus); ok {
+			result, err = publisher.PublishWithStatus(r.Context(), row.ID, channel, message)
+		} else {
+			result.Queued, err = owner.Publish(r.Context(), row.ID, channel, message)
+			result.Subscribers = result.Queued
+		}
+		// The ordered history commit is authoritative. If immediate live fanout
+		// is unavailable, resume subscribers can still recover from the log.
+		result.Sequence = retainedSequence
+		result.Durable = true
+		result.Partial = result.Partial || result.NodesUnavailable > 0 || result.QueueFull > 0 || result.Failed > 0 || err != nil
+		if err != nil {
+			s.log.WarnContext(r.Context(), "retained realtime publish committed but live fanout was incomplete", "endpoint_id", row.ID, "channel", channel, "sequence", retainedSequence, "err", err)
+		}
+	} else if publisher, ok := owner.(realtimePublishStatus); ok {
 		result, err = publisher.PublishWithStatus(r.Context(), row.ID, channel, message)
 	} else {
 		result.Queued, err = owner.Publish(r.Context(), row.ID, channel, message)
+		result.Subscribers = result.Queued
 	}
-	if err != nil {
+	result.Partial = result.Partial || result.NodesUnavailable > 0 || result.QueueFull > 0 || result.Failed > 0
+	if err != nil && delivery != api.ManagedRealtimeDeliveryRetained {
 		s.writeManagedRealtimeOwnerError(w, r, "publish message", err)
 		return
 	}
 	s.audit.Emit(r.Context(), "realtime.channel_published", &acct.ID, map[string]any{
 		"endpoint_id": row.ID, "channel": channel, "queued": result.Queued,
-		"partial": result.Partial, "nodes_unavailable": result.NodesUnavailable,
+		"subscribers": result.Subscribers, "queue_full": result.QueueFull,
+		"failed": result.Failed, "partial": result.Partial, "nodes_unavailable": result.NodesUnavailable,
+		"delivery": delivery, "sequence": result.Sequence, "durable": result.Durable,
 	})
 	writeJSON(w, http.StatusOK, result)
 }
@@ -648,7 +1266,7 @@ func (s *server) writeManagedRealtimeOwnerError(w http.ResponseWriter, r *http.R
 			// A durable endpoint that is absent from this local daemon is an
 			// owner-routing miss, not a customer-visible 404. The cross-node
 			// resolver will retry or redirect this case once enabled.
-			if operation == "publish message" {
+			if operation == "publish message" || operation == "send to principal" {
 				s.log.WarnContext(r.Context(), "managed realtime endpoint owner not found", "err", err)
 				api.WriteProblem(w, api.ErrCapacity("managed realtime owner unavailable"))
 				return

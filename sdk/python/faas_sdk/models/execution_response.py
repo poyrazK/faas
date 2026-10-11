@@ -47,13 +47,13 @@ class ExecutionResponse:
     packages: ExecutionResponsePackages | Unset = UNSET
     """Immutable versions declared by the selected profile and verified by its guest before caller code runs."""
     workflow_id: str | Unset = UNSET
-    """Caller-generated workflow grouping id"""
+    """Caller-generated workflow grouping id, when assigned."""
     step_label: str | Unset = UNSET
-    """Optional step label"""
+    """Optional step label, when assigned."""
     artifacts: list[ExecutionArtifact] | Unset = UNSET
     """Selected output files, present only after successful execution and VM teardown."""
     result: Any | Unset = UNSET
-    """Terminal JSON result"""
+    """Terminal JSON result, omitted when unavailable."""
     stdout: str | Unset = UNSET
     stderr: str | Unset = UNSET
     exit_code: int | None | Unset = UNSET

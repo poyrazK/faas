@@ -22,6 +22,7 @@ import (
 
 func workflowRunResponse(r *state.WorkflowRun) api.WorkflowRunResponse {
 	resp := api.WorkflowRunResponse{
+		DeploymentID:     r.DeploymentID,
 		ResumeCount:      r.ResumeCount,
 		ID:               r.ID,
 		AppID:            r.AppID,
@@ -312,6 +313,7 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	maxConcurrent := acct.Plan.WorkflowMaxConcurrentRuns()
 
 	run := &state.WorkflowRun{
+		DeploymentID:       dep.ID,
 		AppID:              app.ID,
 		PlatformTenantID:   tenantID,
 		WorkflowName:       workflowName,
@@ -335,6 +337,11 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	if errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Idempotency key already used", "use a new Idempotency-Key when starting a run with different input"))
+		return
+	}
+	if errors.Is(err, state.ErrWorkflowDeploymentUnavailable) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Workflow deployment changed", "the captured deployment is unavailable; retry starting a new run"))
 		return
 	}
 	if err != nil {

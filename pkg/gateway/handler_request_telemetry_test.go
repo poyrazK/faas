@@ -49,6 +49,11 @@ func TestHandlerObserveRecordsUsageWithDebuggerDisabled(t *testing.T) {
 	r = withAppAndAccount(r, acct, app)
 	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: consumer.String(), AppID: app.String()}))
 	r = r.WithContext(withAuthenticated(r.Context(), Authenticated{ConsumerID: consumer.String(), PlatformTenantID: tenant.String()}))
+	// A guest-authored 503 is billable; see
+	// TestHandlerObserveDoesNotBillPlatformFailures for gateway failures.
+	guestResponse := &firstByteRecorder{}
+	guestResponse.record(time.Now())
+	r = r.WithContext(WithFirstByteRecorder(r.Context(), guestResponse))
 	h.observe(r, 503, app.String(), string(api.PlanPro), false, Target{})
 	item, ok, err := q.Next()
 	if err != nil || !ok {
@@ -178,6 +183,73 @@ func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testin
 	if len(rows) != 1 || !rows[0].UsageOutboxed || rows[0].EventID.String() != item.Event.EventID {
 		t.Fatalf("debug row=%+v usage=%+v", rows, item.Event)
 	}
+}
+
+// TestHandlerObserveDoesNotBillPlatformFailures pins that a 5xx the guest
+// never started answering stays counted but carries no billable unit, while a
+// guest-authored 5xx and ordinary responses remain billable.
+func TestHandlerObserveDoesNotBillPlatformFailures(t *testing.T) {
+	cases := []struct {
+		name           string
+		status         int
+		guestResponded bool
+		wantBillable   int64
+		wantErrors     int64
+	}{
+		{"guest success", http.StatusOK, true, 1, 0},
+		{"guest client error", http.StatusNotFound, true, 1, 1},
+		{"guest server error", http.StatusInternalServerError, true, 1, 1},
+		{"gateway capacity failure", http.StatusServiceUnavailable, false, 0, 1},
+		{"gateway upstream failure", http.StatusBadGateway, false, 0, 1},
+		{"gateway response without guest", http.StatusOK, false, 1, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := usageoutbox.Open(t.TempDir(), 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := &Handler{usageOutbox: q, requestTelemetry: makeTestRecorder()}
+			r := consumerUsageTestRequest(tc.guestResponded)
+			h.observe(r, tc.status, appIDFromContext(r.Context()).String(), string(api.PlanPro), false, Target{})
+			item, ok, err := q.Next()
+			if err != nil || !ok {
+				t.Fatalf("usage item ok=%t err=%v", ok, err)
+			}
+			if item.Event.RequestCount != 1 || item.Event.ErrorCount != tc.wantErrors || item.Event.BillableUnits != tc.wantBillable {
+				t.Fatalf("usage=%+v, want requests=1 errors=%d billable=%d", item.Event, tc.wantErrors, tc.wantBillable)
+			}
+			if rows := h.requestTelemetry.DrainBatch(1); len(rows) != 1 || !rows[0].UsageOutboxed {
+				t.Fatalf("debug row=%+v, want one outboxed row", rows)
+			}
+		})
+	}
+}
+
+// TestHandlerObserveKeepsPlatformFailuresOutOfLegacyUsage pins that the
+// debugger fallback, which bills every row it writes, never receives a
+// platform failure, while a guest-authored 5xx still reaches it.
+func TestHandlerObserveKeepsPlatformFailuresOutOfLegacyUsage(t *testing.T) {
+	for _, guestResponded := range []bool{false, true} {
+		h := &Handler{requestTelemetry: makeTestRecorder()}
+		r := consumerUsageTestRequest(guestResponded)
+		h.observe(r, http.StatusServiceUnavailable, appIDFromContext(r.Context()).String(), string(api.PlanPro), false, Target{})
+		rows := h.requestTelemetry.DrainBatch(1)
+		if len(rows) != 1 || rows[0].UsageOutboxed == guestResponded {
+			t.Fatalf("guestResponded=%t row=%+v, want legacy usage only for the guest response", guestResponded, rows)
+		}
+	}
+}
+
+func consumerUsageTestRequest(guestResponded bool) *http.Request {
+	acct, app, consumer := uuid.New(), uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), acct, app)
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: consumer.String(), AppID: app.String()}))
+	rec := &firstByteRecorder{}
+	if guestResponded {
+		rec.record(time.Now())
+	}
+	return r.WithContext(WithFirstByteRecorder(r.Context(), rec))
 }
 
 // adr: 234

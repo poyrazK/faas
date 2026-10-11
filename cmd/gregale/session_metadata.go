@@ -33,6 +33,9 @@ func cliSessionMetadataPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if name := currentProfile(); name != "default" {
+		return filepath.Join(dir, "gregale", "profiles", name, "session.json"), nil
+	}
 	return filepath.Join(dir, "gregale", "session.json"), nil
 }
 

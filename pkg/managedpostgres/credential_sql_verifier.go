@@ -11,6 +11,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+// ConnectCredentialSQL opens a private TLS connection without inheriting host
+// PGOPTIONS or accepting additional URI parameters. Callers must close it and
+// keep both the connection string and driver errors out of reports and logs.
+func ConnectCredentialSQL(ctx context.Context, dsn string) (*pgx.Conn, error) {
+	config, err := credentialProbeConfig(dsn)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	return conn, nil
+}
+
 // VerifyCredentialSQL authenticates without writing customer data. ACL evidence
 // cannot establish data correctness or connectivity from an application VM.
 func VerifyCredentialSQL(ctx context.Context, dsn string, access CredentialAccess, major int) error {

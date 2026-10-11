@@ -419,7 +419,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 // consumed by guest-init's overlay assembly. It preserves a customer image's
 // own top-level "upper" path by treating it as normal app content at
 // /upper/upper inside the artifact.
-func stageAppUpper(staging string, opaqueRoot bool) error {
+func stageAppUpper(staging string, opaqueRoots ...bool) error {
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return fmt.Errorf("rootfs: read app staging: %w", err)
@@ -428,10 +428,10 @@ func stageAppUpper(staging string, opaqueRoot bool) error {
 	if err != nil {
 		return fmt.Errorf("rootfs: create app upper wrapper: %w", err)
 	}
-	if err := os.Chmod(upper, 0o755); err != nil {
+	if err := chmodImageDirectory(upper, 0o755); err != nil {
 		return fmt.Errorf("rootfs: set app upper wrapper mode: %w", err)
 	}
-	if opaqueRoot {
+	if len(opaqueRoots) > 0 && opaqueRoots[0] {
 		// Set metadata while the wrapper is empty; clearing it later would
 		// discard the application content we are about to move.
 		if err := applyOverlayOpaque(upper); err != nil {
@@ -495,7 +495,7 @@ func ensureRuntimeDirectory(staging, rel string) error {
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
 	}
-	return os.MkdirAll(path, 0o755)
+	return mkdirImageDirectories(path, 0o755)
 }
 
 // publishExt4 mkfs-es the staging tree into a temp file (or directly into
@@ -1331,10 +1331,15 @@ func injectFunctionRunner(staging, runnerPath string) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	dst := filepath.Join(staging, "usr", "local", "bin", "faas-runner")
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := mkdirImageDirectories(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return "", fmt.Errorf("rootfs: open function runner: %w", err)
+	}
+	_, writeErr := f.Write(data)
+	if err := errors.Join(writeErr, f.Chmod(0o755), f.Close()); err != nil {
 		return "", fmt.Errorf("rootfs: write function runner: %w", err)
 	}
 	return "sha256:" + hex.EncodeToString(sum[:]), nil

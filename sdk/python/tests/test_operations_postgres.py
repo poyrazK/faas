@@ -13,16 +13,31 @@ from uuid import uuid4
 from faas_sdk import (
     OperationConflictError,
     OperationRequest,
+    awith_customer_operation_transaction,
     awith_operation_transaction,
+    customer_operation_receipt_schema,
+    customer_operation_request_digest,
+    customer_operation_request_from_headers,
     operation_receipt_schema,
     operation_request_digest,
     operation_request_from_headers,
+    with_customer_operation_transaction,
     with_operation_transaction,
 )
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "operation-tests/request-fixture.json").read_text())
 REQUEST = operation_request_from_headers(
     FIXTURE["headers"], FIXTURE["method"], FIXTURE["path"], base64.b64decode(FIXTURE["body_base64"])
+)
+
+CUSTOMER_FIXTURE = json.loads(
+    (Path(__file__).resolve().parents[2] / "operation-tests/customer-request-fixture.json").read_text()
+)
+CUSTOMER_REQUEST = customer_operation_request_from_headers(
+    CUSTOMER_FIXTURE["headers"],
+    CUSTOMER_FIXTURE["method"],
+    CUSTOMER_FIXTURE["path"],
+    base64.b64decode(CUSTOMER_FIXTURE["body_base64"]),
 )
 
 
@@ -48,6 +63,30 @@ class OperationContractTest(unittest.TestCase):
                 OperationRequest(REQUEST.operation_id, REQUEST.account_id, REQUEST.app_id, 1, "POST", "/", b"")
             )
 
+    def test_customer_receipt_negotiation(self):
+        self.assertEqual(customer_operation_request_digest(CUSTOMER_REQUEST).hex(), CUSTOMER_FIXTURE["digest"])
+        for change in [
+            {"x-gregale-customer-operation-receipt-version": "2"},
+            {"x-gregale-customer-operation-receipt-binding": "bad"},
+            {"x-gregale-operation-capability": "bad"},
+            {"x-gregale-operation-attempt": "01"},
+            {"x-gregale-operation-attempt": "2147483648"},
+            {"x-faas-platform-tenant-id": ""},
+            {"x-faas-invocation-id": ""},
+            {"x-gregale-operation-execution-kind": "workflow"},
+            {"x-gregale-operation-result-version": "1"},
+            {"x-gregale-customer-operation-id": [CUSTOMER_FIXTURE["headers"]["x-gregale-customer-operation-id"]] * 2},
+        ]:
+            with self.assertRaises(ValueError):
+                customer_operation_request_from_headers(
+                    {**CUSTOMER_FIXTURE["headers"], **change},
+                    CUSTOMER_FIXTURE["method"],
+                    CUSTOMER_FIXTURE["path"],
+                    CUSTOMER_REQUEST._request.body,
+                )
+        with self.assertRaises(ValueError):
+            with_operation_transaction(None, CUSTOMER_REQUEST._request, lambda _: {})
+
 
 @unittest.skipUnless(os.environ.get("DATABASE_URL"), "DATABASE_URL required")
 class OperationPostgresTest(unittest.TestCase):
@@ -65,6 +104,8 @@ class OperationPostgresTest(unittest.TestCase):
         self.conn = self.connect()
         self.conn.execute(operation_receipt_schema)
         self.conn.execute(operation_receipt_schema)
+        self.conn.execute(customer_operation_receipt_schema)
+        self.conn.execute(customer_operation_receipt_schema)
         self.conn.execute(
             "CREATE SCHEMA business; CREATE TABLE business.counter(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business.counter VALUES(1,0); CREATE TABLE business.gregale_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL)"
         )
@@ -83,6 +124,11 @@ class OperationPostgresTest(unittest.TestCase):
     def counts(self):
         return self.conn.execute(
             "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_operation_inbox)"
+        ).fetchone()
+
+    def customer_counts(self):
+        return self.conn.execute(
+            "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox)"
         ).fetchone()
 
     def outcome(self):
@@ -206,6 +252,103 @@ class OperationPostgresTest(unittest.TestCase):
         self.assertFalse(first.replayed)
         self.assertTrue(replay.replayed)
         self.assertEqual(first.body, replay.body)
+
+    def test_customer_transaction_concurrency_replay_and_binding(self):
+        def callback(cursor):
+            cursor.execute("UPDATE business.counter SET total=total+1 WHERE id=1")
+            return {"file": "ready.csv", "value": 9007199254740993, "label": "π <>&"}
+
+        def abort(cursor):
+            callback(cursor)
+            raise RuntimeError("abort")
+
+        with self.assertRaisesRegex(RuntimeError, "abort"):
+            with_customer_operation_transaction(self.conn, CUSTOMER_REQUEST, abort)
+        self.assertEqual(self.customer_counts(), (0, 0))
+
+        def attempt(_):
+            with self.connect() as connection:
+                return with_customer_operation_transaction(connection, CUSTOMER_REQUEST, callback)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(attempt, range(8)))
+        self.assertEqual(sum(not result.replayed for result in results), 1)
+        self.assertTrue(all(result.body == results[0].body for result in results))
+        self.assertEqual(json.loads(results[0].body)["value"], 9007199254740993)
+        self.assertNotIn("gregale_operation_result", json.loads(results[0].body))
+        for change in [
+            {"x-gregale-customer-operation-receipt-binding": "d" * 64},
+            {"x-faas-platform-tenant-id": str(uuid4())},
+            {"x-faas-app-id": str(uuid4())},
+            {"x-faas-tenant-id": str(uuid4())},
+        ]:
+            changed = customer_operation_request_from_headers(
+                {**CUSTOMER_FIXTURE["headers"], **change},
+                CUSTOMER_FIXTURE["method"],
+                CUSTOMER_FIXTURE["path"],
+                CUSTOMER_REQUEST._request.body,
+            )
+            with self.assertRaises(OperationConflictError):
+                with_customer_operation_transaction(self.conn, changed, callback)
+        changed = customer_operation_request_from_headers(
+            CUSTOMER_FIXTURE["headers"], CUSTOMER_FIXTURE["method"], CUSTOMER_FIXTURE["path"], b"{}"
+        )
+        with self.assertRaises(OperationConflictError):
+            with_customer_operation_transaction(self.conn, changed, callback)
+        managed = operation_request_from_headers(
+            {
+                **FIXTURE["headers"],
+                "x-gregale-operation-id": CUSTOMER_FIXTURE["headers"]["x-gregale-customer-operation-id"],
+            },
+            CUSTOMER_FIXTURE["method"],
+            CUSTOMER_FIXTURE["path"],
+            CUSTOMER_REQUEST._request.body,
+        )
+        managed_result = with_operation_transaction(self.conn, managed, lambda _: {"result": {"scope": "managed"}})
+        self.assertFalse(managed_result.replayed)
+        self.assertIn("gregale_operation_result", json.loads(managed_result.body))
+        self.assertEqual(self.customer_counts(), (1, 1))
+        self.assertEqual(self.counts(), (1, 1))
+
+    def test_customer_async_rollback_and_replay(self):
+        async def run():
+            async with await self.psycopg.AsyncConnection.connect(
+                os.environ["DATABASE_URL"], dbname=self.database, autocommit=True
+            ) as connection:
+
+                async def callback(cursor):
+                    await cursor.execute("UPDATE business.counter SET total=total+1 WHERE id=1")
+                    return {"file": "ready.csv"}
+
+                async def abort(cursor):
+                    await callback(cursor)
+                    raise RuntimeError("abort")
+
+                with self.assertRaisesRegex(RuntimeError, "abort"):
+                    await awith_customer_operation_transaction(connection, CUSTOMER_REQUEST, abort)
+                self.assertEqual(self.customer_counts(), (0, 0))
+                saved = await awith_customer_operation_transaction(connection, CUSTOMER_REQUEST, callback)
+                headers = {
+                    **CUSTOMER_FIXTURE["headers"],
+                    "x-gregale-operation-attempt": "2",
+                    "x-faas-invocation-id": str(uuid4()),
+                    "x-gregale-operation-capability": "c" * 64,
+                }
+                later = customer_operation_request_from_headers(
+                    headers, CUSTOMER_FIXTURE["method"], CUSTOMER_FIXTURE["path"], CUSTOMER_REQUEST._request.body
+                )
+
+                async def must_not_run(_):
+                    raise AssertionError("committed customer callback reran")
+
+                recovered = await awith_customer_operation_transaction(connection, later, must_not_run)
+                self.assertFalse(saved.replayed)
+                self.assertTrue(recovered.replayed)
+                self.assertEqual(saved.body, recovered.body)
+                self.assertEqual(json.loads(recovered.body), {"file": "ready.csv"})
+
+        asyncio.run(run())
+        self.assertEqual(self.customer_counts(), (1, 1))
 
 
 if __name__ == "__main__":

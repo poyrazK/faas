@@ -15,6 +15,9 @@ const EmptyWorkloadPlanReason = "scan produced zero workloads; reconcile refused
 var ErrInvalidWorkloadPlan = errors.New("reconcile: invalid workload plan")
 
 func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) error {
+	if reasons := ProjectImageLifecycleAdmissionReasons(plan, workloads); len(reasons) > 0 {
+		return fmt.Errorf("%w: %s", ErrInvalidWorkloadPlan, strings.Join(reasons, "; "))
+	}
 	if plan.ConsumerKeysPerApp() > 0 {
 		return nil
 	}
@@ -26,6 +29,22 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 	return nil
 }
 
+// ProjectImageLifecycleAdmissionReasons keeps background image workloads on
+// their worker/job lifecycle and applies the same plan gate as standalone apps.
+func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
+	var reasons []string
+	for _, workload := range workloads {
+		if workload.Image == "" {
+			continue
+		}
+		manifest := api.AppManifest{ExecutionMode: projectImageExecutionMode(workload)}
+		if err := manifest.ValidateLifecyclePlan(plan); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: %s", workload.Name, err))
+		}
+	}
+	return reasons
+}
+
 // WorkloadAdmissionReasons applies the create-time app identity constraints
 // before a project plan is declared applicable. A same-key app is an intended
 // project member update; reusing an account-wide slug with another key would
@@ -35,9 +54,8 @@ func WorkloadAdmissionReasons(workloads []reposcan.Workload, accountApps []state
 }
 
 // WorkloadAdmissionReasonsWithManaged extends the project admission checks
-// with the Compose dependency graph. Image-only Compose services are external
-// managed resources; they are valid references but are not included in the
-// deploy order because Gregale does not provision them.
+// with the Compose dependency graph. Denylisted stateful images remain external
+// managed resources and are not included in the deploy order.
 func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string) []string {
 	if len(workloads) == 0 {
 		return []string{EmptyWorkloadPlanReason}
@@ -55,10 +73,12 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				"workload %q is a Serverless function without an execution adapter; create a function app and deploy the handler explicitly",
 				workload.Name))
 		}
-		if workload.Image != "" {
+		if workload.Image != "" && !api.ValidProjectImage(workload.Image) {
 			reasons = append(reasons, fmt.Sprintf(
-				"workload %q uses prebuilt image %q; project apply currently supports source builds only; add a Dockerfile/build context or deploy the image as a container app",
-				workload.Name, workload.Image))
+				"workload %q has an invalid image reference", workload.Name))
+		}
+		if err := workload.ImageHealthcheck.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image healthcheck: %s", workload.Name, err))
 		}
 		if api.IsReservedAppSlug(workload.Name) {
 			// Do not strand a project that already owns a reserved collision:

@@ -263,6 +263,28 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				if err != nil || len(audits) != 1 || audits[0].Kind != state.DeployRolledBack {
 					t.Fatalf("candidate rollback audits = %+v, err=%v; want one deploy.rolled_back audit", audits, err)
 				}
+				// A meterd restart or lost response retries the same deterministic
+				// recovery key. Replay it through a fresh client and verify APID
+				// returns the prior result without another rollback audit.
+				restartedClient := api.NewInternalSafeDeployClient(internalServer.URL, circuitBreakerDrillCanaryToken, circuitBreakerDrillActionToken)
+				key := "canary-circuit-breaker-abort-" + candidate.ID + "-" + stable.ID
+				replayed, err := restartedClient.RecoverDeploymentRolloutAndIdempotencyKey(
+					ctx, candidate.ID, stable.ID, "abort", gotCandidate.RolloutAbortedReason, key,
+				)
+				if err != nil {
+					t.Fatalf("replay circuit breaker recovery after worker restart: %v", err)
+				}
+				if replayed.Deployment.ID != candidate.ID || replayed.Deployment.RolloutState != "aborted" || replayed.Deployment.TrafficPercent != 0 {
+					t.Fatalf("replayed recovery deployment = %+v; want same aborted candidate", replayed.Deployment)
+				}
+				gotStable, err = e.store.DeploymentByID(ctx, stable.ID)
+				if err != nil || gotStable.TrafficPercent != 100 {
+					t.Fatalf("predecessor traffic after replay = %d, err=%v; want 100", gotStable.TrafficPercent, err)
+				}
+				audits, err = e.store.ListDeploymentAudit(ctx, candidate.ID, 10)
+				if err != nil || len(audits) != 1 {
+					t.Fatalf("candidate rollback audits after replay = %+v, err=%v; want the single original audit", audits, err)
+				}
 			case canary.CircuitBreakerHold:
 				if stats.SkippedCircuitBreaker != 1 || stats.CircuitBreakerAborted != 0 || stats.Advanced != 0 {
 					t.Fatalf("hold drill stats = %+v; want held with no advance/abort", stats)

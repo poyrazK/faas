@@ -167,58 +167,6 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	// Current CreateDeployment reads these later-added schema objects. Provision
-	// only their shapes so the fixture can seed a deployment in the pre-identity
-	// schema; leave the migrations unapplied for the ordered upgrade below.
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE workflow_automation_definitions (
-		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-		name text NOT NULL CHECK (length(name)>0),
-		version bigint NOT NULL CHECK (version>0),
-		draft jsonb NOT NULL CHECK (jsonb_typeof(draft)='object' AND draft->>'name'=name),
-		published jsonb CHECK (published IS NULL OR (jsonb_typeof(published)='object' AND published->>'name'=name)),
-		published_version bigint NOT NULL DEFAULT 0 CHECK (published_version>=0 AND published_version<=version),
-		enabled boolean NOT NULL DEFAULT true,
-		updated_at timestamptz NOT NULL DEFAULT now(),
-		PRIMARY KEY (app_id, name),
-		CHECK ((published IS NULL) = (published_version=0))
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `ALTER TABLE deployments ADD COLUMN IF NOT EXISTS environment_workload_runtime jsonb`); err != nil {
-		t.Fatal(err)
-	}
-	// Current CreateDeployment also pins workload settings. Provision the exact
-	// later-migration table shapes so the pre-identity fixture can seed its
-	// deployment; leave the migrations unapplied for the ordered upgrade below.
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_specs (
-		id uuid PRIMARY KEY,
-		environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
-		app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-		revision bigint NOT NULL CHECK (revision > 0),
-		config_hash text NOT NULL CHECK (config_hash ~ '^[a-f0-9]{64}$'),
-		settings json NOT NULL CHECK (json_typeof(settings) = 'object'),
-		created_at timestamptz NOT NULL DEFAULT now(),
-		UNIQUE (environment_id, app_id, revision),
-		UNIQUE (environment_id, app_id, id)
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_heads (
-		environment_id uuid NOT NULL,
-		app_id uuid NOT NULL,
-		spec_id uuid NOT NULL,
-		PRIMARY KEY (environment_id, app_id),
-		FOREIGN KEY (environment_id, app_id, spec_id)
-			REFERENCES project_environment_workload_specs(environment_id, app_id, id) ON DELETE CASCADE
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE IF NOT EXISTS project_environment_workload_deployment_specs (
-		deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
-		spec_id uuid NOT NULL REFERENCES project_environment_workload_specs(id) ON DELETE CASCADE
-	)`); err != nil {
-		t.Fatal(err)
-	}
 	s := state.NewPgStore(pool)
 	ctx := context.Background()
 	account, err := s.CreateAccount(ctx, "operations@example.com", api.PlanPro)
@@ -229,9 +177,14 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:operations", Status: state.DeployLive})
-	if err != nil {
-		t.Fatal(err)
+	// Seed the deployment using the actual pre-identity schema. Current writers
+	// read later workload columns and pin later definition tables; manufacturing
+	// those objects here would stop this from exercising a real ordered upgrade.
+	deployment := state.Deployment{ID: uuid.NewString(), AppID: app.ID,
+		Kind: state.DeploymentKindImage, ImageDigest: "sha256:operations", Status: state.DeployLive}
+	if err := pool.QueryRow(ctx, `INSERT INTO deployments(id,app_id,kind,image_digest,status)
+		VALUES($1,$2,$3,$4,$5) RETURNING scope`, deployment.ID, app.ID, deployment.Kind, deployment.ImageDigest, deployment.Status).Scan(&deployment.Scope); err != nil {
+		t.Fatalf("seed legacy deployment: %v", err)
 	}
 	tenant, _, err := s.CreatePlatformTenant(ctx, account.ID, "alice", "Alice", 100)
 	if err != nil {
@@ -341,20 +294,34 @@ func backendRunFixture(t *testing.T, ctx context.Context, s *state.PgStore, kind
 
 func insertBackendOperation(t *testing.T, ctx context.Context, db sqlc.DBTX, id, run, kind, account, app, definition, tenant string) {
 	t.Helper()
-	record, err := json.Marshal(map[string]any{"id": id, "account_id": account, "app_id": app,
+	if err := sqlc.New().InsertCustomerOperation(ctx, db, backendOperationParams(t, id, run, kind, account, app, definition, tenant)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func backendOperationParams(t *testing.T, id, run, kind, account, app, definition, tenant string) sqlc.InsertCustomerOperationParams {
+	t.Helper()
+	fields := map[string]any{"id": id, "account_id": account, "app_id": app,
 		"definition_id": definition, "platform_tenant_id": tenant, "state": "accepted", "generation": 1,
-		"current_execution_id": run, "execution_kind": kind})
+		"current_execution_id": run, "execution_kind": kind}
+	params := sqlc.InsertCustomerOperationParams{ID: backendUUID(id),
+		AccountID: backendUUID(account), AppID: backendUUID(app), TenantID: backendUUID(tenant), DefinitionID: backendUUID(definition),
+		State: "accepted", CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
+	if kind == "workflow" {
+		fields["workflow_run_id"] = run
+		params.WorkflowRunID = backendUUID(run)
+	} else {
+		fields["job_run_id"] = run
+		params.JobRunID = backendUUID(run)
+	}
+	record, err := json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	err = sqlc.New().InsertCustomerOperation(ctx, db, sqlc.InsertCustomerOperationParams{ID: backendUUID(id),
-		AccountID: backendUUID(account), AppID: backendUUID(app), TenantID: backendUUID(tenant), DefinitionID: backendUUID(definition),
-		State: "accepted", Record: record, CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		ExpiresAt: pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	params.Record = record
+	params.ExpiresAt = pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}
+	return params
 }
 
 func markBackend(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, kind, operation, run string) (int64, error) {
@@ -412,8 +379,15 @@ func assertBackendGenerationFence(t *testing.T, ctx context.Context, db interfac
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = q.UpdateCustomerOperation(ctx, wrongGeneration, sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "accepted",
-		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: time.Now().UTC().Add(time.Hour), Valid: true}})
+	update := sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "accepted",
+		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: time.Now().UTC().Add(time.Hour), Valid: true}}
+	switch kind {
+	case "workflow":
+		update.WorkflowRunID = backendUUID(run)
+	case "job":
+		update.JobRunID = backendUUID(run)
+	}
+	err = q.UpdateCustomerOperation(ctx, wrongGeneration, update)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,18 +398,20 @@ func assertBackendGenerationFence(t *testing.T, ctx context.Context, db interfac
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	other := uuid.NewString()
-	insertBackendOperation(t, ctx, tx, other, run, kind, account, app, definition, tenant)
-	if n, err := markBackend(ctx, sqlc.New(), tx, kind, other, run); err != nil || n != 0 {
-		t.Fatalf("backend marker was reassigned to a second operation: %d %v", n, err)
-	}
-	assertBackendForeignKey(t, tx.Commit(ctx), "customer_operations_current_execution_fkey")
+	err = sqlc.New().InsertCustomerOperation(ctx, tx, backendOperationParams(t, other, run, kind, account, app, definition, tenant))
+	assertBackendPostgresError(t, err, "23505", "customer_operations_"+kind+"_run_id_key")
 }
 
 func assertBackendForeignKey(t *testing.T, err error, constraint string) {
 	t.Helper()
+	assertBackendPostgresError(t, err, "23503", constraint)
+}
+
+func assertBackendPostgresError(t *testing.T, err error, code, constraint string) {
+	t.Helper()
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23503" || pgErr.ConstraintName != constraint {
-		t.Fatalf("expected owned backend fence %s, got %v", constraint, err)
+	if !errors.As(err, &pgErr) || pgErr.Code != code || pgErr.ConstraintName != constraint {
+		t.Fatalf("expected owned backend fence %s (%s), got %v", constraint, code, err)
 	}
 }
 
@@ -459,8 +435,15 @@ func assertBackendMarkerSurvivesGC(t *testing.T, ctx context.Context, db interfa
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	err = q.UpdateCustomerOperation(ctx, db, sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "succeeded",
-		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}})
+	update := sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "succeeded",
+		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}}
+	switch kind {
+	case "workflow":
+		update.WorkflowRunID = backendUUID(run)
+	case "job":
+		update.JobRunID = backendUUID(run)
+	}
+	err = q.UpdateCustomerOperation(ctx, db, update)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ const (
 	CodeApplicationStandardVersionStale = api.CodeApplicationStandardVersionStale
 	CodeApplicationStandardsPending     = api.CodeApplicationStandardsPending
 
+	CodeProfileInvestigationLimit            = api.CodeProfileInvestigationLimit
 	CodeBindingReleaseRequired               = api.CodeBindingReleaseRequired
 	CodeBindingReleasePolicyChanged          = api.CodeBindingReleasePolicyChanged
 	CodePlanLimitApps                        = api.CodePlanLimitApps
@@ -92,3 +93,5 @@ const (
 	CodePlanPlatformTenantRequiredNotAllowed = api.CodePlanPlatformTenantRequiredNotAllowed
 	CodePlanConsumerKeyQuotaReached          = api.CodePlanConsumerKeyQuotaReached
 )
+
+const CodeProfileGateBlocked = api.CodeProfileGateBlocked

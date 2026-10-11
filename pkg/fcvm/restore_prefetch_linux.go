@@ -18,29 +18,31 @@ const (
 	pagemapSwapped = uint64(1) << 62
 )
 
-// adviseChunk bounds one FADV_WILLNEED call. The kernel truncates a single
-// request to the device's readahead window (max of read_ahead_kb and the
-// optimal I/O size, 128 KiB by default), so a larger range must be advised
-// in pieces or only its head is read.
-const adviseChunk = 128 << 10
-
 // adviseWillNeed queues readahead for ranges of path. FADV_WILLNEED submits
 // the reads and returns without waiting for them.
 func adviseWillNeed(path string, ranges []fileRange) error {
+	return adviseWillNeedWith(path, ranges, unix.Fadvise)
+}
+
+// adviseWillNeedWith splits ranges into bounded FADV_WILLNEED calls. The
+// injected syscall lets tests verify the requested coverage without assuming
+// the kernel will finish advisory readahead under memory pressure.
+func adviseWillNeedWith(path string, ranges []fileRange, fadvise func(int, int64, int64, int) error) error {
 	f, err := os.Open(path) //nolint:gosec // vmmd-resolved snapshot cache path, never customer-supplied
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	for _, r := range ranges {
-		for off := r.Off; off < r.Off+r.Len; off += adviseChunk {
-			n := min(int64(adviseChunk), r.Off+r.Len-off)
-			if err := unix.Fadvise(int(f.Fd()), off, n, unix.FADV_WILLNEED); err != nil {
-				return fmt.Errorf("fadvise %d+%d: %w", off, n, err)
-			}
-		}
-	}
-	return nil
+	return adviseRanges(int(f.Fd()), ranges, fadvise)
+}
+
+// adviseRanges submits each range in bounded chunks. FADV_WILLNEED is
+// asynchronous and advisory, so callers must not assume every requested page
+// remains resident after this helper returns.
+func adviseRanges(fd int, ranges []fileRange, fadvise func(int, int64, int64, int) error) error {
+	return adviseFileRanges(ranges, func(off, n int64) error {
+		return fadvise(fd, off, n, unix.FADV_WILLNEED)
+	})
 }
 
 // touchedFileRanges returns the byte ranges of path that process pid has

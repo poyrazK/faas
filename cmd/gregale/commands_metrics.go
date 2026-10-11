@@ -107,7 +107,7 @@ func cmdMetrics(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(m))
 	}
-	renderAppMetrics(osStdout, m)
+	renderAppMetrics(osStdout, slug, m)
 	return 0
 }
 
@@ -119,11 +119,15 @@ func cmdMetrics(args []string) int {
 // When Source is "degraded: <reason>" we render a one-line warning
 // before the values so the customer understands the zeroes are
 // real (Prometheus isn't reachable), not a bug.
-func renderAppMetrics(w io.Writer, m api.AppMetricsResponse) {
+func renderAppMetrics(w io.Writer, slug string, m api.AppMetricsResponse) {
 	if m.Source != "" && m.Source != appmetrics.SourcePrometheus {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (values below are zero — Prometheus is unavailable)\n", m.Source)
 	}
+	// Same App/Slug pair as `gregale slo` (H5-4): the id alone named no app.
 	_, _ = fmt.Fprintf(w, "App:        %s\n", m.AppID)
+	if slug != "" {
+		_, _ = fmt.Fprintf(w, "Slug:       %s\n", slug)
+	}
 	_, _ = fmt.Fprintf(w, "Range:      %s\n", m.Range)
 	if m.AsOf != "" {
 		_, _ = fmt.Fprintf(w, "As of:      %s\n", m.AsOf)

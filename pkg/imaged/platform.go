@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -34,6 +35,14 @@ func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep 
 func (h *Handler) prepareContainerWorkloadImage(ctx context.Context, app state.App, dep state.Deployment, workload, ref string, auth *oci.BasicAuth) (preparedContainerWorkload, error) {
 	resolved, err := h.resolveContainerWorkloadImage(ctx, ref, auth)
 	prepared := preparedContainerWorkload{ImageResolution: resolved}
+	if err == nil && !api.ValidDeploymentImage(ref) {
+		pins, ok := h.store.(state.DeploymentImageReferenceStore)
+		if !ok {
+			err = fmt.Errorf("imaged: image reference pinning unavailable")
+		} else if pinErr := pins.PinDeploymentImageReference(ctx, dep.ID, ref, resolved.SourceReference); pinErr != nil {
+			err = fmt.Errorf("imaged: pin image source: %w", pinErr)
+		}
+	}
 	if err == nil && (app.RequireSigned || app.SecurityPolicy.RequiresSignedImage()) {
 		prepared.Verification, err = h.recordContainerWorkloadSignature(ctx, app, dep, workload, ref, resolved, auth)
 	}

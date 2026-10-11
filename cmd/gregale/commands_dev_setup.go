@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/markers"
@@ -32,6 +33,7 @@ type devSetupReceipt struct {
 	EnvKeyCount             int                    `json:"env_key_count,omitempty"`
 	ServiceOverridesFile    string                 `json:"service_overrides_file,omitempty"`
 	ServiceOverrideKeyCount int                    `json:"service_override_key_count,omitempty"`
+	TTL                     string                 `json:"ttl"`
 	Hosting                 *devSetupHosting       `json:"hosting,omitempty"`
 	Authenticated           bool                   `json:"authenticated"`
 	Ready                   bool                   `json:"ready"`
@@ -57,7 +59,7 @@ type devSetupDoctorSummary struct {
 	Errors   int           `json:"errors"`
 }
 
-const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]]"
+const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
 
 // cmdDevSetup prepares the first developer environment without making a
 // remote mutation. --start hands the validated, exact plan to cmdDev, which
@@ -74,6 +76,7 @@ func cmdDevSetup(args []string) int {
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database when starting")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
+	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devSetupUsage, "dev")
 		return 2
@@ -108,9 +111,13 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Invalid developer manifest", err)
 	}
-	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
+	}
+	lease, err := resolveDevTTL(*ttl)
+	if err != nil {
+		return printErr("Invalid --ttl", err)
 	}
 	envFilePath, envKeyCount, err := resolveSetupEnvFile(cwd, *envFile)
 	if err != nil {
@@ -152,7 +159,7 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Could not prepare developer setup", err)
 	}
-	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion)
+	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease)
 
 	if !receipt.Authenticated {
 		receipt.Warnings = append(receipt.Warnings, "not logged in; run `gregale login` before starting")
@@ -175,7 +182,7 @@ func cmdDevSetup(args []string) int {
 			return 1
 		}
 		if *start {
-			return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion))
+			return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease))
 		}
 		return 0
 	}
@@ -188,7 +195,7 @@ func cmdDevSetup(args []string) int {
 		return 0
 	}
 	PrintProgress(osStdout, "Starting the developer environment")
-	return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion))
+	return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease))
 }
 
 func resolveDevSetupSource(sourceDir string) (devSourceConfig, error) {
@@ -234,7 +241,7 @@ func resolveSetupServiceOverrideFile(cwd, raw string) (string, int, error) {
 	return path, len(pairs), nil
 }
 
-func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig, envFile string, envKeyCount int, serviceOverrideFile string, serviceOverrideKeyCount int, start, once, noLogs, open, postgres bool, postgresRegion string) devSetupReceipt {
+func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig, envFile string, envKeyCount int, serviceOverrideFile string, serviceOverrideKeyCount int, start, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration) devSetupReceipt {
 	receipt := devSetupReceipt{
 		Version:                 1,
 		Path:                    sourceDir,
@@ -246,6 +253,7 @@ func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig
 		EnvKeyCount:             envKeyCount,
 		ServiceOverridesFile:    serviceOverrideFile,
 		ServiceOverrideKeyCount: serviceOverrideKeyCount,
+		TTL:                     formatDevLease(lease),
 		Authenticated:           strings.TrimSpace(loadToken()) != "",
 		ConfigPresent:           false,
 	}
@@ -261,7 +269,7 @@ func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig
 			receipt.Hosting = &devSetupHosting{Start: manifest.Hosting.Start, Port: manifest.Hosting.Port, Health: manifest.Hosting.Health}
 		}
 	}
-	receipt.StartCommand = devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile, once, noLogs, open, postgres, postgresRegion)
+	receipt.StartCommand = devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile, once, noLogs, open, postgres, postgresRegion, lease)
 	receipt.Doctor = buildDevSetupDoctorSummary(sourceDir, config.shape)
 	receipt.Ready = receipt.Authenticated && receipt.Doctor.Errors == 0
 	return receipt
@@ -336,8 +344,8 @@ func devSetupNextSteps(receipt devSetupReceipt, start bool) []string {
 	return []string{devSetupShellCommand(receipt.StartCommand)}
 }
 
-func devSetupDevArgs(sourcePath, name, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string) []string {
-	args := make([]string, 0, 14)
+func devSetupDevArgs(sourcePath, name, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration) []string {
+	args := make([]string, 0, 16)
 	if sourcePath != "" {
 		args = append(args, "--path", sourcePath)
 	}
@@ -365,10 +373,13 @@ func devSetupDevArgs(sourcePath, name, envFile, serviceOverrideFile string, once
 			args = append(args, "--postgres-region", postgresRegion)
 		}
 	}
+	if lease > 0 {
+		args = append(args, "--ttl", formatDevLease(lease))
+	}
 	return args
 }
 
-func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string) []string {
+func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration) []string {
 	args := []string{"gregale", "dev"}
 	rel, err := filepath.Rel(cwd, sourceDir)
 	if err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
@@ -405,6 +416,9 @@ func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverride
 		if postgresRegion != "" {
 			args = append(args, "--postgres-region", postgresRegion)
 		}
+	}
+	if lease > 0 {
+		args = append(args, "--ttl", formatDevLease(lease))
 	}
 	return args
 }
@@ -449,6 +463,7 @@ func renderDevSetup(stdout, stderr io.Writer, receipt devSetupReceipt) {
 	} else {
 		PrintProgress(stdout, "service overrides: none selected (use --service-override-file .env.services.local to opt in)")
 	}
+	PrintProgress(stdout, "lease: %s after each sync (use --ttl or dev.ttl to change; plan maximum applies)", receipt.TTL)
 	if receipt.Hosting != nil && (receipt.Hosting.Port != 0 || receipt.Hosting.Health != "" || receipt.Hosting.Start != "") {
 		PrintProgress(stdout, "hosting overrides: start=%q port=%d health=%s", receipt.Hosting.Start, receipt.Hosting.Port, receipt.Hosting.Health)
 	}

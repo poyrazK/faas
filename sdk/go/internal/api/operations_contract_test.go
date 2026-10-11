@@ -24,6 +24,24 @@ func TestOperationWireContractMatchesPlatform(t *testing.T) {
 	}
 	want := operationDeclarations(t, platform)
 	got := operationDeclarations(t, "operations.go")
+	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_subject.go")) {
+		want[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, "operation_subject.go") {
+		got[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_milestones.go")) {
+		want[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, "operation_milestones.go") {
+		got[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_workflows.go")) {
+		want[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, "operation_workflows.go") {
+		got[name] = declaration
+	}
 	for name, declaration := range want {
 		if got[name] != declaration {
 			t.Errorf("operation wire declaration drift: %s", name)

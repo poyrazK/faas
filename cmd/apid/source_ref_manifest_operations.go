@@ -25,6 +25,9 @@ func resolveSourceOperations(sourcePath, manifestPath, slug string, plan api.Pla
 				if operation.App == "" || operation.App == slug {
 					names[path.Join(path.Dir(manifestPath), operation.InputSchema)] = true
 					names[path.Join(path.Dir(manifestPath), operation.OutputSchema)] = true
+					for _, file := range operation.Milestones {
+						names[path.Join(path.Dir(manifestPath), file)] = true
+					}
 				}
 			}
 			var err error

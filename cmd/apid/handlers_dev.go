@@ -17,8 +17,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const devSessionTTL = 24 * time.Hour
-
 // devSessionSlug creates a stable, globally unique app slug for one account,
 // project, and local developer workspace. An empty workspace ID deliberately
 // retains the pre-workspace digest so older CLIs can refresh and destroy the
@@ -36,6 +34,26 @@ func devSessionSlug(accountID, project, workspaceID string) string {
 		readable = strings.Trim(readable[:maxProjectLen], "-")
 	}
 	return "dev-" + readable + "-" + suffix
+}
+
+// devSessionLease resolves the lease a developer session renews on this
+// request. Omission keeps the original 24-hour lease so older CLIs behave as
+// before; an explicit value is bounded below by DeveloperLeaseMin and above
+// by the plan's DeveloperLeaseMaxHours.
+func devSessionLease(leaseSeconds int64, limits api.Limits) (time.Duration, *api.Problem) {
+	if leaseSeconds == 0 {
+		return api.DeveloperLeaseDefault, nil
+	}
+	minSeconds := int64(api.DeveloperLeaseMin / time.Second)
+	if leaseSeconds < minSeconds {
+		return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid lease", fmt.Sprintf("lease_seconds must be at least %d (%s)", minSeconds, api.DeveloperLeaseMin))
+	}
+	// Compare in seconds so an absurd value cannot overflow time.Duration.
+	if leaseSeconds > int64(limits.Plan.DeveloperLeaseMax()/time.Second) {
+		return 0, api.ErrPlanLimitDeveloperLease(limits, leaseSeconds)
+	}
+	return time.Duration(leaseSeconds) * time.Second, nil
 }
 
 func validDevWorkspaceID(workspaceID string) bool {
@@ -75,9 +93,14 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
-	slug := devSessionSlug(acct.ID, project, req.WorkspaceID)
-	expiresAt := time.Now().UTC().Add(devSessionTTL)
 	limits := api.MustLimitsFor(acct.Plan)
+	lease, prob := devSessionLease(req.LeaseSeconds, limits)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	slug := devSessionSlug(acct.ID, project, req.WorkspaceID)
+	expiresAt := time.Now().UTC().Add(lease)
 	app, prob := s.buildApp(acct, api.CreateAppRequest{Slug: slug, Type: req.Type, Runtime: req.Runtime}, limits)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -200,13 +223,48 @@ func (s *server) destroyDevSession(w http.ResponseWriter, r *http.Request, acct 
 	s.destroyPreviewApp(w, r, acct, app, "dev_session.destroyed")
 }
 
+// getDevSession reports the developer environment selected by the account,
+// project, and optional workspace identity. It is read-only: unlike the PUT
+// upsert it never renews the lease or provisions PostgreSQL, so scripts and
+// `gregale dev info` can inspect an environment without extending it.
+func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project := r.PathValue("project")
+	if !validSlug(project) {
+		s.notFound(w, "no such developer session")
+		return
+	}
+	workspaceID := r.URL.Query().Get("workspace_id")
+	if !validDevWorkspaceID(workspaceID) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid workspace ID", "workspace_id must be 32 lowercase hexadecimal characters"))
+		return
+	}
+	app, ok := s.developerSessionApp(r, acct, project, workspaceID)
+	if !ok {
+		s.notFound(w, "no such developer session")
+		return
+	}
+	postgres, err := s.describeDevPostgres(r.Context(), app)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("load developer PostgreSQL"))
+		return
+	}
+	var expiresAt time.Time
+	if app.PreviewExpiresAt != nil {
+		expiresAt = app.PreviewExpiresAt.UTC()
+	}
+	writeJSON(w, http.StatusOK, api.DevSessionResponse{
+		App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+	})
+}
+
 const (
 	devSyncHistoryDefaultLimit = 20
 	devSyncHistoryMaxLimit     = 100
 )
 
 var devSyncHistoryPhases = map[string]bool{
-	"sync": true, "cache": true, "build": true,
+	"sync": true, "patch": true, "cache": true, "build": true,
 	"boot": true, "ready": true, "route": true,
 }
 

@@ -27,6 +27,13 @@ func cmdOverageCap(args []string) int {
 	// "flag provided but not defined: -clear" and exit 1. A real
 	// `--clear` flag is the idiomatic fix; the positional variant
 	// stays for symmetry with `<cents>`.
+	// flag.Parse would read a negative amount such as "-5" as an undefined
+	// flag and print Go's usage dump (production-us hunt #8, H8-32).
+	for _, arg := range args {
+		if n, err := strconv.ParseInt(arg, 10, 64); err == nil && n < 0 {
+			return printErr("Invalid cap", fmt.Errorf("cents must be a non-negative integer; got %q", arg))
+		}
+	}
 	fs := newFlagSet("overage-cap", flag.ContinueOnError)
 	clear := fs.Bool("clear", false, "clear the per-account overage cap (no limit)")
 	if err := fs.Parse(args); err != nil {

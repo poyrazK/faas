@@ -102,14 +102,19 @@ func eventReceiptResponse(accountID string, receipt state.EventReceipt) api.Even
 	out := api.EventReceiptResponse{EventID: receipt.EventID, ClientEventID: receipt.ClientEventID, EventSource: receipt.EventSource, EventType: receipt.EventType,
 		SchemaVersion: receipt.SchemaVersion, AcceptedAt: receipt.AcceptedAt, RoutingSettledAt: receipt.RoutingSettledAt, RetainUntil: receipt.RetainUntil,
 		SnapshotCaptured: receipt.SnapshotCaptured, RoutingMode: "event", RecipientCount: receipt.RecipientCount, RoutingSummary: receipt.RoutingSummary,
+		BackfillRecipientCount: receipt.BackfillRecipientCount, BackfillRoutingSummary: receipt.BackfillRoutingSummary,
 		Recipients: make([]api.EventReceiptRecipientResponse, 0, len(receipt.Recipients)), NextAfter: encodeEventReceiptCursor(accountID, receipt)}
 	if receipt.RecipientClaims {
 		out.RoutingMode = "recipient"
 	}
 	for _, entry := range receipt.Recipients {
 		recipient := api.EventReceiptRecipientResponse{SubscriptionID: entry.SubscriptionID, WorkflowName: entry.WorkflowName,
+			Origin: entry.Origin, BackfillJobID: entry.BackfillJobID,
 			WorkflowRunID: entry.WorkflowRunID, WorkflowRunStatus: entry.WorkflowRunStatus, AppID: entry.AppID, AppSlug: entry.AppSlug,
 			Routing: api.EventReceiptRoutingResponse(entry.Routing), ExecutionUnavailable: entry.ExecutionUnavailable, RecoveryActions: eventReceiptActions(receipt, entry)}
+		if entry.BackfillJobID != "" && entry.TargetAvailable {
+			recipient.BackfillJobURL = "/v1/event-replays/" + url.PathEscape(entry.BackfillJobID)
+		}
 		if entry.Execution != nil {
 			execution := api.EventReceiptExecutionResponse(*entry.Execution)
 			recipient.Execution = &execution

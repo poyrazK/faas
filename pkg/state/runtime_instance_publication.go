@@ -19,6 +19,7 @@ type RuntimeInstancePublication struct {
 	ConfigFence                                  RuntimeAppConfigFence
 	Inputs                                       *RuntimeConfigInputs
 	AdmissionReceipt, PromotionReceipt           *runtimeadmission.Receipt
+	RuntimeUpgradeColdBoot                       *RuntimeUpgradeColdBoot
 }
 
 type RuntimeInstancePublicationStore interface {

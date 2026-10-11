@@ -28,6 +28,8 @@ func (s *server) routeMonitorError(w http.ResponseWriter, err error, a state.Acc
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", a.Plan))
 	case errors.Is(err, state.ErrRouteHealthRevision):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Route monitor revision changed", "Read the current monitor revision before updating it."))
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.ErrValidation("invalid route monitor configuration"))
 	default:
 		s.routeHealthError(w, err)
 	}
@@ -65,6 +67,38 @@ func (s *server) putRouteMonitor(w http.ResponseWriter, r *http.Request, a state
 	}
 	s.audit.Emit(r.Context(), "route_monitor.updated", &a.ID, map[string]any{"app_id": app.ID, "enabled": c.Enabled, "revision": c.Revision, "route_count": len(c.Routes), "customer_group_by": c.CustomerGroupBy})
 	writeJSON(w, http.StatusOK, c)
+}
+func (s *server) postRouteMonitorPreview(w http.ResponseWriter, r *http.Request, a state.Account) {
+	var req api.PreviewRouteMonitorRequest
+	if err := decodeJSONSized(r, &req, api.RouteHealthRequestMaxBytes); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid route monitor preview"))
+		return
+	}
+	if err := routemonitor.ValidatePreviewRequest(req, 0); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	details, err := routeMonitorCustomerDetails(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	app, store, ok := s.routeMonitorTarget(w, r, a)
+	if !ok {
+		return
+	}
+	var preview api.RouteMonitorPreview
+	if detailStore, ok := s.store.(state.RouteMonitorPreviewDetailsStore); ok {
+		preview, err = detailStore.PreviewRouteMonitorWithCustomerDetails(r.Context(), a.ID, app.ID, req, details)
+	} else {
+		preview, err = store.PreviewRouteMonitor(r.Context(), a.ID, app.ID, req)
+		preview.Report = routemonitor.ProjectReport(preview.Report, details)
+	}
+	if err != nil {
+		s.routeMonitorError(w, err, a)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
 }
 func (s *server) getRouteMonitorReport(w http.ResponseWriter, r *http.Request, a state.Account) {
 	app, store, ok := s.routeMonitorTarget(w, r, a)

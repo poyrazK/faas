@@ -11,6 +11,14 @@ export type WorkflowScheduleResponse = {
   schedule: string;
   timezone: string;
   overlap: 'skip' | 'allow';
+  /**
+   * Effective missed-fire policy; defaults to skip.
+   */
+  catch_up?: 'skip' | 'latest';
+  /**
+   * Effective recovery duration
+   */
+  catch_up_window?: string;
   enabled: boolean;
   next_fire_at?: string;
   last_evaluated_at?: string;

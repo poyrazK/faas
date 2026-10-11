@@ -10,6 +10,9 @@ import (
 )
 
 func (m *MemStore) prepareServiceBindingLocked(ctx context.Context, target Deployment, action, recipientID, predecessorID, reason string) (Deployment, error) {
+	previousRecovery := m.lifecycleRecovery
+	m.lifecycleRecovery = action == ServiceRolloutActionAbort
+	defer func() { m.lifecycleRecovery = previousRecovery }()
 	if err := serviceBindingRequestMatches(ctx, target, action, recipientID, predecessorID); err != nil {
 		return target, err
 	}

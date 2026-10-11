@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,6 +12,14 @@ import (
 )
 
 func operationRecoveryFingerprint(req api.OperationRecoveryRequest, limits api.Limits) (string, error) {
+	if revision := req.ExpectedInspectionRevision; revision != "" {
+		if !strings.HasPrefix(revision, "sha256:") || len(revision) != len("sha256:")+64 || revision != strings.ToLower(revision) {
+			return "", ErrInvalidArgument
+		}
+		if _, err := hex.DecodeString(strings.TrimPrefix(revision, "sha256:")); err != nil {
+			return "", ErrInvalidArgument
+		}
+	}
 	if len(req.RecoveryID) < 1 || len(req.RecoveryID) > api.OperationIdempotencyKeyMaxBytes || strings.ContainsAny(req.RecoveryID, "\x00\r\n") || req.ExpectedGeneration <= 0 {
 		return "", ErrInvalidArgument
 	}

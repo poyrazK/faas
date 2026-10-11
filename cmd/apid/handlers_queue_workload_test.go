@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -153,5 +154,25 @@ func TestConfigureQueueWorkloadKeepsScopedDefaultsSeparate(t *testing.T) {
 	current, err := e.store.QueueBindingByID(ctx, e.acct.ID, app.ID, scoped.Binding.ID)
 	if err != nil || current.DeploymentScope != "production" || current.EnvironmentID != scoped.Binding.EnvironmentID || current.MaxConcurrency != 3 {
 		t.Fatalf("legacy profile changed scoped binding: %+v %v", current, err)
+	}
+}
+
+// `gregale queue setup` sends no workload class. For an http app the refusal
+// named workload_class, a field the caller never set (production-us hunt #5,
+// H5-27); it now says what the command supports and what to use instead.
+func TestConfigureQueueWorkloadExplainsHTTPApps(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	if _, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "queue-http", WorkloadClass: state.WorkloadClassHTTP,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodPut, "/v1/apps/queue-http/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "worker and job apps") || !strings.Contains(body, "queue bindings create") {
+		t.Fatalf("problem does not explain the alternative: %s", body)
 	}
 }

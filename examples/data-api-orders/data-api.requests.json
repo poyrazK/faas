@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "scenarios": [{
+    "name": "orders-isolation",
+    "requests": [
+      { "name": "Buyer creates", "identity": "buyer", "method": "POST", "path": "/rest/v1/orders", "body": { "owner": "customer-a", "total": 10 }, "expect": { "status": 201 }, "capture": { "order_id": "/0/id" } },
+      { "name": "Other cannot read", "identity": "other", "method": "GET", "path": "/rest/v1/orders?id=eq.{{order_id}}", "expect": { "status": 200, "json": [] } },
+      { "name": "Other cannot update", "identity": "other", "method": "PATCH", "path": "/rest/v1/orders?id=eq.{{order_id}}", "body": { "total": 0 }, "expect": { "status": 200, "json": [] } },
+      { "name": "Other cannot delete", "identity": "other", "method": "DELETE", "path": "/rest/v1/orders?id=eq.{{order_id}}", "expect": { "status": 200, "json": [] } },
+      { "name": "Wrong owner rejected", "identity": "buyer", "method": "POST", "path": "/rest/v1/orders", "body": { "owner": "customer-b", "total": 1 }, "expect": { "status": 403 } },
+      { "name": "Buyer cleans up", "identity": "buyer", "method": "DELETE", "path": "/rest/v1/orders?id=eq.{{order_id}}&select=id", "expect": { "status": 200, "json": [{ "id": "{{order_id}}" }] } },
+      { "name": "Seed remains", "identity": "buyer", "method": "GET", "path": "/rest/v1/orders?select=total", "expect": { "status": 200, "json": [{ "total": 42 }] } }
+    ]
+  }]
+}

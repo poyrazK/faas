@@ -172,8 +172,12 @@ func resolveDeploymentAliasApp(explicit string) (string, int) {
 }
 
 func deploymentAliasRevisionLabel(alias api.DeploymentAliasResponse) string {
-	if label := renderRevision(alias.Revision); label != "" {
-		return label
+	label := renderRevision(alias.Revision)
+	if label == "" {
+		label = alias.DeploymentID
 	}
-	return alias.DeploymentID
+	if alias.DeploymentStatus != "" && alias.DeploymentStatus != statusLive {
+		label += " (" + alias.DeploymentStatus + ", not serving)"
+	}
+	return label
 }

@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -21,9 +20,13 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 		return Instance{}, err
 	}
+	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)
+	if err != nil {
+		return Instance{}, err
+	}
 	instance, err := publishOwnedRuntimeRow(ctx, tx, p)
 	if err != nil {
-		return Instance{}, runtimeSecretFenceError(err)
+		return Instance{}, err
 	}
 	if err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, sqlc.SaveRuntimeInstanceConfigProofParams{
 		InstanceID: mustPgUUID(p.InstanceID), EnvironmentID: mustPgUUID(p.Fence.EnvironmentID), Scope: p.Fence.Scope,
@@ -33,6 +36,11 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	}
 	if p.Inputs != nil && p.targetState() == string(StateRunning) {
 		if err := recordInstanceRuntimeConfigReceipt(ctx, tx, p.InstanceID, p.WakeID, *p.Inputs); err != nil {
+			return Instance{}, err
+		}
+	}
+	if acceptance != nil {
+		if err := insertRuntimeUpgradeAcceptanceDB(ctx, tx, *acceptance); err != nil {
 			return Instance{}, err
 		}
 	}

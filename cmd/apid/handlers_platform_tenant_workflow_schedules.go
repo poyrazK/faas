@@ -12,6 +12,7 @@ import (
 func tenantWorkflowScheduleResponse(schedule state.TenantWorkflowSchedule) api.TenantWorkflowScheduleResponse {
 	return api.TenantWorkflowScheduleResponse{WorkflowName: schedule.WorkflowName, DeploymentID: schedule.DeploymentID,
 		Schedule: schedule.Schedule, Timezone: schedule.Timezone, Overlap: schedule.Overlap, Enabled: schedule.Enabled,
+		CatchUp: schedule.CatchUp, CatchUpWindow: schedule.CatchUpWindow,
 		TenantConfigurable: true, Customized: schedule.Customized, Version: schedule.Version}
 }
 

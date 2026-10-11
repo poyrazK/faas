@@ -25,7 +25,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -76,12 +78,20 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdEdgeRulesList(args[1:])
+	case "history":
+		return cmdEdgeRulesHistory(args[1:])
+	case "rollback":
+		return cmdEdgeRulesRollback(args[1:])
+	case "stats":
+		return cmdEdgeRulesStats(args[1:])
+	case "events":
+		return cmdEdgeRulesEvents(args[1:])
 	case "trace":
 		return cmdEdgeRulesTrace(args[1:])
 	case subCreate:
@@ -152,8 +162,17 @@ func cmdEdgeRulesList(args []string) int {
 		if !it.Enabled {
 			enabled = secretScanOff
 		}
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]\n",
-			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled)
+		if it.Expired {
+			enabled = "expired"
+		} else if it.Mode == api.EdgeRuleModeLog && it.Enabled {
+			enabled = "log"
+		}
+		label := ""
+		if it.Name != "" {
+			label = "  " + truncate(it.Name, 40)
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
+			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
 	}
 	return 0
 }
@@ -170,13 +189,19 @@ func cmdEdgeRulesCreate(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async (required)")
 	matchHost := fs.String("match-host", "", "host to match (required)")
-	matchPath := fs.String("match-path", "/", "path to match")
+	matchPath := fs.String("match-path", "/", "path glob to match (default / covers only the root; /** covers every path)")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")
 	var matchHeaders multiFlag
 	fs.Var(&matchHeaders, "match-header", "exact request header selector (Name=Value; repeat)")
 	priority := fs.Int("priority", 100, "match priority (lower wins; default 100)")
 	enabled := fs.Bool("enabled", true, "whether the rule is enabled (default true)")
+	ruleName := fs.String("name", "", "operator-facing rule name (<=100 chars)")
+	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
+	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
+	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
+	matchCondition := fs.String("match", "", "match condition (ADR-962 JSON, @file, or -)")
+	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-960)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -197,6 +222,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	redirectTo := fs.String("redirect-to", "", "kind=redirect: Location URL (required)")
 	var redirectHeaders multiFlag
 	fs.Var(&redirectHeaders, "redirect-header", "kind=redirect: extra header (Name:Value; repeat)")
+	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-968)")
 
 	// headers
 	var headersReqAdd, headersReqSet multiFlag
@@ -228,6 +254,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
+	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
 
 	// ip
 	var ipAllow, ipDeny multiFlag
@@ -261,10 +288,13 @@ func cmdEdgeRulesCreate(args []string) int {
 	// acct.Plan is the authoritative gate).
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip|composite)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: maximum distinct consumer buckets (0=plan default)")
 	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: missing identity behavior (shared|reject; default shared)")
+	var throttleKeyFields, throttleCountStatuses multiFlag
+	fs.Var(&throttleKeyFields, "throttle-key-field", "kind=throttle: composite key field with --throttle-key-by composite (ip|country|api_key|consumer_id|jwt_subject|jwt_claim|method|path|header:<name>; repeat)")
+	fs.Var(&throttleCountStatuses, "throttle-count-status", "kind=throttle: charge the bucket only for responses with this status (repeat)")
 
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// max-age-seconds is the fresh window (default 60); stale-
@@ -375,6 +405,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		RewriteTo:                         *rewriteTo,
 		RedirectStatus:                    *redirectStatus,
 		RedirectTo:                        *redirectTo,
+		ActionTemplate:                    *actionTemplate,
 		RedirectHeaders:                   redirectHeaders,
 		HeadersReqAdd:                     headersReqAdd,
 		HeadersReqSet:                     headersReqSet,
@@ -394,6 +425,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		JWTAlgorithms:                     jwtAlgorithms,
 		JWTClaims:                         jwtClaims,
 		JWTPlatformTenantExternalRefClaim: *jwtTenantExternalRefClaim,
+		JWTRequireExp:                     *jwtRequireExp,
 		IPAllow:                           ipAllow,
 		IPDeny:                            ipDeny,
 		LimitMaxBodyBytes:                 *limitMaxBodyBytes,
@@ -406,6 +438,8 @@ func cmdEdgeRulesCreate(args []string) int {
 		ThrottleJWTClaim:                  *throttleJWTClaim,
 		ThrottleMaxKeys:                   *throttleMaxKeys,
 		ThrottleMissingKeyPolicy:          *throttleMissingKeyPolicy,
+		ThrottleKeyFields:                 []string(throttleKeyFields),
+		ThrottleCountStatuses:             []string(throttleCountStatuses),
 		CacheMaxAgeSeconds:                *cacheMaxAge,
 		CacheStaleWhileRevalidateSeconds:  *cacheStaleWhileRevalidate,
 		CacheStaleIfErrorSeconds:          *cacheStaleIfError,
@@ -454,10 +488,26 @@ func cmdEdgeRulesCreate(args []string) int {
 		Enabled:      enabled,
 		Kind:         *kind,
 		Action:       actionBytes,
+		Name:         *ruleName,
+		Description:  *ruleDescription,
 	}
 	if *kind == "validate" {
 		req.ValidateMode = *validateMode
 	}
+	expiry, expiryErr := parseEdgeRuleExpiry(*expiresIn, *expiresAt, time.Now())
+	if expiryErr != nil {
+		return printErr("Invalid expiry", expiryErr)
+	}
+	req.ExpiresAt = expiry
+	condition, conditionErr := parseEdgeRuleMatchFlag(*matchCondition)
+	if conditionErr != nil {
+		return printErr("Invalid --match", conditionErr)
+	}
+	req.Match = condition
+	if prob := api.ValidateEdgeRuleMode(*ruleMode); prob != nil {
+		return printErr("Invalid --mode", fmt.Errorf("%s", prob.Detail))
+	}
+	req.Mode = *ruleMode
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -470,7 +520,18 @@ func cmdEdgeRulesCreate(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	PrintOK(osStdout, "Edge rule %s created for app %s (kind=%s, priority=%d).", out.ID, *slug, out.Kind, out.Priority)
+	warnRootOnlyProtectiveRule(*kind, visited["match-path"])
 	return 0
+}
+
+// warnRootOnlyProtectiveRule flags a gate created without --match-path. The
+// default "/" is an exact glob that covers only the root path, so a jwt, ip,
+// or maintenance rule written without a path leaves every other path open.
+func warnRootOnlyProtectiveRule(kind string, pathGiven bool) {
+	if pathGiven || !api.EdgeRuleKindUsesProtectivePathMatch(kind) {
+		return
+	}
+	PrintWarn(osStderr, "This %s rule covers only the root path /. Pass --match-path '/**' to cover every path.", kind)
 }
 
 // cmdEdgeRulesGet fetches a single edge rule by ID.
@@ -510,6 +571,23 @@ func cmdEdgeRulesGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Priority:    %d\n", out.Priority)
 	_, _ = fmt.Fprintf(osStdout, "Enabled:     %t\n", out.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "Kind:        %s\n", out.Kind)
+	if out.Name != "" {
+		_, _ = fmt.Fprintf(osStdout, "Name:        %s\n", out.Name)
+	}
+	if out.Description != "" {
+		_, _ = fmt.Fprintf(osStdout, "Description: %s\n", out.Description)
+	}
+	if out.ExpiresAt != nil {
+		state := "active until"
+		if out.Expired {
+			state = "expired at"
+		}
+		_, _ = fmt.Fprintf(osStdout, "Expires:     %s %s\n", state, out.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+	}
+	if out.Match != nil {
+		condition, _ := json.Marshal(out.Match)
+		_, _ = fmt.Fprintf(osStdout, "Match:       %s\n", condition)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Action:      %s\n", string(out.Action))
 	_, _ = fmt.Fprintf(osStdout, "Created:     %s\n", out.CreatedAt.Format("2006-01-02 15:04:05 MST"))
 	_, _ = fmt.Fprintf(osStdout, "Updated:     %s\n", out.UpdatedAt.Format("2006-01-02 15:04:05 MST"))
@@ -521,7 +599,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "template")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -534,6 +612,14 @@ func cmdEdgeRulesUpdate(args []string) int {
 	priority := fs.Int("priority", 0, "new priority (0 = unset)")
 	enable := fs.Bool("enable", false, "enable the rule")
 	disable := fs.Bool("disable", false, "disable the rule")
+	ruleName := fs.String("name", "", "operator-facing rule name (<=100 chars)")
+	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
+	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
+	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
+	matchCondition := fs.String("match", "", "match condition (ADR-962 JSON, @file, or -)")
+	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-960)")
+	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
+	clearMatch := fs.Bool("clear-match", false, "remove the rule's match condition")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action
 	// requires the full new action shape — no partial sub-keys.
 	kind := fs.String("kind", "", "rule kind (required when patching --*-action flags)")
@@ -551,6 +637,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	redirectTo := fs.String("redirect-to", "", "kind=redirect: Location URL")
 	var redirectHeaders multiFlag
 	fs.Var(&redirectHeaders, "redirect-header", "kind=redirect: extra header (Name:Value; repeat)")
+	actionTemplate := fs.Bool("template", false, "kind=redirect|headers: expand ${name} request values in the target and header values (ADR-968)")
 	var headersReqAdd, headersReqSet, headersReqRm multiFlag
 	var headersResAdd, headersResSet, headersResRm multiFlag
 	fs.Var(&headersReqAdd, "headers-request-add", "kind=headers: request header to add")
@@ -574,6 +661,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
+	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
 	var ipAllow, ipDeny multiFlag
 	fs.Var(&ipAllow, "ip-allow", "kind=ip: allow CIDR")
 	fs.Var(&ipDeny, "ip-deny", "kind=ip: deny CIDR")
@@ -595,10 +683,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// here AND the validator rejects it server-side.
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: new refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: new token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip|composite)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: new JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: new maximum distinct consumer buckets (0=plan default)")
 	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: new missing identity behavior (shared|reject)")
+	var throttleKeyFields, throttleCountStatuses multiFlag
+	fs.Var(&throttleKeyFields, "throttle-key-field", "kind=throttle: new composite key field (repeat)")
+	fs.Var(&throttleCountStatuses, "throttle-count-status", "kind=throttle: new counted response status (repeat)")
 
 	// cache (ADR-122 §Decision). Mirror of the create-side
 	// flags. Same closed-set + cap semantics — the CLI does
@@ -677,6 +768,39 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 
 	req := api.UpdateEdgeRuleRequest{}
+	if visited["name"] {
+		name := *ruleName
+		req.Name = &name
+	}
+	if visited["description"] {
+		description := *ruleDescription
+		req.Description = &description
+	}
+	expiry, expiryErr := parseEdgeRuleExpiry(*expiresIn, *expiresAt, time.Now())
+	if expiryErr != nil {
+		return printErr("Invalid expiry", expiryErr)
+	}
+	if expiry != nil && *clearExpiry {
+		return printErr("Invalid flags", fmt.Errorf("--clear-expiry cannot be combined with --expires-in / --expires-at"))
+	}
+	req.ExpiresAt = expiry
+	req.ClearExpiresAt = *clearExpiry
+	condition, conditionErr := parseEdgeRuleMatchFlag(*matchCondition)
+	if conditionErr != nil {
+		return printErr("Invalid --match", conditionErr)
+	}
+	if condition != nil && *clearMatch {
+		return printErr("Invalid flags", fmt.Errorf("--clear-match cannot be combined with --match"))
+	}
+	req.Match = condition
+	req.ClearMatch = *clearMatch
+	if visited["mode"] {
+		if prob := api.ValidateEdgeRuleMode(*ruleMode); prob != nil {
+			return printErr("Invalid --mode", fmt.Errorf("%s", prob.Detail))
+		}
+		mode := *ruleMode
+		req.Mode = &mode
+	}
 	if visited["validate-mode"] {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
 			return printErr("Invalid --validate-mode", err)
@@ -743,6 +867,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			RewriteTo:                         *rewriteTo,
 			RedirectStatus:                    *redirectStatus,
 			RedirectTo:                        *redirectTo,
+			ActionTemplate:                    *actionTemplate,
 			RedirectHeaders:                   redirectHeaders,
 			HeadersReqAdd:                     headersReqAdd,
 			HeadersReqSet:                     headersReqSet,
@@ -762,6 +887,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			JWTAlgorithms:                     jwtAlgorithms,
 			JWTClaims:                         jwtClaims,
 			JWTPlatformTenantExternalRefClaim: *jwtTenantExternalRefClaim,
+			JWTRequireExp:                     *jwtRequireExp,
 			IPAllow:                           ipAllow,
 			IPDeny:                            ipDeny,
 			LimitMaxBodyBytes:                 *limitMaxBodyBytes,
@@ -774,6 +900,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 			ThrottleJWTClaim:                  *throttleJWTClaim,
 			ThrottleMaxKeys:                   *throttleMaxKeys,
 			ThrottleMissingKeyPolicy:          *throttleMissingKeyPolicy,
+			ThrottleKeyFields:                 []string(throttleKeyFields),
+			ThrottleCountStatuses:             []string(throttleCountStatuses),
 			CacheMaxAgeSeconds:                *cacheMaxAge,
 			CacheStaleWhileRevalidateSeconds:  *cacheStaleWhileRevalidate,
 			CacheStaleIfErrorSeconds:          *cacheStaleIfError,
@@ -836,16 +964,20 @@ func cmdEdgeRulesUpdate(args []string) int {
 // for CI/scripted paths (issue #312 pattern). Returns 1 if the
 // user cancels (per requireTyped semantics).
 func cmdEdgeRulesRm(args []string) int {
-	flags, positional := splitArgsForFlags(args, "quiet")
+	flags, positional := splitArgsForFlags(args, "quiet", "yes")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--quiet]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--yes]", "edge-rules")
 		return 1
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
 	}
 	id := fs.Arg(0)
 	if !*quiet {
@@ -885,6 +1017,7 @@ type edgeRuleActionInputs struct {
 	// redirect
 	RedirectStatus  int
 	RedirectTo      string
+	ActionTemplate  bool // ADR-968
 	RedirectHeaders []string
 	// headers
 	HeadersReqAdd, HeadersReqSet []string
@@ -902,6 +1035,7 @@ type edgeRuleActionInputs struct {
 	JWTAudience, JWTAlgorithms        []string
 	JWTClaims                         []string
 	JWTPlatformTenantExternalRefClaim string
+	JWTRequireExp                     bool
 	// ip
 	IPAllow, IPDeny []string
 	// limit (ADR-091 D24). Both fields are int — pointer types
@@ -929,6 +1063,8 @@ type edgeRuleActionInputs struct {
 	ThrottleJWTClaim         string
 	ThrottleMaxKeys          int
 	ThrottleMissingKeyPolicy string
+	ThrottleKeyFields        []string
+	ThrottleCountStatuses    []string
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// MaxAgeSeconds defaults to 60 server-side when 0 is passed
 	// (the apid validator applies the default in
@@ -1008,7 +1144,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		if err != nil {
 			return nil, err
 		}
-		a := api.EdgeRuleRedirectAction{StatusCode: in.RedirectStatus, To: in.RedirectTo, Headers: headers}
+		a := api.EdgeRuleRedirectAction{StatusCode: in.RedirectStatus, To: in.RedirectTo, Headers: headers, Template: in.ActionTemplate}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
 		}
@@ -1021,6 +1157,13 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		res, err := parseHeaderOps(in.HeadersResAdd, in.HeadersResSet, in.HeadersResRm, "response")
 		if err != nil {
 			return nil, err
+		}
+		if in.ActionTemplate {
+			for _, ops := range [][]api.EdgeRuleHeaderOp{req, res} {
+				for i := range ops {
+					ops[i].Template = ops[i].Action != "remove"
+				}
+			}
 		}
 		a := api.EdgeRuleHeadersAction{RequestHeaders: req, ResponseHeaders: res}
 		if err := a.Validate(); err != nil {
@@ -1057,6 +1200,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			Algorithms:                     in.JWTAlgorithms,
 			RequiredClaims:                 claims,
 			PlatformTenantExternalRefClaim: in.JWTPlatformTenantExternalRefClaim,
+			RequireExp:                     in.JWTRequireExp,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
@@ -1132,6 +1276,14 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			JWTClaimName:      in.ThrottleJWTClaim,
 			MaxKeysPerRule:    in.ThrottleMaxKeys,
 			MissingKeyPolicy:  in.ThrottleMissingKeyPolicy,
+			KeyFields:         in.ThrottleKeyFields,
+		}
+		for _, raw := range in.ThrottleCountStatuses {
+			code, err := strconv.Atoi(raw)
+			if err != nil {
+				return nil, fmt.Errorf("--throttle-count-status %q is not an HTTP status code", raw)
+			}
+			a.CountStatuses = append(a.CountStatuses, code)
 		}
 		// The server's EdgeRuleThrottleAction.Validate takes a
 		// ThrottleValidationContext (per-plan ceiling). The CLI has
@@ -1544,16 +1696,17 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
 		"rewrite-from", "rewrite-to",
-		"redirect-status", "redirect-to", "redirect-header",
+		"redirect-status", "redirect-to", "redirect-header", "template",
 		"headers-request-add", "headers-request-set", "headers-request-remove",
 		"headers-response-add", "headers-response-set", "headers-response-remove",
 		"cors-allow-origin", "cors-allow-method", "cors-allow-header", "cors-expose-header",
 		"cors-allow-credentials", "cors-max-age-seconds",
-		"jwt-issuer", "jwt-jwks-url", "jwt-audience", "jwt-algorithm", "jwt-required-claim", "jwt-platform-tenant-external-ref-claim",
+		"jwt-issuer", "jwt-jwks-url", "jwt-audience", "jwt-algorithm", "jwt-required-claim", "jwt-platform-tenant-external-ref-claim", "jwt-require-exp",
 		"ip-allow", "ip-deny",
 		"limit-max-body-bytes", "limit-max-body-bytes-streaming",
 		"throttle-requests-per-second", "throttle-burst",
 		"throttle-key-by", "throttle-jwt-claim", "throttle-max-keys-per-rule", "throttle-missing-key-policy",
+		"throttle-key-field", "throttle-count-status",
 		// geo + cache were added to the create/update flag sets but
 		// never to this list, so `edge-rules update <id> --geo-allow X`
 		// silently skipped the action rebuild and sent a metadata-only
@@ -1580,3 +1733,25 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 // truncate is implemented in commands_webhooks.go:420 — re-used here
 // so the edge-rules list table column widths line up with the
 // webhooks table.
+
+// parseEdgeRuleExpiry turns --expires-in / --expires-at into an absolute
+// expiry. At most one may be set; neither means "no expiry".
+func parseEdgeRuleExpiry(in time.Duration, at string, now time.Time) (*time.Time, error) {
+	switch {
+	case in != 0 && at != "":
+		return nil, fmt.Errorf("use only one of --expires-in and --expires-at")
+	case in < 0:
+		return nil, fmt.Errorf("--expires-in must be positive")
+	case in > 0:
+		t := now.Add(in).UTC()
+		return &t, nil
+	case at != "":
+		t, err := time.Parse(time.RFC3339, at)
+		if err != nil {
+			return nil, fmt.Errorf("--expires-at: %w", err)
+		}
+		t = t.UTC()
+		return &t, nil
+	}
+	return nil, nil
+}

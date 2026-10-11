@@ -104,11 +104,12 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		Tap:        nc.Tap,
 		// Per-deployment readiness action. The HTTP path and gRPC
 		// mode/service are forwarded together; both target :8080.
-		HealthcheckPath:        req.HealthcheckPath,
-		HealthcheckGRPC:        req.HealthcheckGRPC,
-		HealthcheckGRPCService: req.HealthcheckGRPCService,
-		StartupDeadlineS:       req.StartupDeadlineS,
-		ExecutionMode:          req.ExecutionMode,
+		HealthcheckPath:          req.HealthcheckPath,
+		HealthcheckGRPC:          req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		StartupDeadlineS:         req.StartupDeadlineS,
+		ExecutionMode:            req.ExecutionMode,
 		// One-shot guests use a vsock dispatch protocol rather than the app
 		// HTTP listener. App tasks remain networked; executions do not.
 		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,

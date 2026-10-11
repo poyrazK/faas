@@ -101,6 +101,8 @@ type CreateAppRequest struct {
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing                *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries             int                   `json:"max_retries,omitempty"`
 	RetryPolicy            *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -142,6 +144,8 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -624,13 +628,14 @@ type CreateDeploymentRequest struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
-	ID          string `json:"id"`
-	AppID       string `json:"app_id"`
-	BuildID     string `json:"build_id,omitempty"`
-	ImageDigest string `json:"image_digest"`
-	Kind        string `json:"kind"`
-	Status      string `json:"status"`
-	Error       string `json:"error,omitempty"`
+	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
+	ID                     string                                `json:"id"`
+	AppID                  string                                `json:"app_id"`
+	BuildID                string                                `json:"build_id,omitempty"`
+	ImageDigest            string                                `json:"image_digest"`
+	Kind                   string                                `json:"kind"`
+	Status                 string                                `json:"status"`
+	Error                  string                                `json:"error,omitempty"`
 	// ErrorCode carries the RFC 7807 code ADR-021 lifted from the
 	// puller-side sentinels (image_not_found / image_egress_denied /
 	// image_manifest_invalid). Empty for every deployment created
@@ -724,9 +729,11 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped capability registry returned by
 // GET /v1/capabilities.
 type CapabilitiesResponse struct {
-	RegistryVersion int                `json:"registry_version"`
-	Plan            string             `json:"plan"`
-	Capabilities    []CapabilityStatus `json:"capabilities"`
+	// ConditionalParking reports support on the serving control plane; omission means unsupported.
+	ConditionalParking bool               `json:"conditional_parking"`
+	RegistryVersion    int                `json:"registry_version"`
+	Plan               string             `json:"plan"`
+	Capabilities       []CapabilityStatus `json:"capabilities"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -2294,7 +2301,7 @@ type TriggerMetricsResponse struct {
 // --- Jobs (issue #1184 Workstream A) ----------------------------------------
 // Mirrors the canonical Job DTOs in pkg/api/dto.go. Field tags + ordering
 // + omitempty are part of the wire contract — the spec_compliance_test
-// gate (TestSpecCompliance in cmd/apid) pins the OpenAPI schema's
+// gate (TestSpecCompliance in scripts/ci/speccompliance) pins the OpenAPI schema's
 // `required` arrays, so any drift between this file and pkg/api/dto.go
 // breaks the gatewayd-public edge case.
 

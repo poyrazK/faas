@@ -30,18 +30,40 @@ type customerOperationsClient interface {
 }
 
 type customerOperationCommand struct {
+	subjectType, subjectID                                              string
 	verb, app, id, scope, tenant, name, state, cursor, artifact, output string
 	after                                                               int
 	limit                                                               int
 	timeout, interval                                                   time.Duration
 	recovery                                                            api.OperationRecoveryRequest
 	self                                                                bool
+	preview                                                             bool
+	receipt                                                             string
+	recoveryFlags                                                       map[string]bool
 }
 
 func cmdCustomerOperations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|start|list|get|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery>", "customer-operations")
+		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|bindings|start|list|get|milestones|outcomes|outcome-summary|attention|attention-summary|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery|types|inspect>", "customer-operations")
 		return 1
+	}
+	if args[0] == "outcomes" {
+		return cmdCustomerOperationOutcomes(args[1:], false)
+	}
+	if args[0] == "outcome-summary" {
+		return cmdCustomerOperationOutcomes(args[1:], true)
+	}
+	if args[0] == "attention-summary" {
+		return cmdCustomerOperationAttentionSummary(args[1:])
+	}
+	if args[0] == "attention" {
+		return cmdCustomerOperationAttention(args[1:])
+	}
+	if args[0] == "milestones" {
+		return cmdCustomerOperationMilestones(args[1:])
+	}
+	if args[0] == "bindings" {
+		return cmdCustomerOperationBindings(args[1:])
 	}
 	if len(args) > 0 && (args[0] == "delivery" || args[0] == "delivery-attempts" || args[0] == "retry-delivery") {
 		return cmdCustomerOperationDelivery(args)
@@ -49,7 +71,7 @@ func cmdCustomerOperations(args []string) int {
 	if len(args) > 0 && args[0] == "doctor" {
 		return cmdCustomerOperationDoctor(args[1:])
 	}
-	if len(args) > 0 && (args[0] == "definitions" || args[0] == "validate" || args[0] == "start") {
+	if len(args) > 0 && (args[0] == "definitions" || args[0] == "validate" || args[0] == "types" || args[0] == "start") {
 		return cmdCustomerOperationDeveloper(args)
 	}
 	command, err := parseCustomerOperationCommand(args)
@@ -88,7 +110,7 @@ func cmdCustomerOperations(args []string) int {
 func parseCustomerOperationCommand(args []string) (customerOperationCommand, error) {
 	var c customerOperationCommand
 	if len(args) == 0 {
-		return c, fmt.Errorf("usage: gregale customer-operations <list|get|events|executions|watch|download|cancel|recover|retry-delivery> --app SLUG")
+		return c, fmt.Errorf("usage: gregale customer-operations <list|get|inspect|events|executions|watch|download|cancel|recover|retry-delivery> --app SLUG")
 	}
 	c.verb = args[0]
 	fs := newFlagSet("customer-operations "+c.verb, flag.ContinueOnError)
@@ -98,6 +120,8 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	var evidenceFile, resultFile string
 	switch c.verb {
 	case "list":
+		fs.StringVar(&c.subjectType, "subject-type", "", "business reference type; requires --subject-id")
+		fs.StringVar(&c.subjectID, "subject-id", "", "exact business reference ID; requires --subject-type")
 		fs.StringVar(&c.scope, "scope", "", "explicit deployment environment")
 		fs.StringVar(&c.tenant, "tenant", "", "optional platform tenant UUID")
 		fs.StringVar(&c.name, "name", "", "operation definition name")
@@ -117,16 +141,19 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	case "cancel":
 		fs.IntVar(&c.recovery.ExpectedGeneration, "expected-generation", 0, "observed operation generation")
 	case "recover":
+		fs.StringVar(&c.receipt, "receipt-file", "", "private immutable recovery request; omit selectors to resume")
+		fs.BoolVar(&c.preview, "preview", false, "read the recovery plan without recording or executing a decision")
+		fs.StringVar(&c.recovery.ExpectedInspectionRevision, "inspection-revision", "", "optional revision from inspection or preview; reject changed execution evidence")
 		fs.IntVar(&c.recovery.ExpectedGeneration, "expected-generation", 0, "observed operation generation")
 		fs.StringVar(&c.recovery.RecoveryID, "recovery-id", "", "stable ID for this recovery decision")
 		fs.StringVar(&c.recovery.Resolution, "resolution", "", "succeeded, failed, cancelled or safe_to_retry")
 		fs.StringVar(&evidenceFile, "evidence-file", "", "file containing reconciliation evidence")
 		fs.StringVar(&resultFile, "result-file", "", "JSON result required for succeeded")
-	case "get", "retry-delivery":
+	case "get", "inspect", "retry-delivery":
 	default:
 		return c, fmt.Errorf("unknown customer-operations command %q", c.verb)
 	}
-	flags, positionals := splitArgsForFlags(args[1:], "self")
+	flags, positionals := splitArgsForFlags(args[1:], "self", "preview")
 	if err := fs.Parse(flags); err != nil {
 		return c, err
 	}
@@ -153,6 +180,11 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 			return c, fmt.Errorf("operation ID must not be empty")
 		}
 	}
+	if c.verb == "list" && (c.subjectType != "" || c.subjectID != "") {
+		if err := api.ValidateOperationSubject(api.OperationSubject{Type: c.subjectType, ID: c.subjectID}); err != nil {
+			return c, err
+		}
+	}
 	if c.verb == "list" && api.ValidateScope(c.scope) != nil {
 		return c, fmt.Errorf("list requires a valid explicit --scope")
 	}
@@ -165,11 +197,27 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	if c.verb == "download" && c.output == "" {
 		return c, fmt.Errorf("download requires --output")
 	}
-	if (c.verb == "recover" || c.verb == "cancel") && c.recovery.ExpectedGeneration < 1 {
+	c.recoveryFlags = map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { c.recoveryFlags[f.Name] = true })
+	if (c.verb == "cancel" || c.verb == "recover" && (c.receipt == "" || c.preview || c.recoveryFlags["expected-generation"])) && c.recovery.ExpectedGeneration < 1 {
 		return c, fmt.Errorf("--expected-generation must be positive")
 	}
 	if c.verb == "recover" {
-		if err := loadCustomerOperationRecovery(&c.recovery, evidenceFile, resultFile); err != nil {
+		var err error
+		if c.preview && c.receipt != "" {
+			return c, fmt.Errorf("--preview cannot create or apply a --receipt-file")
+		}
+		if c.receipt != "" {
+			if !validCustomerOperationUUID(c.id) {
+				return c, fmt.Errorf("recovery receipt requires a valid operation UUID")
+			}
+			err = loadCustomerOperationRecoveryReceiptFlags(&c, evidenceFile, resultFile)
+		} else if c.preview {
+			err = loadCustomerOperationPreview(&c.recovery, evidenceFile, resultFile)
+		} else {
+			err = loadCustomerOperationRecovery(&c.recovery, evidenceFile, resultFile)
+		}
+		if err != nil {
 			return c, err
 		}
 	}
@@ -227,9 +275,15 @@ func loadCustomerOperationRecovery(req *api.OperationRecoveryRequest, evidenceFi
 }
 
 func runCustomerOperationCommand(ctx context.Context, client customerOperationsClient, c customerOperationCommand, out io.Writer, asJSON bool) (int, error) {
+	if c.verb == "recover" && c.receipt != "" {
+		return runCustomerOperationRecoveryReceipt(ctx, client, c, out, asJSON, time.Now().UTC())
+	}
+	if c.verb == "inspect" || c.verb == "recover" && c.preview {
+		return runCustomerOperationRecoveryRead(ctx, client, c, out, asJSON)
+	}
 	switch c.verb {
 	case "list":
-		page, err := client.ListAccountOperations(ctx, c.app, api.OperationListOptions{Scope: c.scope, TenantID: c.tenant, Name: c.name, State: api.OperationState(c.state), Limit: c.limit, Cursor: c.cursor})
+		page, err := client.ListAccountOperations(ctx, c.app, api.OperationListOptions{SubjectType: c.subjectType, SubjectID: c.subjectID, Scope: c.scope, TenantID: c.tenant, Name: c.name, State: api.OperationState(c.state), Limit: c.limit, Cursor: c.cursor})
 		if err != nil {
 			return 0, err
 		}
@@ -237,7 +291,7 @@ func runCustomerOperationCommand(ctx context.Context, client customerOperationsC
 			return 0, json.NewEncoder(out).Encode(page)
 		}
 		for _, op := range page.Operations {
-			if _, err := fmt.Fprintf(out, "%s\ttenant=%s\t%s\twork=%s\tdelivery=%s\tgeneration=%d\n", op.ID, op.PlatformTenantID, op.Name, op.State, op.CompletionDelivery.State, op.Generation); err != nil {
+			if _, err := fmt.Fprintf(out, "%s\ttenant=%s\t%s\twork=%s\tdelivery=%s\tgeneration=%d%s\n", op.ID, op.PlatformTenantID, op.Name, op.State, op.CompletionDelivery.State, op.Generation, customerOperationSubjectLabel(op.Subject)); err != nil {
 				return 0, err
 			}
 		}
@@ -295,7 +349,7 @@ func renderCustomerOperation(out io.Writer, op api.OperationResponse, asJSON boo
 	if asJSON {
 		return json.NewEncoder(out).Encode(op)
 	}
-	_, err := fmt.Fprintf(out, "%s\twork=%s\tdelivery=%s\tdelivery_attempts=%d\tgeneration=%d\tsequence=%d", op.ID, op.State, op.CompletionDelivery.State, op.CompletionDelivery.Attempts, op.Generation, op.LatestSequence)
+	_, err := fmt.Fprintf(out, "%s\twork=%s\tdelivery=%s\tdelivery_attempts=%d\tgeneration=%d\tsequence=%d%s", op.ID, op.State, op.CompletionDelivery.State, op.CompletionDelivery.Attempts, op.Generation, op.LatestSequence, customerOperationSubjectLabel(op.Subject))
 	if err != nil {
 		return err
 	}
@@ -410,4 +464,11 @@ func downloadCustomerOperation(ctx context.Context, client customerOperationsCli
 		return receipt, fmt.Errorf("publish verified download (output must be new): %w", err)
 	}
 	return customerOperationDownloadReceipt{OperationID: op.ID, ArtifactID: artifact.ID, Path: path, SizeBytes: n, SHA256: digest}, nil
+}
+
+func customerOperationSubjectLabel(subject *api.OperationSubject) string {
+	if subject == nil {
+		return ""
+	}
+	return "\tsubject=" + subject.Type + ":" + subject.ID
 }

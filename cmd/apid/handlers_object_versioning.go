@@ -17,13 +17,13 @@ func (s *server) bucketVersioningService(w http.ResponseWriter, r *http.Request,
 	}
 	st, ok := s.store.(state.ObjectBucketVersioningStore)
 	provider, supported := p.(objectstorage.BucketVersioningProvider)
-	metrics, measured := s.store.(state.ObjectStorageProviderUsageStore)
+	_, measured := s.store.(state.ObjectStorageProviderUsageStore)
 	if !ok || !supported || !measured {
 		bucketProblem(w, objectstorage.ErrUnsupported)
 		return b, objectstorage.BucketVersioningService{}, false
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	return b, objectstorage.BucketVersioningService{Store: st, Provider: provider, BeforeRequest: objectstorage.VersioningRequestRecorder(metrics, b.ID)}, true
+	return b, objectstorage.BucketVersioningService{Store: st, Provider: provider, BeforeRequest: s.customerObjectRequestRecorder(b)}, true
 }
 func (s *server) getObjectBucketVersioning(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	b, svc, ok := s.bucketVersioningService(w, r, acct)

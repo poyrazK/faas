@@ -48,14 +48,14 @@ func cmdEventsReplayPreview(args []string) int {
 func writeEventReplayPreview(r api.EventReplayPreviewResponse) {
 	_, _ = fmt.Fprintf(osStdout, "Replay preview for %s / %s (read-only)\n", oneLine(r.AppSlug), oneLine(r.Subscription.ID))
 	_, _ = fmt.Fprintf(osStdout, "Acceptance window: [%s, %s) | fixed cutoff: %s\n", r.From.Format(time.RFC3339Nano), r.Until.Format(time.RFC3339Nano), r.CutoffAt.Format(time.RFC3339Nano))
-	_, _ = fmt.Fprintf(osStdout, "This page: examined %d | matched %d | already captured %d | filter mismatches %d | pattern mismatches %d\n", r.ScannedCount, r.MatchedCount, r.AlreadyCapturedCount, r.FilterMismatchCount, r.PatternMismatchCount)
+	_, _ = fmt.Fprintf(osStdout, "This page: examined %d | matched %d | already captured %d | filter mismatches %d | pattern mismatches %d | schema version mismatches %d\n", r.ScannedCount, r.MatchedCount, r.AlreadyCapturedCount, r.FilterMismatchCount, r.PatternMismatchCount, r.SchemaVersionMismatchCount)
 	_, _ = fmt.Fprintf(osStdout, "Settled receipt retention: %s after routing settlement. Complete history is not guaranteed.\n", time.Duration(r.Retention.SettledRetentionSeconds)*time.Second)
 	if r.Retention.EarliestRetainedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Earliest retained acceptance (account-wide): %s\n", r.Retention.EarliestRetainedAt.Format(time.RFC3339Nano))
 	}
-	_, _ = fmt.Fprintln(osStdout, "ACCEPTED\tSOURCE\tEVENT\tTYPE\tORIGINAL RECIPIENT")
+	_, _ = fmt.Fprintln(osStdout, "ACCEPTED\tSOURCE\tEVENT\tTYPE\tORIGINAL RECIPIENT\tDELIVERY EXPIRED")
 	for _, m := range r.Matches {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", m.AcceptedAt.Format(time.RFC3339Nano), oneLine(m.EventSource), oneLine(m.EventID), oneLine(m.EventType), oneLine(m.OriginalRecipient))
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%t\n", m.AcceptedAt.Format(time.RFC3339Nano), oneLine(m.EventSource), oneLine(m.EventID), oneLine(m.EventType), oneLine(m.OriginalRecipient), m.DeliveryExpired)
 	}
 	if r.NextAfter != "" {
 		_, _ = fmt.Fprintf(osStdout, "Next page: --after %s (keep the same app, subscription and range)\n", r.NextAfter)

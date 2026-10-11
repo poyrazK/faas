@@ -147,7 +147,7 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 	writePolicy(policy)
 	r = get()
 	check(r, "preview_expired", "blocked", "submission")
-	if srv.operationTenantAdmission(acct.ID, dep.AppID, dep.Scope, tenant.ID) {
+	if srv.operationTenantKindAdmission(acct.ID, dep.AppID, dep.Scope, tenant.ID, operations.ExecutionHTTP) {
 		t.Fatal("doctor altered closed policy")
 	}
 	if err := os.WriteFile(policyPath, []byte("invalid-policy-containing-secret"), 0600); err != nil {

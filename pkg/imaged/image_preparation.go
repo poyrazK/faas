@@ -197,7 +197,7 @@ func (h *Handler) openImagePreparationStage(ctx context.Context, app state.App, 
 func (h *Handler) buildSnapshotBootLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
 	switch dep.Kind {
 	case state.DeploymentKindImage:
-		if app.Type == state.AppTypeFunction {
+		if app.Type == state.AppTypeFunction || app.Runtime != "" {
 			return h.buildFunctionLayer(ctx, app, dep, acct, nil)
 		}
 		return h.buildImageLayer(ctx, app, dep, acct)
@@ -214,7 +214,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := h.replicateLayer(ctx, dep.RootfsKey); err != nil {
 		return imageRecoveryError(err)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	var stages state.StageState

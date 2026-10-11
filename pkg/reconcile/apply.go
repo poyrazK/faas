@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -315,6 +316,7 @@ func (s *Service) applyUpdate(
 	transport := serviceBindingTransportForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingTransport)
 	manifest.Env = serviceEnvForWorkloadWithTransport(manifest.Env, a.Workload, serviceNames, transport)
 	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
+	manifest.ProjectDependencyConditions = maps.Clone(a.Workload.DependsOnConditions)
 	manifest.ServiceReliability = serviceReliabilityForWorkload(a.Workload, serviceNames, a.App.Manifest.ServiceReliability)
 	manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingPolicy)
 	manifest.ServiceBindingTransport = transport
@@ -323,6 +325,7 @@ func (s *Service) applyUpdate(
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
+	applyProjectImage(&manifest, a.Workload)
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
 		RootDir:                   &rootDir,
@@ -380,7 +383,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		serviceNames = available[0]
 	}
 	transport := serviceBindingTransportForNewWorkload(w)
-	return state.App{
+	app := state.App{
 		AccountID:     project.AccountID,
 		ProjectID:     project.ID,
 		Slug:          w.Name,
@@ -389,9 +392,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		WorkloadClass: class,
 		StartCommand:  startCmd,
 		Manifest: state.AppManifest{
-			Env:                serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport),
-			ServiceBindings:    serviceBindingsForWorkloadWithAvailable(w, serviceNames),
-			ServiceReliability: serviceReliabilityForWorkload(w, serviceNames, nil),
+			Env:                         serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport),
+			ServiceBindings:             serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+			ProjectDependencyConditions: maps.Clone(w.DependsOnConditions),
+			ServiceReliability:          serviceReliabilityForWorkload(w, serviceNames, nil),
 
 			ServiceBindingPolicy:      serviceBindingPolicyForNewWorkload(w),
 			ServiceBindingTransport:   transport,
@@ -406,6 +410,8 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
 		PlatformTenantRequired: w.PlatformTenantRequired != nil && *w.PlatformTenantRequired,
 	}
+	applyProjectImage(&app.Manifest, w)
+	return app
 }
 
 // ApplyScannedWorkloadToApp projects source-owned workload settings onto an
@@ -423,6 +429,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
 	app.Manifest.Env = serviceEnvForWorkloadWithTransport(app.Manifest.Env, w, available, transport)
 	app.Manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(w, available)
+	app.Manifest.ProjectDependencyConditions = maps.Clone(w.DependsOnConditions)
 	app.Manifest.ServiceReliability = serviceReliabilityForWorkload(w, available, app.Manifest.ServiceReliability)
 	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(w, app.Manifest.ServiceBindingPolicy)
 	app.Manifest.ServiceBindingTransport = transport
@@ -431,7 +438,40 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
+	applyProjectImage(&app.Manifest, w)
 	return app
+}
+
+func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
+	manifest.ProjectImage = w.Image
+	manifest.ProjectImageCommand = nil
+	manifest.ProjectImagePort = 0
+	manifest.ProjectImageHealthcheck = nil
+	if w.Image == "" {
+		return
+	}
+	if manifest.ExecutionMode == "" {
+		manifest.ExecutionMode = projectImageExecutionMode(w)
+	}
+	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
+	if w.CommandShell && len(w.Command) > 0 {
+		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}
+	}
+	if len(w.Ports) > 0 {
+		manifest.ProjectImagePort = w.Ports[0]
+	}
+}
+
+func projectImageExecutionMode(w reposcan.Workload) string {
+	switch w.Class {
+	case reposcan.ClassWorker:
+		return api.ExecutionModeWorker
+	case reposcan.ClassJob:
+		return api.ExecutionModeJob
+	default:
+		return ""
+	}
 }
 
 // workloadClassFromScan converts the reposcan hint into the closed set that

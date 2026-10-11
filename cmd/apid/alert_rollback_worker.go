@@ -87,6 +87,9 @@ func (s *server) alertRollbackCheck(ctx context.Context, operation api.AlertRoll
 	if predecessor.AppID != app.ID || predecessor.Status != state.DeployLive || !operation.Service && predecessor.TrafficPercent <= 0 || recoveryScope(predecessor.Scope) != operation.Scope {
 		return "failed", "alert_rollback_deployment_changed", nil, nil
 	}
+	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, predecessor); problem != nil {
+		return "blocked", problem.Code, nil, nil
+	}
 	if operation.Service {
 		_, err = s.store.(state.AlertRollbackStore).CommitAlertRollback(ctx, operation)
 		if errors.Is(err, state.ErrAlertRollbackChanged) || errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrServiceRolloutInvalid) {

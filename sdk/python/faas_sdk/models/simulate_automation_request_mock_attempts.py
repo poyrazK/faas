@@ -15,8 +15,10 @@ T = TypeVar("T", bound="SimulateAutomationRequestMockAttempts")
 
 @_attrs_define
 class SimulateAutomationRequestMockAttempts:
-    """Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout
-    route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+    """Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with
+    the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept
+    timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout.
+    Cannot be combined with mock_outputs for the same step.
 
     """
 

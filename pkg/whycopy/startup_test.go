@@ -10,6 +10,7 @@ func TestStartupGuidanceUsesRecordedPhase(t *testing.T) {
 	cases := []struct{ detail, want string }{
 		{"guest id not ready: startup_phase=guest_startup; no response", "guest did not answer"},
 		{"startup_phase=handler_healthcheck: readiness returned 503", "answered readiness probes"},
+		{"startup_phase=image_healthcheck: command failed", "fresh successful result"},
 		{"startup_phase=scheduler_timeout: cold boot expired", "configured readiness check"},
 		{"startup_phase=unknown", "configured readiness check"},
 		{"prefix_startup_phase=handler_healthcheck", "configured readiness check"},

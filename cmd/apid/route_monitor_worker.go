@@ -49,6 +49,12 @@ func (s *server) drainRouteMonitors(ctx context.Context) (int, error) {
 		}
 		if done {
 			completed++
+			// Evaluation has committed any new incident; rollback runs
+			// outside its transaction because monitors never write
+			// deployments (ADR-845).
+			rollbackCtx, rollbackCancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
+			s.applyRouteMonitorRollback(rollbackCtx, target)
+			rollbackCancel()
 		}
 	}
 	return completed, nil

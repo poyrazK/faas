@@ -9,11 +9,23 @@ import type { EventReplayBackfillProgress } from './EventReplayBackfillProgress.
 export type EventReplayBackfillJobResponse = {
   id: string;
   app_slug: string;
-  subscription_id: string;
+  consumer_kind: 'application' | 'workflow';
   /**
-   * Fingerprint of the subscription declaration snapshotted when the job was created.
+   * Workflow name for workflow jobs.
    */
-  subscription_revision: string;
+  workflow_name?: string;
+  /**
+   * Fingerprint of the captured workflow recipient definition for workflow jobs.
+   */
+  workflow_revision?: string;
+  /**
+   * Ordinary subscription ID for application jobs.
+   */
+  subscription_id?: string;
+  /**
+   * Fingerprint of the subscription declaration snapshotted when an application job was created.
+   */
+  subscription_revision?: string;
   from: string;
   until: string;
   /**

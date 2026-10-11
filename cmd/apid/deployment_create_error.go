@@ -16,6 +16,10 @@ func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardsPending, "Application standards pending", "Inherited application controls must be persisted before this service accepts a deployment."))
 		return
 	}
+	if p := routeRemovalBlockedProblem(err); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if state.IsBindingReleaseRequired(err) {
 		api.WriteProblem(w, bindingReleaseRequiredProblem())
 		return

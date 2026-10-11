@@ -31,7 +31,7 @@ func TestPgEventWorkBindingSnapshotSurvivesConfigurationChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, policy.Name, "data.document_id",
-		state.EventWorkBindingOptions{FairnessSelector: "data.tenant_id"}); err != nil {
+		state.EventWorkBindingOptions{FairnessSelector: "data.tenant_id", Ordered: true}); err != nil {
 		t.Fatal(err)
 	}
 	envelope := events.Envelope{SpecVersion: events.CloudEventsSpecVersion, ID: uuid.NewString(),
@@ -56,6 +56,7 @@ func TestPgEventWorkBindingSnapshotSurvivesConfigurationChange(t *testing.T) {
 	}
 	if len(recipients) != 1 || !recipients[0].WorkSnapshotCaptured || recipients[0].Work == nil ||
 		recipients[0].Work.KeySelector != "data.document_id" ||
+		!recipients[0].Work.Ordered || recipients[0].Work.RoutingOrder == 0 ||
 		recipients[0].Work.FairnessSelector != "data.tenant_id" ||
 		recipients[0].Work.Policy == nil || recipients[0].Work.Policy.Revision != 1 ||
 		recipients[0].Work.Policy.MaxRunningPerFairnessKey != 2 {

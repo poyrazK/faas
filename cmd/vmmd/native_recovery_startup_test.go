@@ -53,3 +53,45 @@ func TestNativeRecoveryConfigurationIsExplicitOptIn(t *testing.T) {
 		t.Fatalf("configured opt-in=%v err=%v", cfg.NativeProcessRecovery, err)
 	}
 }
+
+func TestNativeSnapshotPublicationRootRequiresNativeRecoveryAndCleanAbsolutePath(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recovery bool
+		root     string
+		wantErr  bool
+	}{
+		{name: "unset", root: ""},
+		{name: "configured", recovery: true, root: filepath.Join(string(filepath.Separator), "var", "lib", "faas", "publications")},
+		{name: "requires recovery", root: filepath.Join(string(filepath.Separator), "var", "lib", "faas", "publications"), wantErr: true},
+		{name: "relative", recovery: true, root: "var/lib/faas/publications", wantErr: true},
+		{name: "unclean", recovery: true, root: string(filepath.Separator) + "var/../tmp/publications", wantErr: true},
+		{name: "filesystem root", recovery: true, root: string(filepath.Separator), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateNativeSnapshotPublicationConfig(tc.recovery, tc.root)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateNativeSnapshotPublicationConfig(%v, %q) err = %v", tc.recovery, tc.root, err)
+			}
+		})
+	}
+}
+
+func TestNativeSnapshotPublicationRootLoadsAsExperimentalOptIn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "publications")
+	config := filepath.Join(t.TempDir(), "vmmd.toml")
+	contents := "native_process_recovery = true\nnative_snapshot_publication_root = \"" + root + "\"\n"
+	if err := os.WriteFile(config, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(config)
+	if err != nil || !cfg.NativeProcessRecovery || cfg.NativeSnapshotPublicationRoot != root {
+		t.Fatalf("native publication config = %+v, err = %v", cfg, err)
+	}
+	if err := os.WriteFile(config, []byte("native_snapshot_publication_root = \""+root+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(config); err == nil {
+		t.Fatal("publication root was accepted without native process recovery")
+	}
+}

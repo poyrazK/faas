@@ -1,6 +1,6 @@
 # ADR-606: Independent event recipient routing and recovery
 
-- **Status:** proposed; implemented behind an opt-in adoption flag
+- **Status:** accepted; adoption default superseded by [ADR-647](647-independent-event-routing-default.md)
 - **Date:** 2026-10-04
 - **Decision:** Keep the durable event receipt and immutable acceptance snapshot,
   and give every captured recipient its own routing lease, retry schedule, and
@@ -65,6 +65,10 @@ retain their existing whole-event replay restrictions.
 
 ## Rollout and rollback
 
+The opt-in rollout below describes the original implementation. ADR-647 makes
+adoption the default and requires explicitly setting the flag to `0` before
+mixed-version upgrades. Ownership and downgrade constraints remain unchanged.
+
 1. Apply the additive migration and deploy compatible apid and schedd binaries
    everywhere with adoption disabled. No existing receipt is rewritten by the
    migration. Confirm schema and generated SQL agree.
@@ -99,7 +103,8 @@ passed. The repository-wide unit run was interrupted by exhausted disk space.
 Full lint reported ten unused symbols in unchanged guest/VM code on macOS;
 repository-wide Linux CI and staging acceptance remain required before rollout.
 
-Receipts with captured workflow recipients retain whole-receipt routing because
-workflow admission authenticates that lease. Application recipients still use
-atomic checkpoint admission and capacity waits within these receipts. Workflow
-recipients are excluded from the application consumer backlog projection.
+ADR-648 extends recipient ownership to captured workflows and mixed receipts.
+Workflow admission commits its run and routing checkpoint under the recipient
+lease. Explicitly disabled adoption retains whole-event routing for new receipts.
+Workflow recipients remain excluded from the application consumer backlog
+projection; receipts and routing history expose their independent progress.

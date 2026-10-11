@@ -17,10 +17,11 @@ type SetCanaryRouteGateRequest struct {
 
 // RouteGateDecision contains metadata only; route findings remain in the check API.
 type RouteGateDecision struct {
-	Mode         string   `json:"mode"`
-	Revision     int64    `json:"revision"`
-	DeploymentID string   `json:"deployment_id"`
-	Status       string   `json:"status"`
-	Reasons      []string `json:"reasons"`
-	CheckQueued  bool     `json:"check_queued"`
+	Mode                 string   `json:"mode"`
+	Revision             int64    `json:"revision"`
+	DeploymentID         string   `json:"deployment_id"`
+	Status               string   `json:"status"`
+	Reasons              []string `json:"reasons"`
+	LifecycleApprovalIDs []string `json:"lifecycle_approval_ids,omitempty"`
+	CheckQueued          bool     `json:"check_queued"`
 }

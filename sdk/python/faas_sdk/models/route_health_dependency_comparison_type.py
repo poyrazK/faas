@@ -1,10 +1,11 @@
 from typing import Literal
 
 RouteHealthDependencyComparisonType = Literal[
-    "application", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
+    "app_dependency", "application", "guest_transport", "managed_binding", "outbound_integration", "platform_internal"
 ]
 
 ROUTE_HEALTH_DEPENDENCY_COMPARISON_TYPE_VALUES: set[RouteHealthDependencyComparisonType] = {
+    "app_dependency",
     "application",
     "guest_transport",
     "managed_binding",

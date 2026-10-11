@@ -16,7 +16,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/apps/exports/operations":
 			q := r.URL.Query()
-			if q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
+			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
 				t.Errorf("account selectors %v", q)
 			}
 			writeOperationJSON(w, 200, `{"operations":[{"id":"operation","platform_tenant_id":"customer","completion_delivery":{"state":"dead","attempts":7}}],"next_cursor":"next"}`)
@@ -39,7 +39,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
 		t.Fatalf("list %+v %v", page, err)
 	}
@@ -96,7 +96,7 @@ func TestOperationDoctorScopedReadOnlyContract(t *testing.T) {
 			t.Errorf("doctor wire %s %s", r.Method, r.URL)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"app_id":"app","scope":"production","deployment_id":"dep","platform_tenant_id":"tenant","plan":"pro","observed_at":"2026-10-05T13:00:00Z","observation_scope":"responding_api_node","submission_state":"eligible","checks":[{"check":"preview","status":"observed","impact":"submission","code":"preview_cohort_observed","message":"Observed."},{"check":"completion_destination","status":"warning","impact":"delivery","code":"completion_destination_disabled","message":"Disabled."},{"check":"native_lifecycle","status":"unknown","impact":"qualification","code":"native_lifecycle_unverified","message":"Unverified."}]}`)
+		_, _ = io.WriteString(w, `{"app_id":"app","scope":"production","deployment_id":"dep","platform_tenant_id":"tenant","plan":"pro","observed_at":"2026-10-05T13:00:00Z","observation_scope":"responding_api_node","submission_state":"eligible","checks":[{"check":"preview","status":"observed","impact":"submission","code":"preview_cohort_observed","message":"Observed."},{"check":"completion_destination","status":"warning","impact":"delivery","code":"completion_destination_disabled","message":"Disabled."},{"check":"native_lifecycle","status":"unknown","impact":"qualification","code":"native_lifecycle_unverified","message":"Unverified."},{"check":"execution_preview","status":"observed","impact":"submission","code":"preview_cohort_observed","message":"Job allowed.","name":"export name","execution_kind":"job"}]}`)
 	}))
 	defer srv.Close()
 	client, err := faas.NewClient(srv.URL, "operator-token")
@@ -104,7 +104,7 @@ func TestOperationDoctorScopedReadOnlyContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err := client.GetOperationDoctor(context.Background(), "exports", definitionID, "tenant+selector", "export name")
-	if err != nil || r.SubmissionState != "eligible" || r.ObservedSubmissionState() != "eligible" || len(r.Checks) != 3 || r.Checks[1].Status != "warning" || r.Checks[2].Status != "unknown" {
+	if err != nil || r.SubmissionState != "eligible" || r.ObservedSubmissionState() != "eligible" || len(r.Checks) != 4 || r.Checks[1].Status != "warning" || r.Checks[2].Status != "unknown" || r.Checks[3].ExecutionKind != "job" {
 		t.Fatal("doctor contract", r, err)
 	}
 }

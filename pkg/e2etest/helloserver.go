@@ -23,8 +23,17 @@ var (
 // helloServerBinary returns the fixture server built once per process as a
 // static Linux/amd64 binary matching the fixture OCI platform and production
 // fleet, independently of the developer machine architecture.
+// helloServerBinaryEnv lets a prebuilt test bundle (a host without the repo
+// source or module cache) supply the linux/amd64 hello server instead of
+// building it from testdata at run time.
+const helloServerBinaryEnv = "FAAS_E2E_HELLO_SERVER_BINARY"
+
 func helloServerBinary() ([]byte, error) {
 	helloServerOnce.Do(func() {
+		if prebuilt := os.Getenv(helloServerBinaryEnv); prebuilt != "" {
+			helloServerBytes, helloServerErr = os.ReadFile(prebuilt)
+			return
+		}
 		dir, err := os.MkdirTemp("", "faas-e2e-helloserver-*")
 		if err != nil {
 			helloServerErr = err

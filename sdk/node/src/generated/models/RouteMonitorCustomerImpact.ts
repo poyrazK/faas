@@ -10,5 +10,9 @@ export type RouteMonitorCustomerImpact = {
   coverage: 'observed_only';
   observed_customers: number;
   violated_customers: number;
+  /**
+   * Distinct observed cohorts whose status cannot be established from retained evidence.
+   */
+  unknown_customers?: number;
 };
 

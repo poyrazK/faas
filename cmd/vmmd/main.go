@@ -845,7 +845,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("vmmd: register snapshot fan-out metrics: %w", metricErr)
 		}
 		fanout := snapshothipd.New(replicaStore, storageBackend, nodeID, log).
-			WithMetrics(fanoutMetrics)
+			WithMetrics(fanoutMetrics).
+			// ADR-956: on unless an operator switches it off.
+			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || interval <= 0 {
@@ -916,6 +918,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stats surface and the liveness loop so load-correlated probe misses
 	// can receive the bounded infrastructure grace (issue #1267).
 	activityTracker := activity.NewWithDefaults()
+	if cfg.NativeSnapshotPublicationRoot != "" {
+		jailer.WithNativeSnapshotPublicationRoot(cfg.NativeSnapshotPublicationRoot)
+	}
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
 	}
@@ -964,6 +969,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err := registerRuntimeAdmissionIdentity(ctx, store, identity); err != nil {
 			return err
 		}
+	}
+	if cfg.NativeSnapshotPublicationRoot != "" {
+		go runNativeArtifactRetirementRecovery(ctx, mgr, nativeArtifactRetirementRecoveryInterval, log)
+		log.Info("vmmd: recurring native artifact retirement recovery enabled",
+			"interval", nativeArtifactRetirementRecoveryInterval.String())
 	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
 	failureNodeID := nodeID
@@ -1233,6 +1243,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// per-instance Firecracker Unix listeners during boot/restore. Registration
 	// remains soft at process startup so diagnostics stay available, but the
 	// receiver health signals below hold /readyz at 503 on failure.
+	if err := startProfilingReceiver(ctx, log, mgr, store, jailer); err != nil {
+		return fmt.Errorf("register profile receiver: %w", err)
+	}
+	closeTraceReceiver, err := startTraceReceiver(ctx, log, mgr, store, jailer)
+	if err != nil {
+		return fmt.Errorf("register trace receiver: %w", err)
+	}
+	defer closeTraceReceiver()
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)
@@ -1241,6 +1259,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recv = nil
 	}
 	if recv != nil {
+		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
+			recv.WithQualificationFrameworkReadyRecorder(func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
+				runtimeName string, warmupMS int64) error {
+				_, err := readinessStore.RecordEnvironmentQualificationFrameworkReadyReceipt(recordCtx, frame, runtimeName, warmupMS)
+				return err
+			})
+		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
 		// account identity from vmmd's live map and persist the same canonical
@@ -1344,7 +1369,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance-bound guest metadata endpoint. The receiver only returns rows
 	// for the deployment/app/account attached to the Firecracker stream.
 	runtimeEnvStore, _ := store.(runtimeConfigStore)
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer)
+	// ADR-740: instances served a developer live patch are never snapshotted.
+	// The receiver marks them; the gRPC snapshot handlers refuse them.
+	divergedInstances := vmmdgrpc.NewDivergedInstances()
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer, divergedInstances)
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
@@ -1505,7 +1533,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithNodeID(nodeID).
-		WithExecutionIdentitySigner(identitySigner)
+		WithExecutionIdentitySigner(identitySigner).
+		WithDivergedInstances(divergedInstances)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200

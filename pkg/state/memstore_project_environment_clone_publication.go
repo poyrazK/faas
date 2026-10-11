@@ -156,7 +156,7 @@ func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, a
 	for _, record := range m.projectEnvironmentCloneWorkloads[op.ID] {
 		members = append(members, ProjectReleaseMember{AppID: record.AppID, DeploymentID: record.TargetDeploymentID})
 	}
-	release, err := m.publishProjectReleaseSetLocked(accountID, projectID, op.TargetEnvironment, ttl, members)
+	release, err := m.publishProjectReleaseSetLocked(accountID, projectID, op.TargetEnvironment, ttl, members, false)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}

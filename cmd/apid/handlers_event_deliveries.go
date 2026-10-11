@@ -333,7 +333,7 @@ func (s *server) eventFanoutHistoryResponse(r *http.Request, store state.EventFa
 	for _, row := range rows {
 		out.History = append(out.History, api.EventFanoutAttemptResponse{
 			SubscriptionID: row.SubscriptionID, Action: row.Action, State: row.State, AttemptNumber: row.Attempts, FailureCode: row.FailureCode,
-			Retryable: row.Retryable, LastError: row.LastError, OccurredAt: row.OccurredAt,
+			FilterReason: row.FilterReason, RetryStopReason: row.RetryStopReason, Retryable: row.Retryable, LastError: row.LastError, OccurredAt: row.OccurredAt,
 			CapacityScope: row.CapacityScope, CapacityDeferrals: row.CapacityDeferrals, DetailsTruncated: row.DetailsTruncated,
 		})
 	}
@@ -350,7 +350,7 @@ func (s *server) eventFanoutHistoryResponse(r *http.Request, store state.EventFa
 }
 
 // replayEventFanoutFailure requeues exactly one terminal recipient from the
-// event's immutable acceptance-time snapshot.
+// event's acceptance snapshot or a retained historical backfill.
 func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -367,9 +367,11 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
 		return
 	}
-	err := store.ReplayFailedPublishedEventRecipientForApp(r.Context(), acct.ID, app.ID,
-		req.EventSource, req.EventID, req.SubscriptionID)
+	err := s.applyEventAgeReplay(r, store, acct.ID, app.ID, req)
 	switch {
+	case errors.Is(err, state.ErrEventDeliveryExpired):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
+		return
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
@@ -377,6 +379,9 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
+		return
+	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
+		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))

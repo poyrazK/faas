@@ -1,0 +1,8 @@
+{
+  "collect": {
+    "total_orders": 12
+  },
+  "deliver": {
+    "delivered": true
+  }
+}

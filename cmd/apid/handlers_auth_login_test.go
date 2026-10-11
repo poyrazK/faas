@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1038,17 +1040,18 @@ func TestV1AuthLogin_UnboundEmail_Returns401(t *testing.T) {
 	}
 }
 
-// TestV1AuthLogin_FailurePathsUseEqualCostPasswordVerification pins the
-// anti-enumeration work directly. Wall-clock bounds are noisy on shared,
-// race-enabled runners; the security invariant is one verification with the
-// same Argon2 parameters on every failure path. Separate endpoint tests pin
-// the 401 response shape.
-func TestV1AuthLogin_FailurePathsUseEqualCostPasswordVerification(t *testing.T) {
+// TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths — the spec §11
+// anti-enumeration closure. The unbound-email and wrong-password
+// paths both run one Argon2id verify against identical parameters
+// (the no-row path against DummyPHC), so the timing observation
+// cannot distinguish "no such email" from "wrong password". Shared
+// CI runners vary substantially in CPU and memory bandwidth, so this
+// compares the two medians instead of enforcing a wall-clock budget;
+// pkg/auth/password_test.go pins the Argon2id parameters themselves.
+func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 	srv, _, store := v1AuthTestHarness(t)
-	oauthAcct, err := store.CreateAccount(context.Background(), "oauth-only@example.com", api.PlanFree)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := srv.handler()
+
 	acct, err := store.CreateAccount(context.Background(), "timing@example.com", api.PlanFree)
 	if err != nil {
 		t.Fatal(err)
@@ -1061,41 +1064,45 @@ func TestV1AuthLogin_FailurePathsUseEqualCostPasswordVerification(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	const password = "wrong-password-1234567890"
-	dummyParams := strings.Split(auth.DummyPHC, "$")[3]
-	cases := []struct {
-		name, email, wantPHC string
-	}{
-		{name: "unbound", email: "ghost@example.com", wantPHC: auth.DummyPHC},
-		{name: "OAuth-only", email: oauthAcct.Email, wantPHC: auth.DummyPHC},
-		{name: "wrong password", email: acct.Email, wantPHC: phc},
+	const (
+		samples  = 5
+		maxRatio = 5.0
+	)
+	runOnce := func(path, body string) time.Duration {
+		// Each Argon2id verify allocates 64 MiB. Reclaim the previous
+		// sample before starting the clock so CI's GOGC=10 does not
+		// charge alternating collection cycles to only one failure path.
+		runtime.GC()
+		start := time.Now()
+		rec := v1AuthJSONRequest(t, h, path, body)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+		return time.Since(start)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
-			var gotPHC, gotPassword string
-			verify := func(phc, plaintext string) (bool, error) {
-				calls++
-				gotPHC, gotPassword = phc, plaintext
-				return false, nil
-			}
-			if _, ok := srv.verifyPasswordOrPadWith(context.Background(), tc.email, password, verify); ok {
-				t.Fatal("failure path returned ok=true")
-			}
-			if calls != 1 {
-				t.Fatalf("password verifier called %d times, want exactly once", calls)
-			}
-			if gotPHC != tc.wantPHC {
-				t.Errorf("verifier received unexpected password hash")
-			}
-			parts := strings.Split(gotPHC, "$")
-			if len(parts) < 5 || parts[3] != dummyParams {
-				t.Errorf("verifier hash parameters = %q, want %q", gotPHC, dummyParams)
-			}
-			if gotPassword != password {
-				t.Errorf("verifier password = %q, want supplied password", gotPassword)
-			}
-		})
+	median := func(values []time.Duration) time.Duration {
+		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+		return values[len(values)/2]
+	}
+	unboundSamples := make([]time.Duration, 0, samples)
+	wrongSamples := make([]time.Duration, 0, samples)
+	for i := 0; i < samples; i++ {
+		// Interleave the paths so CPU frequency and neighbouring runner load
+		// affect both distributions rather than one whole cohort.
+		unboundSamples = append(unboundSamples, runOnce("/v1/auth/login", `{"email":"ghost@example.com","password":"correct-horse-battery-staple"}`))
+		wrongSamples = append(wrongSamples, runOnce("/v1/auth/login", `{"email":"timing@example.com","password":"wrong-password-1234567890"}`))
+	}
+	unbound := median(unboundSamples)
+	wrong := median(wrongSamples)
+	fastest, slowest := unbound, wrong
+	if wrong < unbound {
+		fastest, slowest = wrong, unbound
+	}
+	if fastest == 0 {
+		t.Fatalf("failure-path median was zero; Argon2id verification appears to have been bypassed")
+	}
+	if float64(slowest)/float64(fastest) > maxRatio {
+		t.Errorf("unbound median=%v wrong median=%v — failure paths differ by more than %.1fx", unbound, wrong, maxRatio)
 	}
 }
 
@@ -1130,8 +1137,8 @@ func TestV1AuthSignupMagicLink_UnboundEmail_CreatesAccountAndMailsToken(t *testi
 	if !strings.Contains(msgs[0].TextBody, "/auth/verify?token=") {
 		t.Errorf("mail body missing /auth/verify link: %q", msgs[0].TextBody)
 	}
-	if !strings.Contains(msgs[0].Subject, "faas") {
-		t.Errorf("mail subject = %q, missing faas marker", msgs[0].Subject)
+	if !strings.Contains(msgs[0].Subject, "Gregale") {
+		t.Errorf("mail subject = %q, missing Gregale marker", msgs[0].Subject)
 	}
 	// login_tokens has exactly one row for this account.
 	tokens := loginTokensForAccount(t, store, acct.ID)

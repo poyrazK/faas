@@ -73,6 +73,7 @@ func TestReportLivenessFailed_PropagatesReasonClosedSet(t *testing.T) {
 		"liveness_n_consecutive",
 		fcvm.LivenessReasonInfrastructure,
 		fcvm.LivenessReasonProcessExited,
+		fcvm.LivenessReasonImageHealthcheck,
 	}
 	for _, reason := range reasons {
 		reason := reason

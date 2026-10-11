@@ -668,6 +668,25 @@ func TestCompileHeadersRules_CopiesOpsInOrder(t *testing.T) {
 	}
 }
 
+// Equal-priority rules arrive from the store already in match order
+// (priority, created_at, id). Compile must keep that order: an unstable sort
+// let the gateway pick a different first match than the listing showed.
+func TestCompileHeadersRules_KeepsStoreOrderOnPriorityTies(t *testing.T) {
+	var in []state.EdgeRule
+	for i := range 40 {
+		in = append(in, sampleHeadersActionRule(fmt.Sprintf("headers-%02d", i), 100, "a.example.com", "/", nil, nil, nil))
+	}
+	got, _ := compileHeadersRules(in)
+	if len(got) != len(in) {
+		t.Fatalf("got %d rules, want %d", len(got), len(in))
+	}
+	for i := range got {
+		if got[i].ID != in[i].ID {
+			t.Fatalf("position %d: got %s, want %s", i, got[i].ID, in[i].ID)
+		}
+	}
+}
+
 func TestCompileRewriteRules_EmptyInputProducesEmptyOutput(t *testing.T) {
 	if got, parseErrs := compileRewriteRules(nil); got != nil || parseErrs != nil {
 		t.Errorf("compileRewriteRules(nil) = %v, %v", got, parseErrs)

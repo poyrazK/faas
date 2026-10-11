@@ -1,0 +1,739 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	mcpTaskExtensionID    = "io.modelcontextprotocol/tasks"
+	mcpTaskLease          = 30 * time.Second
+	mcpTaskMaxAttempts    = 3
+	mcpTaskMaxOutstanding = 1000
+	mcpTaskMaxPerOwner    = 100
+)
+
+var mcpTaskEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+var errMcpTaskCapacity = errors.New("MCP task queue capacity reached")
+
+type mcpTaskConfig struct {
+	Enabled                bool   `json:"enabled"`
+	DatabaseURLEnv         string `json:"database_url_env,omitempty"`
+	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
+	NamespaceEnv           string `json:"namespace_env,omitempty"`
+	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
+	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
+	MaxOutstanding         int    `json:"max_outstanding,omitempty"`
+	MaxOutstandingPerOwner int    `json:"max_outstanding_per_owner,omitempty"`
+}
+
+func (c *mcpTaskConfig) validate() error {
+	if c == nil || !c.Enabled {
+		return nil
+	}
+	for name, value := range map[string]string{
+		"database_url_env": c.DatabaseURLEnv,
+		"owner_key_env":    c.OwnerKeyEnv,
+		"namespace_env":    c.NamespaceEnv,
+	} {
+		if !mcpTaskEnvName.MatchString(value) {
+			return fmt.Errorf("tasks.%s must name an uppercase environment variable", name)
+		}
+	}
+	ttl := c.TTLSeconds
+	if ttl == 0 {
+		ttl = 86400
+	}
+	if ttl < 60 || ttl > 30*24*60*60 {
+		return errors.New("tasks.ttl_seconds must be between 60 and 2592000")
+	}
+	poll := c.PollIntervalMS
+	if poll == 0 {
+		poll = 2000
+	}
+	if poll < 500 || poll > 30000 {
+		return errors.New("tasks.poll_interval_ms must be between 500 and 30000")
+	}
+	maxOutstanding := taskDefault(c.MaxOutstanding, mcpTaskMaxOutstanding)
+	maxPerOwner := taskDefault(c.MaxOutstandingPerOwner, mcpTaskMaxPerOwner)
+	if maxOutstanding < 1 || maxPerOwner < 1 || maxPerOwner > maxOutstanding {
+		return errors.New("tasks admission limits must be positive and the owner limit cannot exceed the namespace limit")
+	}
+	return nil
+}
+
+type mcpTaskManager struct {
+	pool                   *pgxpool.Pool
+	namespace              string
+	resource               string
+	authMode               string
+	ownerKey               []byte
+	payloadKey             []byte
+	ttl                    time.Duration
+	poll                   time.Duration
+	maxOutstanding         int
+	maxOutstandingPerOwner int
+}
+
+type mcpTaskRecord struct {
+	ID         string
+	Tool       string
+	Version    string
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	ExpiresAt  time.Time
+	Attempt    int
+	LeaseToken string
+	CancelAt   *time.Time
+	Arguments  map[string]any
+	Result     map[string]any
+	TaskError  map[string]any
+}
+
+func newMcpTaskManager(ctx context.Context, cfg *mcpTaskConfig, _ string, resource, authMode string) (*mcpTaskManager, error) {
+	if cfg == nil || !cfg.Enabled {
+		return nil, nil
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	databaseURL := strings.TrimSpace(os.Getenv(cfg.DatabaseURLEnv))
+	ownerKey := []byte(os.Getenv(cfg.OwnerKeyEnv))
+	namespace := strings.TrimSpace(os.Getenv(cfg.NamespaceEnv))
+	if databaseURL == "" {
+		return nil, fmt.Errorf("environment variable %s is required", cfg.DatabaseURLEnv)
+	}
+	if len(ownerKey) < 32 {
+		return nil, fmt.Errorf("environment variable %s must contain at least 32 bytes", cfg.OwnerKeyEnv)
+	}
+	if namespace == "" || len(namespace) > 255 {
+		return nil, fmt.Errorf("environment variable %s must contain a stable task namespace of at most 255 characters", cfg.NamespaceEnv)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return nil, errors.New("invalid MCP Tasks PostgreSQL connection settings")
+	}
+	manager := &mcpTaskManager{
+		pool: pool, namespace: namespace, resource: resource, authMode: authMode,
+		ownerKey: ownerKey, payloadKey: taskHMAC(ownerKey, "gregale-mcp-task-payload:v1"),
+		ttl:                    time.Duration(taskDefault(cfg.TTLSeconds, 86400)) * time.Second,
+		poll:                   time.Duration(taskDefault(cfg.PollIntervalMS, 2000)) * time.Millisecond,
+		maxOutstanding:         taskDefault(cfg.MaxOutstanding, mcpTaskMaxOutstanding),
+		maxOutstandingPerOwner: taskDefault(cfg.MaxOutstandingPerOwner, mcpTaskMaxPerOwner),
+	}
+	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := pool.Ping(initCtx); err != nil {
+		pool.Close()
+		return nil, errors.New("MCP Tasks PostgreSQL connection failed")
+	}
+	var taskTableExists bool
+	if err := pool.QueryRow(initCtx, `SELECT to_regclass('gregale_mcp_tasks') IS NOT NULL`).Scan(&taskTableExists); err != nil {
+		pool.Close()
+		return nil, errors.New("could not inspect MCP Tasks storage")
+	}
+	if !taskTableExists {
+		if _, err := pool.Exec(initCtx, `CREATE TABLE IF NOT EXISTS gregale_mcp_tasks (
+		namespace text NOT NULL,
+		task_id uuid NOT NULL,
+		owner_hash bytea NOT NULL,
+		tool_name text NOT NULL,
+		handler_version text NOT NULL,
+		arguments_encrypted bytea NOT NULL,
+		status text NOT NULL CHECK (status IN ('queued', 'running', 'input_required', 'completed', 'cancelled', 'failed')),
+		result_encrypted bytea,
+		error_encrypted bytea,
+		input_state_encrypted bytea,
+		input_methods text[] NOT NULL DEFAULT '{}',
+		created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+		updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+		expires_at timestamptz NOT NULL,
+		attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+		resume_pending boolean NOT NULL DEFAULT false,
+		next_attempt_at timestamptz,
+		lease_token uuid,
+		lease_expires_at timestamptz,
+		cancel_requested_at timestamptz,
+		PRIMARY KEY (namespace, task_id),
+		CHECK ((status = 'running') = (lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)),
+		CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL))
+		)`); err != nil {
+			pool.Close()
+			return nil, errors.New("could not initialize MCP Tasks storage")
+		}
+		if _, err := pool.Exec(initCtx, `CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_queue_idx ON gregale_mcp_tasks (namespace, created_at, task_id) WHERE status IN ('queued', 'running')`); err != nil {
+			pool.Close()
+			return nil, errors.New("could not initialize MCP Tasks queue index")
+		}
+	}
+	if _, err := pool.Exec(initCtx, `SELECT namespace, task_id, owner_hash, tool_name, handler_version,
+		arguments_encrypted, result_encrypted, error_encrypted, status, created_at, updated_at,
+		expires_at, attempt_count, lease_token, lease_expires_at, cancel_requested_at
+		FROM gregale_mcp_tasks LIMIT 0`); err != nil {
+		pool.Close()
+		return nil, errors.New("MCP Tasks storage schema is incompatible; run the Gregale task migration")
+	}
+	return manager, nil
+}
+
+func taskDefault(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func taskHMAC(key []byte, value string) []byte {
+	h := hmac.New(sha256.New, key)
+	_, _ = h.Write([]byte(value))
+	return h.Sum(nil)
+}
+
+func (m *mcpTaskManager) ownerHash(principal *authPrincipal) ([]byte, error) {
+	var identity []byte
+	if m.authMode == "open" {
+		identity = []byte("open")
+	} else {
+		if principal == nil || principal.subject == "" {
+			return nil, errors.New("authenticated MCP task owner is unavailable")
+		}
+		var buffer bytes.Buffer
+		encoder := json.NewEncoder(&buffer)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode([]string{m.resource, principal.subject, principal.clientID}); err != nil {
+			return nil, errors.New("could not encode MCP task owner identity")
+		}
+		identity = bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
+	}
+	ownerKey := taskHMAC(m.ownerKey, "gregale-mcp-task-owner:v1")
+	h := hmac.New(sha256.New, ownerKey)
+	_, _ = h.Write(identity)
+	return h.Sum(nil), nil
+}
+
+func taskID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	id[6] = id[6]&0x0f | 0x40
+	id[8] = id[8]&0x3f | 0x80
+	encoded := hex.EncodeToString(id[:])
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
+}
+
+func (m *mcpTaskManager) aad(id, field string) []byte {
+	return []byte(fmt.Sprintf("gregale-mcp-task:v1:%s:%s:%s", m.namespace, id, field))
+}
+
+func (m *mcpTaskManager) encrypt(id, field string, value any) ([]byte, error) {
+	plain, err := json.Marshal(value)
+	if err != nil || len(plain) > 256*1024 {
+		return nil, errors.New("MCP task payload must be JSON serializable and no larger than 256 KiB")
+	}
+	block, err := aes.NewCipher(m.payloadKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	sealed := gcm.Seal(nil, nonce, plain, m.aad(id, field))
+	tagStart := len(sealed) - gcm.Overhead()
+	out := make([]byte, 1, 1+len(nonce)+gcm.Overhead()+len(plain))
+	out[0] = 1
+	out = append(out, nonce...)
+	out = append(out, sealed[tagStart:]...)
+	out = append(out, sealed[:tagStart]...)
+	return out, nil
+}
+
+func (m *mcpTaskManager) decrypt(id, field string, payload []byte, dst any) error {
+	if len(payload) < 29 || payload[0] != 1 {
+		return errors.New("invalid encrypted MCP task payload")
+	}
+	block, err := aes.NewCipher(m.payloadKey)
+	if err != nil {
+		return err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+	offset := 1 + gcm.NonceSize()
+	if len(payload) < offset+gcm.Overhead() {
+		return errors.New("invalid encrypted MCP task payload")
+	}
+	sealed := append(append([]byte(nil), payload[offset+gcm.Overhead():]...), payload[offset:offset+gcm.Overhead()]...)
+	plain, err := gcm.Open(nil, payload[1:offset], sealed, m.aad(id, field))
+	if err != nil {
+		return errors.New("could not decrypt MCP task payload")
+	}
+	return json.Unmarshal(plain, dst)
+}
+
+func (m *mcpTaskManager) create(ctx context.Context, args map[string]any, principal *authPrincipal) (*mcpTaskRecord, error) {
+	owner, err := m.ownerHash(principal)
+	if err != nil {
+		return nil, err
+	}
+	id, err := taskID()
+	if err != nil {
+		return nil, err
+	}
+	arguments, err := m.encrypt(id, "arguments", args)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := m.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "gregale_mcp_tasks:admission:"+m.namespace); err != nil {
+		return nil, errors.New("could not reserve MCP task capacity")
+	}
+	var total, owned int64
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*)::bigint, COUNT(*) FILTER (WHERE owner_hash=$2)::bigint
+		FROM gregale_mcp_tasks WHERE namespace=$1 AND expires_at>clock_timestamp()
+		AND status IN ('queued','running','input_required')`, m.namespace, owner).Scan(&total, &owned); err != nil {
+		return nil, errors.New("could not check MCP task capacity")
+	}
+	if total >= int64(m.maxOutstanding) || owned >= int64(m.maxOutstandingPerOwner) {
+		return nil, errMcpTaskCapacity
+	}
+	var task mcpTaskRecord
+	err = tx.QueryRow(ctx, `INSERT INTO gregale_mcp_tasks (
+		namespace, task_id, owner_hash, tool_name, handler_version,
+		arguments_encrypted, input_methods, status, expires_at
+	) VALUES ($1, $2::uuid, $3, 'build_report', '1', $4, '{}'::text[], 'queued', clock_timestamp() + ($5::double precision * interval '1 second'))
+	RETURNING task_id::text, tool_name, handler_version, status, created_at, updated_at, expires_at, attempt_count`,
+		m.namespace, id, owner, arguments, m.ttl.Seconds()).Scan(
+		&task.ID, &task.Tool, &task.Version, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt, &task.Attempt,
+	)
+	if err != nil {
+		return nil, errors.New("could not persist MCP task")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, errors.New("could not commit MCP task")
+	}
+	task.Arguments = args
+	return &task, nil
+}
+
+func (m *mcpTaskManager) get(ctx context.Context, id string, principal *authPrincipal) (*mcpTaskRecord, error) {
+	owner, err := m.ownerHash(principal)
+	if err != nil {
+		return nil, err
+	}
+	var task mcpTaskRecord
+	var args, result, taskError []byte
+	err = m.pool.QueryRow(ctx, `SELECT task_id::text, tool_name, handler_version, status, created_at, updated_at, expires_at,
+		attempt_count, COALESCE(lease_token::text, ''), cancel_requested_at,
+		arguments_encrypted, result_encrypted, error_encrypted
+	FROM gregale_mcp_tasks WHERE namespace=$1 AND task_id=$2::uuid AND owner_hash=$3 AND expires_at>clock_timestamp()`, m.namespace, id, owner).Scan(
+		&task.ID, &task.Tool, &task.Version, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt,
+		&task.Attempt, &task.LeaseToken, &task.CancelAt, &args, &result, &taskError,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("could not read MCP task")
+	}
+	if err := m.decrypt(task.ID, "arguments", args, &task.Arguments); err != nil {
+		return nil, err
+	}
+	if len(result) > 0 {
+		if err := m.decrypt(task.ID, "result", result, &task.Result); err != nil {
+			return nil, err
+		}
+	}
+	if len(taskError) > 0 {
+		if err := m.decrypt(task.ID, "error", taskError, &task.TaskError); err != nil {
+			return nil, err
+		}
+	}
+	return &task, nil
+}
+
+func (m *mcpTaskManager) cancel(ctx context.Context, id string, principal *authPrincipal) (bool, error) {
+	owner, err := m.ownerHash(principal)
+	if err != nil {
+		return false, err
+	}
+	tag, err := m.pool.Exec(ctx, `UPDATE gregale_mcp_tasks SET
+		status=CASE WHEN status IN ('queued','input_required') THEN 'cancelled' ELSE status END,
+		cancel_requested_at=CASE WHEN status IN ('queued','running','input_required') THEN COALESCE(cancel_requested_at,clock_timestamp()) ELSE cancel_requested_at END,
+		updated_at=CASE WHEN status IN ('queued','running','input_required') THEN clock_timestamp() ELSE updated_at END,
+		lease_token=CASE WHEN status IN ('queued','input_required') THEN NULL ELSE lease_token END,
+		lease_expires_at=CASE WHEN status IN ('queued','input_required') THEN NULL ELSE lease_expires_at END
+	WHERE namespace=$1 AND task_id=$2::uuid AND owner_hash=$3 AND expires_at>clock_timestamp()`, m.namespace, id, owner)
+	if err != nil {
+		return false, errors.New("could not cancel MCP task")
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (m *mcpTaskManager) update(ctx context.Context, id string, principal *authPrincipal, responses map[string]any) (bool, error) {
+	if len(responses) > 0 {
+		return false, errors.New("this task has no outstanding client input requests")
+	}
+	// This starter's build_report handler does not request client input. The
+	// operation still validates task ownership and follows tasks/update's
+	// completion contract, allowing handlers to add input requests later.
+	task, err := m.get(ctx, id, principal)
+	return task != nil, err
+}
+
+func (m *mcpTaskManager) claim(ctx context.Context) (*mcpTaskRecord, error) {
+	tx, err := m.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+	_, err = tx.Exec(ctx, `UPDATE gregale_mcp_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL,
+		updated_at=clock_timestamp() WHERE namespace=$1 AND status='running' AND lease_expires_at<=clock_timestamp() AND attempt_count >= $2`, m.namespace, mcpTaskMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	var task mcpTaskRecord
+	var args []byte
+	err = tx.QueryRow(ctx, `SELECT task_id::text, tool_name, handler_version, created_at, updated_at, expires_at,
+		attempt_count, arguments_encrypted FROM gregale_mcp_tasks
+	WHERE namespace=$1 AND expires_at>clock_timestamp() AND attempt_count<$2 AND
+		((status='queued' AND (next_attempt_at IS NULL OR next_attempt_at<=clock_timestamp())) OR
+		 (status='running' AND lease_expires_at<=clock_timestamp()))
+		ORDER BY created_at, task_id LIMIT 1 FOR UPDATE SKIP LOCKED`, m.namespace, mcpTaskMaxAttempts).Scan(
+		&task.ID, &task.Tool, &task.Version, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt, &task.Attempt, &args,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	lease, err := taskID()
+	if err != nil {
+		return nil, err
+	}
+	err = tx.QueryRow(ctx, `UPDATE gregale_mcp_tasks SET status='running', attempt_count=attempt_count+1,
+		lease_token=$3::uuid, lease_expires_at=clock_timestamp()+($4::double precision*interval '1 millisecond'),
+		updated_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2::uuid
+		RETURNING attempt_count, updated_at`, m.namespace, task.ID, lease, mcpTaskLease.Milliseconds()).Scan(&task.Attempt, &task.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	task.Status, task.LeaseToken = "running", lease
+	if err := m.decrypt(task.ID, "arguments", args, &task.Arguments); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (m *mcpTaskManager) run(ctx context.Context) {
+	ticker := time.NewTicker(m.poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		task, err := m.claim(ctx)
+		if err == nil && task != nil {
+			m.execute(ctx, task)
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *mcpTaskManager) execute(ctx context.Context, task *mcpTaskRecord) {
+	report, _ := task.Arguments["report"].(string)
+	steps, _ := task.Arguments["steps"].(float64)
+	for step := 0; step < int(steps); step++ {
+		if ctx.Err() != nil {
+			return // The lease expires and another process resumes this task.
+		}
+		var cancelled bool
+		if err := m.pool.QueryRow(ctx, `SELECT cancel_requested_at IS NOT NULL FROM gregale_mcp_tasks WHERE namespace=$1 AND task_id=$2::uuid AND lease_token=$3::uuid`, m.namespace, task.ID, task.LeaseToken).Scan(&cancelled); err != nil {
+			return
+		}
+		if cancelled {
+			_, _ = m.pool.Exec(ctx, `UPDATE gregale_mcp_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL, updated_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2::uuid AND lease_token=$3::uuid`, m.namespace, task.ID, task.LeaseToken)
+			return
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+	result := map[string]any{"content": []map[string]string{{"type": "text", "text": fmt.Sprintf("Report %s is ready after %d steps.", report, int(steps))}}}
+	encrypted, err := m.encrypt(task.ID, "result", result)
+	if err != nil {
+		m.fail(ctx, task, err)
+		return
+	}
+	_, _ = m.pool.Exec(ctx, `UPDATE gregale_mcp_tasks SET status='completed', result_encrypted=$4,
+		lease_token=NULL, lease_expires_at=NULL, updated_at=clock_timestamp()
+	WHERE namespace=$1 AND task_id=$2::uuid AND lease_token=$3::uuid AND status='running' AND cancel_requested_at IS NULL`, m.namespace, task.ID, task.LeaseToken, encrypted)
+}
+
+func (m *mcpTaskManager) fail(ctx context.Context, task *mcpTaskRecord, cause error) {
+	message := "Task execution failed"
+	if cause != nil {
+		message = cause.Error()
+	}
+	encoded, err := m.encrypt(task.ID, "error", map[string]any{"code": -32603, "message": message})
+	if err != nil {
+		return
+	}
+	_, _ = m.pool.Exec(ctx, `UPDATE gregale_mcp_tasks SET
+		status=CASE WHEN attempt_count<$4 THEN 'queued' ELSE 'failed' END,
+		error_encrypted=CASE WHEN attempt_count<$4 THEN NULL ELSE $5 END,
+		next_attempt_at=CASE WHEN attempt_count<$4 THEN clock_timestamp()+interval '1 second' ELSE NULL END,
+		lease_token=NULL, lease_expires_at=NULL, updated_at=clock_timestamp()
+	WHERE namespace=$1 AND task_id=$2::uuid AND lease_token=$3::uuid AND status='running'`, m.namespace, task.ID, task.LeaseToken, mcpTaskMaxAttempts, encoded)
+}
+
+func (m *mcpTaskManager) close() {
+	if m != nil && m.pool != nil {
+		m.pool.Close()
+	}
+}
+
+func (m *mcpTaskManager) wireTask(task *mcpTaskRecord) map[string]any {
+	status := task.Status
+	if status == "queued" || status == "running" {
+		status = "working"
+	}
+	result := map[string]any{
+		"resultType": "complete", "taskId": task.ID, "status": status,
+		"createdAt":     task.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"lastUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"ttlMs":         task.ExpiresAt.Sub(task.CreatedAt).Milliseconds(), "pollIntervalMs": m.poll.Milliseconds(),
+	}
+	if status == "completed" && task.Result != nil {
+		result["result"] = task.Result
+	}
+	if status == "failed" {
+		err := task.TaskError
+		if err == nil {
+			err = map[string]any{"code": -32603, "message": "Task execution failed"}
+		}
+		result["error"] = err
+	}
+	return result
+}
+
+func taskRPCResponse(w http.ResponseWriter, id json.RawMessage, result any, rpcErr *mcpTaskRPCError) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id)}
+	if rpcErr != nil {
+		response["error"] = rpcErr
+	} else {
+		if object, ok := result.(map[string]any); ok {
+			object["_meta"] = map[string]any{
+				"io.modelcontextprotocol/serverInfo": map[string]string{"name": "gregale-mcp-go", "version": "1.0.0"},
+			}
+		}
+		response["result"] = result
+	}
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+type mcpTaskRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func mcpTaskProtocolHandler(tasks *mcpTaskManager, authorization *authorization, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || tasks == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxMCPBodyBytes+1))
+		if err != nil {
+			http.Error(w, "Could not read MCP request", http.StatusBadRequest)
+			return
+		}
+		if len(body) > maxMCPBodyBytes {
+			http.Error(w, "MCP request body is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
+		var request struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+			Params  json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal(body, &request) != nil || request.JSONRPC != "2.0" || len(request.ID) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		principal := principalFromContext(r.Context())
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		switch request.Method {
+		case "tools/call":
+			var params struct {
+				Name      string                     `json:"name"`
+				Arguments map[string]any             `json:"arguments"`
+				Meta      map[string]json.RawMessage `json:"_meta"`
+			}
+			if json.Unmarshal(request.Params, &params) != nil || params.Name != "build_report" ||
+				!mcpClientSupportsTasks(params.Meta) || r.Header.Get("MCP-Protocol-Version") != "2026-07-28" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("MCP-Protocol-Version", "2026-07-28")
+			if !authorization.canAccess(authorization.tools, params.Name, principal) {
+				taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32003, Message: "Tool access denied"})
+				return
+			}
+			var args buildReportInput
+			encoded, _ := json.Marshal(params.Arguments)
+			if json.Unmarshal(encoded, &args) != nil || strings.TrimSpace(args.Report) == "" || len(args.Report) > 80 || args.Steps < 1 || args.Steps > 20 {
+				taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32602, Message: "report must contain 1-80 characters and steps must be between 1 and 20"})
+				return
+			}
+			params.Arguments["report"] = strings.TrimSpace(args.Report)
+			params.Arguments["steps"] = args.Steps
+			task, err := tasks.create(ctx, params.Arguments, principal)
+			if err != nil {
+				if errors.Is(err, errMcpTaskCapacity) {
+					taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32005, Message: "MCP task queue capacity reached"})
+					return
+				}
+				taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32603, Message: "Could not create MCP task"})
+				return
+			}
+			taskRPCResponse(w, request.ID, map[string]any{
+				"resultType": "task", "taskId": task.ID, "status": "working",
+				"statusMessage": "Task accepted for processing.",
+				"createdAt":     task.CreatedAt.UTC().Format(time.RFC3339Nano),
+				"lastUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano),
+				"ttlMs":         task.ExpiresAt.Sub(task.CreatedAt).Milliseconds(), "pollIntervalMs": tasks.poll.Milliseconds(),
+			}, nil)
+		case "tasks/get", "tasks/cancel", "tasks/update":
+			if r.Header.Get("MCP-Protocol-Version") != "2026-07-28" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("MCP-Protocol-Version", "2026-07-28")
+			var params struct {
+				TaskID         string         `json:"taskId"`
+				InputResponses map[string]any `json:"inputResponses"`
+			}
+			if json.Unmarshal(request.Params, &params) != nil || !validTaskUUID(params.TaskID) {
+				taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32602, Message: "taskId must be a UUID"})
+				return
+			}
+			task, err := tasks.get(ctx, params.TaskID, principal)
+			if err != nil || task == nil || !authorization.canAccess(authorization.tools, task.Tool, principal) {
+				taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32004, Message: "Task not found"})
+				return
+			}
+			switch request.Method {
+			case "tasks/get":
+				taskRPCResponse(w, request.ID, tasks.wireTask(task), nil)
+			case "tasks/cancel":
+				ok, err := tasks.cancel(ctx, params.TaskID, principal)
+				if err != nil || !ok {
+					taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32004, Message: "Task not found"})
+					return
+				}
+				taskRPCResponse(w, request.ID, map[string]any{"resultType": "complete"}, nil)
+			case "tasks/update":
+				if len(params.InputResponses) > 0 {
+					taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32602, Message: "This task has no outstanding client input requests"})
+					return
+				}
+				ok, err := tasks.update(ctx, params.TaskID, principal, params.InputResponses)
+				if err != nil || !ok {
+					taskRPCResponse(w, request.ID, nil, &mcpTaskRPCError{Code: -32004, Message: "Task not found"})
+					return
+				}
+				taskRPCResponse(w, request.ID, map[string]any{"resultType": "complete"}, nil)
+			}
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+func mcpClientSupportsTasks(meta map[string]json.RawMessage) bool {
+	var envelope struct {
+		Protocol     string `json:"io.modelcontextprotocol/protocolVersion"`
+		Capabilities struct {
+			Extensions map[string]json.RawMessage `json:"extensions"`
+		} `json:"io.modelcontextprotocol/clientCapabilities"`
+	}
+	if json.Unmarshal(mustJSON(meta), &envelope) != nil || envelope.Protocol < "2026-07-28" {
+		return false
+	}
+	_, ok := envelope.Capabilities.Extensions[mcpTaskExtensionID]
+	return ok
+}
+
+func mustJSON(value any) []byte {
+	encoded, _ := json.Marshal(value)
+	return encoded
+}
+
+func validTaskUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for index, char := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdefABCDEF", char) {
+			return false
+		}
+	}
+	return true
+}

@@ -38,6 +38,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SpansWriter_WriteSpansSummary_FullMethodName = "/onebox.faas.apid.v1.SpansWriter/WriteSpansSummary"
+	SpansWriter_IngestGuestSpans_FullMethodName  = "/onebox.faas.apid.v1.SpansWriter/IngestGuestSpans"
 )
 
 // SpansWriterClient is the client API for SpansWriter service.
@@ -62,6 +63,13 @@ type SpansWriterClient interface {
 	//     the OTLP POST).
 	//   - Internal on Postgres errors.
 	WriteSpansSummary(ctx context.Context, in *WriteSpansSummaryRequest, opts ...grpc.CallOption) (*WriteSpansSummaryResponse, error)
+	// IngestGuestSpans accepts one raw OTLP/HTTP trace export from the
+	// in-guest bridge (ADR-958). vmmd is the only caller: it bounds the
+	// frame and supplies the host-owned principal, but never decodes the
+	// payload. apid checks the plan and per-account rate cap, decodes with
+	// the public-ingest codec, and merges spans through its own flush loop.
+	// Outcomes ride on the response, not gRPC errors.
+	IngestGuestSpans(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestSpansResponse, error)
 }
 
 type spansWriterClient struct {
@@ -76,6 +84,16 @@ func (c *spansWriterClient) WriteSpansSummary(ctx context.Context, in *WriteSpan
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteSpansSummaryResponse)
 	err := c.cc.Invoke(ctx, SpansWriter_WriteSpansSummary_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *spansWriterClient) IngestGuestSpans(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestSpansResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestGuestSpansResponse)
+	err := c.cc.Invoke(ctx, SpansWriter_IngestGuestSpans_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +122,13 @@ type SpansWriterServer interface {
 	//     the OTLP POST).
 	//   - Internal on Postgres errors.
 	WriteSpansSummary(context.Context, *WriteSpansSummaryRequest) (*WriteSpansSummaryResponse, error)
+	// IngestGuestSpans accepts one raw OTLP/HTTP trace export from the
+	// in-guest bridge (ADR-958). vmmd is the only caller: it bounds the
+	// frame and supplies the host-owned principal, but never decodes the
+	// payload. apid checks the plan and per-account rate cap, decodes with
+	// the public-ingest codec, and merges spans through its own flush loop.
+	// Outcomes ride on the response, not gRPC errors.
+	IngestGuestSpans(context.Context, *IngestGuestSpansRequest) (*IngestGuestSpansResponse, error)
 	mustEmbedUnimplementedSpansWriterServer()
 }
 
@@ -116,6 +141,9 @@ type UnimplementedSpansWriterServer struct{}
 
 func (UnimplementedSpansWriterServer) WriteSpansSummary(context.Context, *WriteSpansSummaryRequest) (*WriteSpansSummaryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WriteSpansSummary not implemented")
+}
+func (UnimplementedSpansWriterServer) IngestGuestSpans(context.Context, *IngestGuestSpansRequest) (*IngestGuestSpansResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IngestGuestSpans not implemented")
 }
 func (UnimplementedSpansWriterServer) mustEmbedUnimplementedSpansWriterServer() {}
 func (UnimplementedSpansWriterServer) testEmbeddedByValue()                     {}
@@ -156,6 +184,24 @@ func _SpansWriter_WriteSpansSummary_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SpansWriter_IngestGuestSpans_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestGuestSpansRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SpansWriterServer).IngestGuestSpans(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SpansWriter_IngestGuestSpans_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SpansWriterServer).IngestGuestSpans(ctx, req.(*IngestGuestSpansRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SpansWriter_ServiceDesc is the grpc.ServiceDesc for SpansWriter service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -166,6 +212,10 @@ var SpansWriter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WriteSpansSummary",
 			Handler:    _SpansWriter_WriteSpansSummary_Handler,
+		},
+		{
+			MethodName: "IngestGuestSpans",
+			Handler:    _SpansWriter_IngestGuestSpans_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

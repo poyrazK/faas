@@ -268,6 +268,9 @@ func DrainNotificationOutboxOnceForNode(ctx context.Context, pool *pgxpool.Pool,
 			return delivered, err
 		}
 		outcome, err := deliverNotificationClaim(ctx, pool, item, notificationOutboxLease, handler)
+		if outcome == notificationDeferred {
+			continue
+		}
 		if outcome == notificationRetrying {
 			if log != nil {
 				log.Warn("db: durable notification delivery failed; queued for retry",

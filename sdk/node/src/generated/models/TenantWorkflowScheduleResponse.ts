@@ -13,10 +13,18 @@ export type TenantWorkflowScheduleResponse = {
    */
   schedule: string;
   /**
-   * Effective IANA timezone.
+   * Effective IANA timezone inherited from the published workflow.
    */
   timezone: string;
   overlap: 'skip' | 'allow';
+  /**
+   * Inherited owner-controlled recovery policy.
+   */
+  catch_up?: 'skip' | 'latest';
+  /**
+   * Inherited recovery duration
+   */
+  catch_up_window?: string;
   enabled: boolean;
   tenant_configurable: boolean;
   /**

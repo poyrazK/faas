@@ -1,0 +1,19 @@
+name: scheduled-report
+trigger:
+  type: schedule
+  schedule: "0 9 * * 1-5"
+  timezone: UTC
+  overlap: skip
+  enabled: false
+  input:
+    report: daily-summary
+steps:
+  - name: collect
+    path: /collect-report
+    input:
+      report: "{{input.report}}"
+  - name: deliver
+    path: /deliver-report
+    depends_on: [collect]
+    input:
+      report: "{{steps.collect.output}}"

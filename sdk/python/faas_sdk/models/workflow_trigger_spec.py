@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.workflow_trigger_spec_catch_up import WorkflowTriggerSpecCatchUp, check_workflow_trigger_spec_catch_up
 from ..models.workflow_trigger_spec_overlap import WorkflowTriggerSpecOverlap, check_workflow_trigger_spec_overlap
 from ..models.workflow_trigger_spec_type import WorkflowTriggerSpecType, check_workflow_trigger_spec_type
 from ..types import UNSET, Unset
@@ -20,11 +21,12 @@ T = TypeVar("T", bound="WorkflowTriggerSpec")
 class WorkflowTriggerSpec:
     """Manual start, a five-field recurring schedule, or an internal event start. Event triggers use source/event_type
     patterns and a JSON content filter; matching runs receive the full CloudEvents envelope as input. Event recipients
-    and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes and default to
-    skipping overlapping runs. Scheduling is active only on the live default deployment and requires the workflow
-    runtime. New deployments arm schedules before their next eligible minute. An app owner may mark a schedule
-    tenant_configurable to let each linked customer manage only its own cadence, timezone, overlap behavior, and enabled
-    state.
+    and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes by default;
+    catch_up latest recovers at most one unconsumed fire inside a bounded window. Overlapping runs are skipped by
+    default. Scheduling is active only on the live default deployment and requires the workflow runtime. New deployments
+    and changed triggers arm before firing. An app owner may mark a schedule tenant_configurable to let each linked
+    customer manage only its own cadence, timezone, overlap behavior, and enabled state; catch-up remains owner-
+    controlled.
 
     """
 
@@ -38,6 +40,12 @@ class WorkflowTriggerSpec:
     overlap: WorkflowTriggerSpecOverlap | Unset = UNSET
     """Skip a minute while any run of this workflow is active, or allow overlap subject to the app run quota.
     Defaults to skip."""
+    catch_up: WorkflowTriggerSpecCatchUp | Unset = UNSET
+    """Schedule-only recovery policy; defaults to skip. Latest coalesces missed fires into at most one run inside
+    the recovery window; a current-minute fire takes precedence. Quota and overlap skips consume the interval."""
+    catch_up_window: str | Unset = UNSET
+    """Schedule-only duration used with catch_up latest, between 1m and 24h. Defaults to 1h; fires exactly at the
+    age limit are included. Other policies reject this field."""
     enabled: bool | Unset = UNSET
     """Whether the automatic trigger is enabled; defaults to true. Already accepted events and existing runs
     continue after disabling."""
@@ -50,7 +58,7 @@ class WorkflowTriggerSpec:
     """Required for event triggers; exact event type or edge wildcard pattern."""
     filter_: WorkflowTriggerSpecFilter | Unset = UNSET
     """Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule,
-    timezone, input, and overlap options."""
+    timezone, input, overlap, and catch-up options."""
 
     def to_dict(self) -> dict[str, Any]:
         type_: str = self.type_
@@ -64,6 +72,12 @@ class WorkflowTriggerSpec:
         overlap: str | Unset = UNSET
         if not isinstance(self.overlap, Unset):
             overlap = self.overlap
+
+        catch_up: str | Unset = UNSET
+        if not isinstance(self.catch_up, Unset):
+            catch_up = self.catch_up
+
+        catch_up_window = self.catch_up_window
 
         enabled = self.enabled
 
@@ -92,6 +106,10 @@ class WorkflowTriggerSpec:
             field_dict["input"] = input_
         if overlap is not UNSET:
             field_dict["overlap"] = overlap
+        if catch_up is not UNSET:
+            field_dict["catch_up"] = catch_up
+        if catch_up_window is not UNSET:
+            field_dict["catch_up_window"] = catch_up_window
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
         if tenant_configurable is not UNSET:
@@ -125,6 +143,15 @@ class WorkflowTriggerSpec:
         else:
             overlap = check_workflow_trigger_spec_overlap(_overlap)
 
+        _catch_up = d.pop("catch_up", UNSET)
+        catch_up: WorkflowTriggerSpecCatchUp | Unset
+        if isinstance(_catch_up, Unset):
+            catch_up = UNSET
+        else:
+            catch_up = check_workflow_trigger_spec_catch_up(_catch_up)
+
+        catch_up_window = d.pop("catch_up_window", UNSET)
+
         enabled = d.pop("enabled", UNSET)
 
         tenant_configurable = d.pop("tenant_configurable", UNSET)
@@ -146,6 +173,8 @@ class WorkflowTriggerSpec:
             timezone=timezone,
             input_=input_,
             overlap=overlap,
+            catch_up=catch_up,
+            catch_up_window=catch_up_window,
             enabled=enabled,
             tenant_configurable=tenant_configurable,
             source=source,

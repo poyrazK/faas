@@ -249,6 +249,16 @@ func RenderSummaryText(w io.Writer, ss state.StageState, status string, terminal
 
 	order := StageOrder()
 	labels := StageLabels()
+	if ss.DependencyGate != nil && ss.DependencyGate.Blocker != "" {
+		if _, err := fmt.Fprintf(w, "Dependencies: %s\n", ss.DependencyGate.Blocker); err != nil {
+			return err
+		}
+		if ss.DependencyGate.Status == "waiting" && ss.DependencyGate.DeadlineAt != nil {
+			if _, err := fmt.Fprintf(w, "Dependency deadline: %s\n", ss.DependencyGate.DeadlineAt.UTC().Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+	}
 
 	// Build a name → StageStateItem lookup so a missing history
 	// entry (which can happen mid-deploy, before the first frame
@@ -391,6 +401,9 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 	}
 
 	var rowsHTML strings.Builder
+	if ss.DependencyGate != nil && ss.DependencyGate.Blocker != "" {
+		fmt.Fprintf(&rowsHTML, "<p class=\"stage-dependency-note\">Dependencies: %s</p>", template.HTMLEscapeString(ss.DependencyGate.Blocker))
+	}
 	if ss.RetryRestartReason != "" {
 		fmt.Fprintf(&rowsHTML, "<p class=\"stage-retry-note\">%s</p>", template.HTMLEscapeString(ss.RetryRestartReason))
 	}

@@ -184,13 +184,20 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		}
 	}
 	if req.MinInstances == nil {
-		// fall through to the egress allowlist branch
+		// Lowering max_concurrency below the configured floor leaves a floor
+		// the scheduler can never reach.
+		if req.MaxConcurrency != nil && app.MinInstances > appMaxConcurrencyAfter(app, req, limits) {
+			return minInstancesAboveMaxConcurrency(app.MinInstances, appMaxConcurrencyAfter(app, req, limits))
+		}
 	} else {
 		if !acct.Plan.MinInstancesAllowed() {
 			return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
 		}
 		if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
 			return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
+		}
+		if appMax := appMaxConcurrencyAfter(app, req, limits); *req.MinInstances > appMax {
+			return minInstancesAboveMaxConcurrency(*req.MinInstances, appMax)
 		}
 		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
@@ -1052,6 +1059,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// is `pkg/vmmd/activity.ActivityTracker` (PR-B) which counts
 	// in-flight HTTP requests; a worker has none, so the metric is
 	// forever 0 and the engine would never admit.
+	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
+		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
+		return
+	}
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
+		return
+	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1507,11 +1522,18 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
+			// The caller only sees a generic 503; keep the cause. Under load,
+			// h4-edge's no-op idle updates and one deploy's app update failed
+			// intermittently here with nothing logged (production-us hunt #5,
+			// H5-42).
+			if s.log != nil {
+				s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
+			}
 			api.WriteProblem(w, api.ErrCapacity("could not update app"))
 		}
 		return
 	}
-	if req.BeforeCheckpoint != nil {
+	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
 		// baked manifest does not match this update.
@@ -2410,6 +2432,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
+	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, target); problem != nil {
+		return state.Deployment{}, problem
+	}
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -2422,8 +2447,8 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
 			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
 		}
-		if len(check.Diff.Breaks) > 0 {
-			problem := api.ErrAPIContractBreakingChange((&openapidiff.GateError{Diff: check.Diff}).Error())
+		if check.Diff.Blocking() {
+			problem := contractGateProblem(check.Diff)
 			return state.Deployment{}, problem
 		}
 	}
@@ -2517,9 +2542,44 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }
 
-// parkApp marks the app evicted_cold; schedd reacts and tears down live
-// instances.
+// parkAppIfDeployment requires an atomic deployment comparison before parking.
+func (s *server) parkAppIfDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.parkAppWithGuard(w, r, acct, true)
+}
+
+// parkApp marks the app evicted_cold; schedd tears down live instances.
 func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.parkAppWithGuard(w, r, acct, false)
+}
+
+func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct state.Account, required bool) {
+	var input struct {
+		ExpectedDeploymentID string `json:"expected_deployment_id"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		api.WriteProblem(w, api.ErrValidation("invalid park request"))
+		return
+	}
+	if required && input.ExpectedDeploymentID == "" {
+		api.WriteProblem(w, api.ErrValidation("expected_deployment_id is required"))
+		return
+	}
+	if required {
+		var extra any
+		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+			api.WriteProblem(w, api.ErrValidation("invalid park request"))
+			return
+		}
+	}
+	if input.ExpectedDeploymentID != "" {
+		if _, err := uuid.Parse(input.ExpectedDeploymentID); err != nil {
+			api.WriteProblem(w, api.ErrValidation("expected_deployment_id must be a UUID"))
+			return
+		}
+	}
+
 	fresh := false
 	if raw := r.URL.Query().Get("fresh"); raw != "" {
 		parsed, err := strconv.ParseBool(raw)
@@ -2548,11 +2608,23 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		parkTransition state.AppParkTransition
 		durablePark    state.AppParkTransitionStore
 	)
-	if transitionStore, ok := s.store.(state.AppParkTransitionStore); ok {
+	if input.ExpectedDeploymentID != "" {
+		conditional, ok := s.store.(state.ConditionalAppParkTransitionStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("conditional parking is unavailable"))
+			return
+		}
+		durablePark = conditional
+		parkTransition, claimed, err = conditional.BeginAppParkTransitionIfDeployment(r.Context(), app.ID, app.Status, input.ExpectedDeploymentID)
+	} else if transitionStore, ok := s.store.(state.AppParkTransitionStore); ok {
 		durablePark = transitionStore
 		parkTransition, claimed, err = transitionStore.BeginAppParkTransition(r.Context(), app.ID, app.Status)
 	} else {
 		claimed, err = transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	}
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Deployment changed", "expected deployment is no longer the latest app deployment"))
+		return
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
@@ -2781,6 +2853,31 @@ type appStatusCompareAndSetter interface {
 	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
 }
 
+// appMaxConcurrencyAfter is the app's instance ceiling once this update
+// applies: its own max_concurrency, bounded by the plan.
+func appMaxConcurrencyAfter(app state.App, req *api.UpdateAppRequest, limits api.Limits) int {
+	appMax := app.MaxConcurrency
+	if req.MaxConcurrency != nil {
+		appMax = *req.MaxConcurrency
+	}
+	if appMax <= 0 || appMax > limits.MaxConcurrency {
+		appMax = limits.MaxConcurrency
+	}
+	return appMax
+}
+
+// minInstancesAboveMaxConcurrency rejects a floor above the app's own
+// instance ceiling. The plan bound alone accepted min_instances=3 on an app
+// with max_concurrency=1, and the CLI then promised three warm instances
+// (production-us hunt #5, H5-38).
+func minInstancesAboveMaxConcurrency(minInstances, appMax int) *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidMinInstances,
+		"Invalid min_instances",
+		fmt.Sprintf("min_instances (%d) exceeds this app's max_concurrency (%d); raise max_concurrency or lower min_instances.", minInstances, appMax)).
+		WithLimit(int64(appMax), int64(minInstances)).
+		WithDocs("https://gregale.dev/docs/apps#min-instances")
+}
+
 func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
 	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
 		return atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppActive, state.AppEvictedCold)
@@ -2794,7 +2891,18 @@ func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool
 	return true, nil
 }
 
+// restartClaimReleaseTimeout bounds the release write once it is detached from
+// the request.
+const restartClaimReleaseTimeout = 10 * time.Second
+
+// releaseAppRestartClaim returns a claimed app to active. It runs detached
+// from the caller's context: the release follows a failure, which is often
+// the request's own deadline, and a release on that context fails too and
+// leaves a live app parked; the reaper then stops every serving instance
+// (production-us hunt #5, H5-35).
 func releaseAppRestartClaim(ctx context.Context, store state.Store, appID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restartClaimReleaseTimeout)
+	defer cancel()
 	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
 		_, err := atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppEvictedCold, state.AppActive)
 		return err
@@ -5941,6 +6049,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
 	resp := s.deploymentResponse(d, app)
+	resp.DurableEntityValidator = s.deploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
 	}

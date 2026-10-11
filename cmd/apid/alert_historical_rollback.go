@@ -38,8 +38,12 @@ func (s *server) queueHistoricalAlertRollback(ctx context.Context, r api.AlertRo
 		if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 			return "", "", nil, err
 		}
-		if len(check.Diff.Breaks) > 0 {
-			return "failed", api.CodeAPIContractBreakingChange, nil, nil
+		if check.Diff.Blocking() {
+			code := api.CodeAPIContractBreakingChange
+			if len(check.Diff.Breaks) == 0 && len(check.Diff.Unknowns) > 0 {
+				code = api.CodeAPIContractComparisonIncomplete
+			}
+			return "failed", code, nil, nil
 		}
 	}
 	accepted, err := s.store.(state.AlertRollbackStore).CommitAlertRollback(ctx, r)

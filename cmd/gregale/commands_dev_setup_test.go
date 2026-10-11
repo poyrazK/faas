@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDevSetupReceiptIsReadyAndSecretSafe(t *testing.T) {
@@ -27,12 +28,15 @@ func TestDevSetupReceiptIsReadyAndSecretSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildDevSetupReceipt(dir, dir, "demo", config, path, keys, "", 0, false, false, false, false, false, "")
+	receipt := buildDevSetupReceipt(dir, dir, "demo", config, path, keys, "", 0, false, false, false, false, false, "", 0)
 	if !receipt.Ready || !receipt.Authenticated {
 		t.Fatalf("receipt readiness = ready:%t authenticated:%t, want both true", receipt.Ready, receipt.Authenticated)
 	}
 	if receipt.Class != "app" || receipt.Framework != "node" {
 		t.Fatalf("detected shape = %q/%q, want app/node", receipt.Class, receipt.Framework)
+	}
+	if receipt.TTL != "24h" {
+		t.Fatalf("receipt ttl = %q, want the 24h default", receipt.TTL)
 	}
 	if receipt.EnvKeyCount != 2 || len(receipt.DependencyFiles) != 1 || receipt.DependencyFiles[0] != "package.json" {
 		t.Fatalf("env/dependencies = %d/%v, want 2/[package.json]", receipt.EnvKeyCount, receipt.DependencyFiles)
@@ -118,5 +122,57 @@ func TestCmdDevSetupUsesManifestDevDefaults(t *testing.T) {
 func TestDevSetupRejectsStartOnlyFlags(t *testing.T) {
 	if code := cmdDevSetup([]string{"--once"}); code != 1 {
 		t.Fatalf("cmdDevSetup(--once) = %d, want 1", code)
+	}
+}
+
+func TestCmdDevSetupTTLPrecedence(t *testing.T) {
+	cases := []struct {
+		name        string
+		manifestTTL string
+		args        []string
+		wantCode    int
+		wantOutput  string
+	}{
+		{name: "default lease", wantOutput: "lease: 24h"},
+		{name: "manifest lease", manifestTTL: "72h", wantOutput: "--ttl 72h"},
+		{name: "flag wins over manifest", manifestTTL: "72h", args: []string{"--ttl", "168h"}, wantOutput: "--ttl 168h"},
+		{name: "invalid flag", args: []string{"--ttl", "10m"}, wantCode: 1},
+		{name: "invalid manifest", manifestTTL: "soon", wantCode: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"start":"node server.js"}}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.manifestTTL != "" {
+				if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("dev:\n  ttl: "+tc.manifestTTL+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(dir)
+			t.Setenv("FAAS_TOKEN", testAPIKey('d'))
+			stdout, restoreOut := captureStdout(t)
+			defer restoreOut()
+			_, restoreErr := captureStderr(t)
+			defer restoreErr()
+
+			if code := cmdDevSetup(tc.args); code != tc.wantCode {
+				t.Fatalf("cmdDevSetup(%v) = %d, want %d; stdout=%q", tc.args, code, tc.wantCode, stdout.String())
+			}
+			if tc.wantOutput != "" && !strings.Contains(stdout.String(), tc.wantOutput) {
+				t.Fatalf("setup output missing %q: %q", tc.wantOutput, stdout.String())
+			}
+		})
+	}
+}
+
+func TestDevSetupDevArgsForwardsLease(t *testing.T) {
+	args := devSetupDevArgs("", "", "", "", false, false, false, false, "", 72*time.Hour)
+	if strings.Join(args, " ") != "--ttl 72h" {
+		t.Fatalf("args = %v, want --ttl 72h", args)
+	}
+	if args := devSetupDevArgs("", "", "", "", false, false, false, false, "", 0); len(args) != 0 {
+		t.Fatalf("args without lease = %v, want none", args)
 	}
 }

@@ -312,14 +312,15 @@ func TestCmdBindingsSmokeWaitTimeoutBoundsReads(t *testing.T) {
 			}))
 			defer srv.Close()
 			args := smokeTestArgs()
-			args[len(args)-1] = "100ms"
+			// Allow setup requests to finish before testing the blocked read.
+			args[len(args)-1] = "1s"
 			start := time.Now()
 			code, out, errOut := captureBindingCLI(t, srv.URL, args...)
 			wantPosts := 0
 			if slowRead == "task" {
 				wantPosts = 1
 			}
-			if code == 0 || posts != wantPosts || cancels != 0 || time.Since(start) > time.Second || strings.Contains(out, `"passed":true`) {
+			if code == 0 || posts != wantPosts || cancels != 0 || time.Since(start) > 5*time.Second || strings.Contains(out, `"passed":true`) {
 				t.Fatalf("exit=%d posts=%d cancels=%d output=%s %s", code, posts, cancels, out, errOut)
 			}
 		})

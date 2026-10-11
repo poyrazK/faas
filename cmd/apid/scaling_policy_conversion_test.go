@@ -123,7 +123,7 @@ func setDistinctiveValue(v reflect.Value) bool {
 		// would be rejected elsewhere; "drop" is valid for it and
 		// harmless as a timezone for a pure conversion test.
 		v.SetString("drop")
-	case reflect.Ptr:
+	case reflect.Pointer:
 		elem := reflect.New(v.Type().Elem())
 		if !fillStruct(elem.Elem()) {
 			return false

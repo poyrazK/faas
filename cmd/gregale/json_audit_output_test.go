@@ -175,8 +175,8 @@ func TestEnvPushJSONReportsActualWritesAndFreshRestart(t *testing.T) {
 		{name: "file", count: 2, result: "applied", mode: "next_cold_wake"},
 		{name: "stdin", stdin: true, count: 2, result: "applied", mode: "next_cold_wake"},
 		{name: "restart", restart: true, count: 2, result: "applied", mode: "fresh_restart_requested"},
-		{name: "partial", restart: true, failSet: true, code: 1, count: 1, result: "partial", mode: "next_cold_wake"},
-		{name: "restart-failed", restart: true, failRestart: true, code: 1, count: 2, result: "restart_failed", mode: "next_cold_wake"},
+		{name: "partial", restart: true, failSet: true, code: 5, count: 1, result: "partial", mode: "next_cold_wake"},
+		{name: "restart-failed", restart: true, failRestart: true, code: 5, count: 2, result: "restart_failed", mode: "next_cold_wake"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

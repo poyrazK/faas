@@ -34,6 +34,27 @@ func TestGenerateFromEdgeRules_AddsRoutePath(t *testing.T) {
 	}
 }
 
+func TestGenerateFromEdgeRulesMarksOpaqueFacetBaselineKnown(t *testing.T) {
+	embedded, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	out, err := GenerateFromEdgeRules(embedded, nil, []api.CreateEdgeRuleRequest{{
+		Kind: "route", MatchHost: "api.example.com", MatchPath: "/v1/foo",
+	}})
+	if err != nil {
+		t.Fatalf("GenerateFromEdgeRules: %v", err)
+	}
+	schema := out.Paths["api.example.com/v1/foo"].Methods["get"].Responses["200"].Content["application/json"]
+	if schema.UnsupportedFacetsSHA256 == "" || schema.Properties["status"].UnsupportedFacetsSHA256 == "" {
+		t.Fatalf("generated route schemas must preserve known empty-facet fingerprints: %+v", schema)
+	}
+	comparison := CompareDetailed(out, out)
+	if len(comparison.Unknowns) != 0 {
+		t.Fatalf("identical generated route contracts should be complete, got %+v", comparison.Unknowns)
+	}
+}
+
 // TestGenerateFromEdgeRules_RemovedPath_FiresBreak — a route
 // edge rule present in the baseline rules but absent from the
 // pending rules must produce a SchemaBreak with Kind=FieldRemoved

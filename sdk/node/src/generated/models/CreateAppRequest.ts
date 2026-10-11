@@ -5,18 +5,22 @@
 import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
+import type { ProfilingConfig } from './ProfilingConfig.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
+  profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
   /**
    * The tag- prefix is reserved for stable deployment-alias hostnames.
    */

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {{if .Data.RefreshSeconds}}<meta http-equiv="refresh" content="{{.Data.RefreshSeconds}}">{{end}}
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 850px; margin: 0 auto; padding: 1.5rem; }
+    header { border-bottom: 1px solid #ddd; padding-bottom: 1rem; }
+    main { padding: 1rem 0; }
+    code { overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.75rem; border: 1px solid #9ca3af; border-radius: 4px; }
+    dt { font-weight: 600; margin-top: 0.75rem; }
+    dd { margin: 0.25rem 0; }
+  </style>
+</head>
+<body>
+  <header><strong>Gregale</strong> · <a href="/dashboard/apps">Apps</a> · <a href="/dashboard/apps/{{.Data.App.Slug}}">{{.Data.App.Slug}}</a></header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>Restart progress</h1>
+    <p>App: <code>{{.Data.App.Slug}}</code> · restart ID: <code>{{.Data.WakeID}}</code></p>
+    {{if .Data.Status}}
+      {{with .Data.Status}}
+        <section class="notice" aria-label="Restart status">
+          <h2>{{.Status}}</h2>
+          <p role="status">{{.ProgressMessage}}</p>
+          <p><strong>Next:</strong> {{.ProgressNextStep}}</p>
+        </section>
+        <dl>
+          <dt>Processing attempts</dt><dd>{{.Attempts}}</dd>
+          <dt>Requested</dt><dd><time>{{.RequestedAt.Format "2006-01-02T15:04:05Z07:00"}}</time></dd>
+          {{if .FailureReason}}<dt>Last unsuccessful attempt</dt><dd><code>{{.FailureReason}}</code></dd>{{end}}
+          {{if .CompletedAt}}<dt>Processing completed</dt><dd><time>{{.CompletedAt.Format "2006-01-02T15:04:05Z07:00"}}</time></dd>{{end}}
+        </dl>
+      {{end}}
+    {{else}}
+      <p class="notice" role="status">{{.Data.Unavailable}}</p>
+    {{end}}
+    {{if .Data.RefreshSeconds}}<p class="muted">This page refreshes while the restart is pending.</p>{{end}}
+    <p><a href="/dashboard/apps/{{.Data.App.Slug}}/restarts/{{.Data.WakeID}}">Refresh status</a> · <a href="/dashboard/apps/{{.Data.App.Slug}}">View current application health</a> · <a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View logs</a> · <a href="/dashboard/apps/{{.Data.App.Slug}}/instances">View instances</a></p>
+    <p>Follow in the CLI:</p>
+    <pre><code>gregale app {{.Data.App.Slug}} restart status --wake-id {{.Data.WakeID}} --wait</code></pre>
+    <p class="muted">Refreshing only reads this accepted request. Restart processing and current application health are separate results.</p>
+  </main>
+</body>
+</html>

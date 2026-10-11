@@ -1,6 +1,8 @@
 import pg from 'pg';
+import { checkMcpTaskSchema } from './task-schema.js';
+import { parseMcpTaskEncryptionKeys } from './task-crypto.js';
 import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from './task-store.js';
-import { createMcpTaskRuntime, mcpTaskHandlers } from './tasks.js';
+import { createMcpTaskRuntime, mcpTaskHandlers, validateMcpTaskRetryPolicy } from './tasks.js';
 import { resolveMcpTaskMetricsSettings, startMcpTaskMetricsPublisher } from './task-metrics.js';
 import defaults from './task-limits.json' with { type: 'json' };
 
@@ -36,10 +38,15 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
     role,
     databaseURL,
     ownerKey,
+    encryptionKeys: role !== 'observer' && settings.encryption_keys_env ? parseMcpTaskEncryptionKeys(env[envName(settings.encryption_keys_env)]) : undefined,
     namespace: namespace.trim(),
     ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
     pollIntervalMs: settings.poll_interval_ms ?? 2000,
     workerConcurrency: settings.worker_concurrency ?? 1,
+    shutdownTimeoutMs: settings.shutdown_timeout_ms ?? 30_000,
+    ...validateMcpTaskRetryPolicy({ maxAttempts: settings.max_attempts ?? 3, retryBaseDelayMs: settings.retry_base_delay_ms ?? 1000, retryMaxDelayMs: settings.retry_max_delay_ms ?? 60_000 }),
+    maxRunning: settings.max_running || defaults.maxRunning,
+    maxRunningPerOwner: settings.max_running_per_owner || defaults.maxRunningPerOwner,
     maxOutstanding: settings.max_outstanding || defaults.maxOutstanding,
     maxOutstandingPerOwner: settings.max_outstanding_per_owner || defaults.maxOutstandingPerOwner,
   };
@@ -51,6 +58,7 @@ export async function startMcpTaskRuntime(config, {
   createPool = options => new pg.Pool(options),
   createStore = createPostgresMcpTaskStore,
   createObserver = createMcpTaskQueueObserver,
+  checkSchema = checkMcpTaskSchema,
   createRuntime = createMcpTaskRuntime,
   createMetricsPublisher = startMcpTaskMetricsPublisher,
   handlers = mcpTaskHandlers,
@@ -64,19 +72,26 @@ export async function startMcpTaskRuntime(config, {
   let taskRuntime;
   let metricsPublisher;
   try {
-    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, ttlMs: settings.ttlMs, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
-    if (role === 'observer') await store.queueMetrics();
+    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, encryptionKeys: settings.encryptionKeys, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
+    if (role === 'observer') {
+      await checkSchema({ pool, namespace: settings.namespace, role: 'observer' });
+      await store.queueMetrics();
+    }
     else taskRuntime = createRuntime({
       store,
       handlers,
       pollIntervalMs: settings.pollIntervalMs,
       workerConcurrency: settings.workerConcurrency,
+      shutdownTimeoutMs: settings.shutdownTimeoutMs,
+      maxAttempts: settings.maxAttempts,
+      retryBaseDelayMs: settings.retryBaseDelayMs,
+      retryMaxDelayMs: settings.retryMaxDelayMs,
       workerEnabled: settings.role !== 'web',
       keepAlive: settings.role === 'worker',
       onError: () => console.error(JSON.stringify({ event: 'mcp_task_runtime_error' })),
     });
     await taskRuntime?.start();
-    if (metricsSettings) metricsPublisher = createMetricsPublisher({ store, ...metricsSettings,
+    if (metricsSettings) metricsPublisher = createMetricsPublisher({ store, ...metricsSettings, role: settings.role,
       keepAlive: role === 'observer',
       onError: () => console.error(JSON.stringify({ event: 'mcp_task_metrics_publish_failed' })),
     });
@@ -94,8 +109,8 @@ export async function startMcpTaskRuntime(config, {
       if (closing) return closing;
       closing = (async () => {
         try {
-          await metricsPublisher?.close();
           await taskRuntime?.stop();
+          await metricsPublisher?.close();
         } finally {
           await pool.end();
         }

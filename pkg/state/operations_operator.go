@@ -25,7 +25,12 @@ func (s *PgStore) ListAccountOperations(ctx context.Context, account string, opt
 		params.BeforeID, _ = operationUUID(cursor.ID)
 		params.BeforeCreatedAt = pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: true}
 	}
-	raw, err := sqlc.New().ListAccountCustomerOperations(ctx, s.pool, params)
+	var raw [][]byte
+	if opts.SubjectType == "" {
+		raw, err = sqlc.New().ListAccountCustomerOperations(ctx, s.pool, params)
+	} else {
+		raw, err = sqlc.New().ListAccountCustomerOperationsBySubject(ctx, s.pool, sqlc.ListAccountCustomerOperationsBySubjectParams{AccountID: params.AccountID, TenantID: params.TenantID, AppID: params.AppID, Scope: params.Scope, OperationName: params.OperationName, OperationState: params.OperationState, Now: params.Now, BeforeCreatedAt: params.BeforeCreatedAt, BeforeID: params.BeforeID, PageLimit: params.PageLimit, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID})
+	}
 	if err != nil {
 		return api.OperationListResponse{}, fmt.Errorf("state: list account operations: %w", mapErr(err))
 	}
@@ -75,6 +80,17 @@ func (m *MemStore) OperationExecutions(_ context.Context, account, id string, af
 		return api.OperationExecutionsResponse{}, ErrOperationExpired
 	}
 	rows := []api.OperationExecution{}
+	for generation, row := range data.jobExecutions[id] {
+		if generation > int(afterGeneration) {
+			rows = append(rows, row)
+		}
+	}
+	for generation, row := range data.workflowExecutions[id] {
+		if generation > int(afterGeneration) {
+			row.CompletedAt = cloneWorkflowTime(row.CompletedAt)
+			rows = append(rows, row)
+		}
+	}
 	for invocation, operation := range data.executions {
 		generation := data.generations[invocation]
 		inv, exists := m.invocations[invocation]
@@ -100,8 +116,15 @@ func (s *PgStore) OperationExecutions(ctx context.Context, account, id string, a
 	if err != nil {
 		return api.OperationExecutionsResponse{}, err
 	}
-	if _, err := s.OperationByID(ctx, account, "", id); err != nil {
+	op, err := s.OperationByID(ctx, account, "", id)
+	if err != nil {
 		return api.OperationExecutionsResponse{}, err
+	}
+	if op.WorkflowRunID != "" {
+		return s.operationWorkflowExecutions(ctx, op, afterGeneration, limit)
+	}
+	if op.JobRunID != "" {
+		return s.operationJobExecutions(ctx, op, afterGeneration, limit)
 	}
 	a, _ := operationUUID(account)
 	i, _ := operationUUID(id)

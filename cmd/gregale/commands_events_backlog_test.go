@@ -11,7 +11,7 @@ import (
 
 func TestCmdEventsBacklogDiscoveryAndFilters(t *testing.T) {
 	resetJSONOut(t)
-	fake := authedFakeAPI(t, `{"coverage":"captured_application_recipients","unattributed_receipts":2,"consumers":[{"app_slug":"orders","subscription_id":"sub","waiting_recipients":9,"capacity_waiting_recipients":7}],"recipients":[{"app_slug":"orders","event_id":"evt","waiting_reason":"capacity_consumer","capacity_deferrals":20}],"next_after":"recipient","next_consumers_after":"consumer"}`, http.StatusOK)
+	fake := authedFakeAPI(t, `{"coverage":"captured_and_backfill_recipients","unattributed_receipts":2,"consumers":[{"app_slug":"orders","subscription_id":"sub","waiting_recipients":9,"capacity_waiting_recipients":7}],"recipients":[{"app_slug":"orders","event_id":"evt","waiting_reason":"capacity_consumer","capacity_deferrals":20}],"next_after":"recipient","next_consumers_after":"consumer"}`, http.StatusOK)
 	stdout, restore := swapStdout(t)
 	defer restore()
 	if code := cmdEvents([]string{"backlog", "--app", "orders", "--subscription-id", "a&b", "--capacity-scope", "consumer", "--min-age", "10m", "--limit", "17", "--consumer-limit", "3", "--consumers-after", "before"}); code != 0 {
@@ -39,7 +39,7 @@ func TestCmdEventsBacklogValidation(t *testing.T) {
 
 func TestCmdEventsBacklogJSON(t *testing.T) {
 	resetJSONOut(t)
-	authedFakeAPI(t, `{"coverage":"captured_application_recipients","recipients":[],"consumers":[],"unattributed_receipts":3}`, http.StatusOK)
+	authedFakeAPI(t, `{"coverage":"captured_and_backfill_recipients","recipients":[],"consumers":[],"unattributed_receipts":3}`, http.StatusOK)
 	jsonOutput = true
 	stdout, restore := swapStdout(t)
 	defer restore()

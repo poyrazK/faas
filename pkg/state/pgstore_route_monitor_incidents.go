@@ -21,10 +21,11 @@ func pgReadRouteMonitorIncident(ctx context.Context, db sqlc.DBTX, accountID, ap
 	if err := json.Unmarshal(body, &i); err != nil {
 		return i, fmt.Errorf("decode route monitor incident: %w", err)
 	}
+	routemonitor.EnsureIncidentTimeline(&i)
 	return i, nil
 }
 func pgWriteRouteMonitorIncident(ctx context.Context, db sqlc.DBTX, accountID string, i api.RouteMonitorIncident) error {
-	body, err := encodeRouteMonitorIncident(i)
+	body, err := encodeRouteMonitorIncident(&i)
 	if err != nil {
 		return err
 	}
@@ -62,6 +63,17 @@ func pgNotifyRouteMonitor(ctx context.Context, db sqlc.DBTX, owner RoutePolicySn
 	}
 	if err := sqlc.New().EnqueueRouteHealthNotification(ctx, db, sqlc.EnqueueRouteHealthNotificationParams{AppID: i.AppID, AccountID: owner.Account.ID, Event: string(event), DecisionID: i.ID, Payload: body}); err != nil {
 		return fmt.Errorf("enqueue route monitor event: %w", err)
+	}
+	return nil
+}
+
+func pgNotifyRouteMonitorEscalation(ctx context.Context, db sqlc.DBTX, owner RoutePolicySnapshot, i api.RouteMonitorIncident, report api.RouteMonitorReport, escalation *api.RouteMonitorWebhookEscalation) error {
+	event, transitionID, body, err := routeMonitorEscalationNotification(i, owner.App.Slug, report, escalation)
+	if err != nil {
+		return err
+	}
+	if err := sqlc.New().EnqueueRouteHealthNotification(ctx, db, sqlc.EnqueueRouteHealthNotificationParams{AppID: i.AppID, AccountID: owner.Account.ID, Event: string(event), DecisionID: transitionID, Payload: body}); err != nil {
+		return fmt.Errorf("enqueue route monitor escalation event: %w", err)
 	}
 	return nil
 }
@@ -167,25 +179,70 @@ func pgAppendRouteMonitorEvidence(ctx context.Context, db sqlc.DBTX, accountID, 
 		i.EvidenceTruncated = true
 		return nil
 	}
+	evidence, err := pgBuildRouteMonitorEvidence(ctx, db, accountID, slug, i.AppID, i.DeploymentID, method, path, signal, customerGroupBy, customerID, windows)
+	if err != nil {
+		return err
+	}
+	i.Evidence = append(i.Evidence, evidence)
+	return nil
+}
+
+func pgBuildRouteMonitorEvidence(ctx context.Context, db sqlc.DBTX, accountID, slug, appID, deploymentID, method, path, signal, customerGroupBy, customerID string, windows []api.RouteMonitorWindow) (api.RouteMonitorEvidence, error) {
 	evidence := api.RouteMonitorEvidence{CustomerGroupBy: customerGroupBy, CustomerID: customerID, Method: method, Path: path, Signal: signal, Windows: []api.RouteMonitorEvidenceWindow{}}
-	out := api.RouteHealthInvestigation{Report: api.RouteHealthReport{AppID: i.AppID, DeploymentID: i.DeploymentID, StableDeploymentID: i.DeploymentID}, Selection: api.RouteHealthInvestigationSelection{Method: method, Path: path, Signal: signal, CustomerGroupBy: customerGroupBy, CustomerID: customerID}, Windows: []api.RouteHealthInvestigationWindow{}}
+	out := api.RouteHealthInvestigation{Report: api.RouteHealthReport{AppID: appID, DeploymentID: deploymentID, StableDeploymentID: deploymentID}, Selection: api.RouteHealthInvestigationSelection{Method: method, Path: path, Signal: signal, CustomerGroupBy: customerGroupBy, CustomerID: customerID}, Windows: []api.RouteHealthInvestigationWindow{}}
 	for _, w := range windows {
 		out.Windows = append(out.Windows, api.RouteHealthInvestigationWindow{Start: w.Start, End: w.End})
 	}
 	if err := pgInvestigationExamples(ctx, db, accountID, slug, &out); err != nil {
-		return err
+		return api.RouteMonitorEvidence{}, err
 	}
 	for j := range out.Windows {
 		out.Windows[j].Stable = api.RouteHealthInvestigationSide{Examples: []api.RouteHealthInvestigationExample{}}
 	}
 	if signal == "latency" {
 		if err := pgInvestigationLatency(ctx, db, accountID, slug, &out); err != nil {
-			return err
+			return api.RouteMonitorEvidence{}, err
 		}
 	}
 	for _, w := range out.Windows {
 		evidence.Windows = append(evidence.Windows, api.RouteMonitorEvidenceWindow{Start: w.Start, End: w.End, Requests: w.Candidate, Diagnostics: w.Diagnostics})
 	}
-	i.Evidence = append(i.Evidence, evidence)
-	return nil
+	return evidence, nil
+}
+
+func pgBuildRouteMonitorIncidentEscalation(ctx context.Context, db sqlc.DBTX, accountID, slug string, incident api.RouteMonitorIncident, report api.RouteMonitorReport, previous api.RouteMonitorIncidentTimelineEntry, summary *api.RouteMonitorWebhookEscalation) (api.RouteMonitorIncidentEscalation, error) {
+	if summary == nil || summary.NewlyViolatedSignals < 1 || summary.NewlyViolatedRoutes < 1 || len(report.Routes) > api.RouteMonitorIncidentEscalationSignalsMax/2 {
+		return api.RouteMonitorIncidentEscalation{}, fmt.Errorf("invalid route monitor escalation evidence")
+	}
+	current := routemonitor.IncidentTimelineEntry(report)
+	changes := routemonitor.NewlyViolatedIncidentTimelineSignals(previous, current)
+	if len(changes) != summary.NewlyViolatedSignals || !previous.CheckedAt.Equal(summary.PreviousCheckedAt) {
+		return api.RouteMonitorIncidentEscalation{}, fmt.Errorf("route monitor escalation signals do not match the timeline")
+	}
+	detail := api.RouteMonitorIncidentEscalation{
+		TransitionID:         routeMonitorEscalationTransitionID(incident.ID, report.CheckedAt),
+		CheckedAt:            report.CheckedAt,
+		PreviousCheckedAt:    previous.CheckedAt,
+		NewlyViolatedRoutes:  summary.NewlyViolatedRoutes,
+		NewlyViolatedSignals: summary.NewlyViolatedSignals,
+		Signals:              make([]api.RouteMonitorIncidentEscalationSignal, 0, len(changes)),
+		Evidence:             []api.RouteMonitorEvidence{},
+	}
+	for _, change := range changes {
+		if change.RouteIndex < 0 || change.RouteIndex >= len(report.Routes) {
+			return api.RouteMonitorIncidentEscalation{}, fmt.Errorf("route monitor escalation selected an unknown route")
+		}
+		finding := report.Routes[change.RouteIndex]
+		detail.Signals = append(detail.Signals, api.RouteMonitorIncidentEscalationSignal{RouteIndex: change.RouteIndex, Signal: change.Signal, Finding: finding})
+		if len(detail.Evidence) >= api.RouteMonitorIncidentEscalationEvidenceLimit {
+			detail.EvidenceTruncated = true
+			continue
+		}
+		evidence, err := pgBuildRouteMonitorEvidence(ctx, db, accountID, slug, incident.AppID, incident.DeploymentID, finding.Route.Method, finding.Route.Path, change.Signal, "", "", finding.Windows)
+		if err != nil {
+			return api.RouteMonitorIncidentEscalation{}, err
+		}
+		detail.Evidence = append(detail.Evidence, evidence)
+	}
+	return detail, nil
 }

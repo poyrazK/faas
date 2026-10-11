@@ -40,13 +40,13 @@ func decodeAppWebhookAttemptPageToken(token string) (int, int, bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	generation, err := strconv.Atoi(generationText)
-	if err != nil || generation < 0 || generation > (1<<31)-1 {
+	generation, err := strconv.ParseInt(generationText, 10, 32)
+	if err != nil || generation < 0 {
 		return 0, 0, false
 	}
-	number, err := strconv.Atoi(numberText)
+	number, err := strconv.ParseInt(numberText, 10, 32)
 	if err != nil || number < 1 || number > 8 {
 		return 0, 0, false
 	}
-	return generation, number, true
+	return int(generation), int(number), true
 }

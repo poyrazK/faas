@@ -386,7 +386,8 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		`sum(increase(schedd_egress_net_tx_bytes_total{app=%q}[%s]))`, appID, rng)
 	if v, err := fetcher.QueryScalar(ctx, egressQ); err == nil {
 		resp.EgressBytes = int64(SafeRoundNonNeg(v))
-	} else {
+	} else if !errors.Is(err, promql.ErrNoData) {
+		// An app that sent nothing has no series; that is zero, not a failure.
 		log.Warn("appmetrics: egress_bytes query failed", "app_id", appID, "err", err)
 	}
 
@@ -415,7 +416,8 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		`sum(increase(gateway_egress_tx_bytes_total{app=%q}[%s]))`, appID, rng)
 	if v, err := fetcher.QueryScalar(ctx, txBytesQ); err == nil {
 		resp.TxBytes = int64(SafeRoundNonNeg(v))
-	} else {
+	} else if !errors.Is(err, promql.ErrNoData) {
+		// An app that sent nothing has no series; that is zero, not a failure.
 		log.Warn("appmetrics: tx_bytes query failed", "app_id", appID, "err", err)
 	}
 

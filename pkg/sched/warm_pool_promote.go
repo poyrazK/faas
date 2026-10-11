@@ -116,7 +116,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 
 		resumeStartedAt := time.Now()
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
-		receipt, resumeErr := e.resumeWarmWithStandards(resumeCtx, warm)
+		receipt, resumeErr := e.resumeWarmWithStandards(resumeCtx, warm, imageHealthcheckRequiredFromDep(dep))
 		cancel()
 		if resumeErr != nil {
 			if errors.Is(resumeErr, state.ErrConflict) {

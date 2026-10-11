@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestListEventDeliveries_ReturnsOnlyEventInvocations(t *testing.T) {
@@ -481,10 +482,18 @@ func TestReplayRetryableEventFanoutFailuresRequiresCompleteEventIdentity(t *test
 func TestListEventSubscriptions_ReturnsReconciledManifestRows(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "events-app")
-	_, _, err := e.store.UpsertEventSubscription(context.Background(), e.acct.ID, appID,
+	subscription, _, err := e.store.UpsertEventSubscription(context.Background(), e.acct.ID, appID,
 		"orders", "order.created", json.RawMessage(`{"status":"paid"}`))
 	if err != nil {
 		t.Fatalf("seed event subscription: %v", err)
+	}
+	policy := workpolicy.Policy{Name: "ordered-orders", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll}
+	if _, err := e.store.UpsertAppWorkPolicy(context.Background(), e.acct.ID, appID, policy); err != nil {
+		t.Fatalf("seed event work policy: %v", err)
+	}
+	if _, err := e.store.SetEventWorkBinding(context.Background(), appID, subscription.ID, policy.Name,
+		"data.order_id", state.EventWorkBindingOptions{Ordered: true}); err != nil {
+		t.Fatalf("seed ordered event work binding: %v", err)
 	}
 
 	rec := e.do(t, "GET", "/v1/apps/events-app/event-subscriptions", nil, nil)
@@ -502,7 +511,7 @@ func TestListEventSubscriptions_ReturnsReconciledManifestRows(t *testing.T) {
 		t.Fatalf("subscriptions = %d, want 1", len(out.Subscriptions))
 	}
 	got := out.Subscriptions[0]
-	if got.Source != "orders" || got.Type != "order.created" || !got.Enabled {
+	if got.Source != "orders" || got.Type != "order.created" || !got.Enabled || !got.Ordered {
 		t.Fatalf("subscription = %+v", got)
 	}
 	if string(got.Filter) != `{"status":"paid"}` {

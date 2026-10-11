@@ -16,12 +16,21 @@ type standardNativePromotionVMM interface {
 	PromoteAdmittedRuntime(context.Context, string, *vmmdpb.PromoteAdmittedRuntimeRequest) (runtimeadmission.Receipt, error)
 }
 
-func (e *Engine) resumeWarmWithStandards(ctx context.Context, warm state.Instance) (*runtimeadmission.Receipt, error) {
+func (e *Engine) resumeWarmWithStandards(ctx context.Context, warm state.Instance, imageHealthcheck bool) (*runtimeadmission.Receipt, error) {
 	capture, err := e.capturedStandardRuntime(ctx, warm.AppID, warm.ID)
 	if err != nil {
 		return nil, applicationStandardRuntimeProblem(err)
 	}
 	if !capture.Managed {
+		if imageHealthcheck {
+			checked, ok := e.vmm.(interface {
+				ResumeWarmInstanceWithImageHealthcheck(context.Context, string, string) error
+			})
+			if !ok {
+				return nil, runtimeadmission.ErrUnavailable
+			}
+			return nil, checked.ResumeWarmInstanceWithImageHealthcheck(ctx, e.nodeForRoute(warm.NodeID), warm.ID)
+		}
 		resumer, ok := e.vmm.(WarmResumeVMM)
 		if !ok {
 			return nil, runtimeadmission.ErrUnavailable

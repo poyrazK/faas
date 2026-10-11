@@ -68,6 +68,21 @@ type ReadOnlyCredentialEvidence struct {
 	Revoked               bool `json:"revoked"`
 }
 
+type DataAPICredentialEvidence struct {
+	SchemaIsolated        bool `json:"schema_isolated"`
+	RLSEnforced           bool `json:"rls_enforced"`
+	PasswordRecovered     bool `json:"password_recovered"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+	Revoked               bool `json:"revoked"`
+}
+
+func (e DataAPICredentialEvidence) Validate() error {
+	if !e.SchemaIsolated || !e.RLSEnforced || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 func (e ReadOnlyCredentialEvidence) Validate() error {
 	if !e.Restricted || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
 		return ErrUnavailable
@@ -89,6 +104,7 @@ type QualificationReport struct {
 	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
 	CredentialAccess     []CredentialAccess           `json:"credential_access"`
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
+	DataAPICredentials   *DataAPICredentialEvidence   `json:"data_api_credentials,omitempty"`
 	ClassResize          bool                         `json:"class_resize"`
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
@@ -100,12 +116,15 @@ type QualificationReport struct {
 // codes: logical database, binding, provider resource, credential material,
 // and connection URLs never cross this boundary.
 type LifecycleQualificationReport struct {
+	Mode   string               `json:"mode,omitempty"`
 	Checks []QualificationCheck `json:"checks"`
 }
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 7
+const QualificationArtifactVersion = 8
+
+const DurableLifecycleMode = "postgres_restart"
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -126,6 +145,11 @@ var restoreQualificationChecks = [...]string{
 var requiredLifecycleQualificationChecks = [...]string{
 	"service_present", "binding_service_present", "lifecycle_identity", "lifecycle_access", "lifecycle_spec",
 	"database_create", "database_ready", "binding_create", "binding_ready", "binding_delete", "database_delete",
+	"catalog_postgres", "fixture_ownership", "fixture_fresh", "provision_ack_lost", "restart_catalog_identity", "provision_lost_ack_recovered",
+	"credentials_lost_ack_recovered_setup", "credential_ack_lost", "credentials_lost_ack_recovered_restart", "credentials_lost_ack_recovered",
+	"secret_publication_lost_ack_recovered_setup", "secret_ack_lost", "secret_publication_lost_ack_recovered_restart", "secret_publication_lost_ack_recovered",
+	"sealed_credentials_verified", "workload_sql_round_trip", "rotation_setup", "rotation_ack_lost", "rotation_restart", "rotation_lost_ack_recovered",
+	"rotation_preserves_workload", "dataset_identity_preserved", "cleanup_restart_verified",
 }
 
 // QualificationApproval is the non-secret approval material an operator may
@@ -201,7 +225,7 @@ func LoadQualificationArtifact(path string) (QualificationArtifact, error) {
 // BuildQualificationApproval creates an approval envelope from a successful
 // provider qualification. A missing lifecycle report is allowed here so the
 // command can still emit provider evidence, but readiness remains blocked
-// until the control-plane lifecycle smoke is present and passing.
+// until the durable SQL restart qualification is present and passing.
 func BuildQualificationApproval(report QualificationReport, lifecycle *LifecycleQualificationReport, backendID, backendFingerprint string, canaryAccounts []string, now time.Time, ttl time.Duration) (QualificationApproval, error) {
 	if err := ValidateQualificationReport(report); err != nil {
 		return QualificationApproval{}, err
@@ -263,12 +287,12 @@ func ValidateQualificationReport(report QualificationReport) error {
 		return ErrInvalid
 	}
 	requiredChecks := requiredProviderQualificationChecks[:]
-	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 3 {
+	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 4 {
 		return ErrInvalid
 	}
 	seenAccess := make(map[CredentialAccess]bool, len(report.CredentialAccess))
 	for _, access := range report.CredentialAccess {
-		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration) {
+		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI) {
 			return ErrInvalid
 		}
 		seenAccess[access] = true
@@ -279,6 +303,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 			return ErrUnavailable
 		}
 	} else if report.ReadOnlyCredentials != nil {
+		return ErrInvalid
+	}
+	if seenAccess[CredentialDataAPI] {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "data_api_credentials_probe")
+		if report.DataAPICredentials == nil || report.DataAPICredentials.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.DataAPICredentials != nil {
 		return ErrInvalid
 	}
 	if report.ClassResize {
@@ -315,10 +347,10 @@ func ValidateQualificationReport(report QualificationReport) error {
 	return nil
 }
 
-// ValidateLifecycleQualificationReport checks that every lifecycle assertion
-// passed and that the report is not an empty placeholder.
+// ValidateLifecycleQualificationReport requires independently verified durable
+// SQL restart evidence. The old memory smoke cannot authorize provisioning.
 func ValidateLifecycleQualificationReport(report LifecycleQualificationReport) error {
-	if !hasQualificationChecks(report.Checks, requiredLifecycleQualificationChecks[:]) {
+	if report.Mode != DurableLifecycleMode || !hasQualificationChecks(report.Checks, requiredLifecycleQualificationChecks[:]) {
 		return ErrInvalid
 	}
 	return nil
@@ -385,7 +417,9 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		case errors.Is(err, ErrQualificationFailed):
 			add("provider_checks_failed")
 		case errors.Is(err, ErrUnavailable):
-			if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
+			if contains(artifact.Report.CredentialAccess, CredentialDataAPI) && (artifact.Report.DataAPICredentials == nil || artifact.Report.DataAPICredentials.Validate() != nil) {
+				add("data_api_evidence_missing")
+			} else if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
 				add("credential_privileges_evidence_missing")
 			} else if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.DataVerified || !artifact.Report.Restore.CredentialsIsolated || !artifact.Report.Restore.Deleted) {
 				add("restore_evidence_missing")
@@ -827,6 +861,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 	}
+	if contains(capabilities.CredentialAccess, CredentialDataAPI) {
+		prober, ok := provider.(DataAPICredentialProber)
+		if !ok {
+			record("data_api_credentials_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeDataAPICredentials(ctx, providerResourceID)
+		report.DataAPICredentials = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("data_api_credentials_probe", probeErr) {
+			return report, resultErr
+		}
+	}
 	if capabilities.ClassResize {
 		prober, ok := provider.(ComputeResizeProber)
 		if !ok {
@@ -1017,7 +1066,7 @@ func QualifyLifecycle(parent context.Context, service *Service, bindings *Bindin
 		recordQualificationFailure(&report, "lifecycle_identity", ErrInvalid, &resultErr)
 		return report, resultErr
 	}
-	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration {
+	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration && options.Access != CredentialDataAPI {
 		recordQualificationFailure(&report, "lifecycle_access", ErrInvalid, &resultErr)
 		return report, resultErr
 	}

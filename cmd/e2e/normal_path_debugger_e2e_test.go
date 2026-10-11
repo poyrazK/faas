@@ -618,15 +618,9 @@ func TestE2E_NormalPath_PublicRequestIDJournalWithoutDetailedTelemetry(t *testin
 		t.Fatalf("origin response IDs: request=%q trace=%q; want distinct public and W3C IDs", publicRequestID, traceID)
 	}
 
-	body, statusCode = doReq(t, f.h, f.key, http.MethodGet,
-		"/v1/apps/normal-request-id-only/debug/requests/"+url.PathEscape(publicRequestID), nil)
-	if statusCode != http.StatusOK {
-		t.Fatalf("request-ID-only debugger lookup: status=%d body=%s", statusCode, body)
-	}
-	var detail api.DebugTelemetryRequestItem
-	if err := json.Unmarshal(body, &detail); err != nil {
-		t.Fatalf("decode request-ID-only debugger detail: %v body=%s", err, body)
-	}
+	// ADR-634 writes the journal asynchronously, independently of the origin
+	// response. Wait for that write before asserting the journal-only contract.
+	detail := waitForRequestIDJournal(t, f, "normal-request-id-only", publicRequestID, 10*time.Second)
 	if detail.RequestID != publicRequestID || detail.EvidenceStatus != "request_id_only" || detail.ID != "" {
 		t.Fatalf("request-ID-only debugger detail = %+v, want exact ID and no telemetry row", detail)
 	}

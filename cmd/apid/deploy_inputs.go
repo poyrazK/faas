@@ -381,6 +381,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	var devPatch devPatchPlan
 	if developerSource {
 		deltaStarted := time.Now()
 		deltaOutcome := "failed"
@@ -400,6 +401,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 		sourceBytes = preparedBytes
 		deltaOutcome = "completed"
+		devPatch = s.planDevPatch(r.Context(), app, sourcePath, sourceRoot, limits)
 	}
 	if sourceRoot != "" {
 		present, rootErr := archiveHasSourceRoot(sourcePath, sourceRoot)
@@ -502,7 +504,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// dashboards.
 		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 			OperationDefinitions:      sourceOperationSpecs(manifest),
-			OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, rollout.Scope),
+			OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 			Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
 			AppID:                     app.ID,
 			Kind:                      kind,
@@ -562,7 +564,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 			return
 		}
-		writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+		if developerSource {
+			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
+		}
+		response := s.deploymentResponse(d, app)
+		response.DevPatch = devPatch.preview
+		writeJSON(w, http.StatusAccepted, response)
 		return
 	}
 }

@@ -14,7 +14,7 @@ export type EventFanoutAttemptHistoryResponse = {
   subscription_id?: string;
   history: Array<EventFanoutAttemptResponse>;
   /**
-   * Opaque cursor bound to the app
+   * Opaque cursor bound to the app, event identity, and optional recipient filter.
    */
   next_before?: string;
   /**
