@@ -1,16 +1,22 @@
 import { getCommitDeliveryReport, CommitDeliveryReportError } from './commit-delivery-report.js';
 import type { CommitDeliveryReportItem } from './commit-delivery-report.js';
-import type { CommitRecoveryPlan } from './commit-recovery-plan.js';
+import { sameAcceptance } from './commit-recovery-plan.js';
+import type { CommitEventPublication } from './generated/models/CommitEventPublication.js';
+import type { CommitRecoveryPlanItem, CommitRecoveryPlan } from './commit-recovery-plan.js';
 import type { CommitRecoveryApplyItem, CommitRecoveryApplyResult } from './commit-recovery-apply.js';
 import type { EventReceiptRecipientResponse } from './generated/models/EventReceiptRecipientResponse.js';
 
+export interface CommitRecoveryStatusSelection {
+  publication: CommitEventPublication; reviewed: CommitRecoveryPlanItem;
+}
 export interface CommitRecoveryStatusItem {
+  selection?: CommitRecoveryStatusSelection;
   attempt: CommitRecoveryApplyItem; status: string; reason?: string; attribution: string;
   observed_at?: string; expected_generation?: number; generation?: number; generation_relation?: string;
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryStatusResult {
-  source_id: string; items: CommitRecoveryStatusItem[]; counts: Record<string, number>; complete: boolean;
+  source_id: string; subscription_id?: string; remaining: number; items: CommitRecoveryStatusItem[]; counts: Record<string, number>; complete: boolean;
 }
 export class CommitRecoveryStatusError extends Error {
   constructor(readonly result: CommitRecoveryStatusResult, cause: unknown) {
@@ -44,10 +50,10 @@ function observe(row: CommitRecoveryStatusItem, evidence?: CommitDeliveryReportI
 }
 /** Read guarded evidence only. An unknown attempt remains unknown even when delivery advances. */
 export async function getCommitRecoveryStatus(source: string, reviewed: CommitRecoveryPlan, applied: CommitRecoveryApplyResult,
-  options: { limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<CommitRecoveryStatusResult> {
+  options: { limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal } = options;
-  const plan = structuredClone(reviewed), result = structuredClone(applied);
-  const out: CommitRecoveryStatusResult = { source_id: source, items: [], counts: Object.create(null), complete: false };
+  const plan = structuredClone(reviewed), result = structuredClone(applied), previous = options.resume ? structuredClone(options.resume) : undefined;
+  const out: CommitRecoveryStatusResult = { source_id: source, subscription_id: plan.report.subscription_id, remaining: 0, items: [], counts: Object.create(null), complete: false };
   if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(recipientPages) || recipientPages < 1 || recipientPages > 20 || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 86400000 || plan.report.source_id !== source || result.source_id.toLowerCase() !== source.toLowerCase() || plan.report.items.length > 200 || plan.items.length > 200*200*20 || result.items.length > 200*200*20) throw new TypeError('invalid recovery status budgets or source');
   const publications = new Map(plan.report.items.map(item => [item.acceptance.event_id.toLowerCase(), item]));
   const selection = new Map<string, typeof plan.items[number]>();
@@ -63,20 +69,35 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
     if (!selected || seen.has(key(item)) || !['queued', 'unknown', 'rejected', 'read_error', 'skipped', 'not_attempted'].includes(item.status) || (['queued', 'unknown', 'rejected', 'read_error'].includes(item.status) && selected.status !== 'eligible')) throw new TypeError('apply result does not match reviewed selection');
     seen.add(key(item));
     const generation = selected.action?.kind === 'routing_replay' ? selected.action.body?.expected_generation : undefined;
-    out.items.push({ attempt: item, status: 'not_observed', reason: 'status_budget', attribution: 'unproven',
+    const publication = publications.get(item.event_id.toLowerCase())!.acceptance.publication;
+    if (!publication) throw new TypeError('saved publication identity mismatch');
+    out.items.push({ selection: { publication, reviewed: selected }, attempt: item, status: 'not_observed', reason: 'status_budget', attribution: 'unproven',
       expected_generation: generation !== undefined && Number.isSafeInteger(generation) && generation >= 0 ? generation : undefined });
   }
+  if (previous) {
+    if (previous.items.some(row => !row.selection)) throw new TypeError('saved status lacks selection snapshots; run recovery-status without --resume');
+    if (previous.source_id.toLowerCase() !== source.toLowerCase() || (previous.subscription_id ?? '').toLowerCase() !== (out.subscription_id ?? '').toLowerCase() || previous.items.length !== out.items.length) throw new TypeError('saved status selection mismatch');
+    for (let i = 0; i < previous.items.length; i++) {
+      const row = previous.items[i]!, expected = out.items[i]!;
+      if (!row.selection || !sameSelection(row.selection, expected.selection!) || canonical(row.attempt) !== canonical(expected.attempt) || row.expected_generation !== expected.expected_generation) throw new TypeError('saved status does not match reviewed plan and apply result');
+      if (row.observed_at !== undefined && (typeof row.observed_at !== 'string' || !sameAcceptance(row.observed_at, row.observed_at))) throw new TypeError('invalid saved observation timestamp');
+      if (!['completed', 'active', 'failed', 'unresolved', 'unsupported_recipient', 'read_error', 'not_observed'].includes(row.status) || !['unproven', 'matches_acknowledged_execution'].includes(row.attribution) || (row.attribution === 'matches_acknowledged_execution' && row.attempt.status !== 'queued')) throw new TypeError('invalid saved observation or attribution');
+    }
+    out.items = previous.items;
+  }
+  recount(out);
+  const pending = ['not_observed', 'read_error'].flatMap(status => out.items.map((row, index) => row.status === status ? index : -1).filter(index => index >= 0));
   const controller = new AbortController(), abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
   const timer = setTimeout(abort, timeoutMs);
   let cause: unknown;
   try {
     await getCommitDeliveryReport(source, { refresh: plan.report, recipientPages: 1, timeoutMs, signal: controller.signal });
-    out.complete = result.items.length <= limit;
-    for (let i = 0; i < out.items.length && i < limit; i++) {
-      const row = out.items[i]!;
-      if (controller.signal.aborted) { row.reason = 'interrupted'; out.complete = false; cause ??= new Error('status interrupted'); continue; }
-      row.status = 'unresolved'; row.reason = 'evidence_unavailable';
+    for (const index of pending.slice(0, limit)) {
+      if (controller.signal.aborted) { cause ??= new Error('status interrupted'); break; }
+      const old = out.items[index]!;
+      const row: CommitRecoveryStatusItem = { attempt: old.attempt, selection: old.selection, expected_generation: old.expected_generation, status: 'unresolved', reason: 'evidence_unavailable', attribution: 'unproven' };
+      out.items[index] = row;
       const original = publications.get(row.attempt.event_id.toLowerCase())!;
       try {
         const report = await getCommitDeliveryReport(source, { refresh: { ...plan.report, subscription_id: row.attempt.subscription_id.toLowerCase(), items: [{ ...original, subscribers: [] }] }, recipientPages, timeoutMs, signal: controller.signal });
@@ -86,9 +107,30 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
         row.status = 'read_error'; row.reason = 'evidence_read_failed'; out.complete = false; cause ??= error;
       }
     }
-  } catch (error) { out.complete = false; cause = error; for (const row of out.items) row.reason = 'validation_read_failed'; }
+  } catch (error) { cause = error; }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
-  for (const row of out.items) out.counts[row.status] = (out.counts[row.status] ?? 0) + 1;
+  if (controller.signal.aborted) { cause ??= new Error('status interrupted'); for (const row of out.items) if (row.status === 'not_observed') row.reason = 'interrupted'; }
+  recount(out);
+  if (cause) out.complete = false;
   if (cause) throw new CommitRecoveryStatusError(out, cause);
   return out;
+}
+
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}';
+  return JSON.stringify(value ?? null);
+}
+function sameSelection(a: CommitRecoveryStatusSelection, b: CommitRecoveryStatusSelection): boolean {
+  if (!a.publication || !sameAcceptance(a.publication.accepted_at, b.publication.accepted_at)) return false;
+  return canonical({ ...a, publication: { ...a.publication, accepted_at: b.publication.accepted_at } }) === canonical(b);
+}
+function recount(out: CommitRecoveryStatusResult): void {
+  out.counts = Object.create(null); out.remaining = 0;
+  for (const row of out.items) {
+    out.counts[row.status] = (out.counts[row.status] ?? 0) + 1;
+    if (['not_observed', 'read_error'].includes(row.status)) out.remaining++;
+  }
+  out.complete = out.remaining === 0;
 }

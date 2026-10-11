@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 from typing import Any
 from uuid import UUID
 
 from .client import AuthenticatedClient
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+from .commit_recovery_plan import _same_acceptance
 
 
 class CommitRecoveryStatusError(Exception):
@@ -94,11 +96,20 @@ async def aget_commit_recovery_status(
     limit: int = 50,
     recipient_pages: int = 1,
     timeout: float = 120,
+    resume: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read guarded evidence only; never resolve an unknown write from delivery advancement."""
     source = str(UUID(str(source)))
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
-    out: dict[str, Any] = {"source_id": source, "items": [], "counts": {}, "complete": False}
+    previous = copy.deepcopy(resume)
+    out: dict[str, Any] = {
+        "source_id": source,
+        "subscription_id": plan["report"].get("subscription_id", ""),
+        "items": [],
+        "counts": {},
+        "remaining": 0,
+        "complete": False,
+    }
     if (
         type(limit) is not int
         or not 1 <= limit <= 50
@@ -142,7 +153,16 @@ async def aget_commit_recovery_status(
         ):
             raise ValueError("apply result does not match reviewed selection")
         seen.add(key)
-        row = {"attempt": attempt, "status": "not_observed", "reason": "status_budget", "attribution": "unproven"}
+        publication = publications[attempt["event_id"].lower()]["acceptance"].get("publication")
+        if not publication:
+            raise ValueError("saved publication identity mismatch")
+        row = {
+            "selection": {"publication": publication, "reviewed": selected},
+            "attempt": attempt,
+            "status": "not_observed",
+            "reason": "status_budget",
+            "attribution": "unproven",
+        }
         action = selected.get("action") or {}
         generation = (
             (action.get("body") or {}).get("expected_generation") if action.get("kind") == "routing_replay" else None
@@ -150,15 +170,71 @@ async def aget_commit_recovery_status(
         if type(generation) is int and generation >= 0:
             row["expected_generation"] = generation
         out["items"].append(row)
+    if previous is not None:
+        if any(not row.get("selection") for row in previous["items"]):
+            raise ValueError("saved status lacks selection snapshots; run recovery-status without --resume")
+        if (
+            previous.get("source_id", "").lower() != source
+            or (previous.get("subscription_id") or "").lower() != (out.get("subscription_id") or "").lower()
+            or len(previous["items"]) != len(out["items"])
+        ):
+            raise ValueError("saved status selection mismatch")
+        for row, expected in zip(previous["items"], out["items"], strict=True):
+            if (
+                not row.get("selection")
+                or not _same_selection(row["selection"], expected["selection"])
+                or not _same_json(row["attempt"], expected["attempt"])
+                or not _same_json(row.get("expected_generation"), expected.get("expected_generation"))
+            ):
+                raise ValueError("saved status does not match reviewed plan and apply result")
+            if (
+                row["status"]
+                not in {
+                    "completed",
+                    "active",
+                    "failed",
+                    "unresolved",
+                    "unsupported_recipient",
+                    "read_error",
+                    "not_observed",
+                }
+                or row["attribution"] not in {"unproven", "matches_acknowledged_execution"}
+                or (row["attribution"] == "matches_acknowledged_execution" and row["attempt"]["status"] != "queued")
+            ):
+                raise ValueError("invalid saved observation or attribution")
+            observed_at = row.get("observed_at")
+            if observed_at is not None and (
+                not isinstance(observed_at, str) or not _same_acceptance(observed_at, observed_at)
+            ):
+                raise ValueError("invalid saved observation timestamp")
+        out["items"] = previous["items"]
+    _recount(out)
+    pending = [
+        index
+        for status in ("not_observed", "read_error")
+        for index, row in enumerate(out["items"])
+        if row["status"] == status
+    ]
     cause: BaseException | None = None
+    reading_index: int | None = None
     try:
         async with asyncio.timeout(timeout):
             await aget_commit_delivery_report(
                 client, source, refresh=plan["report"], recipient_pages=1, timeout=timeout
             )
-            out["complete"] = len(out["items"]) <= limit
-            for row in out["items"][:limit]:
-                row.update(status="unresolved", reason="evidence_unavailable")
+            for index in pending[:limit]:
+                reading_index = index
+                old = out["items"][index]
+                row = {
+                    "attempt": old["attempt"],
+                    "selection": old["selection"],
+                    "status": "unresolved",
+                    "reason": "evidence_unavailable",
+                    "attribution": "unproven",
+                }
+                if "expected_generation" in old:
+                    row["expected_generation"] = old["expected_generation"]
+                out["items"][index] = row
                 original = copy.deepcopy(publications[row["attempt"]["event_id"].lower()])
                 original["subscribers"] = []
                 saved = {
@@ -177,6 +253,7 @@ async def aget_commit_recovery_status(
                     row.update(status="read_error", reason="evidence_read_failed")
                     out["complete"] = False
                     cause = cause or error
+                reading_index = None
     except (Exception, asyncio.CancelledError) as error:
         out["complete"] = False
         cause = error
@@ -187,11 +264,39 @@ async def aget_commit_recovery_status(
                     if isinstance(error, (TimeoutError, asyncio.CancelledError))
                     else "validation_read_failed"
                 )
-            elif row["status"] == "unresolved" and row["reason"] == "evidence_unavailable":
-                row.update(status="read_error", reason="evidence_read_failed")
-    for row in out["items"]:
-        status = row["status"]
-        out["counts"][status] = out["counts"].get(status, 0) + 1
+        if reading_index is not None:
+            out["items"][reading_index].update(status="read_error", reason="evidence_read_failed")
+    _recount(out)
+    if cause is not None:
+        out["complete"] = False
     if cause is not None:
         raise CommitRecoveryStatusError(out) from cause
     return out
+
+
+def _same_json(left: Any, right: Any) -> bool:
+    return json.dumps(left, sort_keys=True, separators=(",", ":"), allow_nan=False) == json.dumps(
+        right, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _same_selection(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    publication = left.get("publication")
+    if (
+        not isinstance(publication, dict)
+        or not isinstance(publication.get("accepted_at"), str)
+        or not _same_acceptance(publication["accepted_at"], right["publication"]["accepted_at"])
+    ):
+        return False
+    normalised = {**left, "publication": {**publication, "accepted_at": right["publication"]["accepted_at"]}}
+    return _same_json(normalised, right)
+
+
+def _recount(out: dict[str, Any]) -> None:
+    out["counts"], out["remaining"] = {}, 0
+    for row in out["items"]:
+        status = row["status"]
+        out["counts"][status] = out["counts"].get(status, 0) + 1
+        if status in {"not_observed", "read_error"}:
+            out["remaining"] += 1
+    out["complete"] = out["remaining"] == 0

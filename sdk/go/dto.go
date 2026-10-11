@@ -403,3 +403,5 @@ type ReplayEventFanoutFailureResponse = api.ReplayEventFanoutFailureResponse
 // CommitRecoveryStatusResult keeps current delivery evidence separate from saved attempts.
 type CommitRecoveryStatusResult = api.CommitRecoveryStatusResult
 type CommitRecoveryStatusItem = api.CommitRecoveryStatusItem
+
+type CommitRecoveryStatusSelection = api.CommitRecoveryStatusSelection

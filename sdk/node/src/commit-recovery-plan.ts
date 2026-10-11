@@ -16,7 +16,7 @@ export class CommitRecoveryPlanError extends Error {
   }
 }
 
-function sameAcceptance(left: string, right: string): boolean {
+export function sameAcceptance(left: string, right: string): boolean {
   const pattern = /^(.+?)(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})$/;
   const a = pattern.exec(left), b = pattern.exec(right);
   if (!a || !b) return false;

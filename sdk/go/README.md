@@ -793,3 +793,13 @@ submits replay or follows saved action URLs. See
 [the recovery-status guide](../../docs/gregale-commit.md#inspecting-recovery-results-without-replay).
 
 Use client.GetCommitRecoveryStatus(ctx, plan, applied, 50, 5).
+
+Recovery status can resume saved output, preserving successful observations
+and their timestamps. Unread items are inspected before failed reads are
+retried. Selection snapshots bind resume to the original plan, apply result,
+publication acceptance and subscriber filter. Counts and remaining coverage
+are recomputed, and unknown attempts remain unknown.
+
+Use client.ResumeCommitRecoveryStatus(ctx, plan, applied, previous, 50, 5).
+
+Older status files without selection snapshots require a fresh status read. Resume keeps historical samples; omit resume to reread them.

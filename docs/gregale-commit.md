@@ -1078,3 +1078,58 @@ status = await aget_commit_recovery_status(
 Go returns partial status alongside a read error. Node/Python raise
 CommitRecoveryStatusError with partial output in result.
 See [ADR-938](adr/938-read-only-commit-recovery-status.md).
+
+### Resuming recovery status
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --resume recovery-status.json \
+  --limit 50 --recipient-pages 5 --timeout 2m > recovery-status-next.json
+~~~
+
+Resume preserves successful status reads, including active, failed, unresolved
+and unsupported observations with their original evidence and timestamps.
+It first reads not_observed items, then retries read_error items, keeping
+output in the original apply-result order. Copied observations do not consume
+the 1..50 read limit. A retry clears its old partial evidence before rereading.
+
+New status results include each item's selection snapshot: the original
+publication descriptor and reviewed plan item. Resume validates these against
+the supplied plan and result, including the exact acceptance instant, reviewed
+action, saved attempt, source, subscriber filter and ordered result coverage.
+It rejects mismatched or incomplete selections before receipt reads. Older
+status files without snapshots cannot be resumed; run recovery-status once
+without --resume to create a new resumable status.
+
+Counts and remaining are recomputed from the rows; saved aggregate values
+are ignored. Remaining is the number of not_observed or read_error items.
+Complete is cumulative observation coverage across the resume chain, without
+a validation/read error or interruption in this call. It does not prove
+current delivery completion, complete recipient-page coverage, or that an
+unknown replay succeeded. Unknown saved attempts stay unknown.
+
+Preserved observations are historical samples, not a fresh poll. To reread
+them, start a status call without --resume. Source ownership is checked again;
+Node/Python retain their bounded one-page validation refresh of the full
+publication selection, without replacing copied observations. Every input,
+including the saved status file, retains the 64 MiB CLI limit. Page budgets
+and the overall timeout also apply. Partial failures retain output, and resume
+never submits recovery or follows saved URLs.
+
+~~~go
+next, err := client.ResumeCommitRecoveryStatus(ctx, plan, applied, previous, 50, 5)
+~~~
+
+~~~ts
+const next = await getCommitRecoveryStatus(source, plan, applied, {
+  resume: previous, limit: 50, recipientPages: 5,
+});
+~~~
+
+~~~python
+next_status = await aget_commit_recovery_status(
+    client, source, plan, applied, resume=previous, limit=50, recipient_pages=5,
+)
+~~~
+
+See [ADR-939](adr/939-resumable-commit-recovery-status.md).
