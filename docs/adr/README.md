@@ -797,6 +797,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
+- [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
+
 - [ADR-1000: Reviewed workflow event recovery jobs](1000-reviewed-workflow-event-recovery-jobs.md) — durable submission of pinned automation event plans.
 
 - [ADR-1001: Durable recovery of reviewed native workflow runs](1001-durable-workflow-run-recovery.md)

@@ -121,3 +121,27 @@ func TestCustomerConsoleDropsStartBannerAndBootStages(t *testing.T) {
 		}
 	}
 }
+
+// adr: 983 — Firecracker 1.17 logs vCPU-thread events and the guest's PCI
+// probes, and a 6.18 guest reports the missing PCI config space on every boot.
+// None of it is the customer's output; the console file keeps it.
+func TestCustomerConsoleDropsVcpuLogsAndPCIConfigSpaceNotice(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	for _, line := range []string{
+		"2026-10-11T20:25:18.032196598 [m0-hello:fc_vcpu 0] vcpu: IO write @ 0xcf8:0x4 failed: Failed to find address range.\n",
+		"2026-10-11T20:25:17.987772734 [m0-hello:fc_vcpu 1] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding\n",
+		"[    0.054718] PCI: Fatal: No config space access function found\n",
+		"PCI: Fatal: No config space access function found\n",
+		"app ready\n",
+		"[    1.200000] PCI: Fatal: something the app caused\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := ring.Snapshot(1)
+	if len(lines) != 2 || !strings.Contains(lines[0].Line, "app ready") || !strings.Contains(lines[1].Line, "something the app caused") {
+		t.Fatalf("customer lines = %+v, want only the app line and the unrelated kernel error", lines)
+	}
+}

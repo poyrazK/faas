@@ -1226,7 +1226,7 @@ type UpdateAppRequest struct {
 	// targeting these) so an existing CLI SDK never sends them.
 	RootDir      *string `json:"-"`
 	WorkloadName *string `json:"-"`
-	StartCommand *string `json:""`
+	StartCommand *string `json:"-"`
 	// ScalingPolicy is the per-app autoscaling configuration
 	// (issue #462 / ADR-058). nil pointer = "don't touch the
 	// jsonb column"; non-nil with the Set bit set = "replace the

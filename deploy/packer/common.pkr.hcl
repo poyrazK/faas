@@ -42,13 +42,13 @@ packer {
 variable "fc_release" {
   type        = string
   description = "Firecracker release baked into the image. Must match deploy/ansible/roles/firecracker/defaults/main.yml:fc_release."
-  default     = "v1.7.0"
+  default     = "v1.17.0"
 }
 
 variable "kernel_version" {
   type        = string
   description = "Linux kernel version baked into the image as vmlinux. Must match deploy/ansible/roles/firecracker/defaults/main.yml:fc_kernel_version."
-  default     = "6.1.134"
+  default     = "6.18.54"
 }
 
 variable "git_sha" {
@@ -71,7 +71,7 @@ locals {
   image_tag = "gregale-compute-fc${var.fc_release}-kernel${var.kernel_version}-g${var.git_sha}"
 
   // Strip the leading "v" from fc_release + kernel_version for compactness in
-  // the tag. v1.7.0 → "1.7.0"; 6.1.134 → "6.1.134" (no leading v).
+  // the tag. v1.17.0 → "1.17.0"; 6.18.54 → "6.18.54" (no leading v).
   image_tag_compact = "gregale-compute-fc${replace(var.fc_release, "v", "")}-kernel${var.kernel_version}-g${var.git_sha}"
 
   image_labels = {

@@ -6,12 +6,12 @@
 # forward = new image tag + lazy re-snapshot, NEVER in-place FC upgrade.
 #
 # Pinned FC release + sha must mirror deploy/ansible/roles/firecracker/
-# defaults/main.yml:fc_release + fc_release_sha256. Today: v1.7.0 +
-# 55bd3e6d599fdd108e36e52f9aee2319f06c18a90f2fa49b64e93fdf06f5ff53.
+# defaults/main.yml:fc_release + fc_release_sha256. Today: v1.17.0 +
+# 06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558.
 set -euo pipefail
 
-FC_RELEASE="${FC_RELEASE:-v1.7.0}"
-FC_RELEASE_SHA256="${FC_RELEASE_SHA256:-55bd3e6d599fdd108e36e52f9aee2319f06c18a90f2fa49b64e93fdf06f5ff53}"
+FC_RELEASE="${FC_RELEASE:-v1.17.0}"
+FC_RELEASE_SHA256="${FC_RELEASE_SHA256:-06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558}"
 FC_ARCH="${FC_ARCH:-x86_64}"
 FC_URL="https://github.com/firecracker-microvm/firecracker/releases/download/${FC_RELEASE}/firecracker-${FC_RELEASE}-${FC_ARCH}.tgz"
 
@@ -27,9 +27,9 @@ echo "${FC_RELEASE_SHA256}  ${TMP}/fc.tgz" | sha256sum --check --strict
 # Install FC + jailer. The versioned name preserves the pinned binary;
 # /usr/local/bin/firecracker and /usr/local/bin/jailer are symlinks that
 # the systemd unit consumes.
-install -m 0755 "${TMP}/release-${FC_RELEASE}-${FC_ARCH}/firecracker" \
+install -m 0755 "${TMP}/release-${FC_RELEASE}-${FC_ARCH}/firecracker-${FC_RELEASE}-${FC_ARCH}" \
     "/usr/local/bin/firecracker-${FC_RELEASE}"
-install -m 0755 "${TMP}/release-${FC_RELEASE}-${FC_ARCH}/jailer" \
+install -m 0755 "${TMP}/release-${FC_RELEASE}-${FC_ARCH}/jailer-${FC_RELEASE}-${FC_ARCH}" \
     "/usr/local/bin/jailer-${FC_RELEASE}"
 
 ln -sf "firecracker-${FC_RELEASE}" /usr/local/bin/firecracker
