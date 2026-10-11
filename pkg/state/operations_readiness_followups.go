@@ -100,6 +100,12 @@ func checkReadinessNotification(ctx context.Context, store readinessSubscription
 		return out, ErrNotFound
 	}
 	out.Notification = page.Items[0]
+	if c := out.Notification.Coordination; c != nil && c.Completion != nil && c.Completion.ExpectedOutcomeCode != "" {
+		out.BusinessOutcome, err = readReadinessBusinessOutcome(ctx, store, account, tenant, app, scope, out.Notification, c.Completion.ExpectedOutcomeCode, operator)
+		if err != nil {
+			return out, err
+		}
+	}
 	saved := readinessNotificationBaseline(out.Notification)
 	if saved == nil {
 		return out, nil

@@ -2209,6 +2209,8 @@ from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequir
 from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
 from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
 from .operation_workflow_prerequisite_recovery_steps_item import OperationWorkflowPrerequisiteRecoveryStepsItem
+from .operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+from .operation_workflow_readiness_business_outcome_status import OperationWorkflowReadinessBusinessOutcomeStatus
 from .operation_workflow_readiness_change import OperationWorkflowReadinessChange
 from .operation_workflow_readiness_change_added_reasons_item import OperationWorkflowReadinessChangeAddedReasonsItem
 from .operation_workflow_readiness_change_changed_categories_item import (
@@ -5791,6 +5793,8 @@ __all__ = (
     "OperationWorkflowPrerequisiteRecovery",
     "OperationWorkflowPrerequisiteRecoveryReason",
     "OperationWorkflowPrerequisiteRecoveryStepsItem",
+    "OperationWorkflowReadinessBusinessOutcome",
+    "OperationWorkflowReadinessBusinessOutcomeStatus",
     "OperationWorkflowReadinessChange",
     "OperationWorkflowReadinessChangeAddedReasonsItem",
     "OperationWorkflowReadinessChangeChangedCategoriesItem",

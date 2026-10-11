@@ -31,6 +31,10 @@ class OperationWorkflowReadinessCompletionRequest:
     evidence_operation_ids: list[UUID]
     """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
     never changes application evidence."""
+    expected_outcome_code: str | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome
+    slug compared with application reports for the source workflow; never defines or modifies application success
+    rules."""
     watch_verification: bool | Unset = UNSET
     """OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16
     currently pending saved resolutions; requires comparable current pending evidence."""
@@ -45,6 +49,8 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = str(evidence_operation_ids_item_data)
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        expected_outcome_code = self.expected_outcome_code
+
         watch_verification = self.watch_verification
 
         field_dict: dict[str, Any] = {}
@@ -56,6 +62,8 @@ class OperationWorkflowReadinessCompletionRequest:
                 "evidence_operation_ids": evidence_operation_ids,
             }
         )
+        if expected_outcome_code is not UNSET:
+            field_dict["expected_outcome_code"] = expected_outcome_code
         if watch_verification is not UNSET:
             field_dict["watch_verification"] = watch_verification
 
@@ -75,12 +83,15 @@ class OperationWorkflowReadinessCompletionRequest:
 
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        expected_outcome_code = d.pop("expected_outcome_code", UNSET)
+
         watch_verification = d.pop("watch_verification", UNSET)
 
         operation_workflow_readiness_completion_request = cls(
             outcome=outcome,
             note=note,
             evidence_operation_ids=evidence_operation_ids,
+            expected_outcome_code=expected_outcome_code,
             watch_verification=watch_verification,
         )
 

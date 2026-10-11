@@ -7,6 +7,10 @@
  */
 export type OperationWorkflowReadinessCompletionRequest = {
   /**
+   * OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome slug compared with application reports for the source workflow; never defines or modifies application success rules.
+   */
+  expected_outcome_code?: string;
+  /**
    * OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16 currently pending saved resolutions; requires comparable current pending evidence.
    */
   watch_verification?: boolean;

@@ -87,11 +87,12 @@ type OperationWorkflowReadinessHandoff struct {
 	Limitations         []string   `json:"limitations"`
 }
 type OperationWorkflowReadinessNotificationCheck struct {
-	Handoff      OperationWorkflowReadinessHandoff      `json:"handoff"`
-	Notification OperationWorkflowReadinessNotification `json:"notification"`
-	CheckedAt    time.Time                              `json:"checked_at"`
-	Status       string                                 `json:"status"`
-	Change       *OperationWorkflowReadinessChange      `json:"change,omitempty"`
+	BusinessOutcome *OperationWorkflowReadinessBusinessOutcome `json:"business_outcome,omitempty"`
+	Handoff         OperationWorkflowReadinessHandoff          `json:"handoff"`
+	Notification    OperationWorkflowReadinessNotification     `json:"notification"`
+	CheckedAt       time.Time                                  `json:"checked_at"`
+	Status          string                                     `json:"status"`
+	Change          *OperationWorkflowReadinessChange          `json:"change,omitempty"`
 }
 
 // Follow-up queues aggregate retained coordination, not application execution tasks.
@@ -146,12 +147,15 @@ type OperationWorkflowReadinessDueReminder struct {
 
 // Completion closes coordination only; outcome is an operator/customer assertion.
 type OperationWorkflowReadinessCompletionRequest struct {
+	ExpectedOutcomeCode  string   `json:"expected_outcome_code,omitempty"`
 	WatchVerification    bool     `json:"watch_verification,omitempty"`
 	Outcome              string   `json:"outcome"`
 	Note                 string   `json:"note"`
 	EvidenceOperationIDs []string `json:"evidence_operation_ids"`
 }
 type OperationWorkflowReadinessCompletion struct {
+	ExpectedOutcomeCode  string                                       `json:"expected_outcome_code,omitempty"`
+	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcome   `json:"business_outcome,omitempty"`
 	WatchVerification    bool                                         `json:"watch_verification,omitempty"`
 	Outcome              string                                       `json:"outcome"`
 	Note                 string                                       `json:"note"`
@@ -206,4 +210,20 @@ type OperationWorkflowReadinessVerificationEvent struct {
 	CheckedAt            time.Time                                      `json:"checked_at"`
 	Source               OperationWorkflowReadinessSnapshotEntry        `json:"source"`
 	Changes              []OperationWorkflowReadinessVerificationChange `json:"changes"`
+}
+
+// BusinessOutcome compares an asserted target with scoped application reports, never coordination status.
+type OperationWorkflowReadinessBusinessOutcome struct {
+	ExpectedOutcomeCode        string     `json:"expected_outcome_code"`
+	CheckedAt                  time.Time  `json:"checked_at"`
+	Status                     string     `json:"status"`
+	Explanation                string     `json:"explanation"`
+	ReportingOperationID       string     `json:"reporting_operation_id,omitempty"`
+	ReportID                   string     `json:"report_id,omitempty"`
+	StateRevision              int64      `json:"state_revision,omitempty"`
+	ContractVersion            int        `json:"contract_version,omitempty"`
+	State                      string     `json:"state,omitempty"`
+	ReportedOutcomeCode        string     `json:"reported_outcome_code,omitempty"`
+	ReportedOutcomeDescription string     `json:"reported_outcome_description,omitempty"`
+	OccurredAt                 *time.Time `json:"occurred_at,omitempty"`
 }

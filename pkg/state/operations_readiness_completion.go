@@ -21,6 +21,9 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 		return out, nil
 	}
 	r := req.Completion
+	if r.ExpectedOutcomeCode != "" && api.ValidateOperationWorkflowStateName(r.ExpectedOutcomeCode) != nil {
+		return out, ErrInvalidArgument
+	}
 	if req.FollowUpAt != nil || (r.Outcome != "resolved" && r.Outcome != "no_longer_applicable" && r.Outcome != "handed_off") || strings.TrimSpace(r.Note) == "" || len(r.Note) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(r.Note) || r.EvidenceOperationIDs == nil || len(r.EvidenceOperationIDs) > api.OperationWorkflowReadinessCompletionEvidenceMax || (r.Outcome == "resolved" && len(r.EvidenceOperationIDs) == 0) {
 		return out, ErrInvalidArgument
 	}
@@ -71,7 +74,13 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	if check.Status != "ready" {
 		e.Warnings = append(e.Warnings, "Follow-up completion does not establish workflow readiness: "+check.Status+".")
 	}
-	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{WatchVerification: r.WatchVerification, Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
+	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{ExpectedOutcomeCode: r.ExpectedOutcomeCode, WatchVerification: r.WatchVerification, Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
+	if r.ExpectedOutcomeCode != "" {
+		out.PreparedCompletion.BusinessOutcome, err = readReadinessBusinessOutcome(ctx, store, account, tenant, app, scope, check.Notification, r.ExpectedOutcomeCode, operator)
+		if err != nil {
+			return out, err
+		}
+	}
 	if r.WatchVerification {
 		if !check.Handoff.Comparable || check.Change == nil || check.Change.Current == nil || len(check.Change.Current.PendingVerifications) == 0 {
 			return out, ErrConflict

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
 import type { OperationWorkflowReadinessHandoff } from './OperationWorkflowReadinessHandoff.js';
 import type { OperationWorkflowReadinessNotification } from './OperationWorkflowReadinessNotification.js';
@@ -9,6 +10,7 @@ import type { OperationWorkflowReadinessNotification } from './OperationWorkflow
  * Current advisory evidence check preserving the original notification. Global failures remain unavailable.
  */
 export type OperationWorkflowReadinessNotificationCheck = {
+  business_outcome?: OperationWorkflowReadinessBusinessOutcome;
   handoff: OperationWorkflowReadinessHandoff;
   notification: OperationWorkflowReadinessNotification;
   /**

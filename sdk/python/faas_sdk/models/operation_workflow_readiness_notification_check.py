@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
     from ..models.operation_workflow_readiness_handoff import OperationWorkflowReadinessHandoff
     from ..models.operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
@@ -31,6 +32,11 @@ class OperationWorkflowReadinessNotificationCheck:
     status: str
     """OperationWorkflowReadinessNotificationCheck.status. Ready or blocked only for a comparable retained edge;
     otherwise the explicit comparison boundary status."""
+    business_outcome: OperationWorkflowReadinessBusinessOutcome | Unset = UNSET
+    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
+    unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
+    immutable; current checks are live reads."""
     change: OperationWorkflowReadinessChange | Unset = UNSET
     """Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are
     explicit."""
@@ -43,6 +49,10 @@ class OperationWorkflowReadinessNotificationCheck:
         checked_at = self.checked_at.isoformat()
 
         status = self.status
+
+        business_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_outcome, Unset):
+            business_outcome = self.business_outcome.to_dict()
 
         change: dict[str, Any] | Unset = UNSET
         if not isinstance(self.change, Unset):
@@ -58,6 +68,8 @@ class OperationWorkflowReadinessNotificationCheck:
                 "status": status,
             }
         )
+        if business_outcome is not UNSET:
+            field_dict["business_outcome"] = business_outcome
         if change is not UNSET:
             field_dict["change"] = change
 
@@ -65,6 +77,7 @@ class OperationWorkflowReadinessNotificationCheck:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
         from ..models.operation_workflow_readiness_handoff import OperationWorkflowReadinessHandoff
         from ..models.operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
@@ -78,6 +91,13 @@ class OperationWorkflowReadinessNotificationCheck:
 
         status = d.pop("status")
 
+        _business_outcome = d.pop("business_outcome", UNSET)
+        business_outcome: OperationWorkflowReadinessBusinessOutcome | Unset
+        if isinstance(_business_outcome, Unset):
+            business_outcome = UNSET
+        else:
+            business_outcome = OperationWorkflowReadinessBusinessOutcome.from_dict(_business_outcome)
+
         _change = d.pop("change", UNSET)
         change: OperationWorkflowReadinessChange | Unset
         if isinstance(_change, Unset):
@@ -90,6 +110,7 @@ class OperationWorkflowReadinessNotificationCheck:
             notification=notification,
             checked_at=checked_at,
             status=status,
+            business_outcome=business_outcome,
             change=change,
         )
 

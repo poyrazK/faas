@@ -279,6 +279,7 @@ type OperationWorkflowReadinessHandoff = api.OperationWorkflowReadinessHandoff
 // Evidence-backed follow-up completion remains shared coordination.
 type OperationWorkflowReadinessCompletionRequest = api.OperationWorkflowReadinessCompletionRequest
 type OperationWorkflowReadinessCompletion = api.OperationWorkflowReadinessCompletion
+type OperationWorkflowReadinessBusinessOutcome = api.OperationWorkflowReadinessBusinessOutcome
 type OperationWorkflowReadinessCompletionEvidence = api.OperationWorkflowReadinessCompletionEvidence
 
 // Verification watches observe retained application evidence only.

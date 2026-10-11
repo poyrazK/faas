@@ -75120,6 +75120,12 @@ components:
         Closing does not prove business resolution.
       additionalProperties: false
       properties:
+        expected_outcome_code:
+          type: string
+          description: OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome slug compared with application reports for the source workflow; never defines or modifies application success rules.
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
         watch_verification:
           type: boolean
           description: OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16 currently pending saved resolutions; requires comparable current pending evidence.
@@ -75156,6 +75162,14 @@ components:
         check. Retained with the original notification.
       additionalProperties: false
       properties:
+        expected_outcome_code:
+          type: string
+          description: OperationWorkflowReadinessCompletion.expected_outcome_code. Optional caller-selected terminal outcome slug compared with application reports for the source workflow; never defines or modifies application success rules.
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+        business_outcome:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
         watch_verification:
           type: boolean
           description: OperationWorkflowReadinessCompletion.watch_verification. Opt in at completion to watch up to 16 currently pending saved resolutions; requires comparable current pending evidence.
@@ -75257,6 +75271,77 @@ components:
       - remaining_reasons
       - pending_verification_count
       - warnings
+
+    OperationWorkflowReadinessBusinessOutcome:
+      type: object
+      description: Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing state,
+        stale reports, contract changes, older revisions and terminal reports without outcome codes remain unknown. Explicit outcome
+        codes do not imply causation or authorize execution. Completion snapshots are immutable; current checks are live reads.
+      additionalProperties: false
+      properties:
+        expected_outcome_code:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.expected_outcome_code. Scoped application-reported business result
+            relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+        checked_at:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.checked_at. Scoped application-reported business result relative
+            to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+          format: date-time
+        status:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.status. Scoped application-reported business result relative
+            to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+          enum:
+          - achieved
+          - pending
+          - different_outcome
+          - unknown
+        explanation:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.explanation. Scoped application-reported business result relative
+            to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+        reporting_operation_id:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.reporting_operation_id. Scoped application-reported business
+            result relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+          format: uuid
+        report_id:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.report_id. Scoped application-reported business result relative
+            to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+          format: uuid
+        state_revision:
+          type: integer
+          description: OperationWorkflowReadinessBusinessOutcome.state_revision. Scoped application-reported business result relative
+            to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+          format: int64
+        contract_version:
+          type: integer
+          description: OperationWorkflowReadinessBusinessOutcome.contract_version. Scoped application-reported business result
+            relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+        state:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.state. Scoped application-reported business result relative to
+            the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+        reported_outcome_code:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.reported_outcome_code. Scoped application-reported business result
+            relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+        reported_outcome_description:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.reported_outcome_description. Scoped application-reported business
+            result relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+        occurred_at:
+          type: string
+          description: OperationWorkflowReadinessBusinessOutcome.occurred_at. Scoped application-reported business result relative
+            to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
+          format: date-time
+      required:
+      - expected_outcome_code
+      - checked_at
+      - status
+      - explanation
 
     OperationWorkflowReadinessVerificationWatch:
       type: object
@@ -75464,6 +75549,8 @@ components:
       description: Current advisory evidence check preserving the original notification. Global failures remain unavailable.
       additionalProperties: false
       properties:
+        business_outcome:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
         handoff:
           $ref: '#/components/schemas/OperationWorkflowReadinessHandoff'
         notification:
