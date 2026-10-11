@@ -115,8 +115,20 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 			return out, err
 		}
 		for _, p := range records {
-			out.HistoryTruncated = out.HistoryTruncated || p.HistoryTruncated
+			out.HistoryTruncated = out.HistoryTruncated || p.HistoryTruncated || p.ReviewsTruncated
 			out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/start", PlaybookProgressID: p.ID, At: p.CreatedAt, Kind: "playbook_started", Summary: "Started pinned playbook " + p.Playbook.ID, Actor: p.CreatedBy, ReportingOperationIDs: []string{p.ReportingOperationID}})
+
+			for _, review := range p.Reviews {
+				summary := "Playbook review: " + review.Decision
+				if review.ReplacementProgressID != "" {
+					summary += "; replacement checklist " + review.ReplacementProgressID
+				}
+				ids := []string{}
+				if review.Applicability.ReportingOperationID != "" {
+					ids = append(ids, review.Applicability.ReportingOperationID)
+				}
+				out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/decision/" + fmt.Sprint(review.Revision), PlaybookProgressID: p.ID, At: review.At, Kind: "playbook_review_decision", Summary: summary, Actor: review.Actor, Status: review.Decision, Note: review.Reason, ReportingOperationIDs: ids})
+			}
 			for _, change := range p.History {
 				ids := []string{}
 				for _, e := range change.Item.Evidence {

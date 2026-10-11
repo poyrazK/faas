@@ -7,6 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_playbook_progress_disposition import (
+    OperationWorkflowPlaybookProgressDisposition,
+    check_operation_workflow_playbook_progress_disposition,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -14,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
     from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
     from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
+    from ..models.operation_workflow_playbook_review import OperationWorkflowPlaybookReview
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookProgress")
@@ -60,6 +65,21 @@ class OperationWorkflowPlaybookProgress:
     history_truncated: bool
     """OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
     history."""
+    disposition: OperationWorkflowPlaybookProgressDisposition | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active.
+    Closed checklists reject item edits and further decisions; this is not business success."""
+    latest_review: OperationWorkflowPlaybookReview | Unset = UNSET
+    """OperationWorkflowPlaybookReview. Durable human choice with server reviewer, observation context and
+    immutable replacement reference. Not an application outcome or execution permission."""
+    reviews: list[OperationWorkflowPlaybookReview] | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.reviews. Most recent 32 durable review decisions in shared revision order;
+    independent of item review history."""
+    reviews_truncated: bool | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.reviews_truncated. Older human review decisions were pruned from the
+    bounded journal."""
+    replaces_progress_ids: list[UUID] | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.replaces_progress_ids. Case-read-only inverse links from replaced
+    predecessors. Derived from retained exact-case records and never persisted or accepted in requests."""
     applicability: OperationWorkflowPlaybookApplicability | Unset = UNSET
     """OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
     current exact-case evidence. No progress, review history, readiness or outcome is mutated."""
@@ -99,6 +119,30 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = self.history_truncated
 
+        disposition: str | Unset = UNSET
+        if not isinstance(self.disposition, Unset):
+            disposition = self.disposition
+
+        latest_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.latest_review, Unset):
+            latest_review = self.latest_review.to_dict()
+
+        reviews: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.reviews, Unset):
+            reviews = []
+            for reviews_item_data in self.reviews:
+                reviews_item = reviews_item_data.to_dict()
+                reviews.append(reviews_item)
+
+        reviews_truncated = self.reviews_truncated
+
+        replaces_progress_ids: list[str] | Unset = UNSET
+        if not isinstance(self.replaces_progress_ids, Unset):
+            replaces_progress_ids = []
+            for replaces_progress_ids_item_data in self.replaces_progress_ids:
+                replaces_progress_ids_item = str(replaces_progress_ids_item_data)
+                replaces_progress_ids.append(replaces_progress_ids_item)
+
         applicability: dict[str, Any] | Unset = UNSET
         if not isinstance(self.applicability, Unset):
             applicability = self.applicability.to_dict()
@@ -123,6 +167,16 @@ class OperationWorkflowPlaybookProgress:
                 "history_truncated": history_truncated,
             }
         )
+        if disposition is not UNSET:
+            field_dict["disposition"] = disposition
+        if latest_review is not UNSET:
+            field_dict["latest_review"] = latest_review
+        if reviews is not UNSET:
+            field_dict["reviews"] = reviews
+        if reviews_truncated is not UNSET:
+            field_dict["reviews_truncated"] = reviews_truncated
+        if replaces_progress_ids is not UNSET:
+            field_dict["replaces_progress_ids"] = replaces_progress_ids
         if applicability is not UNSET:
             field_dict["applicability"] = applicability
 
@@ -134,6 +188,7 @@ class OperationWorkflowPlaybookProgress:
         from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
         from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
         from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
+        from ..models.operation_workflow_playbook_review import OperationWorkflowPlaybookReview
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -174,6 +229,40 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = d.pop("history_truncated")
 
+        _disposition = d.pop("disposition", UNSET)
+        disposition: OperationWorkflowPlaybookProgressDisposition | Unset
+        if isinstance(_disposition, Unset):
+            disposition = UNSET
+        else:
+            disposition = check_operation_workflow_playbook_progress_disposition(_disposition)
+
+        _latest_review = d.pop("latest_review", UNSET)
+        latest_review: OperationWorkflowPlaybookReview | Unset
+        if isinstance(_latest_review, Unset):
+            latest_review = UNSET
+        else:
+            latest_review = OperationWorkflowPlaybookReview.from_dict(_latest_review)
+
+        _reviews = d.pop("reviews", UNSET)
+        reviews: list[OperationWorkflowPlaybookReview] | Unset = UNSET
+        if _reviews is not UNSET:
+            reviews = []
+            for reviews_item_data in _reviews:
+                reviews_item = OperationWorkflowPlaybookReview.from_dict(reviews_item_data)
+
+                reviews.append(reviews_item)
+
+        reviews_truncated = d.pop("reviews_truncated", UNSET)
+
+        _replaces_progress_ids = d.pop("replaces_progress_ids", UNSET)
+        replaces_progress_ids: list[UUID] | Unset = UNSET
+        if _replaces_progress_ids is not UNSET:
+            replaces_progress_ids = []
+            for replaces_progress_ids_item_data in _replaces_progress_ids:
+                replaces_progress_ids_item = UUID(replaces_progress_ids_item_data)
+
+                replaces_progress_ids.append(replaces_progress_ids_item)
+
         _applicability = d.pop("applicability", UNSET)
         applicability: OperationWorkflowPlaybookApplicability | Unset
         if isinstance(_applicability, Unset):
@@ -196,6 +285,11 @@ class OperationWorkflowPlaybookProgress:
             updated_at=updated_at,
             history=history,
             history_truncated=history_truncated,
+            disposition=disposition,
+            latest_review=latest_review,
+            reviews=reviews,
+            reviews_truncated=reviews_truncated,
+            replaces_progress_ids=replaces_progress_ids,
             applicability=applicability,
         )
 

@@ -636,18 +636,38 @@
   if(result.history_truncated)limitations.append(node('li','Older coordination review or assignment changes are missing.'));
   if(!result.sources.length)sources.append(node('li','No retained readiness inboxes are available for this role, application and environment.'));
  }
- async function savePlaybookProgress(id,body,button) {
+ async function savePlaybookProgress(id,body,button,reviewDecision=false) {
   const token=generation,query=new URLSearchParams(active);query.delete('offset');query.delete('limit');
   button.disabled=true;message.textContent='Saving playbook progress…';
   try {
    const url=safeURL(root.dataset.caseUrl);if(!url.pathname.endsWith('/case'))throw new Error('Invalid progress destination.');
-   url.pathname=url.pathname.slice(0,-5)+'/playbook-progress'+(id?'/'+encodeURIComponent(id):'');url.search=query.toString();
-   const response=await fetch(url.href,{method:id?'PATCH':'POST',credentials:'same-origin',redirect:'error',cache:'no-store',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)});
+   url.pathname=url.pathname.slice(0,-5)+'/playbook-progress'+(id?'/'+encodeURIComponent(id):'')+(reviewDecision?'/reviews':'');url.search=query.toString();
+   const response=await fetch(url.href,{method:reviewDecision?'POST':id?'PATCH':'POST',credentials:'same-origin',redirect:'error',cache:'no-store',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)});
    if(!response.ok)throw new Error(response.status===409?'This checklist or its guidance changed. Reload the case before saving again.':'Playbook progress could not be saved (HTTP '+response.status+').');
    if(token!==generation)return;
    next=0;seen=new Set();items.replaceChildren();await loadTimeline(false);
   }catch(error){if(token===generation)message.textContent=error instanceof Error?error.message:'Playbook progress could not be saved.';}
   finally{button.disabled=false;}
+ }
+ function renderPlaybookDecision(section,p,records) {
+  const disposition=p.disposition||'active';section.id='playbook-progress-'+p.id;
+  section.append(node('p','Coordination: '+disposition+' · Checklist '+p.id));
+  const linkTo=(id,label)=>{const link=node('a',label);link.href='#playbook-progress-'+encodeURIComponent(id);section.append(link,node('span',' '));};
+  if(p.latest_review){const r=p.latest_review;section.append(node('p','Latest decision: '+r.decision+' · '+r.actor+' · '+clock(r.at)),node('p',r.reason),node('p','Reviewed applicability: '+r.applicability.status.replace(/_/g,' ')+' · '+r.applicability.summary));if(r.replacement_progress_id)linkTo(r.replacement_progress_id,'Replacement checklist '+r.replacement_progress_id);}
+  for(const id of p.replaces_progress_ids||[])linkTo(id,'Replaces checklist '+id);
+  if(p.reviews_truncated)section.append(node('p','Older review decisions are no longer retained.'));
+  if(disposition!=='active'){section.append(node('p','This coordination is closed. Its evidence and reviews remain available; no business outcome is asserted.'));return;}
+  const form=node('form','');const choice=node('select','');choice.setAttribute('aria-label','Review decision for '+p.playbook.id);
+  for(const [value,text] of [['continue','Continue this checklist'],['retire','Retire this checklist'],['replace','Replace with another checklist']]){const option=node('option',text);option.value=value;choice.append(option);}choice.value='continue';
+  const targets=node('select','');targets.setAttribute('aria-label','Replacement checklist for '+p.playbook.id);const blank=node('option','Choose a replacement');blank.value='';targets.append(blank);
+  const eligible=records.filter(target=>target.id!==p.id&&(target.disposition||'active')==='active'&&target.applicability&&target.applicability.status==='applicable');
+  for(const target of eligible){const option=node('option',target.playbook.id+' v'+target.playbook.version+' · '+target.id);option.value=target.id;targets.append(option);}targets.value='';
+  const reason=node('textarea','');reason.required=true;reason.maxLength=1024;reason.setAttribute('aria-label','Decision reason for '+p.playbook.id);
+  const button=node('button','Record decision');button.type='submit';form.append(choice,targets,reason,node('p','Retire and replace permanently close this checklist. Start the replacement from current guidance first. Evidence and completion are not transferred.'),button);
+  form.addEventListener('submit',event=>{event.preventDefault();if(!form.reportValidity())return;const body={revision:p.revision,decision:choice.value,reason:reason.value};
+   if(choice.value==='replace'){const target=eligible.find(target=>target.id===targets.value);if(!target){message.textContent='Choose an active applicable replacement checklist in this case.';return;}body.replacement_progress_id=target.id;body.replacement_revision=target.revision;}
+   void savePlaybookProgress(p.id,body,button,true);
+  });section.append(form);
  }
  function renderPlaybookProgress(records) {
   caseView.append(node('h4','Playbook checklist progress'),node('p','Reviews follow pinned guidance. Completing a checklist does not establish readiness or business success. Evidence references were checked when saved.'));
@@ -666,11 +686,13 @@
     if(applicability.status==='applicable'&&!applicability.evidence_complete)section.append(node('p','The trigger was observed, but evaluated evidence coverage is incomplete.'));
     if(applicability.reporting_operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(applicability.reporting_operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Applicability reporting operation');link.href=url.href;section.append(link);}
    }else section.append(node('p','Applicability has not been checked in this response. Reload the case overview for current evidence.'));
+   renderPlaybookDecision(section,p,records);
    if(p.checklist_complete)section.append(node('p','Checklist complete (human review).'));
    if(p.history_truncated)section.append(node('p','Older checklist reviews are no longer retained.'));
    p.items.forEach((item,index)=>{
-    const edit=node('form','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
+    const editable=(p.disposition||'active')==='active';const edit=node(editable?'form':'div','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
     for(const ref of item.evidence||[]){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(ref.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Saved evidence '+ref.operation_id+(ref.milestone_id?' / milestone '+ref.milestone_id:''));link.href=url.href;edit.append(link,node('span',' '));}
+    if(!editable){edit.append(node('p',item.status+' · '+item.note));section.append(edit);return;}
     const status=node('select','');status.setAttribute('aria-label','Review status for '+item.label);
     for(const value of ['pending','completed']){const option=node('option',value==='completed'?'Reviewed complete':'Pending');option.value=value;status.append(option);}status.value=item.status;
     const note=node('textarea','');note.required=true;note.maxLength=1024;note.value=item.note;note.setAttribute('aria-label','Review note for '+item.label);

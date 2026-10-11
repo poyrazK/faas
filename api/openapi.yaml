@@ -37849,7 +37849,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 62500
+          maximum: 65700
           default: 0
       - name: limit
         in: query
@@ -37945,7 +37945,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 62500
+          maximum: 65700
           default: 0
       - name: limit
         in: query
@@ -38048,7 +38048,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 62500
+          maximum: 65700
           default: 0
       - name: limit
         in: query
@@ -38177,7 +38177,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 62500
+          maximum: 65700
           default: 0
       - name: limit
         in: query
@@ -38592,6 +38592,198 @@ paths:
         '200':
           description: UpdatePlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted
             start or review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews:
+    post:
+      operationId: ReviewAccountWorkflowPlaybookProgress
+      summary: Record account playbook review decision
+      description: ReviewAccountWorkflowPlaybookProgress. Record continue, retire or replace with a required human
+        reason and expected source revision. Retire and replace permanently close source coordination. Replacement
+        requires an already-started active applicable target in the same exact case, its expected revision, and an
+        atomic target-state check. No item evidence, pinned guidance, business outcome or execution authority is changed.
+        Account write scope and MFA or customer operations-manage scope are required; customer ownership derives from
+        authentication. Applicability is observed before the write, not transactionally locked application evidence.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.slug. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference
+          projections are not accepted.
+        schema:
+          type: string
+          format: uuid
+      - name: subject_type
+        in: query
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: id
+        in: path
+        required: true
+        description: ReviewAccountWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookReviewRequest'
+      responses:
+        '200':
+          description: ReviewAccountWorkflowPlaybookProgress. Source checklist with the committed durable decision
+            and updated shared revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews:
+    post:
+      operationId: ReviewPlatformTenantSelfWorkflowPlaybookProgress
+      summary: Record customer playbook review decision
+      description: ReviewPlatformTenantSelfWorkflowPlaybookProgress. Record continue, retire or replace with a required
+        human reason and expected source revision. Retire and replace permanently close source coordination. Replacement
+        requires an already-started active applicable target in the same exact case, its expected revision, and an
+        atomic target-state check. No item evidence, pinned guidance, business outcome or execution authority is changed.
+        Account write scope and MFA or customer operations-manage scope are required; customer ownership derives from
+        authentication. Applicability is observed before the write, not transactionally locked application evidence.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: app_id
+        in: query
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity
+          comes from authentication.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: subject_type
+        in: query
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: id
+        in: path
+        required: true
+        description: ReviewPlatformTenantSelfWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this
+          exact case.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookReviewRequest'
+      responses:
+        '200':
+          description: ReviewPlatformTenantSelfWorkflowPlaybookProgress. Source checklist with the committed durable
+            decision and updated shared revision.
           content:
             application/json:
               schema:
@@ -77268,7 +77460,7 @@ components:
           description: OperationWorkflowCoordinationTimelineOptions.offset. Exact timeline query selector; customer
             identity comes from authentication.
           minimum: 0
-          maximum: 62500
+          maximum: 65700
         limit:
           type: integer
           description: OperationWorkflowCoordinationTimelineOptions.limit. Exact timeline query selector; customer identity
@@ -77688,6 +77880,37 @@ components:
       - history
       - history_truncated
       properties:
+        disposition:
+          type: string
+          enum:
+          - active
+          - retired
+          - replaced
+          description: OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean
+            active. Closed checklists reject item edits and further decisions; this is not business success.
+        latest_review:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookReview'
+          description: OperationWorkflowPlaybookProgress.latest_review. Latest committed review decision, retained even
+            when earlier decision history is truncated.
+        reviews:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookReview'
+          description: OperationWorkflowPlaybookProgress.reviews. Most recent 32 durable review decisions in shared revision
+            order; independent of item review history.
+        reviews_truncated:
+          type: boolean
+          description: OperationWorkflowPlaybookProgress.reviews_truncated. Older human review decisions were pruned from
+            the bounded journal.
+        replaces_progress_ids:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+          description: OperationWorkflowPlaybookProgress.replaces_progress_ids. Case-read-only inverse links from replaced
+            predecessors. Derived from retained exact-case records and never persisted or accepted in requests.
         applicability:
           $ref: '#/components/schemas/OperationWorkflowPlaybookApplicability'
           description: OperationWorkflowPlaybookProgress.applicability. Live advisory observation included in case overviews only; absent from stored progress and mutation responses. Frozen guidance, revision and history remain unchanged.
@@ -77837,6 +78060,105 @@ components:
           maximum: 16
           description: OperationWorkflowPlaybookApplicability.remaining_item_count. Count of frozen checklist items
             not human-reviewed as completed; independent of current trigger or business outcome.
+
+    OperationWorkflowPlaybookReviewRequest:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookReviewRequest. Human review of frozen checklist coordination under a shared
+        revision fence. No caller-supplied reviewer or applicability is accepted.
+      required:
+      - revision
+      - decision
+      - reason
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookReviewRequest.revision. Expected current source revision for requests,
+            committed new shared revision for retained decisions.
+        decision:
+          type: string
+          enum:
+          - continue
+          - retire
+          - replace
+          description: OperationWorkflowPlaybookReviewRequest.decision. Human coordination choice; retire and replace
+            permanently close this source checklist.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowPlaybookReviewRequest.reason. Required nonempty UTF-8 review reason, at most
+            1024 bytes and without control characters.
+        replacement_progress_id:
+          type: string
+          format: uuid
+          description: 'OperationWorkflowPlaybookReviewRequest.replacement_progress_id. Only for replace: distinct already-started
+            active applicable checklist in the exact same case.'
+        replacement_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 'OperationWorkflowPlaybookReviewRequest.replacement_revision. Only for replace: expected target
+            revision, rechecked with its active disposition under the writer lock.'
+    OperationWorkflowPlaybookReview:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookReview. Durable human choice with server reviewer, observation context and
+        immutable replacement reference. Not an application outcome or execution permission.
+      required:
+      - revision
+      - decision
+      - reason
+      - actor
+      - at
+      - applicability
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookReview.revision. Expected current source revision for requests, committed
+            new shared revision for retained decisions.
+        decision:
+          type: string
+          enum:
+          - continue
+          - retire
+          - replace
+          description: OperationWorkflowPlaybookReview.decision. Human coordination choice; retire and replace permanently
+            close this source checklist.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowPlaybookReview.reason. Required nonempty UTF-8 review reason, at most 1024 bytes
+            and without control characters.
+        replacement_progress_id:
+          type: string
+          format: uuid
+          description: 'OperationWorkflowPlaybookReview.replacement_progress_id. Only for replace: distinct already-started
+            active applicable checklist in the exact same case.'
+        replacement_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 'OperationWorkflowPlaybookReview.replacement_revision. Only for replace: expected target revision,
+            rechecked with its active disposition under the writer lock.'
+        actor:
+          type: string
+          description: OperationWorkflowPlaybookReview.actor. Authenticated account or API-key reviewer assigned by
+            the server.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookReview.at. Server decision clock; application evidence was independently
+            read.
+        applicability:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookApplicability'
+          description: OperationWorkflowPlaybookReview.applicability. Retained exact-case observation reviewed by this
+            decision; distinct from the live applicability field.
 
   responses:
     OperationConflict:

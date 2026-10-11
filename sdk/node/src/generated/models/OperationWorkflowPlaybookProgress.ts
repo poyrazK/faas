@@ -6,10 +6,31 @@ import type { OperationWorkflowPlaybook } from './OperationWorkflowPlaybook.js';
 import type { OperationWorkflowPlaybookApplicability } from './OperationWorkflowPlaybookApplicability.js';
 import type { OperationWorkflowPlaybookProgressChange } from './OperationWorkflowPlaybookProgressChange.js';
 import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
+import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlaybookReview.js';
 /**
  * OperationWorkflowPlaybookProgress. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgress = {
+  /**
+   * OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active. Closed checklists reject item edits and further decisions; this is not business success.
+   */
+  disposition?: 'active' | 'retired' | 'replaced';
+  /**
+   * OperationWorkflowPlaybookProgress.latest_review. Latest committed review decision, retained even when earlier decision history is truncated.
+   */
+  latest_review?: OperationWorkflowPlaybookReview;
+  /**
+   * OperationWorkflowPlaybookProgress.reviews. Most recent 32 durable review decisions in shared revision order; independent of item review history.
+   */
+  reviews?: Array<OperationWorkflowPlaybookReview>;
+  /**
+   * OperationWorkflowPlaybookProgress.reviews_truncated. Older human review decisions were pruned from the bounded journal.
+   */
+  reviews_truncated?: boolean;
+  /**
+   * OperationWorkflowPlaybookProgress.replaces_progress_ids. Case-read-only inverse links from replaced predecessors. Derived from retained exact-case records and never persisted or accepted in requests.
+   */
+  replaces_progress_ids?: Array<string>;
   /**
    * OperationWorkflowPlaybookProgress.applicability. Live advisory observation included in case overviews only; absent from stored progress and mutation responses. Frozen guidance, revision and history remain unchanged.
    */

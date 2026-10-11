@@ -1530,3 +1530,30 @@ Applicability is ephemeral response metadata on case reads, not persisted progre
 or a durable timeline event. It never advances revisions, edits or closes checklists,
 changes guidance/history, or mutates application-owned evidence and execution authority.
 No new migration or quota is required: checklists remain bounded by existing limits.
+
+## Human review decisions for pinned playbook coordination
+
+Add continue/retire/replace decisions under the existing exact-case, scope, tenant and
+write authorization boundaries. Server-derived reviewers and clocks accompany a
+required bounded reason and the applicability observation reviewed. Store this
+observation as durable decision context, separately from the ephemeral live field;
+never treat it as current verification or transactionally consistent business evidence.
+
+Decisions and item edits share one optimistic revision. Continue keeps coordination
+active, even under explicit evidence uncertainty. Retire and replace permanently close
+source coordination without editing frozen guidance, item proofs, completion counts
+or business outcomes. Closed sources reject future decisions and item writes. Omitted
+legacy dispositions remain active. No automatic retirement or execution is introduced.
+
+Replacement links a distinct already-started active applicable checklist in the same
+exact case and requires its expected revision. Validate source and target revisions
+and target active state under the shared memory/account writer lock. Application
+applicability remains an independently observed pre-write fact. Active-only targets
+and irreversible source closure prevent cycles; subsequent replacement chains preserve
+older links. No checklist items or proof are transferred and no reverse write is needed:
+case reads derive inverse links from retained predecessor decisions.
+
+Retain the latest decision plus a bounded journal of the latest 32 choices, with
+explicit truncation and durable timeline events. Add the journal bound to the central
+limits table and timeline projection budget. Existing JSON progress storage suffices;
+no new migration or application lifecycle writer is required.

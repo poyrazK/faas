@@ -9714,7 +9714,7 @@ const OperationWorkflowReadinessAssignmentHistoryMax = 16
 const OperationWorkflowReadinessCoordinationRevisionMax int64 = 1<<53 - 1
 
 // Timeline projections share existing subscription/inbox and page budgets.
-const OperationWorkflowCoordinationTimelineEventsMax = OperationWorkflowReadinessFollowUpCandidatesMax*(OperationWorkflowReadinessAssignmentHistoryMax+12) + OperationWorkflowPlaybookProgressPerCaseMax*(OperationWorkflowPlaybookProgressHistoryMax+1)
+const OperationWorkflowCoordinationTimelineEventsMax = OperationWorkflowReadinessFollowUpCandidatesMax*(OperationWorkflowReadinessAssignmentHistoryMax+12) + OperationWorkflowPlaybookProgressPerCaseMax*(OperationWorkflowPlaybookProgressHistoryMax+OperationWorkflowPlaybookReviewsMax+1)
 const OperationWorkflowCoordinationTimelineOperationLinksMax = 48
 
 const OperationWorkflowCaseFollowUpsMax = OperationHistoryPageMax
@@ -9732,3 +9732,6 @@ const (
 	OperationWorkflowPlaybookProgressHistoryMax   = 64
 	OperationWorkflowPlaybookProgressBodyMaxBytes = 32768
 )
+
+// Review decisions retain a bounded journal independent of item reviews.
+const OperationWorkflowPlaybookReviewsMax = 32

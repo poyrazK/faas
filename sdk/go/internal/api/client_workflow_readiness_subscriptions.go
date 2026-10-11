@@ -193,3 +193,21 @@ func (c *Client) UpdatePlatformTenantSelfWorkflowPlaybookProgress(ctx context.Co
 	err := c.doOperation(ctx, http.MethodPatch, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
 	return out, err
 }
+
+func (c *Client) ReviewAccountWorkflowPlaybookProgress(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookReviewRequest) (OperationWorkflowPlaybookProgress, error) {
+	var out OperationWorkflowPlaybookProgress
+	opts.Offset = 0
+	opts.Limit = 0
+	opts.AppID = ""
+	err := c.doOperation(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/reviews?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) ReviewPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookReviewRequest) (OperationWorkflowPlaybookProgress, error) {
+	var out OperationWorkflowPlaybookProgress
+	opts.Offset = 0
+	opts.Limit = 0
+
+	err := c.doOperation(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/reviews?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}

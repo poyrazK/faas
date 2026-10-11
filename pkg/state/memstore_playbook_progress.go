@@ -26,6 +26,9 @@ func (m *MemStore) readPlaybookProgress(ctx context.Context, r workflowPlaybookP
 	return out, ctx.Err()
 }
 func (m *MemStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookProgressRecord, revision int64) (api.OperationWorkflowPlaybookProgress, error) {
+	return m.savePlaybookProgressReview(ctx, r, revision, "", 0)
+}
+func (m *MemStore) savePlaybookProgressReview(ctx context.Context, r workflowPlaybookProgressRecord, revision int64, targetID string, targetRevision int64) (api.OperationWorkflowPlaybookProgress, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -42,7 +45,7 @@ func (m *MemStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookP
 	if revision == 0 && exists {
 		return clonePlaybookProgress(old.Progress), nil
 	}
-	if revision > 0 && (!exists || old.Progress.Revision != revision) {
+	if revision > 0 && (!exists || old.Progress.Revision != revision || !workflowPlaybookProgressActive(old.Progress)) {
 		return r.Progress, ErrConflict
 	}
 	if revision == 0 {
@@ -56,7 +59,25 @@ func (m *MemStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookP
 			return r.Progress, NewOperationLimitError("playbook_progress_per_case", api.OperationWorkflowPlaybookProgressPerCaseMax, int64(count+1))
 		}
 	}
+
+	if targetID != "" {
+		rows := []api.OperationWorkflowPlaybookProgress{}
+		for _, row := range data.playbookProgress {
+			if row.key() == r.key() {
+				rows = append(rows, row.Progress)
+			}
+		}
+		if err := validatePlaybookReplacement(rows, targetID, targetRevision); err != nil {
+			return r.Progress, err
+		}
+	}
+	r.Progress.Applicability = nil
+	r.Progress.ReplacesProgressIDs = nil
 	r.Progress = clonePlaybookProgress(r.Progress)
 	data.playbookProgress[r.Progress.ID] = r
 	return clonePlaybookProgress(r.Progress), nil
+}
+
+func (s *MemStore) ReviewWorkflowPlaybookProgress(ctx context.Context, a, t string, o api.OperationWorkflowCoordinationTimelineOptions, id, actor string, r api.OperationWorkflowPlaybookReviewRequest, b bool) (api.OperationWorkflowPlaybookProgress, error) {
+	return reviewWorkflowPlaybookProgress(ctx, s, a, t, o, id, actor, r, b)
 }

@@ -1162,6 +1162,8 @@ export type { OperationWorkflowPlaybookProgressChange } from './OperationWorkflo
 export type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
 export type { OperationWorkflowPlaybookProgressStartRequest } from './OperationWorkflowPlaybookProgressStartRequest.js';
 export type { OperationWorkflowPlaybookProgressUpdateRequest } from './OperationWorkflowPlaybookProgressUpdateRequest.js';
+export type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlaybookReview.js';
+export type { OperationWorkflowPlaybookReviewRequest } from './OperationWorkflowPlaybookReviewRequest.js';
 export type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 export type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowPrerequisiteRecovery.js';
 export type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';

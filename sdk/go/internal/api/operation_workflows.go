@@ -106,6 +106,12 @@ type OperationWorkflowPlaybookProgressChange struct {
 	Actor     string                                `json:"actor"`
 }
 type OperationWorkflowPlaybookProgress struct {
+	Disposition         string                            `json:"disposition,omitempty"`
+	LatestReview        *OperationWorkflowPlaybookReview  `json:"latest_review,omitempty"`
+	Reviews             []OperationWorkflowPlaybookReview `json:"reviews,omitempty"`
+	ReviewsTruncated    bool                              `json:"reviews_truncated,omitempty"`
+	ReplacesProgressIDs []string                          `json:"replaces_progress_ids,omitempty"`
+
 	Applicability        *OperationWorkflowPlaybookApplicability   `json:"applicability,omitempty"`
 	ID                   string                                    `json:"id"`
 	Revision             int64                                     `json:"revision"`
@@ -137,4 +143,23 @@ type OperationWorkflowPlaybookApplicability struct {
 	TriggerMatched         bool      `json:"trigger_matched"`
 	EvidenceComplete       bool      `json:"evidence_complete"`
 	RemainingItemCount     int       `json:"remaining_item_count"`
+}
+
+// OperationWorkflowPlaybookReviewRequest records a human coordination decision.
+type OperationWorkflowPlaybookReviewRequest struct {
+	Revision              int64  `json:"revision"`
+	Decision              string `json:"decision"`
+	Reason                string `json:"reason"`
+	ReplacementProgressID string `json:"replacement_progress_id,omitempty"`
+	ReplacementRevision   int64  `json:"replacement_revision,omitempty"`
+}
+type OperationWorkflowPlaybookReview struct {
+	Revision              int64                                  `json:"revision"`
+	Decision              string                                 `json:"decision"`
+	Reason                string                                 `json:"reason"`
+	Actor                 string                                 `json:"actor"`
+	At                    time.Time                              `json:"at"`
+	Applicability         OperationWorkflowPlaybookApplicability `json:"applicability"`
+	ReplacementProgressID string                                 `json:"replacement_progress_id,omitempty"`
+	ReplacementRevision   int64                                  `json:"replacement_revision,omitempty"`
 }

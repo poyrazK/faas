@@ -39,6 +39,11 @@ func (s *PgStore) readPlaybookProgress(ctx context.Context, r workflowPlaybookPr
 	return readPGPlaybookProgress(ctx, s.pool, r)
 }
 func (s *PgStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookProgressRecord, revision int64) (api.OperationWorkflowPlaybookProgress, error) {
+	return s.savePlaybookProgressReview(ctx, r, revision, "", 0)
+}
+func (s *PgStore) savePlaybookProgressReview(ctx context.Context, r workflowPlaybookProgressRecord, revision int64, targetID string, targetRevision int64) (api.OperationWorkflowPlaybookProgress, error) {
+	r.Progress.Applicability = nil
+	r.Progress.ReplacesProgressIDs = nil
 	q := sqlc.New()
 	params := playbookProgressQuery(r)
 	id, _ := operationUUID(r.Progress.ID)
@@ -55,11 +60,30 @@ func (s *PgStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookPr
 	if _, err = q.LockCustomerOperationAccount(ctx, tx, params.AccountID); err != nil {
 		return r.Progress, mapErr(err)
 	}
-	if revision == 0 {
-		rows, err := readPGPlaybookProgress(ctx, tx, r)
-		if err != nil {
-			return r.Progress, err
+
+	rows, err := readPGPlaybookProgress(ctx, tx, r)
+	if err != nil {
+		return r.Progress, err
+	}
+	if err = validatePlaybookReplacement(rows, targetID, targetRevision); err != nil {
+		return r.Progress, err
+	}
+	if revision > 0 {
+		found := false
+		for _, old := range rows {
+			if old.ID == r.Progress.ID {
+				found = true
+				if old.Revision != revision || !workflowPlaybookProgressActive(old) {
+					return r.Progress, ErrConflict
+				}
+				break
+			}
 		}
+		if !found {
+			return r.Progress, ErrNotFound
+		}
+	}
+	if revision == 0 {
 		for _, old := range rows {
 			if old.ID == r.Progress.ID {
 				return old, nil
@@ -85,4 +109,8 @@ func (s *PgStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookPr
 		}
 	}
 	return r.Progress, tx.Commit(ctx)
+}
+
+func (s *PgStore) ReviewWorkflowPlaybookProgress(ctx context.Context, a, t string, o api.OperationWorkflowCoordinationTimelineOptions, id, actor string, r api.OperationWorkflowPlaybookReviewRequest, b bool) (api.OperationWorkflowPlaybookProgress, error) {
+	return reviewWorkflowPlaybookProgress(ctx, s, a, t, o, id, actor, r, b)
 }

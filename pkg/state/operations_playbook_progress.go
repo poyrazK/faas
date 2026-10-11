@@ -14,6 +14,8 @@ import (
 )
 
 type OperationWorkflowPlaybookProgressStore interface {
+	ReviewWorkflowPlaybookProgress(context.Context, string, string, api.OperationWorkflowCoordinationTimelineOptions, string, string, api.OperationWorkflowPlaybookReviewRequest, bool) (api.OperationWorkflowPlaybookProgress, error)
+
 	StartWorkflowPlaybookProgress(context.Context, string, string, api.OperationWorkflowCoordinationTimelineOptions, string, api.OperationWorkflowPlaybookProgressStartRequest, bool) (api.OperationWorkflowPlaybookProgress, error)
 	UpdateWorkflowPlaybookProgress(context.Context, string, string, api.OperationWorkflowCoordinationTimelineOptions, string, string, api.OperationWorkflowPlaybookProgressUpdateRequest, bool) (api.OperationWorkflowPlaybookProgress, error)
 }
@@ -28,6 +30,7 @@ func (r workflowPlaybookProgressRecord) key() string {
 
 type workflowPlaybookProgressBackend interface {
 	workflowCaseBackend
+	savePlaybookProgressReview(context.Context, workflowPlaybookProgressRecord, int64, string, int64) (api.OperationWorkflowPlaybookProgress, error)
 	savePlaybookProgress(context.Context, workflowPlaybookProgressRecord, int64) (api.OperationWorkflowPlaybookProgress, error)
 }
 
@@ -91,7 +94,7 @@ func startWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookPr
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// Stable identity makes a retried start return the original checklist, never reset it.
-	r.Progress = api.OperationWorkflowPlaybookProgress{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.key()+"/"+op.DefinitionID+"/"+matched.Playbook.ID+"/"+fmt.Sprint(matched.Playbook.Version)+"/"+fmt.Sprint(matched.ContractVersion))).String(), Revision: 1, Playbook: matched.Playbook, ContractVersion: matched.ContractVersion, DefinitionID: op.DefinitionID, ReportingOperationID: op.ID, Items: []api.OperationWorkflowPlaybookProgressItem{}, History: []api.OperationWorkflowPlaybookProgressChange{}, CreatedAt: now, UpdatedAt: now, CreatedBy: actor}
+	r.Progress = api.OperationWorkflowPlaybookProgress{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.key()+"/"+op.DefinitionID+"/"+matched.Playbook.ID+"/"+fmt.Sprint(matched.Playbook.Version)+"/"+fmt.Sprint(matched.ContractVersion))).String(), Revision: 1, Disposition: "active", Playbook: matched.Playbook, ContractVersion: matched.ContractVersion, DefinitionID: op.DefinitionID, ReportingOperationID: op.ID, Items: []api.OperationWorkflowPlaybookProgressItem{}, History: []api.OperationWorkflowPlaybookProgressChange{}, CreatedAt: now, UpdatedAt: now, CreatedBy: actor}
 	for _, label := range matched.Playbook.RequiredEvidence {
 		r.Progress.Items = append(r.Progress.Items, api.OperationWorkflowPlaybookProgressItem{Label: label, Status: "pending", Evidence: []api.OperationWorkflowPlaybookEvidence{}})
 	}
@@ -126,7 +129,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		return r.Progress, ErrNotFound
 	}
 	p := &r.Progress
-	if p.Revision != req.Revision {
+	if p.Revision != req.Revision || !workflowPlaybookProgressActive(*p) {
 		return *p, ErrConflict
 	}
 	if req.ItemIndex >= len(p.Items) {

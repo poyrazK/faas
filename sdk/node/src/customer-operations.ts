@@ -342,7 +342,7 @@ export class GregaleOperationClient {
     q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 62500) throw new Error('Invalid timeline offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 65700) throw new Error('Invalid timeline offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {
@@ -357,7 +357,7 @@ export class GregaleOperationClient {
     q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 62500) throw new Error('Invalid timeline offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 65700) throw new Error('Invalid timeline offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {
@@ -383,6 +383,14 @@ export class GregaleOperationClient {
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     if (!UUID.test(id)) throw new Error('Checklist UUID required');
     return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress' + '/' + encodeURIComponent(id) + '?' + q, 'PATCH', body, undefined, signal);
+  }
+  reviewWorkflowPlaybookProgress(options: OperationWorkflowCoordinationTimelineOptions, id: string, body: OperationWorkflowPlaybookReviewRequest, signal?: AbortSignal): Promise<OperationWorkflowPlaybookProgress> {
+    const q = readinessSubscriptionQuery(options);
+    if (options.offset !== undefined || options.limit !== undefined) throw new Error('Pagination is not accepted for review decisions');
+    if (!options.subjectType || !options.subjectID || !options.workflow || !options.instanceID || !UUID.test(id)) throw new Error('Explicit case and checklist UUID required');
+    q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
+    q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
+    return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress/' + encodeURIComponent(id) + '/reviews?' + q, 'POST', body, undefined, signal);
   }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
@@ -808,6 +816,9 @@ export interface OperationWorkflowPlaybookEvidence { operation_id: string; miles
 export interface OperationWorkflowPlaybookProgressUpdateRequest { revision: number; item_index: number; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[] }
 export interface OperationWorkflowPlaybookProgressItem { label: string; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[]; reviewed_by?: string; reviewed_at?: string }
 export interface OperationWorkflowPlaybookProgressChange { revision: number; item_index: number; item: OperationWorkflowPlaybookProgressItem; at: string; actor: string }
-export interface OperationWorkflowPlaybookProgress { applicability?: OperationWorkflowPlaybookApplicability; id: string; revision: number; playbook: OperationWorkflowPlaybook; contract_version: number; definition_id: string; reporting_operation_id: string; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean; created_at: string; created_by: string; updated_at: string; history: OperationWorkflowPlaybookProgressChange[]; history_truncated: boolean }
+export interface OperationWorkflowPlaybookProgress { disposition?: 'active' | 'retired' | 'replaced'; latest_review?: OperationWorkflowPlaybookReview; reviews?: OperationWorkflowPlaybookReview[]; reviews_truncated?: boolean; replaces_progress_ids?: string[]; applicability?: OperationWorkflowPlaybookApplicability; id: string; revision: number; playbook: OperationWorkflowPlaybook; contract_version: number; definition_id: string; reporting_operation_id: string; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean; created_at: string; created_by: string; updated_at: string; history: OperationWorkflowPlaybookProgressChange[]; history_truncated: boolean }
 
 export interface OperationWorkflowPlaybookApplicability { status: 'applicable' | 'trigger_absent' | 'terminal_reported' | 'contract_changed' | 'guidance_changed' | 'evidence_unavailable' | 'definition_unavailable' | 'evidence_incomplete'; summary: string; suggested_action: string; checked_at: string; current_contract_version?: number; state_revision?: number; reporting_operation_id?: string; definition_id?: string; definition_changed: boolean; trigger_matched: boolean; evidence_complete: boolean; remaining_item_count: number }
+
+export interface OperationWorkflowPlaybookReviewRequest { revision: number; decision: 'continue' | 'retire' | 'replace'; reason: string; replacement_progress_id?: string; replacement_revision?: number }
+export interface OperationWorkflowPlaybookReview { revision: number; decision: 'continue' | 'retire' | 'replace'; reason: string; actor: string; at: string; applicability: OperationWorkflowPlaybookApplicability; replacement_progress_id?: string; replacement_revision?: number }

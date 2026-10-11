@@ -3006,9 +3006,46 @@ internal observations rather than the public proof preview. A workflow with no
 current-state transitions has no transition-based trigger in that retained evaluation.
 Terminal reports remain distinct from both successful outcomes and trigger absence.
 
-These are live advisory reads, not durable audit events. Observations are not stored,
-do not advance checklist revisions, and are omitted from start/update responses.
+The live applicability field is an advisory read, is not stored, does not advance
+checklist revisions, and is omitted from start/update responses. Human review decisions
+can separately retain the observation reviewed as durable decision context.
 They never close or reopen checklist items, replace frozen guidance, alter reviews,
 change application-owned blockers/readiness, or infer business success. Existing
 attached evidence is not revalidated by this trigger check. Refresh the case before
 acting; the application continues to own verification, outcome interpretation and execution.
+
+### Review changed or obsolete playbook work
+
+Record a human coordination decision with
+`POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews` or its
+`/v1/platform-tenant-self` equivalent, using the exact case query selectors without
+pagination. Existing account write/MFA and customer operations-manage authorization
+apply. Send `revision`, `decision` (`continue`, `retire` or `replace`) and a required
+`reason` of at most 1,024 UTF-8 bytes without control characters. Reviewer identity,
+server time and an applicability observation are recorded by Gregale, not the caller.
+
+`continue` records the reviewed choice and keeps coordination active, including when
+application evidence is unavailable; it is a human choice, not execution permission.
+`retire` and `replace` permanently close source coordination and reject subsequent
+item edits or review decisions with 409. Pending items, completion counts, notes,
+evidence and pinned guidance remain intact. Neither closure nor an explicit decision
+to continue asserts readiness, verification or business success. Existing records
+with no `disposition` are treated as active.
+
+For `replace`, first start an appropriate checklist from current matching guidance.
+Then send its `replacement_progress_id` and `replacement_revision`. The target must
+be distinct, active, applicable at the observation, and in the same exact case.
+Its revision and active state are rechecked atomically with the source update under
+the shared writer lock; concurrent retirement or editing produces a conflict. Closed
+sources cannot later be replacement targets, preventing cycles. A replacement can
+later itself be replaced; all earlier links remain retained. No item evidence or
+completion is copied. Other decisions reject replacement parameters.
+
+Both decisions and item edits advance the same checklist revision. The source stores
+`latest_review` and the latest 32 `reviews`, with `reviews_truncated` when older choices
+are pruned. Review observations are retained context; live applicability remains
+separate, and application evidence is not transactionally locked with human writes.
+Case overviews derive `replaces_progress_ids` from retained predecessor decisions;
+these inverse links are not stored or accepted in requests. Dashboard controls show
+closure, review context and links, and SDKs expose the review endpoint. Timeline
+entries retain the decision, reason, reviewer, clock and replacement identity.
