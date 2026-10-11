@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -542,9 +543,12 @@ func validateNativeJournalLease(l Lease) error {
 	return nil
 }
 
-// sameNativePhysicalLease compares every durable field. processGeneration is
-// a local callback fence, deliberately absent from disk and native authority.
+// sameNativePhysicalLease compares every durable field. The callback generation
+// and profiling start time are process-local, deliberately absent from disk and
+// native authority.
 func sameNativePhysicalLease(a, b Lease) bool {
+	a.profileStartedAt = time.Time{}
+	b.profileStartedAt = time.Time{}
 	a.processGeneration = 0
 	b.processGeneration = 0
 	return a == b
