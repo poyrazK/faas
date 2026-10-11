@@ -899,6 +899,7 @@ def _recount_diagnostics(out: dict[str, Any]) -> None:
             progress["retained"] += 1
     progress["complete"] = progress["remaining"] == 0
     progress["fresh_complete"] = progress["freshness"]["fresh"] == progress["target_count"]
+    progress["consumers"] = _diagnostic_consumers(out)
 
 
 async def adiagnose_commit_recovery_status(
@@ -1310,3 +1311,55 @@ class _DiagnosticEstimator:
             )
             result["estimated_remaining_ms"] = math.ceil(result["estimated_remaining_passes"] * cycle_ms)
         return result
+
+
+def _diagnostic_consumers(out: dict[str, Any]) -> list[dict[str, Any]]:
+    p = out["diagnostics_progress"]
+    groups: dict[str, dict[str, Any]] = {}
+    checked = datetime.fromisoformat(p["freshness_checked_at"]).timestamp()
+    for row in out["items"]:
+        if not _diagnostic_target(row):
+            continue
+        sid = row["attempt"]["subscription_id"].lower()
+        g = groups.setdefault(
+            sid,
+            dict(
+                subscription_id=sid,
+                target_count=0,
+                freshness=dict(fresh=0, stale=0, unread=0),
+                statuses={},
+                fresh_waiting_reasons={},
+                stale_waiting_reasons={},
+                compared=0,
+                changed=0,
+            ),
+        )
+        g["target_count"] += 1
+        freshness = _diagnostic_freshness(row, checked, p["max_diagnostic_age_ms"] / 1000)
+        g["freshness"][freshness] += 1
+        d = row.get("diagnostics")
+        if not _valid_diagnostic(d, row):
+            continue
+        g["statuses"][d["status"]] = g["statuses"].get(d["status"], 0) + 1
+        if not d.get("retained") and d.get("comparison") == "compared":
+            g["compared"] += 1
+            g["changed"] += bool(d.get("changes"))
+        if d["status"] != "available":
+            continue
+        reason = d["recipient"]["waiting_reason"]
+        reasons = g["stale_waiting_reasons"] if freshness == "stale" else g["fresh_waiting_reasons"]
+        reasons[reason] = reasons.get(reason, 0) + 1
+        pub = row["selection"]["publication"]
+        oldest = g.get("oldest_waiting")
+        if oldest is None or _diagnostic_time_key(pub["accepted_at"]) < _diagnostic_time_key(
+            oldest["query"]["expected_accepted_at"]
+        ):
+            g["oldest_waiting"] = dict(
+                query=dict(
+                    source=pub["source"], id=pub["id"], subscription_id=sid, expected_accepted_at=pub["accepted_at"]
+                ),
+                observed_at=d["observed_at"],
+                freshness=freshness,
+                waiting_reason=reason,
+            )
+    return [groups[sid] for sid in sorted(groups)]

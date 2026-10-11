@@ -20,6 +20,7 @@ export interface CommitRecoveryStatusChange {
   field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
 }
 export interface CommitRecoveryDiagnosticProgress {
+  consumers: CommitRecoveryDiagnosticConsumer[];
   compared: number; changed: number;
   max_diagnostic_age_ms: number; freshness_checked_at: string; freshness: Record<string, number>; fresh_complete: boolean;
   next_index: number; retry_next_index: number; refresh_next_index: number; target_count: number; remaining: number; deferred: number; retained: number; reads: number; counts: Record<string, number>; complete: boolean;
@@ -404,7 +405,7 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
   const out = structuredClone(status), prior = structuredClone(previous ?? status);
   if (out.source_id.toLowerCase() !== prior.source_id.toLowerCase() || (out.subscription_id ?? '').toLowerCase() !== (prior.subscription_id ?? '').toLowerCase() || out.items.length !== prior.items.length || out.items.some((row, i) => !row.selection || !prior.items[i]?.selection || !sameSelection(row.selection, prior.items[i]!.selection!) || canonical(row.attempt) !== canonical(prior.items[i]!.attempt))) throw new TypeError('saved diagnostic selection mismatch');
   const cursor = (value: number | undefined) => Number.isSafeInteger(value) && value! >= 0 && value! < out.items.length ? value! : 0;
-  const progress: CommitRecoveryDiagnosticProgress = { compared: 0, changed: 0, max_diagnostic_age_ms: maxDiagnosticAgeMs, freshness_checked_at: new Date().toISOString(), freshness: {fresh: 0, stale: 0, unread: 0}, fresh_complete: false, next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
+  const progress: CommitRecoveryDiagnosticProgress = { compared: 0, changed: 0, consumers: [], max_diagnostic_age_ms: maxDiagnosticAgeMs, freshness_checked_at: new Date().toISOString(), freshness: {fresh: 0, stale: 0, unread: 0}, fresh_complete: false, next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
   const baselines: (CommitRecoveryDiagnosticObservation | undefined)[] = [];
   for (let i = 0; i < out.items.length; i++) {
     const row = out.items[i]!, old = prior.items[i]!.diagnostics;
@@ -483,6 +484,7 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
   progress.complete = progress.remaining === 0;
   progress.fresh_complete = progress.freshness.fresh === progress.target_count;
   out.diagnostics_progress = progress;
+  progress.consumers = diagnosticConsumers(out);
   if (strictReads && transportFailure !== undefined) throw new CommitRecoveryStatusError(out, transportFailure);
   return out;
 }
@@ -597,6 +599,7 @@ function diagnosticCoverageComplete(out: CommitRecoveryStatusResult, age: number
  progress.remaining = progress.freshness.unread!;
  progress.complete = progress.remaining === 0;
  progress.fresh_complete = progress.freshness.fresh === progress.target_count;
+ progress.consumers = diagnosticConsumers(out);
  return progress.complete && progress.fresh_complete;
 }
 
@@ -631,4 +634,36 @@ class DiagnosticEstimator {
     }
     return result;
   }
+}
+
+export interface CommitRecoveryDiagnosticConsumer {
+ subscription_id: string; target_count: number; freshness: Record<string, number>; statuses: Record<string, number>;
+ fresh_waiting_reasons: Record<string, number>; stale_waiting_reasons: Record<string, number>; compared: number; changed: number;
+ oldest_waiting?: {query: EventRecipientBlockerQuery; observed_at: string; freshness: string; waiting_reason: string};
+}
+function diagnosticConsumers(out: CommitRecoveryStatusResult): CommitRecoveryDiagnosticConsumer[] {
+ const p = out.diagnostics_progress!;
+ const groups = new Map<string, CommitRecoveryDiagnosticConsumer>();
+ for (const row of out.items) {
+  if (!diagnosticTarget(row)) continue;
+  const id = row.attempt.subscription_id.toLowerCase();
+  let g = groups.get(id);
+  if (!g) {g = {subscription_id:id,target_count:0,freshness:{fresh:0,stale:0,unread:0},statuses:{},fresh_waiting_reasons:{},stale_waiting_reasons:{},compared:0,changed:0};groups.set(id,g);}
+  g.target_count++;
+  const freshness = diagnosticFreshness(row, Date.parse(p.freshness_checked_at), p.max_diagnostic_age_ms);
+  g.freshness[freshness]!++;
+  const d = row.diagnostics;
+  if (!validDiagnostic(d,row)) continue;
+  g.statuses[d!.status] = (g.statuses[d!.status] ?? 0)+1;
+  if (!d!.retained && d!.comparison === 'compared') {g.compared++;if(d!.changes?.length)g.changed++;}
+  if(d!.status !== 'available')continue;
+  const reason = d!.recipient!.waiting_reason;
+  const reasons = freshness === 'stale' ? g.stale_waiting_reasons : g.fresh_waiting_reasons;
+  reasons[reason] = (reasons[reason] ?? 0)+1;
+  const pub = row.selection!.publication;
+  if(!g.oldest_waiting || diagnosticTimeAfter(g.oldest_waiting.query.expected_accepted_at, pub.accepted_at)) {
+   g.oldest_waiting = {query:{source:pub.source,id:pub.id,subscription_id:id,expected_accepted_at:pub.accepted_at},observed_at:d!.observed_at!,freshness,waiting_reason:reason};
+  }
+ }
+ return [...groups.values()].sort((a,b)=>a.subscription_id < b.subscription_id ? -1 : a.subscription_id > b.subscription_id ? 1 : 0);
 }

@@ -445,3 +445,6 @@ type CommitRecoveryDiagnosticOrdering = api.CommitRecoveryDiagnosticOrdering
 type CommitRecoveryDiagnosticChange = api.CommitRecoveryDiagnosticChange
 
 type CommitRecoveryDiagnosticEstimate = api.CommitRecoveryDiagnosticEstimate
+
+type CommitRecoveryDiagnosticConsumer = api.CommitRecoveryDiagnosticConsumer
+type CommitRecoveryDiagnosticWaiting = api.CommitRecoveryDiagnosticWaiting

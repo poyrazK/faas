@@ -25,22 +25,23 @@ type CommitRecoveryDiagnostics struct {
 
 // CommitRecoveryDiagnosticProgress describes diagnostic sampling independently of delivery.
 type CommitRecoveryDiagnosticProgress struct {
-	Compared           int            `json:"compared"`
-	Changed            int            `json:"changed"`
-	MaxDiagnosticAgeMS int64          `json:"max_diagnostic_age_ms"`
-	FreshnessCheckedAt time.Time      `json:"freshness_checked_at"`
-	Freshness          map[string]int `json:"freshness"`
-	FreshComplete      bool           `json:"fresh_complete"`
-	NextIndex          int            `json:"next_index"`
-	RetryNextIndex     int            `json:"retry_next_index"`
-	RefreshNextIndex   int            `json:"refresh_next_index"`
-	TargetCount        int            `json:"target_count"`
-	Remaining          int            `json:"remaining"`
-	Deferred           int            `json:"deferred"`
-	Retained           int            `json:"retained"`
-	Reads              int            `json:"reads"`
-	Counts             map[string]int `json:"counts"`
-	Complete           bool           `json:"complete"`
+	Consumers          []CommitRecoveryDiagnosticConsumer `json:"consumers"`
+	Compared           int                                `json:"compared"`
+	Changed            int                                `json:"changed"`
+	MaxDiagnosticAgeMS int64                              `json:"max_diagnostic_age_ms"`
+	FreshnessCheckedAt time.Time                          `json:"freshness_checked_at"`
+	Freshness          map[string]int                     `json:"freshness"`
+	FreshComplete      bool                               `json:"fresh_complete"`
+	NextIndex          int                                `json:"next_index"`
+	RetryNextIndex     int                                `json:"retry_next_index"`
+	RefreshNextIndex   int                                `json:"refresh_next_index"`
+	TargetCount        int                                `json:"target_count"`
+	Remaining          int                                `json:"remaining"`
+	Deferred           int                                `json:"deferred"`
+	Retained           int                                `json:"retained"`
+	Reads              int                                `json:"reads"`
+	Counts             map[string]int                     `json:"counts"`
+	Complete           bool                               `json:"complete"`
 }
 
 // DiagnoseCommitRecoveryStatus rotates exact lookups within the existing read cap.
@@ -235,6 +236,7 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 	progress.Complete = progress.Remaining == 0
 	progress.FreshComplete = progress.Freshness["fresh"] == progress.TargetCount
 	out.DiagnosticsProgress = progress
+	progress.Consumers = commitRecoveryDiagnosticConsumers(out)
 	if len(strictReads) > 0 && strictReads[0] && transportErr != nil {
 		return out, transportErr
 	}
@@ -357,6 +359,7 @@ func commitRecoveryDiagnosticCoverageComplete(out CommitRecoveryStatusResult, ma
 	progress.Remaining = progress.Freshness["unread"]
 	progress.Complete = progress.Remaining == 0
 	progress.FreshComplete = progress.Freshness["fresh"] == progress.TargetCount
+	progress.Consumers = commitRecoveryDiagnosticConsumers(out)
 	return progress.Complete && progress.FreshComplete
 }
 

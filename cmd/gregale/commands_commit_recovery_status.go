@@ -134,6 +134,8 @@ func cmdCommitRecoveryStatus(args []string) int {
 				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, terminal)
 				if status.DiagnosticsProgress != nil {
 					d := status.DiagnosticsProgress
+					rawConsumers, _ := json.Marshal(d.Consumers)
+					_, _ = fmt.Fprintf(os.Stderr, "Selected consumer diagnostics: %s\n", rawConsumers)
 					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d; freshness=%v; compared=%d; changed=%d\n", d.Remaining, d.Counts, d.Retained, d.Deferred, d.Freshness, d.Compared, d.Changed)
 				}
 				if status.Monitoring != nil && status.Monitoring.DiagnosticEstimate != nil {
@@ -223,7 +225,7 @@ func commitRecoveryDiagnosticSummary(progress *api.CommitRecoveryDiagnosticProgr
 	if progress == nil {
 		return nil
 	}
-	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained, progress.Freshness, progress.FreshComplete, progress.Compared, progress.Changed}
+	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained, progress.Freshness, progress.FreshComplete, progress.Compared, progress.Changed, commitRecoveryConsumerSummary(progress.Consumers)}
 }
 
 func printCommitRecoveryDiagnosticChanges(status api.CommitRecoveryStatusResult, seen map[string]string) {
@@ -247,4 +249,18 @@ func commitRecoveryEstimateSummary(monitoring *api.CommitRecoveryMonitoring) any
 		return nil
 	}
 	return []any{monitoring.DiagnosticEstimate.State, monitoring.DiagnosticEstimate.RefreshExceedsMaxAge}
+}
+
+// Exclude observation timestamp motion while retaining consumer-specific changes.
+func commitRecoveryConsumerSummary(consumers []api.CommitRecoveryDiagnosticConsumer) any {
+	result := make([]any, 0, len(consumers))
+	for _, consumer := range consumers {
+		var oldest any
+		if consumer.OldestWaiting != nil {
+			waiting := consumer.OldestWaiting
+			oldest = []any{waiting.Query, waiting.Freshness, waiting.WaitingReason}
+		}
+		result = append(result, []any{consumer.SubscriptionID, consumer.TargetCount, consumer.Freshness, consumer.Statuses, consumer.FreshWaitingReasons, consumer.StaleWaitingReasons, consumer.Compared, consumer.Changed, oldest})
+	}
+	return result
 }
