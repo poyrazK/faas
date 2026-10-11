@@ -3580,7 +3580,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// CreateSnapshot guarantees non-empty; an empty value here
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
-		snapKey: snap.StorageKey,
+		snapKey:      snap.StorageKey,
+		snapMemBytes: snap.MemBytes,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -3822,6 +3823,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			StorageKey:        bootInput.snapKey,
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
+			MemBytes:          bootInput.snapMemBytes,
 		})
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
@@ -4240,6 +4242,9 @@ type bootInput struct {
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
 	snapKey string
+	// snapMemBytes is the snap row's guest memory length; vmmd matches it
+	// against the requested guest memory before restoring a companion.
+	snapMemBytes int64
 	// nodeID is the chosen compute_node for this wake (issue #97 /
 	// ADR-025 axis 3). Captured under the Phase 2 lock alongside
 	// the rest of bootInput so the unlocked Phase 3 vmmd call can

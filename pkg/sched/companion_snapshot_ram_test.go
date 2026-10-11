@@ -47,6 +47,12 @@ func TestWakeRestoresCompanionSnapshot(t *testing.T) {
 	if vmm.restores != 1 || vmm.coldBoots != 0 {
 		t.Fatalf("restores=%d coldBoots=%d; want the companion snapshot restored", vmm.restores, vmm.coldBoots)
 	}
+	// vmmd matches this against the requested guest memory before it
+	// restores a companion; production-us rc.252 sent 0 and every
+	// companion wake cold-booted (SnapshotRef had no mem_bytes).
+	if vmm.lastSnapRef.MemBytes != (512+64)<<20 {
+		t.Fatalf("wake SnapshotRef.MemBytes = %d; want the snapshot's %d", vmm.lastSnapRef.MemBytes, (512+64)<<20)
+	}
 	got, err := store.LatestSnapshot(ctx, dep.ID)
 	if err != nil || got.ID != snap.ID || got.Stale {
 		t.Fatalf("companion snapshot after wake = %+v, %v; want it kept fresh", got, err)
