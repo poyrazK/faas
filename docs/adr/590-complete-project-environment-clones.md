@@ -9434,3 +9434,25 @@ This removes unborrowed workload catalogue rows only. It does not retire operati
 borrowers, delete environment metadata, authorize published-release withdrawal,
 normalize independently removed managed secrets, or enable whole-stage terminal
 compensation/public full-stage admission. Native qualification remains deferred.
+
+### Authenticated managed-secret withdrawal inventory
+
+The private leased managed-secret borrower report requires original configuration
+ownership and completed native workload retirement. It returns only counts of
+target-scope PostgreSQL secret envelopes, object-storage secret envelopes, managed
+credential references and runtime reload observations, linked to the original
+ownership digest and native plan/observation digests. Credential-reference counts
+overlap provider counts. Runtime observations include unmanaged secrets and
+observations from instances in other scopes; their secret scope is authoritative.
+All project Apps are included, including deleted Apps. Source-scope secrets are
+excluded. Missing legacy ownership, stale workers, altered original rows or native
+proofs fail closed without returning partial inventory. Authenticated configuration
+and workload cleanup receipts allow the empty post-cleanup inventory to replay.
+
+This is a transactionally authenticated observation, not a persisted withdrawal
+receipt or provider revocation proof. It does not remove secrets, observations or
+credentials, or grant deletion authority. Configuration cleanup continues to block
+on these borrowers. Linking separately withdrawn managed envelopes to the original
+configuration manifest atomically remains required before cleanup can normalize
+their absence; the report never backfills or adopts that ownership. Whole-stage
+terminal compensation and public full-stage admission remain gated.

@@ -15731,6 +15731,19 @@ SELECT EXISTS(SELECT 1 FROM app_secrets s WHERE s.app_id IN (SELECT a.id FROM ap
  OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)
  OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)::boolean AS blocked;
 
+-- name: ReadCloneManagedSecretConfigurationBorrowers :one
+WITH scoped_apps AS (
+ SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid
+), scoped_secrets AS (
+ SELECT s.managed_postgres_binding_id,s.managed_object_storage_credential_id,s.managed_credential_ref
+ FROM app_secrets s WHERE s.app_id IN (SELECT id FROM scoped_apps) AND s.scope=sqlc.arg(environment)::text
+)
+SELECT
+ (SELECT count(*) FROM scoped_secrets WHERE managed_postgres_binding_id IS NOT NULL)::bigint AS postgres_secrets,
+ (SELECT count(*) FROM scoped_secrets WHERE managed_object_storage_credential_id IS NOT NULL)::bigint AS object_storage_secrets,
+ (SELECT count(*) FROM scoped_secrets WHERE managed_credential_ref IS NOT NULL)::bigint AS credential_references,
+ (SELECT count(*) FROM app_secret_runtime_reload_observations s WHERE s.app_id IN (SELECT id FROM scoped_apps) AND s.scope=sqlc.arg(environment)::text)::bigint AS runtime_observations;
+
 -- name: DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions :exec
 DELETE FROM app_environment_secret_ref_suppressions WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND scope=sqlc.arg(environment)::text;
 

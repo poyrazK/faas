@@ -49663,6 +49663,44 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 	return manifest, err
 }
 
+const readCloneManagedSecretConfigurationBorrowers = `-- name: ReadCloneManagedSecretConfigurationBorrowers :one
+WITH scoped_apps AS (
+ SELECT a.id FROM apps a WHERE a.project_id=$2::uuid
+), scoped_secrets AS (
+ SELECT s.managed_postgres_binding_id,s.managed_object_storage_credential_id,s.managed_credential_ref
+ FROM app_secrets s WHERE s.app_id IN (SELECT id FROM scoped_apps) AND s.scope=$1::text
+)
+SELECT
+ (SELECT count(*) FROM scoped_secrets WHERE managed_postgres_binding_id IS NOT NULL)::bigint AS postgres_secrets,
+ (SELECT count(*) FROM scoped_secrets WHERE managed_object_storage_credential_id IS NOT NULL)::bigint AS object_storage_secrets,
+ (SELECT count(*) FROM scoped_secrets WHERE managed_credential_ref IS NOT NULL)::bigint AS credential_references,
+ (SELECT count(*) FROM app_secret_runtime_reload_observations s WHERE s.app_id IN (SELECT id FROM scoped_apps) AND s.scope=$1::text)::bigint AS runtime_observations
+`
+
+type ReadCloneManagedSecretConfigurationBorrowersParams struct {
+	Environment string
+	ProjectID   pgtype.UUID
+}
+
+type ReadCloneManagedSecretConfigurationBorrowersRow struct {
+	PostgresSecrets      int64
+	ObjectStorageSecrets int64
+	CredentialReferences int64
+	RuntimeObservations  int64
+}
+
+func (q *Queries) ReadCloneManagedSecretConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneManagedSecretConfigurationBorrowersParams) (ReadCloneManagedSecretConfigurationBorrowersRow, error) {
+	row := db.QueryRow(ctx, readCloneManagedSecretConfigurationBorrowers, arg.Environment, arg.ProjectID)
+	var i ReadCloneManagedSecretConfigurationBorrowersRow
+	err := row.Scan(
+		&i.PostgresSecrets,
+		&i.ObjectStorageSecrets,
+		&i.CredentialReferences,
+		&i.RuntimeObservations,
+	)
+	return i, err
+}
+
 const readClonePostgresCheckpointSelection = `-- name: ReadClonePostgresCheckpointSelection :one
 SELECT operation_id, source_database_id, maintenance_id, scope, fingerprint, key_id, ciphertext_sha256, ciphertext, retained_at FROM project_environment_clone_postgres_checkpoint_selections
 WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE

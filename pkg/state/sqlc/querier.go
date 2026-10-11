@@ -2307,6 +2307,7 @@ type Querier interface {
 	ReadCloneConfigurationCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCleanup, error)
 	ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error)
 	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
+	ReadCloneManagedSecretConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneManagedSecretConfigurationBorrowersParams) (ReadCloneManagedSecretConfigurationBorrowersRow, error)
 	// ADR-531: private original selection precedes a coordinated capture point.
 	ReadClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg ReadClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	// ADR-531: resource ownership is separate from an operation's writer barrier.
