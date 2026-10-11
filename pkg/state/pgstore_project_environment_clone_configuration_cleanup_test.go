@@ -219,6 +219,13 @@ func TestPgCloneConfigurationCleanupRetainsManagedSecretOwnership(t *testing.T) 
 // empty rollback/replay; the cleanup FK intentionally preserves its evidence.
 func dropEmptyConfigurationCleanupForParentMigration(t *testing.T, tx pgx.Tx) {
 	t.Helper()
+	rawWithdrawal, err := migrations.FS.ReadFile("20261011083735571_clone_postgres_secret_withdrawal_receipts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), strings.SplitN(string(rawWithdrawal), "-- +goose Down", 2)[1]); err != nil {
+		t.Fatal("dependent secret withdrawal downgrade", err)
+	}
 	dropEmptyCloneWorkloadCleanupForParentMigration(t, tx)
 	raw, err := migrations.FS.ReadFile("20261011071832540_clone_configuration_cleanup_receipts.sql")
 	if err != nil {

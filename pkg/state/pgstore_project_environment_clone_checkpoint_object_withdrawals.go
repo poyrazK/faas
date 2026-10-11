@@ -21,6 +21,9 @@ func (s *PgStore) WithdrawProjectEnvironmentCloneCheckpointObjects(ctx context.C
 		return mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err = sqlc.New().LockCloneCheckpointUnusedReservationClock(ctx, tx); err != nil {
+		return mapErr(err)
+	}
 	op, err := lockCloneWorkloadOperationTx(ctx, tx, l.Operation.AccountID, l.Operation.ProjectID, l.Operation.ID)
 	if err != nil {
 		return err

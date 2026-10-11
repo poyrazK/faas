@@ -15719,6 +15719,18 @@ SELECT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions t WHERE t.ap
 -- name: ReadCloneConfigurationCleanup :one
 SELECT * FROM project_environment_clone_configuration_cleanups WHERE operation_id=$1 FOR UPDATE;
 
+-- name: ReadClonePostgresSecretWithdrawal :one
+SELECT * FROM project_environment_clone_postgres_secret_withdrawals WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertClonePostgresSecretWithdrawal :exec
+INSERT INTO project_environment_clone_postgres_secret_withdrawals(operation_id,ownership_sha256,publication_plan_sha256,publication_withdrawn_at,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6);
+
+-- name: CloneManagedSecretWithdrawalHasExternalOwners :one
+SELECT EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)
+ OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)
+ OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)::boolean AS blocked;
+
 -- name: InsertCloneConfigurationCleanup :exec
 INSERT INTO project_environment_clone_configuration_cleanups(operation_id,ownership_sha256,native_plan_sha256,native_observation_sha256,manifest,manifest_sha256)
 VALUES($1,$2,$3,$4,$5,$6);

@@ -299,6 +299,9 @@ func (s *PgStore) WithdrawProjectEnvironmentCloneCheckpointPgBindings(ctx contex
 		return mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err = sqlc.New().LockCloneCheckpointUnusedReservationClock(ctx, tx); err != nil {
+		return mapErr(err)
+	}
 	op, err := lockCloneWorkloadOperationTx(ctx, tx, l.Operation.AccountID, l.Operation.ProjectID, l.Operation.ID)
 	if err != nil {
 		return err
@@ -324,6 +327,10 @@ func (s *PgStore) WithdrawProjectEnvironmentCloneCheckpointPgBindings(ctx contex
 	}
 	if in.State == "published" {
 		q := sqlc.New()
+		owner, err := prepareClonePostgresSecretWithdrawalTx(ctx, tx, op)
+		if err != nil {
+			return err
+		}
 		for _, secret := range in.Plan.Secrets {
 			n, err := q.DeleteCloneCheckpointPgAppSecret(ctx, tx, sqlc.DeleteCloneCheckpointPgAppSecretParams{ManagedPostgresBindingID: mustPgUUID(secret.ManagedPostgresBindingID), AccountID: mustPgUUID(op.AccountID), AppID: mustPgUUID(secret.AppID), Scope: secret.Scope, Key: secret.Key})
 			if err != nil {
@@ -351,6 +358,17 @@ func (s *PgStore) WithdrawProjectEnvironmentCloneCheckpointPgBindings(ctx contex
 		if err = checkpointPgPublicationRowsTx(ctx, tx, op, in); err != nil {
 			return err
 		}
+		if err = saveClonePostgresSecretWithdrawalTx(ctx, tx, op, owner, in.PlanSHA256); err != nil {
+			return err
+		}
+	}
+	owned, err := sqlc.New().ReadCloneConfigurationOwnership(ctx, tx, mustPgUUID(op.ID))
+	if err == nil {
+		if _, err = verifyCloneConfigurationOwnershipTx(ctx, tx, op, pgUUIDString(owned.EnvironmentID)); err != nil {
+			return err
+		}
+	} else if !errors.Is(mapErr(err), ErrNotFound) {
+		return mapErr(err)
 	}
 	if err = authorizeCloneObjectMutationTx(ctx, tx, op, &l); err != nil {
 		return err

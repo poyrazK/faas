@@ -5637,6 +5637,16 @@ type ProjectEnvironmentClonePostgresRolePlan struct {
 	CapturedAt                 pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresSecretWithdrawal struct {
+	OperationID            pgtype.UUID
+	OwnershipSha256        string
+	PublicationPlanSha256  string
+	PublicationWithdrawnAt pgtype.Timestamptz
+	Manifest               []byte
+	ManifestSha256         string
+	RecordedAt             pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresSnapshot struct {
 	OperationID              pgtype.UUID
 	SourceDatabaseID         pgtype.UUID

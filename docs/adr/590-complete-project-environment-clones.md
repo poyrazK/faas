@@ -9456,3 +9456,39 @@ on these borrowers. Linking separately withdrawn managed envelopes to the origin
 configuration manifest atomically remains required before cleanup can normalize
 their absence; the report never backfills or adopts that ownership. Whole-stage
 terminal compensation and public full-stage admission remain gated.
+
+### Atomic PostgreSQL secret withdrawal ownership receipt
+
+Private PostgreSQL publication withdrawal now locks the configuration clock before
+operation/App locks and authenticates original materialization and its configuration
+ownership before deleting managed envelopes. Runtime reload observations, including
+observations from another instance scope, block withdrawal instead of disappearing
+through secret deletion cascades. External field owners, managed fields and GitOps
+sources also block withdrawal for materializations with original ownership.
+The publication check locks its secret rows before the observation inventory, so
+new foreign-key borrowers cannot race that inventory and disappear in a cascade.
+
+The same transaction removes only the publication's authenticated PostgreSQL secret
+envelopes, tombstones its bindings, marks its original publication withdrawn and
+saves a bounded non-secret post-configuration manifest. This receipt pins the
+original ownership digest, publication plan digest and exact withdrawal timestamp.
+Receipt-write failure rolls secret removal, binding changes and publication changes
+back together. Legacy materializations continue their existing withdrawal protocol
+but never acquire a backfilled ownership receipt.
+
+Recovery validates the retained publication/activation proof, absence of its owned
+secret envelopes, the original ownership link and all unchanged non-secret table
+hashes. It accepts only the exact saved post-state until a separately authenticated
+configuration/workload cleanup receipt supersedes current rows. Original ownership
+and materialization hashes remain unchanged. Missing, altered or reordered evidence
+and changed remaining settings fail closed; keyless worker handoff never rewrites
+the receipt. Migration rollback refuses any retained receipt. Object withdrawal now
+uses the same clock-first lock order.
+
+This records local PostgreSQL envelope withdrawal only. Native credential/grant
+revocation remains governed by its existing retirement protocol. Object-storage
+envelope withdrawal still needs its own linked transition receipt; independently
+removed object envelopes cannot be normalized by the PostgreSQL witness. Environment
+metadata retirement, operational borrower retirement, published release withdrawal
+and whole-stage terminal compensation remain separate gaps. Public full-stage
+admission and live qualification remain gated/deferred.

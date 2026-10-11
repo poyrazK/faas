@@ -43111,3 +43111,17 @@ CREATE TABLE project_environment_clone_workload_cleanups (
  manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
  cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+
+-- filename: 20261011083735571_clone_postgres_secret_withdrawal_receipts.sql
+
+-- ADR-590: original ownership survives atomic PostgreSQL envelope withdrawal.
+CREATE TABLE project_environment_clone_postgres_secret_withdrawals (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
+ ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
+ publication_plan_sha256 text NOT NULL CHECK(publication_plan_sha256 ~ '^[a-f0-9]{64}$'),
+ publication_withdrawn_at timestamptz NOT NULL,
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(recorded_at>=publication_withdrawn_at)
+);

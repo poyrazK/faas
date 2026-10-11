@@ -5321,6 +5321,19 @@ func (q *Queries) CloneConfigurationOwnershipScopeIsForeign(ctx context.Context,
 	return foreign_scope, err
 }
 
+const cloneManagedSecretWithdrawalHasExternalOwners = `-- name: CloneManagedSecretWithdrawalHasExternalOwners :one
+SELECT EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=$1::uuid)::boolean AS blocked
+`
+
+func (q *Queries) CloneManagedSecretWithdrawalHasExternalOwners(ctx context.Context, db DBTX, environmentID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneManagedSecretWithdrawalHasExternalOwners, environmentID)
+	var blocked pgtype.Bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
 const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
 UPDATE project_environment_clone_object_grant_revocations
 SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
@@ -19124,6 +19137,32 @@ func (q *Queries) InsertClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertClonePostgresSecretWithdrawal = `-- name: InsertClonePostgresSecretWithdrawal :exec
+INSERT INTO project_environment_clone_postgres_secret_withdrawals(operation_id,ownership_sha256,publication_plan_sha256,publication_withdrawn_at,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type InsertClonePostgresSecretWithdrawalParams struct {
+	OperationID            pgtype.UUID
+	OwnershipSha256        string
+	PublicationPlanSha256  string
+	PublicationWithdrawnAt pgtype.Timestamptz
+	Manifest               []byte
+	ManifestSha256         string
+}
+
+func (q *Queries) InsertClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, arg InsertClonePostgresSecretWithdrawalParams) error {
+	_, err := db.Exec(ctx, insertClonePostgresSecretWithdrawal,
+		arg.OperationID,
+		arg.OwnershipSha256,
+		arg.PublicationPlanSha256,
+		arg.PublicationWithdrawnAt,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
 }
 
 const insertClonePostgresWriteFence = `-- name: InsertClonePostgresWriteFence :one
@@ -49754,6 +49793,25 @@ func (q *Queries) ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sou
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const readClonePostgresSecretWithdrawal = `-- name: ReadClonePostgresSecretWithdrawal :one
+SELECT operation_id, ownership_sha256, publication_plan_sha256, publication_withdrawn_at, manifest, manifest_sha256, recorded_at FROM project_environment_clone_postgres_secret_withdrawals WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentClonePostgresSecretWithdrawal, error) {
+	row := db.QueryRow(ctx, readClonePostgresSecretWithdrawal, operationID)
+	var i ProjectEnvironmentClonePostgresSecretWithdrawal
+	err := row.Scan(
+		&i.OperationID,
+		&i.OwnershipSha256,
+		&i.PublicationPlanSha256,
+		&i.PublicationWithdrawnAt,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.RecordedAt,
 	)
 	return i, err
 }

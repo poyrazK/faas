@@ -84,6 +84,10 @@ func verifyCloneConfigurationOwnershipTx(ctx context.Context, tx pgx.Tx, op Proj
 		EnvironmentID, ManifestSHA256 string
 		CreatedAt                     time.Time
 	}{environmentID, row.ManifestSha256, row.CreatedAt.Time.UTC()})
+	normalized, err := clonePostgresSecretWithdrawalManifestTx(ctx, tx, op, ownership, row.CreatedAt.Time, manifest)
+	if err != nil {
+		return "", err
+	}
 	// A saved cleanup must authenticate its exact post-state even if an observer
 	// restores the original rows; absence or equality alone is not authority.
 	_, cleanupErr := q.ReadCloneConfigurationCleanup(ctx, tx, mustPgUUID(op.ID))
@@ -93,7 +97,7 @@ func verifyCloneConfigurationOwnershipTx(ctx context.Context, tx pgx.Tx, op Proj
 		}
 	} else if !errors.Is(mapErr(cleanupErr), ErrNotFound) {
 		return "", mapErr(cleanupErr)
-	} else if !reflect.DeepEqual(manifest, current) {
+	} else if !reflect.DeepEqual(normalized, current) {
 		return "", ErrConflict
 	}
 	return ownership, nil
