@@ -59,6 +59,9 @@ class AlertRuleResponse:
     event_subscription_id: UUID | Unset = UNSET
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
+    edge_rule_id: UUID | Unset = UNSET
+    """ADR-998. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of
+    the app."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
@@ -103,6 +106,10 @@ class AlertRuleResponse:
         if not isinstance(self.event_subscription_id, Unset):
             event_subscription_id = str(self.event_subscription_id)
 
+        edge_rule_id: str | Unset = UNSET
+        if not isinstance(self.edge_rule_id, Unset):
+            edge_rule_id = str(self.edge_rule_id)
+
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         failure_source: str | Unset = UNSET
@@ -140,6 +147,8 @@ class AlertRuleResponse:
         )
         if event_subscription_id is not UNSET:
             field_dict["event_subscription_id"] = event_subscription_id
+        if edge_rule_id is not UNSET:
+            field_dict["edge_rule_id"] = edge_rule_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
@@ -191,6 +200,13 @@ class AlertRuleResponse:
         else:
             event_subscription_id = UUID(_event_subscription_id)
 
+        _edge_rule_id = d.pop("edge_rule_id", UNSET)
+        edge_rule_id: UUID | Unset
+        if isinstance(_edge_rule_id, Unset):
+            edge_rule_id = UNSET
+        else:
+            edge_rule_id = UUID(_edge_rule_id)
+
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         _failure_source = d.pop("failure_source", UNSET)
@@ -231,6 +247,7 @@ class AlertRuleResponse:
             created_at=created_at,
             updated_at=updated_at,
             event_subscription_id=event_subscription_id,
+            edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
             last_fired_at=last_fired_at,

@@ -176,6 +176,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "edge_rule_id",
       "enabled",
       "event_subscription_id",
       "failure_source",

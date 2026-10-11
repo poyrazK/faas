@@ -48,6 +48,7 @@ var memDispatched = map[string]bool{
 	"DeadLetterEventByID":                                     true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
+	"EdgeRuleHitStatsForApp":                                  true,
 	"EnqueueInvocation":                                       true,
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
@@ -330,6 +331,15 @@ func (s *Mem) DeploymentSnapshotBackoffActive(p0 context.Context, p1 string) (st
 		return o.DeploymentSnapshotBackoffActive(p0, p1)
 	}
 	return s.MemStore.DeploymentSnapshotBackoffActive(p0, p1)
+}
+
+func (s *Mem) EdgeRuleHitStatsForApp(p0 context.Context, p1 string, p2 time.Time) ([]state.EdgeRuleHitStats, error) {
+	if o, ok := s.over.(interface {
+		EdgeRuleHitStatsForApp(context.Context, string, time.Time) ([]state.EdgeRuleHitStats, error)
+	}); ok {
+		return o.EdgeRuleHitStatsForApp(p0, p1, p2)
+	}
+	return s.MemStore.EdgeRuleHitStatsForApp(p0, p1, p2)
 }
 
 func (s *Mem) EnqueueInvocation(p0 context.Context, p1 state.Invocation) (state.Invocation, error) {
