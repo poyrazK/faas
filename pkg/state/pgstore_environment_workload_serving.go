@@ -163,12 +163,21 @@ func recordEnvironmentGitOpsQueueServingAcknowledgementTx(ctx context.Context, t
 			AND (graph_member.value->>'candidate_deployment_id'=$5::text OR
 				(nullif(graph_member.value->>'candidate_deployment_id','') IS NULL AND
 				 coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? $5::text))
+			AND environment_workload_graph_serving_supported(graph.id)
+			AND environment_workload_queue_serving_ack_authorized(graph.id,binding.id,$7,queue_trigger.id,
+				binding.app_id,$5::uuid,$6::uuid)
 		ON CONFLICT (graph_id,binding_id) DO UPDATE
 			SET acknowledged_at=environment_workload_serving_queue_acks.acknowledged_at
 			WHERE environment_workload_serving_queue_acks.app_id=EXCLUDED.app_id
 				AND environment_workload_serving_queue_acks.mode=EXCLUDED.mode
 				AND environment_workload_serving_queue_acks.trigger_id IS NOT DISTINCT FROM EXCLUDED.trigger_id
 				AND environment_workload_serving_queue_acks.deployment_id=EXCLUDED.deployment_id
+				AND environment_workload_graph_serving_supported(environment_workload_serving_queue_acks.graph_id)
+				AND environment_workload_queue_serving_ack_authorized(
+					environment_workload_serving_queue_acks.graph_id,environment_workload_serving_queue_acks.binding_id,
+					environment_workload_serving_queue_acks.mode,environment_workload_serving_queue_acks.trigger_id,
+					environment_workload_serving_queue_acks.app_id,environment_workload_serving_queue_acks.deployment_id,
+					environment_workload_serving_queue_acks.invocation_id)
 		RETURNING graph_id`, acknowledgement.AppID, acknowledgement.Scope, acknowledgement.BindingID,
 		acknowledgement.TriggerID, acknowledgement.DeploymentID, acknowledgement.InvocationID, acknowledgement.Mode).Scan(&graphID)
 	if errors.Is(err, pgx.ErrNoRows) {

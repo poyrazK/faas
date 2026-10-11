@@ -137,7 +137,7 @@ func TestPgEnvironmentGitOpsMixedGraphServingWaitsForQueueDelivery(t *testing.T)
 		t.Fatal(err)
 	}
 	staleInvocationID := completePushServingTestDelivery(t, store, lease.Source.AccountID, worker.AppID,
-		lease.Source.EnvironmentSlug, bindingID, triggerID, worker.DeploymentID, false)
+		lease.Source.EnvironmentSlug, bindingID, triggerID, worker.DeploymentID, true)
 	for _, request := range requests {
 		completeRequestQualificationReceipts(t, store, request)
 	}
@@ -174,8 +174,14 @@ func TestPgEnvironmentGitOpsMixedGraphServingWaitsForQueueDelivery(t *testing.T)
 	if err != nil || evidence.Serving {
 		t.Fatalf("pre-activation queue delivery established serving: %+v %v", evidence, err)
 	}
-	completePushServingTestDelivery(t, restarted, lease.Source.AccountID, worker.AppID,
+	freshInvocationID := completePushServingTestDelivery(t, restarted, lease.Source.AccountID, worker.AppID,
 		lease.Source.EnvironmentSlug, bindingID, triggerID, worker.DeploymentID, true)
+	if err := restarted.RecordEnvironmentGitOpsQueueServingAcknowledgement(t.Context(), state.EnvironmentWorkloadQueueServingAcknowledgement{
+		Mode: "push", AppID: worker.AppID, Scope: lease.Source.EnvironmentSlug, BindingID: bindingID,
+		TriggerID: triggerID, DeploymentID: worker.DeploymentID, InvocationID: freshInvocationID,
+	}); err != nil {
+		t.Fatalf("replaying current queue serving proof: %v", err)
+	}
 	served, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan)
 	if err != nil || !served.Serving || !served.Activated || !served.Qualified {
 		t.Fatalf("complete mixed graph not serving: %+v %v", served, err)
