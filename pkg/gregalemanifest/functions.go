@@ -204,6 +204,23 @@ func (m *Manifest) rejectSectionsBesideFunctions() error {
 	return nil
 }
 
+// RepositoryDeployFunctions reports how a single-app repository deploy
+// treats a `functions:` manifest (ADR-985). The CLI fans such a manifest out
+// into one function app per entry and applies each function's settings
+// itself; a function app's upload carries the project manifest whenever the
+// function shares the project root, so a function app applies nothing from
+// it (skip). Any other app would silently deploy the repository root, so it
+// is refused.
+func (m *Manifest) RepositoryDeployFunctions(functionApp bool) (skip bool, err error) {
+	if len(m.Functions) == 0 {
+		return false, nil
+	}
+	if functionApp {
+		return true, nil
+	}
+	return false, errors.New("functions: is deployed with `gregale deploy` from a checkout, one app per function; point this app at a single function's root instead")
+}
+
 // FunctionRoot is the function's source directory relative to the project:
 // Root, or the project itself when only a handler is given.
 func (fn FunctionSpec) FunctionRoot() string {

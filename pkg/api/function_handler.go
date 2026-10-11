@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"path"
 	"regexp"
 	"strings"
@@ -12,6 +13,19 @@ import (
 const FunctionHandlerFileMaxBytes = 256
 
 var functionHandlerFileRE = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// FunctionHandlerProblem validates a function deploy's handler: it must be
+// set, and a handler naming a source file must stay inside the source root
+// (ADR-985). Nil means acceptable.
+func FunctionHandlerProblem(runtime, handler string) *Problem {
+	if handler == "" {
+		return ErrHandlerMissing()
+	}
+	if _, _, err := FunctionHandlerFile(runtime, handler); err != nil {
+		return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid handler", err.Error())
+	}
+	return nil
+}
 
 // FunctionHandlerFile reports whether handler names a source file for a
 // function runtime (ADR-985 shared-tree functions) and returns its clean path

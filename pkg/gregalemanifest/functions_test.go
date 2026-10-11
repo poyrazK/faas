@@ -125,6 +125,21 @@ func TestFunctionsManifestSharedTree(t *testing.T) {
 	}
 }
 
+// adr: 985
+func TestRepositoryDeployFunctions(t *testing.T) {
+	plain := &Manifest{}
+	if skip, err := plain.RepositoryDeployFunctions(false); skip || err != nil {
+		t.Fatalf("no functions: skip=%v err=%v, want neither", skip, err)
+	}
+	fanOut := &Manifest{Functions: []FunctionSpec{{Name: "thumbs"}}}
+	if skip, err := fanOut.RepositoryDeployFunctions(true); !skip || err != nil {
+		t.Fatalf("function app: skip=%v err=%v, want skip", skip, err)
+	}
+	if skip, err := fanOut.RepositoryDeployFunctions(false); skip || err == nil {
+		t.Fatalf("other app: skip=%v err=%v, want refusal", skip, err)
+	}
+}
+
 func TestFunctionBucketRuleID(t *testing.T) {
 	if got := FunctionBucketRuleID("shop-thumbs", 0, FunctionBucketEvent{}); got != "fn-shop-thumbs-1" {
 		t.Fatalf("default id = %q", got)

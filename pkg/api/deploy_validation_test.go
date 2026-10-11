@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -58,6 +59,32 @@ func TestFunctionBinaryRuntime(t *testing.T) {
 		}
 		if FunctionRuntimeBuildsFromDockerfile(runtime) != (runtime == FunctionRuntimeBinary) {
 			t.Errorf("FunctionRuntimeBuildsFromDockerfile(%q) = %v", runtime, FunctionRuntimeBuildsFromDockerfile(runtime))
+		}
+	}
+}
+
+// adr: 987
+func TestFunctionDockerfileProblem(t *testing.T) {
+	for _, tc := range []struct {
+		runtime       string
+		hasDockerfile bool
+		wantTitle     string
+	}{
+		{FunctionRuntimeBinary, true, ""},
+		{FunctionRuntimeBinary, false, "Dockerfile required"},
+		{"go124", false, ""},
+		{"node22", true, "Dockerfile functions unsupported"},
+	} {
+		prob := FunctionDockerfileProblem(tc.runtime, tc.hasDockerfile)
+		got := ""
+		if prob != nil {
+			got = prob.Title
+			if prob.Status != http.StatusBadRequest {
+				t.Errorf("%s dockerfile=%v: status %d, want 400", tc.runtime, tc.hasDockerfile, prob.Status)
+			}
+		}
+		if got != tc.wantTitle {
+			t.Errorf("%s dockerfile=%v: problem %q, want %q", tc.runtime, tc.hasDockerfile, got, tc.wantTitle)
 		}
 	}
 }

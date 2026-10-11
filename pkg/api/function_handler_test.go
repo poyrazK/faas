@@ -27,3 +27,18 @@ func TestFunctionHandlerFile(t *testing.T) {
 		}
 	}
 }
+
+// adr: 985
+func TestFunctionHandlerProblem(t *testing.T) {
+	if p := FunctionHandlerProblem("node22", ""); p == nil || p.Title != ErrHandlerMissing().Title {
+		t.Fatalf("empty handler: %+v, want handler missing", p)
+	}
+	if p := FunctionHandlerProblem("node22", "../outside.js"); p == nil || p.Title != "Invalid handler" {
+		t.Fatalf("escaping handler: %+v, want invalid handler", p)
+	}
+	for _, ok := range [][2]string{{"node22", "api/thumbs.js"}, {"node22", "handler.handler"}, {"binary", "handler"}} {
+		if p := FunctionHandlerProblem(ok[0], ok[1]); p != nil {
+			t.Errorf("%s %s: %+v, want acceptable", ok[0], ok[1], p)
+		}
+	}
+}
