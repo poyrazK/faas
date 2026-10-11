@@ -9827,3 +9827,29 @@ frames and queued dispatch writers. They do not run native VMs or qualify the
 host adapter. An issued native RPC still requires original host retirement;
 ordinary wake and migration RPC closure and complete physical resource
 observation remain gaps. Public full-stage admission remains gated.
+
+### Retaining original migration handoff evidence
+
+The clone retirement writer fence now includes `migration_leases`. After the
+original workload journal becomes requested, a migration lease for an original
+target deployment cannot be inserted, renewed, replaced, reassigned or deleted.
+An expired lease retains the same protection: expiry does not prove that a source
+pause, destination restore or delayed resume has finished. An in-flight original
+snapshot completion may record its handles once, and exact completion replay is
+allowed; it cannot replace completed handles or renew handoff authority.
+
+Instance and deployment deletion cannot cascade away an original fenced lease.
+TRUNCATE likewise refuses retained clone migration ownership. Migration admission
+and deletion require READ COMMITTED isolation so stale snapshots cannot overlook
+a newly requested fence. Unrelated source migration leases keep their existing
+reservation, completion, renewal and release behavior. Downgrading the guard
+migration refuses any requested or retired original workload journal.
+
+These guards preserve unresolved handoff evidence and block new lease authority;
+they do not supply native closure. The existing instance-absence check prevents
+accepting workload retirement while the retained handoff still has its original
+instance. There is deliberately no generic lease-deletion exception for expiry,
+Destroy success or an instance state label. A future original host-proof protocol
+must close both source and destination producers before collecting this evidence.
+Ordinary wake RPC closure, migration host closure and public full-stage admission
+remain gated. Storage tests use no native VMs or live provider qualification.
