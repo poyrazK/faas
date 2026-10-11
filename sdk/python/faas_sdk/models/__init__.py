@@ -2132,6 +2132,7 @@ from .operation_workflow_instance_snapshot import OperationWorkflowInstanceSnaps
 from .operation_workflow_instance_step import OperationWorkflowInstanceStep
 from .operation_workflow_instance_transition import OperationWorkflowInstanceTransition
 from .operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
+from .operation_workflow_missing_condition_group import OperationWorkflowMissingConditionGroup
 from .operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
 from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
 from .operation_workflow_outcome_link import OperationWorkflowOutcomeLink
@@ -5624,6 +5625,7 @@ __all__ = (
     "OperationWorkflowInstanceStep",
     "OperationWorkflowInstanceTransition",
     "OperationWorkflowInvariantRequirement",
+    "OperationWorkflowMissingConditionGroup",
     "OperationWorkflowOutcomeEntry",
     "OperationWorkflowOutcomeGroup",
     "OperationWorkflowOutcomeLink",

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowConditionCoverageEntry } from './OperationWorkflowConditionCoverageEntry.js';
 import type { OperationWorkflowConditionRefreshPriority } from './OperationWorkflowConditionRefreshPriority.js';
 import type { OperationWorkflowDecisionOutcomeEvidence } from './OperationWorkflowDecisionOutcomeEvidence.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
@@ -11,6 +12,15 @@ import type { OperationWorkflowState } from './OperationWorkflowState.js';
  * Current state and verification findings for one complete-history contributor. Customer responses omit tenant identifiers. Observed seconds measure the selected historical group rather than current ownership alone.
  */
 export type OperationWorkflowPerformanceInstance = {
+  /**
+   * Exact missing condition count for the selected current state and refresh owner before preview limits.
+   */
+  missing_condition_count?: number;
+  missing_conditions_truncated?: boolean;
+  /**
+   * First matching missing conditions ordered by workflow step then condition ID with latest reporting Operation pinned expectations and public guidance. No qualifying report exists in current contexts, so evidence is absent.
+   */
+  missing_conditions?: Array<OperationWorkflowConditionCoverageEntry>;
   refresh_priority?: OperationWorkflowConditionRefreshPriority;
   /**
    * Exact number of selected overdue conditions for this contributor. Owner dimensions restrict the count to that owner; workflow priority dimensions count all overdue conditions across owners.

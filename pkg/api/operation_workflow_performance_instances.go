@@ -32,6 +32,9 @@ type OperationWorkflowPerformanceInstanceOptions struct {
 
 // OperationWorkflowPerformanceInstance is a complete-history contributor.
 type OperationWorkflowPerformanceInstance struct {
+	MissingConditions           []OperationWorkflowConditionCoverageEntry  `json:"missing_conditions,omitempty"`
+	MissingConditionCount       int64                                      `json:"missing_condition_count,omitempty"`
+	MissingConditionsTruncated  bool                                       `json:"missing_conditions_truncated,omitempty"`
 	RefreshPriority             *OperationWorkflowConditionRefreshPriority `json:"refresh_priority,omitempty"`
 	RefreshEvidence             []OperationWorkflowDecisionOutcomeEvidence `json:"refresh_evidence,omitempty"`
 	RefreshEvidenceCount        int64                                      `json:"refresh_evidence_count,omitempty"`
@@ -49,6 +52,7 @@ type OperationWorkflowPerformanceInstance struct {
 
 // OperationWorkflowPerformanceInstancesResponse preserves cohort coverage alongside ranked contributors.
 type OperationWorkflowPerformanceInstancesResponse struct {
+	ConditionCoverage               *OperationWorkflowConditionCoverage          `json:"condition_coverage,omitempty"`
 	ActiveConditions                *OperationWorkflowActiveConditionSummary     `json:"active_conditions,omitempty"`
 	ConditionOutcomes               *OperationWorkflowConditionOutcomeSummary    `json:"condition_outcomes,omitempty"`
 	DecisionOutcomes                *OperationWorkflowDecisionOutcomeSummary     `json:"decision_outcomes,omitempty"`

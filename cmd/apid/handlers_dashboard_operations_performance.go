@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.MissingConditionGroups = workflowMissingConditionLinks(data.SummaryURL, opts, summary)
 		data.ConditionCoverageInstances = workflowConditionCoverageLinks(data.ListURL, opts, summary.ConditionCoverage)
 		data.BaselineToken = opts.BaselineToken
 		data.CompareRefreshURL, data.RefreshProgressInstances = workflowRefreshProgressLinks(data.SummaryURL, data.ListURL, opts, summary)
@@ -212,4 +213,16 @@ func workflowConditionCoverageLinks(listPath string, opts api.OperationWorkflowP
 		views = append(views, dashboard.WorkflowConditionCoverageLink{OperationWorkflowConditionCoverageInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
 	}
 	return views
+}
+
+func workflowMissingConditionLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowMissingConditionGroupLink {
+	links := []dashboard.WorkflowMissingConditionGroupLink{}
+	if summary.ConditionCoverage == nil {
+		return links
+	}
+	for _, group := range summary.ConditionCoverage.MissingGroups {
+		selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_missing_owner", ContractVersion: group.ContractVersion, State: group.State, Owner: group.Owner, Unassigned: group.Unassigned}
+		links = append(links, dashboard.WorkflowMissingConditionGroupLink{OperationWorkflowMissingConditionGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
+	}
+	return links
 }

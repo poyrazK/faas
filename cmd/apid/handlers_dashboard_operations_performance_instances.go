@@ -54,6 +54,8 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		return "Refresh priority · oldest overdue report age"
 	case "condition_refresh_blocked":
 		return "Refresh priority · full workflow blocked duration"
+	case "condition_missing_owner":
+		return fmt.Sprintf("Missing condition reports · state %s · contract %d · refresh owner %s", group.State, group.ContractVersion, owner)
 	case "condition_refresh_owner":
 		return "Overdue condition refresh · owner " + owner
 	case "verification_owner":

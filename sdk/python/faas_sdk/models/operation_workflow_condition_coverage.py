@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_condition_coverage_instance import OperationWorkflowConditionCoverageInstance
+    from ..models.operation_workflow_missing_condition_group import OperationWorkflowMissingConditionGroup
 
 
 T = TypeVar("T", bound="OperationWorkflowConditionCoverage")
@@ -23,6 +24,11 @@ class OperationWorkflowConditionCoverage:
 
     """
 
+    missing_groups: list[OperationWorkflowMissingConditionGroup]
+    """Missing reports grouped by current contract and state and pinned refresh owner. Workflow counts are unique
+    per group; one workflow may appear for several owners. Canonical contract/state/owner ordering includes
+    unassigned. Counts precede condition previews; group display caps do not change total missing conditions."""
+    missing_groups_truncated: bool
     matching_workflow_count: int
     sampled_workflow_count: int
     compared_workflow_count: int
@@ -38,6 +44,13 @@ class OperationWorkflowConditionCoverage:
     items: list[OperationWorkflowConditionCoverageInstance]
 
     def to_dict(self) -> dict[str, Any]:
+        missing_groups = []
+        for missing_groups_item_data in self.missing_groups:
+            missing_groups_item = missing_groups_item_data.to_dict()
+            missing_groups.append(missing_groups_item)
+
+        missing_groups_truncated = self.missing_groups_truncated
+
         matching_workflow_count = self.matching_workflow_count
 
         sampled_workflow_count = self.sampled_workflow_count
@@ -71,6 +84,8 @@ class OperationWorkflowConditionCoverage:
 
         field_dict.update(
             {
+                "missing_groups": missing_groups,
+                "missing_groups_truncated": missing_groups_truncated,
                 "matching_workflow_count": matching_workflow_count,
                 "sampled_workflow_count": sampled_workflow_count,
                 "compared_workflow_count": compared_workflow_count,
@@ -92,8 +107,18 @@ class OperationWorkflowConditionCoverage:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_condition_coverage_instance import OperationWorkflowConditionCoverageInstance
+        from ..models.operation_workflow_missing_condition_group import OperationWorkflowMissingConditionGroup
 
         d = dict(src_dict)
+        missing_groups = []
+        _missing_groups = d.pop("missing_groups")
+        for missing_groups_item_data in _missing_groups:
+            missing_groups_item = OperationWorkflowMissingConditionGroup.from_dict(missing_groups_item_data)
+
+            missing_groups.append(missing_groups_item)
+
+        missing_groups_truncated = d.pop("missing_groups_truncated")
+
         matching_workflow_count = d.pop("matching_workflow_count")
 
         sampled_workflow_count = d.pop("sampled_workflow_count")
@@ -126,6 +151,8 @@ class OperationWorkflowConditionCoverage:
             items.append(items_item)
 
         operation_workflow_condition_coverage = cls(
+            missing_groups=missing_groups,
+            missing_groups_truncated=missing_groups_truncated,
             matching_workflow_count=matching_workflow_count,
             sampled_workflow_count=sampled_workflow_count,
             compared_workflow_count=compared_workflow_count,

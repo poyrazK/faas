@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_condition_coverage_entry import OperationWorkflowConditionCoverageEntry
     from ..models.operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
     from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
     from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
@@ -36,6 +37,13 @@ class OperationWorkflowPerformanceInstance:
     resolution_verifications: list[OperationWorkflowResolutionVerification]
     awaiting_verification_count: int
     resolution_verification_count: int
+    missing_condition_count: int | Unset = UNSET
+    """Exact missing condition count for the selected current state and refresh owner before preview limits."""
+    missing_conditions_truncated: bool | Unset = UNSET
+    missing_conditions: list[OperationWorkflowConditionCoverageEntry] | Unset = UNSET
+    """First matching missing conditions ordered by workflow step then condition ID with latest reporting Operation
+    pinned expectations and public guidance. No qualifying report exists in current contexts, so evidence is absent.
+   """
     refresh_priority: OperationWorkflowConditionRefreshPriority | Unset = UNSET
     """Evidence and explanation for one ongoing workflow with overdue condition reports. Rankings use the same
     token-bound sample, complete-history eligibility and pinned definitions as active condition coverage. Owner
@@ -75,6 +83,17 @@ class OperationWorkflowPerformanceInstance:
 
         resolution_verification_count = self.resolution_verification_count
 
+        missing_condition_count = self.missing_condition_count
+
+        missing_conditions_truncated = self.missing_conditions_truncated
+
+        missing_conditions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.missing_conditions, Unset):
+            missing_conditions = []
+            for missing_conditions_item_data in self.missing_conditions:
+                missing_conditions_item = missing_conditions_item_data.to_dict()
+                missing_conditions.append(missing_conditions_item)
+
         refresh_priority: dict[str, Any] | Unset = UNSET
         if not isinstance(self.refresh_priority, Unset):
             refresh_priority = self.refresh_priority.to_dict()
@@ -111,6 +130,12 @@ class OperationWorkflowPerformanceInstance:
                 "resolution_verification_count": resolution_verification_count,
             }
         )
+        if missing_condition_count is not UNSET:
+            field_dict["missing_condition_count"] = missing_condition_count
+        if missing_conditions_truncated is not UNSET:
+            field_dict["missing_conditions_truncated"] = missing_conditions_truncated
+        if missing_conditions is not UNSET:
+            field_dict["missing_conditions"] = missing_conditions
         if refresh_priority is not UNSET:
             field_dict["refresh_priority"] = refresh_priority
         if refresh_evidence_count is not UNSET:
@@ -129,6 +154,7 @@ class OperationWorkflowPerformanceInstance:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_condition_coverage_entry import OperationWorkflowConditionCoverageEntry
         from ..models.operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
         from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
         from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
@@ -155,6 +181,21 @@ class OperationWorkflowPerformanceInstance:
         awaiting_verification_count = d.pop("awaiting_verification_count")
 
         resolution_verification_count = d.pop("resolution_verification_count")
+
+        missing_condition_count = d.pop("missing_condition_count", UNSET)
+
+        missing_conditions_truncated = d.pop("missing_conditions_truncated", UNSET)
+
+        _missing_conditions = d.pop("missing_conditions", UNSET)
+        missing_conditions: list[OperationWorkflowConditionCoverageEntry] | Unset = UNSET
+        if _missing_conditions is not UNSET:
+            missing_conditions = []
+            for missing_conditions_item_data in _missing_conditions:
+                missing_conditions_item = OperationWorkflowConditionCoverageEntry.from_dict(
+                    missing_conditions_item_data
+                )
+
+                missing_conditions.append(missing_conditions_item)
 
         _refresh_priority = d.pop("refresh_priority", UNSET)
         refresh_priority: OperationWorkflowConditionRefreshPriority | Unset
@@ -198,6 +239,9 @@ class OperationWorkflowPerformanceInstance:
             resolution_verifications=resolution_verifications,
             awaiting_verification_count=awaiting_verification_count,
             resolution_verification_count=resolution_verification_count,
+            missing_condition_count=missing_condition_count,
+            missing_conditions_truncated=missing_conditions_truncated,
+            missing_conditions=missing_conditions,
             refresh_priority=refresh_priority,
             refresh_evidence_count=refresh_evidence_count,
             refresh_evidence_truncated=refresh_evidence_truncated,

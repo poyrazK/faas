@@ -258,7 +258,15 @@ def sync_detailed(
     independent of condition and owner display caps. Each contributor includes refresh_priority with the
     oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
     the bounded condition preview. Age ranking does not mean most past deadline or highest business
-    severity. Conflicting snapshots and incomplete histories are excluded.
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation.
 
     Args:
         app_id (UUID):
@@ -403,7 +411,15 @@ def sync(
     independent of condition and owner display caps. Each contributor includes refresh_priority with the
     oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
     the bounded condition preview. Age ranking does not mean most past deadline or highest business
-    severity. Conflicting snapshots and incomplete histories are excluded.
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation.
 
     Args:
         app_id (UUID):
@@ -543,7 +559,15 @@ async def asyncio_detailed(
     independent of condition and owner display caps. Each contributor includes refresh_priority with the
     oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
     the bounded condition preview. Age ranking does not mean most past deadline or highest business
-    severity. Conflicting snapshots and incomplete histories are excluded.
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation.
 
     Args:
         app_id (UUID):
@@ -686,7 +710,15 @@ async def asyncio(
     independent of condition and owner display caps. Each contributor includes refresh_priority with the
     oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
     the bounded condition preview. Age ranking does not mean most past deadline or highest business
-    severity. Conflicting snapshots and incomplete histories are excluded.
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation.
 
     Args:
         app_id (UUID):

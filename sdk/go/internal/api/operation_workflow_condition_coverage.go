@@ -2,6 +2,8 @@ package api
 
 // OperationWorkflowConditionCoverage summarizes reporting, never business truth.
 type OperationWorkflowConditionCoverage struct {
+	MissingGroups                          []OperationWorkflowMissingConditionGroup     `json:"missing_groups"`
+	MissingGroupsTruncated                 bool                                         `json:"missing_groups_truncated"`
 	MatchingWorkflowCount                  int64                                        `json:"matching_workflow_count"`
 	SampledWorkflowCount                   int64                                        `json:"sampled_workflow_count"`
 	CohortTruncated                        bool                                         `json:"cohort_truncated"`
@@ -35,4 +37,14 @@ type OperationWorkflowConditionCoverageEntry struct {
 	Definition OperationBusinessConditionDefinition      `json:"definition"`
 	Status     string                                    `json:"status"`
 	Evidence   *OperationWorkflowDecisionOutcomeEvidence `json:"evidence,omitempty"`
+}
+
+// OperationWorkflowMissingConditionGroup counts missing evidence in one current state and owner.
+type OperationWorkflowMissingConditionGroup struct {
+	ContractVersion       int                                   `json:"contract_version"`
+	State                 string                                `json:"state"`
+	Owner                 string                                `json:"owner,omitempty"`
+	Unassigned            bool                                  `json:"unassigned"`
+	MissingConditionCount int64                                 `json:"missing_condition_count"`
+	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
 }

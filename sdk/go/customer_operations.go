@@ -224,3 +224,5 @@ type OperationWorkflowConditionRefreshProgressChange = api.OperationWorkflowCond
 type OperationWorkflowConditionCoverage = api.OperationWorkflowConditionCoverage
 type OperationWorkflowConditionCoverageInstance = api.OperationWorkflowConditionCoverageInstance
 type OperationWorkflowConditionCoverageEntry = api.OperationWorkflowConditionCoverageEntry
+
+type OperationWorkflowMissingConditionGroup = api.OperationWorkflowMissingConditionGroup

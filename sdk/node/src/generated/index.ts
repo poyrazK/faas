@@ -1125,6 +1125,7 @@ export type { OperationWorkflowInstanceSnapshot } from './models/OperationWorkfl
 export type { OperationWorkflowInstanceStep } from './models/OperationWorkflowInstanceStep.js';
 export type { OperationWorkflowInstanceTransition } from './models/OperationWorkflowInstanceTransition.js';
 export type { OperationWorkflowInvariantRequirement } from './models/OperationWorkflowInvariantRequirement.js';
+export type { OperationWorkflowMissingConditionGroup } from './models/OperationWorkflowMissingConditionGroup.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';

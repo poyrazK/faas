@@ -316,3 +316,5 @@ export type { OperationWorkflowConditionRefreshPriority } from './customer-opera
 export type { OperationWorkflowConditionRefreshProgress, OperationWorkflowConditionRefreshProgressCount, OperationWorkflowConditionRefreshProgressInstance, OperationWorkflowConditionRefreshProgressChange } from './customer-operations.js';
 
 export type { OperationWorkflowConditionCoverage, OperationWorkflowConditionCoverageInstance, OperationWorkflowConditionCoverageEntry } from './customer-operations.js';
+
+export type { OperationWorkflowMissingConditionGroup } from './customer-operations.js';

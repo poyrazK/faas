@@ -2460,3 +2460,50 @@ decision_conditions:
 
 `ready-to-ship` must also be in that step's workflow `states` list. The application
 still evaluates and reports the result through its business decision facts.
+
+
+### Missing condition report groups and contributors
+
+Condition coverage adds `missing_groups`, ordered by effective contract version,
+current state and declared refresh owner (empty owner is `unassigned`). Groups
+count all matching missing conditions before condition previews. Each workflow
+contributes once per owner to `blocked_time`; a workflow with missing conditions
+for several owners appears in several groups. The measure is full observed
+workflow blocked duration, not delay caused by a condition or team. Only the
+first 64 groups are displayed using the existing active-condition group bound;
+`missing_groups_truncated` flags omissions without changing coverage totals.
+
+The `condition_missing_owner` contributor dimension requires `cohort=ongoing`
+and `cohort_token`, an exact returned missing group selected by `contract_version`,
+current `state` and exactly one of `owner` or `unassigned=true`. It rejects all
+condition/result/status, decision/path/outcome and blocker selectors. Invalid or
+undisplayed groups are rejected. The existing query-bound token checks both
+cohorts' retained evidence before deriving contributors; changed or expired
+evidence requires a new summary. Evaluation time remains the summary's time.
+
+Missing contributors share the full coverage eligibility and explicit-context
+selection helper: pinned expectations from the latest reporting Operation,
+complete histories, conflict and evidence-limit exclusions, exact declaring
+step and condition vocabulary, and no inference of failed verification. Display
+caps cannot hide matching workflows or owners from contributor counting. Each
+workflow appears once in its selected group and ranks by full observed blocked
+duration descending, with stable workflow identity ties. `observed_seconds` and
+response `duration` statistics use that same measure; no evidence age is invented
+for an absent report.
+
+Contributor `missing_condition_count` is exact for the selected state and owner;
+`missing_conditions` previews the first 16 matching expected declarations in
+step/condition ID order, independent of the overall coverage preview.
+`missing_conditions_truncated` flags omissions. Entries have no evidence report
+and include pinned vocabulary, step, milestone, budget and public refresh
+guidance. Customer responses omit tenant identifiers from contributors and
+nested condition coverage. API schemas and Go, Node and Python SDKs expose the
+same group and contributor fields.
+
+The dashboard coverage card shows missing-group counts and snapshot-bound links.
+Drilldowns show coverage exclusions, exact missing counts, expected declarations
+and guidance, the latest reporting Operation and pinned definition revision, and
+workflow history. The previously misplaced schema text in the summary template
+is replaced by the actual expected-condition coverage card. These observations
+neither assign severity nor execute refreshes, business checks or application
+actions. No new SQL, migration or persistence is required.

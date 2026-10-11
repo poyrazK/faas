@@ -1,9 +1,10 @@
 package state
 
 import (
-	"github.com/onebox-faas/faas/pkg/api"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func workflowConditionSteps(steps []api.OperationWorkflowSpec, workflow string, version int) []api.OperationWorkflowSpec {
@@ -101,46 +102,27 @@ func workflowConditionCoverage(instances []workflowPerformanceInstance, at time.
 		a, b := ordered[i], ordered[j]
 		return operationAttentionKey(a.Tenant, a.Subject, a.Current.Workflow, a.Current.InstanceID) < operationAttentionKey(b.Tenant, b.Subject, b.Current.Workflow, b.Current.InstanceID)
 	})
+	buckets := map[workflowMissingConditionGroupKey]*workflowMissingConditionBucket{}
 	for _, instance := range ordered {
-		expectations := workflowConditionExpectations(instance)
-		if len(expectations) == 0 {
+		item, status := workflowConditionCoverageInstance(instance, at)
+		switch status {
+		case "unconfigured":
 			out.NoExpectationsWorkflowCount++
 			continue
-		}
-		if instance.Current.Terminal || instance.Bottlenecks == nil || !instance.Bottlenecks.HistoryComplete {
+		case "incomplete":
 			out.ExcludedIncompleteWorkflowCount++
 			continue
-		}
-		evidence, status := workflowExpectedConditionEvidence(instance, at)
-		if len(expectations) > api.OperationWorkflowConditionIdentitiesPerWorkflowMax || status == "limit" {
+		case "limit":
 			out.ExcludedConditionEvidenceWorkflowCount++
 			continue
-		}
-		if status == "ambiguous" {
+		case "ambiguous":
 			out.ExcludedAmbiguousWorkflowCount++
 			continue
 		}
-		item := api.OperationWorkflowConditionCoverageInstance{PlatformTenantID: instance.Tenant, Subject: instance.Subject, State: instance.Current, ExpectedConditionCount: int64(len(expectations)), Conditions: []api.OperationWorkflowConditionCoverageEntry{}}
-		for _, entry := range expectations {
-			if fact, exists := evidence[workflowCoverageConditionKey{Step: entry.Step, ID: entry.Definition.ID, Description: entry.Definition.Description}]; exists {
-				value := fact
-				entry.Evidence = &value
-			}
-			if entry.Evidence == nil {
-				item.MissingConditionCount++
-			} else {
-				item.ReportedConditionCount++
-				entry.Status = "reported"
-				if entry.Evidence.ConditionFreshness.Status == "overdue" {
-					item.OverdueConditionCount++
-					entry.Status = "overdue"
-				}
-			}
-			if len(item.Conditions) < api.OperationWorkflowConditionRefreshEvidenceMax {
-				item.Conditions = append(item.Conditions, entry)
-			} else {
-				item.ConditionsTruncated = true
-			}
+		workflowMissingConditionBuckets(instance, item, buckets)
+		if len(item.Conditions) > api.OperationWorkflowConditionRefreshEvidenceMax {
+			item.Conditions = item.Conditions[:api.OperationWorkflowConditionRefreshEvidenceMax]
+			item.ConditionsTruncated = true
 		}
 		out.ComparedWorkflowCount++
 		out.ExpectedConditionCount += item.ExpectedConditionCount
@@ -149,8 +131,45 @@ func workflowConditionCoverage(instances []workflowPerformanceInstance, at time.
 		out.OverdueConditionCount += item.OverdueConditionCount
 		out.Items = append(out.Items, item)
 	}
+	workflowMissingConditionGroups(out, buckets)
 	return out
 }
+func workflowConditionCoverageInstance(instance workflowPerformanceInstance, at time.Time) (api.OperationWorkflowConditionCoverageInstance, string) {
+	expectations := workflowConditionExpectations(instance)
+	if len(expectations) == 0 {
+		return api.OperationWorkflowConditionCoverageInstance{}, "unconfigured"
+	}
+	if instance.Current.Terminal || instance.Bottlenecks == nil || !instance.Bottlenecks.HistoryComplete {
+		return api.OperationWorkflowConditionCoverageInstance{}, "incomplete"
+	}
+	evidence, status := workflowExpectedConditionEvidence(instance, at)
+	if len(expectations) > api.OperationWorkflowConditionIdentitiesPerWorkflowMax || status == "limit" {
+		return api.OperationWorkflowConditionCoverageInstance{}, "limit"
+	}
+	if status == "ambiguous" {
+		return api.OperationWorkflowConditionCoverageInstance{}, "ambiguous"
+	}
+	item := api.OperationWorkflowConditionCoverageInstance{PlatformTenantID: instance.Tenant, Subject: instance.Subject, State: instance.Current, ExpectedConditionCount: int64(len(expectations)), Conditions: []api.OperationWorkflowConditionCoverageEntry{}}
+	for _, entry := range expectations {
+		if fact, exists := evidence[workflowCoverageConditionKey{Step: entry.Step, ID: entry.Definition.ID, Description: entry.Definition.Description}]; exists {
+			value := fact
+			entry.Evidence = &value
+		}
+		if entry.Evidence == nil {
+			item.MissingConditionCount++
+		} else {
+			item.ReportedConditionCount++
+			entry.Status = "reported"
+			if entry.Evidence.ConditionFreshness.Status == "overdue" {
+				item.OverdueConditionCount++
+				entry.Status = "overdue"
+			}
+		}
+		item.Conditions = append(item.Conditions, entry)
+	}
+	return item, ""
+}
+
 func hideConditionCoverageTenants(coverage *api.OperationWorkflowConditionCoverage) {
 	if coverage == nil {
 		return
