@@ -323,4 +323,3 @@ class Authenticator:
             if reference_type == "ref/resource" and isinstance(reference.get("uri"), str):
                 return self.resource_failure(reference["uri"], granted_scopes)
         return None
-

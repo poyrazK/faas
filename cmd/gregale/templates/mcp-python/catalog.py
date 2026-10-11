@@ -200,4 +200,3 @@ def match_uri_template(template, uri):
     if match is None:
         return None
     return {variable.group(1): value for variable, value in zip(variables, match.groups())}
-
