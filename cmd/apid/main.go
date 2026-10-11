@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -748,15 +749,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
-		go srv.runManagedRealtimeEndpointReconciler(ctx)
-		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
-		go srv.runManagedRealtimeOwnerReaper(ctx)
-		go srv.runManagedRealtimeHistoryReaper(ctx)
-		go srv.runManagedRealtimeEntityExpirations(ctx)
-		go srv.runManagedRealtimeSchedules(ctx)
-		go srv.runManagedRealtimeFallbacks(ctx)
-		go srv.runManagedRealtimePush(ctx)
-		go srv.runManagedRealtimeDrainWorker(ctx)
+		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
+		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
+		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)
+		go srv.realtime.RunManagedRealtimeHistoryReaper(ctx)
+		go srv.realtime.RunManagedRealtimeEntityExpirations(ctx)
+		go srv.realtime.RunManagedRealtimeSchedules(ctx)
+		go srv.realtime.RunManagedRealtimeFallbacks(ctx)
+		go srv.realtime.RunManagedRealtimePush(ctx)
+		go srv.realtime.RunManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
 		go srv.durable.RunAlarms(ctx)
 		go srv.durable.RunOutbox(ctx)
@@ -1707,22 +1708,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				localNodeID = node.ID
 			}
 		}
-		var local realtimeNodeOperator
-		if srv.realtimeOwner != nil && srv.realtimeClient != nil {
-			local = localRealtimeNodeOperator{owner: srv.realtimeOwner, client: srv.realtimeClient}
+		var local managedrealtime.RealtimeNodeOperator
+		if srv.realtime.Owner != nil && srv.realtimeClient != nil {
+			local = managedrealtime.LocalRealtimeNodeOperator{Owner: srv.realtime.Owner, Client: srv.realtimeClient}
 		}
-		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
-		resolver.ops = ops
-		resolver.channelRouteMetrics = newManagedRealtimeChannelRouteMetrics(ops.Registry(), ops.MetricPrefix())
-		resolver.channelRoutingEnabled = realtimeChannelRoutingEnabledFromEnv(deps.getenv)
-		resolver.channelRoutes, _ = store.(state.ManagedRealtimeChannelRouteStore)
-		if resolver.channelRoutingEnabled && resolver.channelRoutes == nil {
+		resolver := managedrealtime.NewLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
+		channelRoutes, _ := store.(state.ManagedRealtimeChannelRouteStore)
+		channelRouting := realtimeChannelRoutingEnabledFromEnv(deps.getenv)
+		resolver.ConfigureFleetRouting(ops, channelRouting, channelRoutes)
+		if channelRouting && channelRoutes == nil {
 			log.Warn("apid: realtime channel routing requested but state store has no route directory; retaining fleet broadcast")
 		}
 		// The fleet adapter owns both public operations and endpoint
 		// reconciliation. It retains the local Unix fast path when present.
-		srv.realtimeOwner = resolver
-		srv.realtimeRegistrar = resolver
+		srv.realtime.Owner = resolver
+		srv.realtime.Registrar = resolver
 		log.Info("apid: managed realtime leased owner resolver armed", "local_node_id", localNodeID)
 	}
 
@@ -2277,7 +2277,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtimeOwner)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2298,7 +2298,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, guestSpans, srv.realtimeOwner)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, guestSpans, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2384,7 +2384,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, guestSpans, srv.realtimeOwner)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, guestSpans, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2892,7 +2892,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -2917,9 +2917,9 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	if !isUnixSocketPath(target) {
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
-			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerRealtimePush)
+			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 		} else {
-			receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerRealtimePush)
+			receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush)
 		}
 	}
 	// Split-box deployments reuse the same private mTLS listener for both
@@ -2950,7 +2950,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest receivers.IngestGate, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
@@ -2960,9 +2960,9 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	// Single-box realtimed reaches apid through this DAC-protected socket.
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
 	if len(fleetRouter) > 0 {
-		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerRealtimePush)
+		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {
-		receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerRealtimePush)
+		receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush)
 	}
 	return srv, lis, nil
 }

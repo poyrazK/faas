@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/auth"
@@ -144,24 +145,12 @@ type server struct {
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
-	// realtimeRegistrar is optional in split-box deployments. When set, apid
-	// mirrors durable endpoint writes onto the local or leased realtime owner.
-	realtimeRegistrar realtimeEndpointRegistrar
 	// realtimeClient is retained so the leased fleet adapter can use the local
 	// Unix owner for endpoint registration and connection discovery.
 	realtimeClient *realtime.Client
-	// realtimeOwner routes customer-facing connection operations to the node
-	// that owns a live socket. Production wires a leased cross-node resolver;
-	// the local Unix client remains the same-box fast path.
-	realtimeOwner          realtimeOwner
-	realtimeBackendSignals realtimeBackendSignalLimiter
-	// realtimeDrainWake nudges the durable drain worker after a new operation
-	// is committed; the ticker remains the restart/recovery backstop.
-	realtimeDrainWake chan struct{}
-	// Retained messages are a storage preview until channel grants and the
-	// versioned reconnect protocol are ready for customer traffic.
-	realtimeHistoryPreviewEnabled bool
-	realtimeHistoryMetrics        *managedRealtimeHistoryMetrics
+	// realtime is the managed realtime surface (ADR-977): owner, registrar,
+	// drain wake, history preview and metrics. Host wired in newServer.
+	realtime managedrealtime.Service
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -333,9 +322,8 @@ type server struct {
 	metricsDiscoveryMetrics *metricsDiscoveryMetrics
 	// Source health reads durable fleet aggregates, so replicas do not need to
 	// own a poll lease to expose freshness. Enablement is configured at startup.
-	environmentGitSourceMetrics            *environmentGitSourceMetrics
-	environmentGitSourcePollingEnabled     atomic.Bool
-	managedRealtimePublishIdempotencySweep atomic.Uint64
+	environmentGitSourceMetrics        *environmentGitSourceMetrics
+	environmentGitSourcePollingEnabled atomic.Bool
 	// graceWindowCache (issue #189 / IAM-5) caches the per-account
 	// rotation grace override (accounts.key_grace_window_days). The
 	// bearer-key auth path does NOT read it (the lazy expiry gate
@@ -506,7 +494,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
-		s.realtimeHistoryMetrics = nil
+		s.realtime.HistoryMetrics = nil
 		s.environmentGitSourceMetrics = nil
 		s.durable.Metrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
@@ -520,8 +508,8 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
 		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
-	if ops != nil && (s.realtimeHistoryMetrics == nil || s.realtimeHistoryMetrics.registry != ops.Registry()) {
-		s.realtimeHistoryMetrics = newManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
+	if ops != nil && (s.realtime.HistoryMetrics == nil || s.realtime.HistoryMetrics.Registry() != ops.Registry()) {
+		s.realtime.HistoryMetrics = managedrealtime.NewManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.environmentGitSourceMetrics == nil || s.environmentGitSourceMetrics.registry != ops.Registry()) {
 		store, _ := s.store.(state.EnvironmentGitSourceHealthStore)
@@ -769,7 +757,7 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 }
 
 func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
-	s.realtimeHistoryPreviewEnabled = enabled
+	s.realtime.HistoryPreviewEnabled = enabled
 	return s
 }
 
@@ -848,8 +836,8 @@ func (s *server) WithGatewaydControlURL(url string) *server {
 func (s *server) WithRealtimeSocket(socket string) *server {
 	if socket != "" {
 		client := realtime.NewUnixClient(socket)
-		s.realtimeRegistrar = client
-		s.realtimeOwner = localRealtimeOwner{client: client}
+		s.realtime.Registrar = client
+		s.realtime.Owner = managedrealtime.LocalRealtimeOwner{Client: client}
 		s.realtimeClient = client
 	}
 	return s
@@ -859,8 +847,8 @@ func (s *server) WithRealtimeSocket(socket string) *server {
 // realtime operations. Production installs the leased fleet adapter when the
 // persistence boundary supports it; tests can use this seam independently of
 // a Unix socket.
-func (s *server) WithRealtimeOwner(owner realtimeOwner) *server {
-	s.realtimeOwner = owner
+func (s *server) WithRealtimeOwner(owner managedrealtime.RealtimeOwner) *server {
+	s.realtime.Owner = owner
 	return s
 }
 
@@ -1174,8 +1162,7 @@ func newServerWithDeps(
 		// can group by source. Pre-PR-G callers used
 		// store.ApplyProjectPlan directly; post-PR-G every
 		// workload-mutating path goes through Service.Reconcile.
-		reconcileSvc:      buildReconcileService(store, aud.pkgAuditor(), log),
-		realtimeDrainWake: make(chan struct{}, 1),
+		reconcileSvc: buildReconcileService(store, aud.pkgAuditor(), log),
 		// IAM-5 (issue #189): rotation grace-window cache. 60 s
 		// TTL bounds the admin-update propagation latency; the
 		// invalidate-on-write path closes the loop. nil in
@@ -1194,6 +1181,8 @@ func newServerWithDeps(
 	s.object.Host = objectHost{s}
 	s.operation.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
+	s.realtime.Host = realtimeHost{s}
+	s.realtime.DrainWake = make(chan struct{}, 1)
 	s.appEvents.Host = appEventsHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
@@ -1349,7 +1338,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.object.GetObjectStorageUsage))))
 	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
-	mux.HandleFunc("GET /v1/account/realtime-history-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedRealtimeHistoryUsage))))
+	mux.HandleFunc("GET /v1/account/realtime-history-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.realtime.GetManagedRealtimeHistoryUsage))))
 	// Disposable one-shot executions (ADR-171). The handlers are mounted
 	// behind a separate explicit opt-in so a control-plane upgrade cannot
 	// accept work before the restore/execute/destroy path is ready. POST and
@@ -2761,84 +2750,84 @@ func (s *server) handler() http.Handler {
 	// Managed realtime endpoint resources (ADR-156). These routes persist the
 	// callback contract and sealed credentials; live connections remain owned by
 	// realtimed and are reconciled from this durable source of truth.
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listManagedRealtimeEndpoints))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createManagedRealtimeEndpoint)))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeEndpoint))))
-	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateManagedRealtimeEndpoint))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rotateManagedRealtimeAuth)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizeManagedRealtimeAuth)))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteManagedRealtimeEndpoint))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ListManagedRealtimeEndpoints))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.CreateManagedRealtimeEndpoint)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeEndpoint))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.UpdateManagedRealtimeEndpoint))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.RotateManagedRealtimeAuth)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.FinalizeManagedRealtimeAuth)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.DeleteManagedRealtimeEndpoint))))
 	// Live managed realtime operations are endpoint-scoped so an API key can
 	// never address a connection or channel outside an app it owns. The same
 	// owner seam serves the local Unix fast path and leased cross-node resolver.
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listManagedRealtimeConnections))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.drainManagedRealtimeConnections)))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeDrainOperation))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimeConnection))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals:send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimePrincipal))))
-	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mutateManagedRealtimeMessage))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mutateManagedRealtimeMessage))))
-	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mutateManagedRealtimeMessage))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mutateManagedRealtimeMessage))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeNotificationTimeline))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeNotificationControl))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeNotificationControl))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimePushPreferences))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimePushPreferences))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ListManagedRealtimeConnections))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.DrainManagedRealtimeConnections)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeDrainOperation))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SendManagedRealtimeConnection))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals:send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SendManagedRealtimePrincipal))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.MutateManagedRealtimeMessage))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.MutateManagedRealtimeMessage))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.MutateManagedRealtimeMessage))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.MutateManagedRealtimeMessage))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeNotificationTimeline))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeNotificationControl))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeNotificationControl))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimePushPreferences))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimePushPreferences))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/providers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		r.SetPathValue("push_collection", "providers")
-		s.managedRealtimePush(w, r, acct)
+		s.realtime.ManagedRealtimePush(w, r, acct)
 	}))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/devices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		r.SetPathValue("push_collection", "devices")
-		s.managedRealtimePush(w, r, acct)
+		s.realtime.ManagedRealtimePush(w, r, acct)
 	}))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		r.SetPathValue("push_collection", "deliveries")
-		s.managedRealtimePush(w, r, acct)
+		s.realtime.ManagedRealtimePush(w, r, acct)
 	}))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/providers/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimePush))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimePush))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimePush))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/providers/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimePush))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimePush))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimePush))))
 
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeReadProgress))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeReadProgress))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeReadProgress))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeReadProgress))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeInbox))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimePrincipalReceipt))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeChannelSnapshot))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeChannelSnapshot))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeChannelSnapshot))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeSchedules))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeReadProgress))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeReadProgress))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeReadProgress))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeReadProgress))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ReadManagedRealtimeInbox))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimePrincipalReceipt))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.CloseManagedRealtimeConnection))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SubscribeManagedRealtimeConnection))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.UnsubscribeManagedRealtimeConnection))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeChannelSnapshot))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeChannelSnapshot))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeChannelSnapshot))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeSchedules))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/pause", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		r.SetPathValue("recurrence_action", "pause")
-		s.managedRealtimeSchedules(w, r, acct)
+		s.realtime.ManagedRealtimeSchedules(w, r, acct)
 	}))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		r.SetPathValue("recurrence_action", "resume")
-		s.managedRealtimeSchedules(w, r, acct)
+		s.realtime.ManagedRealtimeSchedules(w, r, acct)
 	}))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/groups/{group}/{group_action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeScheduleGroup))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeSchedules))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
-	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeReducer))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeReducer))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeReducer))))
-	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeEventSchema))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeEventSchema))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannelBatch))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/activity-scopes/{activity_scope}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeSignal))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeSignal))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotentManagedRealtimePublish(s.publishManagedRealtimeChannel)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appendManagedRealtimeRetainedMessage))))
-	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeRetainedMessages))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeSchedules))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/groups/{group}/{group_action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeScheduleGroup))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeSchedules))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeSchedules))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeSchedules))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeSchedules))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeReducer))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeReducer))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeReducer))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManagedRealtimeEventSchema))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeEventSchema))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.PublishManagedRealtimeChannelBatch))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/activity-scopes/{activity_scope}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.PublishManagedRealtimeSignal))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.PublishManagedRealtimeSignal))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IdempotentManagedRealtimePublish(s.realtime.PublishManagedRealtimeChannel)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.AppendManagedRealtimeRetainedMessage))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ReadManagedRealtimeRetainedMessages))))
 
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
