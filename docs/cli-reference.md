@@ -61,6 +61,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
+| [`entities`](#entities) | Observe durable entity state and recovery metadata |
 | [`customer-operations`](#customer-operations) | Inspect customer work, verify downloads and reconcile outcomes |
 | [`operations`](#operations) | Coordinate named work with leases, explicit contention policy, and fenced ownership |
 | [`debug`](#debug) | Inspect production requests and regressions |
@@ -8146,6 +8147,52 @@ Revoke an ingest credential
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+
+
+## entities
+
+Observe durable entity state and recovery metadata
+
+`gregale entities [<subcommand>]`
+
+Examples:
+
+```sh
+gregale entities inspect --app my-app --namespace counters --key customer:123
+gregale entities watch --app my-app --namespace sessions --key run:1 --timeout 5m --json
+```
+
+### entities inspect
+
+Read metadata and recovery diagnostics without invoking an entity
+
+`gregale entities inspect --app <SLUG> --namespace <NAME> --key <KEY> [--environment <ENV>] [--tenant <UUID>] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--namespace <NAME>` | exact entity namespace | required |
+| `--key <KEY>` | exact entity key | required |
+| `--environment <ENV>` | exact environment; omitted uses API default |  |
+| `--tenant <UUID>` | owned platform tenant |  |
+| `--timeout <DURATION>` | observation deadline, default 5m, maximum 1h |  |
+| `--interval <DURATION>` | watch poll interval, default 5s, range 1s to 1m |  |
+
+### entities watch
+
+Poll metadata for a bounded window, emitting changes only
+
+`gregale entities watch --app <SLUG> --namespace <NAME> --key <KEY> [--environment <ENV>] [--tenant <UUID>] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--namespace <NAME>` | exact entity namespace | required |
+| `--key <KEY>` | exact entity key | required |
+| `--environment <ENV>` | exact environment; omitted uses API default |  |
+| `--tenant <UUID>` | owned platform tenant |  |
+| `--timeout <DURATION>` | observation deadline, default 5m, maximum 1h |  |
+| `--interval <DURATION>` | watch poll interval, default 5s, range 1s to 1m |  |
 
 
 ## customer-operations

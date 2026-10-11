@@ -3303,6 +3303,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// selected source. Only when that source is unreachable (cwdErr != nil for
 	// zero-config) does the gate skip — in that case the server-side validators
 	// on upload are the catch.
+	// A declared durable-entity project must have its source artifacts prepared
+	// before upload, even when advisory doctor checks are disabled. This does not
+	// execute handlers or enable platform preview gates.
+	if sourceDir != "" {
+		if check, present := doctorCheckDurableEntities(sourceDir); present && check.Status == "error" {
+			return printErr("Durable entity project is not ready", errors.New(check.Hint))
+		}
+	}
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" && (!execution.sourcePreflightChecked || *doctorStrict) {
 		doctorShape := resolvedShape

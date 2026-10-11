@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "entrypoint": "server.mjs",
+  "handlers": [
+    {
+      "namespace": "counters",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "counter",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "counterContract"
+      }
+    },
+    {
+      "namespace": "reservations",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "reservation",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "reservationContract"
+      }
+    },
+    {
+      "namespace": "sessions",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "session",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "sessionContract"
+      }
+    }
+  ],
+  "restore_validator": "gregale.validator.json"
+}

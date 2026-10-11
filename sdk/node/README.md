@@ -2615,3 +2615,32 @@ Use the attention reason `sla_breached` to find known breaches. Performance coho
 Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
+
+### Durable entity developer workflow
+
+The pure `@gregale/sdk-node/durable-entities/runtime` entrypoint exports
+`defineDurableEntity` and `createDurableEntityRegistry` for namespace-bound,
+schema-aware synchronous handlers. The separate
+`@gregale/sdk-node/durable-entities/testing` entrypoint exports
+`DurableEntitySimulator` for serialized local calls, replay receipts, commit fault
+injection, manually advanced alarms, captured intents and restart checkpoints.
+It is an in-memory development tool, not a production storage backend.
+
+See the [complete Node starter workflow](../../cmd/gregale/templates/durable-entity-node/README.md)
+for installation, examples, validation and deployment requirements.
+
+### Durable entity operational visibility
+
+Call `entityHandle.observe()` or `observeDurableEntity(selectors)` for an inspection
+plus alarm/outbox status and actionable findings. `summarizeDurableEntity(inspection,
+clock)` diagnoses existing metadata without network calls. Neither helper reads
+application state, inspects replay receipts, acquires ownership or retries work.
+See [visibility semantics and CLI watch](../../docs/durable-entity-visibility.md).
+
+### Typed entity clients
+
+`@gregale/sdk-node/durable-entities/client` exports
+`defineDurableEntityClientContract` and `durableEntityClient`. Shared pure decoders
+infer payload/result types; clients validate before transport and preserve explicit
+request IDs. The Node starter generates namespace-bound factories from declared
+contract exports. See its [generated client guide](../../cmd/gregale/templates/durable-entity-node/README.md#generated-typed-clients).

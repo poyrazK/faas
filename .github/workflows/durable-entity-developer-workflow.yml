@@ -1,0 +1,56 @@
+name: durable-entity-developer-workflow
+on:
+  pull_request:
+    paths:
+      - 'sdk/node/**'
+      - 'cmd/gregale/templates/durable-entity-node/**'
+      - 'cmd/gregale/durable_entity_project*'
+      - 'cmd/gregale/commands*.go'
+      - 'cmd/gregale/templates/embed.go'
+      - 'pkg/durableentity/project/**'
+      - 'scripts/gen-durable-entity-contract.py'
+      - '.github/workflows/durable-entity-developer-workflow.yml'
+  push:
+    branches: [main, codex/durable-entity-developer-workflow]
+    paths:
+      - 'sdk/node/**'
+      - 'cmd/gregale/templates/durable-entity-node/**'
+      - 'pkg/durableentity/project/**'
+      - '.github/workflows/durable-entity-developer-workflow.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  node-starter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: npm
+          cache-dependency-path: sdk/node/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: sdk/node
+      - run: npm run test:build
+        working-directory: sdk/node
+      - run: node --test dist-test/test/durable-entity-workflow.test.js dist-test/test/durable-entity-visibility.test.js
+        working-directory: sdk/node
+      - run: npm run build
+        working-directory: sdk/node
+      - run: node --test test/durable-entity-starter.test.mjs
+        working-directory: sdk/node
+
+  go-source-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.9'
+      - name: Verify declared project artifacts and metadata diagnostics
+        run: go test -race ./pkg/durableentity/project ./pkg/durableentity/visibility
+      - name: Verify CLI workflow, read-only inspection and generated reference
+        run: go test -race ./cmd/gregale -run 'Test(DurableEntity|Entity|MarkdownReferenceFresh)' -count=1

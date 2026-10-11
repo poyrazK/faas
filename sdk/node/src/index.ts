@@ -312,3 +312,9 @@ export { validateDurableEntityRestore, type DurableEntityRestoreValidationOption
 export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
+
+export { defineDurableEntity, createDurableEntityRegistry, type DurableEntityDefinition, type DurableEntityRegistry } from './durable-entity-runtime.js';
+
+export { summarizeDurableEntity, observeDurableEntity, type DurableEntityObservation, type DurableEntityFinding } from './durable-entity-visibility.js';
+
+export { defineDurableEntityClientContract, durableEntityClient, type DurableEntityClientContract } from './durable-entity-client.js';

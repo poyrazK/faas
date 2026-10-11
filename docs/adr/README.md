@@ -778,3 +778,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-947: Shared durable entity validator artifacts](947-shared-durable-entity-validator-artifacts.md)
 
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
+
+- [ADR-967: Durable entity developer workflow](967-durable-entity-developer-workflow.md)
+- [ADR-968: Durable entity operational visibility](968-durable-entity-operational-visibility.md)
+- [ADR-969: Durable entity generated clients](969-durable-entity-generated-clients.md)

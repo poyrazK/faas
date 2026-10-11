@@ -159,7 +159,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 			tpl, strings.Join(templates.Names, ", "))
 		return 1
 	}
-	if deploy && templates.CategoryFor(tpl) == "operations" {
+	if deploy && (templates.CategoryFor(tpl) == "operations" || templates.CategoryFor(tpl) == "durable-entities") {
 		PrintFail(stderr, "%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl)
 		return 1
 	}
