@@ -39,4 +39,10 @@
     - faas-gatewayd-internal
   changed_when: true
   failed_when: false
-  when: systemd_available.stat.exists | bool
+  # A node join defers service restarts to its final play, which restarts
+  # every daemon after the drain. Restarting vmmd here, before the drain,
+  # quarantined the node's running VMs (ADR-472): the rc.252 production-us
+  # rollout could neither migrate nor stop a worker on fsn-3 and aborted.
+  when:
+    - systemd_available.stat.exists | bool
+    - not (faas_join_defer_service_handlers | default(false) | bool)
