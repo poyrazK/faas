@@ -478,3 +478,5 @@ type EventDeliveryHealthWatchOptions = api.EventDeliveryHealthWatchOptions
 type EventDeliveryHealthWatchResult = api.EventDeliveryHealthWatchResult
 type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
 type EventDeliveryHealthAlert = api.EventDeliveryHealthAlert
+
+type EventConsumerCapacityWaits = api.EventConsumerCapacityWaits

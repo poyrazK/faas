@@ -892,6 +892,11 @@ zero disables a threshold. `OnProgress` receives detached health/condition snaps
 and latest-pass `Alerts` (`opened`, `resolved`, or `confirmation_lost`). Return an
 error to stop. Deduplicate by incident ID and sequence, and persist externally if
 needed: this watch is invocation-local and does not use a durable alert outbox.
-Circuit/capacity durations require consecutive fresh samples; truncated capacity
-samples and incomplete execution evidence cannot resolve alerts. Deadline/read/
+Circuit/capacity durations require consecutive fresh samples; missing/incomplete capacity
+aggregates and incomplete execution evidence cannot resolve alerts. Deadline/read/
 callback failures return a partial result and error.
+
+Delivery health `CapacityWaits` exposes complete effective capacity-reason counts
+by scope with independent freshness and subscription binding. Local capacity watches
+use these counts even when the pending event sample is truncated. Missing aggregates
+from older servers remain unknown rather than becoming zero counts.

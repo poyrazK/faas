@@ -185,6 +185,9 @@ SELECT b.app_id,b.subscription_id,b.consumer_kind,coalesce(a.slug,'')::text AS a
        count(*) FILTER (WHERE b.routing_state='pending')::bigint AS pending_recipients,
        count(*) FILTER (WHERE b.routing_state='processing')::bigint AS processing_recipients,
        count(*) FILTER (WHERE b.capacity_scope<>'')::bigint AS capacity_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='capacity_consumer')::bigint AS capacity_consumer_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='capacity_app')::bigint AS capacity_app_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='capacity_account')::bigint AS capacity_account_waiting_recipients,
        count(*) FILTER (WHERE observation.reason='ordering_blocked')::bigint AS ordering_waiting_recipients,
        min(b.accepted_at)::timestamptz AS oldest_accepted_at
 FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id

@@ -1755,8 +1755,10 @@ preserving its last observed health and condition state in the final result.
 Pending acceptance age and pause duration use server observations. Circuit and
 capacity durations measure elapsed time between consecutive fresh samples in this
 invocation and need at least two advancing samples. Circuit restriction includes
-open, half-open, and draining controls. Capacity monitoring requires the entire
-pending sample to fit within 50 recipients; truncation cannot clear an alert.
+open, half-open, and draining controls. Capacity monitoring uses complete
+`capacity_waits` aggregates independently of
+pending-sample truncation. Missing, incomplete, stale, or invalid aggregates cannot
+clear an alert.
 These are sampled subscription conditions, not continuous measurements or the
 original age of a specific blocker.
 
@@ -1771,3 +1773,24 @@ Alerts are local to this watch, reset on restart, and are not checkpointed. Use
 existing server alert rules for durable webhooks on supported pending-age,
 pause-duration, and dead-letter metrics. Watch-specific options require `--watch`;
 monitoring does not replay deliveries or change subscription controls.
+
+
+### Complete subscription capacity waits
+
+Delivery health includes `capacity_waits`: complete counts by `consumer`, `app`,
+and `account` scope, the matching `pending_recipients` total, `coverage`, `complete`,
+`app_id`, `subscription_id`, and its own `observed_at`. These counts cover all
+retained pending application recipients, including backfills, in one backlog
+snapshot and are independent of the 50-event sample. They count effective waiting
+reasons after pause, circuit, ordering, and other classification precedence.
+The existing backlog `capacity_waiting_recipients` field continues to count recorded
+capacity scopes and can therefore differ from these effective-reason counts.
+
+The capacity watch can now confirm or clear conditions on large backlogs. It uses
+fresh complete aggregates, never infers zero from a missing field or truncated
+sample, and validates scope counts against their own pending total. Older servers
+without `capacity_waits` produce unknown capacity confirmation. Other summary
+components remain independent reads; use the aggregate's timestamp when assessing
+freshness. Scope counters are available in the backlog consumer API as
+`capacity_consumer_waiting_recipients`, `capacity_app_waiting_recipients`, and
+`capacity_account_waiting_recipients`, with the backlog's existing filters.

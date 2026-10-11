@@ -6,6 +6,18 @@
  * Exact counts over all matching waiting recipients for one app/subscription/consumer kind, independent of recipient pagination.
  */
 export type EventBacklogConsumer = {
+  /**
+   * Complete count with effective capacity_consumer waiting reason.
+   */
+  capacity_consumer_waiting_recipients?: number;
+  /**
+   * Complete count with effective capacity_app waiting reason.
+   */
+  capacity_app_waiting_recipients?: number;
+  /**
+   * Complete count with effective capacity_account waiting reason.
+   */
+  capacity_account_waiting_recipients?: number;
   app_id: string;
   app_slug: string;
   target_available: boolean;

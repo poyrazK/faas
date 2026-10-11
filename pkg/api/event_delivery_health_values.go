@@ -57,34 +57,19 @@ func deliveryHealthValue(h EventConsumerDeliveryHealth, metric string) (float64,
 }
 
 func deliveryHealthCapacityValue(h EventConsumerDeliveryHealth) (float64, bool, time.Time) {
-	sample := h.PendingSample
-	invalid := func() (float64, bool, time.Time) { return 0, false, sample.ObservedAt }
-	if sample.Coverage != "oldest_pending_recipients" || sample.Truncated || len(sample.Recipients) > EventConsumerDeliveryHealthSampleMax {
-		return invalid()
+	counts := h.CapacityWaits
+	if counts == nil {
+		return 0, false, time.Time{}
 	}
-	counts := map[string]int64{}
-	var capacity float64
-	seen := map[string]bool{}
-	for _, row := range sample.Recipients {
-		query := EventRecipientBlockerQuery{Source: row.EventSource, ID: row.EventID, SubscriptionID: row.SubscriptionID, ExpectedAcceptedAt: row.AcceptedAt}
-		key := incidentRecipientKey(query)
-		if query.Validate() != nil || seen[key] || row.AcceptedAt.After(sample.ObservedAt) || !strings.EqualFold(row.AppID, h.Routing.AppID) || !strings.EqualFold(row.SubscriptionID, h.Routing.SubscriptionID) || row.ConsumerKind != "application" || row.State != "pending" || (EventBacklogFilters{WaitingReason: row.WaitingReason}).Validate() != nil || row.WaitingReason == "" {
-			return invalid()
+	valid := counts.Complete && counts.Coverage == "all_pending_application_recipients" && strings.EqualFold(counts.AppID, h.Routing.AppID) && strings.EqualFold(counts.SubscriptionID, h.Routing.SubscriptionID) && counts.PendingRecipients >= 0 && counts.Consumer >= 0 && counts.App >= 0 && counts.Account >= 0
+	// Subtraction avoids overflow and verifies the mutually exclusive scopes.
+	remaining := counts.PendingRecipients
+	for _, count := range []int64{counts.Consumer, counts.App, counts.Account} {
+		if count < 0 || count > remaining {
+			valid = false
+			break
 		}
-		seen[key] = true
-		counts[row.WaitingReason]++
-		switch row.WaitingReason {
-		case "capacity_consumer", "capacity_app", "capacity_account":
-			capacity++
-		}
+		remaining -= count
 	}
-	if len(counts) != len(sample.WaitingReasons) {
-		return invalid()
-	}
-	for reason, count := range counts {
-		if sample.WaitingReasons[reason] != count {
-			return invalid()
-		}
-	}
-	return capacity, true, sample.ObservedAt
+	return float64(counts.PendingRecipients - remaining), valid, counts.ObservedAt
 }

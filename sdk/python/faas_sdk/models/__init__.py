@@ -1001,6 +1001,8 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_capacity_waits import EventConsumerCapacityWaits
+from .event_consumer_capacity_waits_coverage import EventConsumerCapacityWaitsCoverage
 from .event_consumer_delivery_health import EventConsumerDeliveryHealth
 from .event_consumer_execution_health import EventConsumerExecutionHealth
 from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
@@ -4422,6 +4424,8 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerCapacityWaits",
+    "EventConsumerCapacityWaitsCoverage",
     "EventConsumerDeliveryHealth",
     "EventConsumerExecutionHealth",
     "EventConsumerExecutionHealthCoverage",

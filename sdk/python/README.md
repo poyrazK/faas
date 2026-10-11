@@ -896,3 +896,9 @@ for a combined subscription delivery summary. Component timestamps represent
 independent reads. Inspect pending-sample truncation and execution retention
 coverage; the latest successful completion is a retained observation, not an
 all-time watermark.
+
+Subscription delivery health includes optional `capacity_waits`: complete effective capacity-reason counts
+for consumer/app/account scope, a pending total, explicit coverage/completeness,
+consumer binding, and a separate observation time. Counts cover all retained pending
+recipients independently of the bounded sample. A missing aggregate from an older
+server is unavailable evidence, not zero waits.

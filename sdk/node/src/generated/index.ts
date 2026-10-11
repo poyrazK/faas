@@ -515,6 +515,7 @@ export type { EventBacklogRecipient } from './models/EventBacklogRecipient.js';
 export type { EventBacklogResponse } from './models/EventBacklogResponse.js';
 export type { EventCircuitBreakerPolicy } from './models/EventCircuitBreakerPolicy.js';
 export type { EventCircuitBreakerResponse } from './models/EventCircuitBreakerResponse.js';
+export type { EventConsumerCapacityWaits } from './models/EventConsumerCapacityWaits.js';
 export type { EventConsumerDeliveryHealth } from './models/EventConsumerDeliveryHealth.js';
 export type { EventConsumerExecutionHealth } from './models/EventConsumerExecutionHealth.js';
 export type { EventConsumerHealth } from './models/EventConsumerHealth.js';

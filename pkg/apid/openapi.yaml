@@ -29255,7 +29255,7 @@ paths:
       tags: [events]
       operationId: getEventConsumerDeliveryHealth
       summary: Inspect subscription delivery health across routing and retained execution evidence.
-      description: Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Execution counts include retained handler replays and remain historically incomplete. Pending blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+      description: Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Execution counts include retained handler replays and remain historically incomplete. Pending sample blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait counts cover all retained pending application recipients independently of that sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -53659,11 +53659,28 @@ components:
       description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
       required: [started_at, observed_at, routing, execution, pending_sample]
       properties:
+        capacity_waits: { $ref: '#/components/schemas/EventConsumerCapacityWaits' }
         started_at: { type: string, format: date-time }
         observed_at: { type: string, format: date-time }
         routing: { $ref: '#/components/schemas/EventConsumerHealth' }
         execution: { $ref: '#/components/schemas/EventConsumerExecutionHealth' }
         pending_sample: { $ref: '#/components/schemas/EventConsumerPendingSample' }
+
+    EventConsumerCapacityWaits:
+      type: object
+      additionalProperties: false
+      description: Complete counts of effective capacity waiting reasons among retained pending application recipients in one backlog snapshot. Independent of recipient pagination. Missing or incomplete evidence cannot clear capacity alerts.
+      required: [app_id, subscription_id, observed_at, coverage, complete, pending_recipients, consumer, app, account]
+      properties:
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [all_pending_application_recipients] }
+        complete: { type: boolean }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        consumer: { type: integer, format: int64, minimum: 0 }
+        app: { type: integer, format: int64, minimum: 0 }
+        account: { type: integer, format: int64, minimum: 0 }
 
     EventConsumerPendingSample:
       type: object
@@ -54810,6 +54827,9 @@ components:
       description: Exact counts over all matching waiting recipients for one app/subscription/consumer kind, independent of recipient pagination.
       required: [app_id, app_slug, target_available, subscription_id, consumer_kind, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, ordering_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
       properties:
+        capacity_consumer_waiting_recipients: { type: integer, format: int64, minimum: 0, description: Complete count with effective capacity_consumer waiting reason. }
+        capacity_app_waiting_recipients: { type: integer, format: int64, minimum: 0, description: Complete count with effective capacity_app waiting reason. }
+        capacity_account_waiting_recipients: { type: integer, format: int64, minimum: 0, description: Complete count with effective capacity_account waiting reason. }
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
         target_available: { type: boolean }

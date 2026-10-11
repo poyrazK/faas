@@ -2479,3 +2479,9 @@ returns independent routing/execution reads and an oldest-first pending sample.
 Check component timestamps, truncation, and retention coverage. Sampled blocker
 counts and retained dead-letter/retry counts are not all-time event totals;
 `latest_successful_completion_at` is the latest retained observed completion.
+
+Subscription delivery health now includes optional `capacity_waits`: complete
+effective capacity-reason counts for consumer/app/account scope, a pending total,
+explicit coverage/completeness, consumer binding, and a separate observation time.
+Counts cover all retained pending recipients independently of the bounded sample.
+A missing aggregate from an older server is unavailable evidence, not zero waits.

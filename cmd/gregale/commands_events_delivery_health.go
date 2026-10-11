@@ -60,6 +60,9 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	if r.CircuitBreaker != nil {
 		_, _ = fmt.Fprintf(osStdout, "Circuit: %s | reason %s\n", oneLine(r.CircuitBreaker.State), oneLine(r.CircuitBreaker.Reason))
 	}
+	if counts := out.CapacityWaits; counts != nil {
+		_, _ = fmt.Fprintf(osStdout, "Capacity waits: consumer %d | app %d | account %d | complete %t | observed %s\n", counts.Consumer, counts.App, counts.Account, counts.Complete, counts.ObservedAt.Format("2006-01-02T15:04:05Z07:00"))
+	}
 	_, _ = fmt.Fprintf(osStdout, "Oldest pending sample: %d | truncated %t | waiting reasons %v\n", len(sample.Recipients), sample.Truncated, sample.WaitingReasons)
 	if len(sample.Recipients) > 0 {
 		first := sample.Recipients[0]

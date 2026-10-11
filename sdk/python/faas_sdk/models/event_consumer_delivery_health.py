@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.event_consumer_capacity_waits import EventConsumerCapacityWaits
     from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
     from ..models.event_consumer_health import EventConsumerHealth
     from ..models.event_consumer_pending_sample import EventConsumerPendingSample
@@ -35,6 +38,10 @@ class EventConsumerDeliveryHealth:
     pending_sample: EventConsumerPendingSample
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""
+    capacity_waits: EventConsumerCapacityWaits | Unset = UNSET
+    """Complete counts of effective capacity waiting reasons among retained pending application recipients in one
+    backlog snapshot. Independent of recipient pagination. Missing or incomplete evidence cannot clear capacity
+    alerts."""
 
     def to_dict(self) -> dict[str, Any]:
         started_at = self.started_at.isoformat()
@@ -47,6 +54,10 @@ class EventConsumerDeliveryHealth:
 
         pending_sample = self.pending_sample.to_dict()
 
+        capacity_waits: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.capacity_waits, Unset):
+            capacity_waits = self.capacity_waits.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -58,11 +69,14 @@ class EventConsumerDeliveryHealth:
                 "pending_sample": pending_sample,
             }
         )
+        if capacity_waits is not UNSET:
+            field_dict["capacity_waits"] = capacity_waits
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_consumer_capacity_waits import EventConsumerCapacityWaits
         from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
         from ..models.event_consumer_health import EventConsumerHealth
         from ..models.event_consumer_pending_sample import EventConsumerPendingSample
@@ -78,12 +92,20 @@ class EventConsumerDeliveryHealth:
 
         pending_sample = EventConsumerPendingSample.from_dict(d.pop("pending_sample"))
 
+        _capacity_waits = d.pop("capacity_waits", UNSET)
+        capacity_waits: EventConsumerCapacityWaits | Unset
+        if isinstance(_capacity_waits, Unset):
+            capacity_waits = UNSET
+        else:
+            capacity_waits = EventConsumerCapacityWaits.from_dict(_capacity_waits)
+
         event_consumer_delivery_health = cls(
             started_at=started_at,
             observed_at=observed_at,
             routing=routing,
             execution=execution,
             pending_sample=pending_sample,
+            capacity_waits=capacity_waits,
         )
 
         return event_consumer_delivery_health

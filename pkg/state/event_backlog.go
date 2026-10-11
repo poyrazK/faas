@@ -144,7 +144,7 @@ func (s *PgStore) EventBacklog(ctx context.Context, accountID string, query Even
 		oldest := timeFromPgtype(row.OldestAcceptedAt)
 		result.Consumers = append(result.Consumers, api.EventBacklogConsumer{AppID: uuidFromPgtype(row.AppID).String(), AppSlug: row.AppSlug, TargetAvailable: row.TargetAvailable,
 			SubscriptionID: row.SubscriptionID, ConsumerKind: row.ConsumerKind, WaitingRecipients: row.WaitingRecipients, PendingRecipients: row.PendingRecipients, ProcessingRecipients: row.ProcessingRecipients,
-			OrderingWaitingRecipients: row.OrderingWaitingRecipients, CapacityWaitingRecipients: row.CapacityWaitingRecipients, OldestAcceptedAt: oldest, OldestAgeSeconds: max(0, result.ObservedAt.Sub(oldest).Seconds())})
+			CapacityConsumerWaitingRecipients: row.CapacityConsumerWaitingRecipients, CapacityAppWaitingRecipients: row.CapacityAppWaitingRecipients, CapacityAccountWaitingRecipients: row.CapacityAccountWaitingRecipients, OrderingWaitingRecipients: row.OrderingWaitingRecipients, CapacityWaitingRecipients: row.CapacityWaitingRecipients, OldestAcceptedAt: oldest, OldestAgeSeconds: max(0, result.ObservedAt.Sub(oldest).Seconds())})
 	}
 	result.UnattributedReceipts, err = q.EventBacklogUnattributed(ctx, tx, sqlc.EventBacklogUnattributedParams{AccountID: id, Cutoff: cutoff})
 	if err != nil {
@@ -350,6 +350,14 @@ func backlogConsumerObserve(cs map[EventBacklogConsumerPosition]*api.EventBacklo
 	if c == nil {
 		c = &api.EventBacklogConsumer{AppID: e.AppID, AppSlug: e.AppSlug, TargetAvailable: e.TargetAvailable, SubscriptionID: e.SubscriptionID, ConsumerKind: e.ConsumerKind, OldestAcceptedAt: e.AcceptedAt}
 		cs[key] = c
+	}
+	switch e.WaitingReason {
+	case "capacity_consumer":
+		c.CapacityConsumerWaitingRecipients++
+	case "capacity_app":
+		c.CapacityAppWaitingRecipients++
+	case "capacity_account":
+		c.CapacityAccountWaitingRecipients++
 	}
 	c.WaitingRecipients++
 	if e.WaitingReason == "ordering_blocked" {
