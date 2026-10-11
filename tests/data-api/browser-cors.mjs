@@ -108,6 +108,69 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     }
     assert.ok(requests.some(req => req.origin === origins.allowed && req.method === 'OPTIONS' && !req.authorization), 'preflight_not_observed')
     assert.ok(requests.filter(req => req.origin === origins.allowed).every(req => !req.cookie), 'browser_credentials_leaked')
+    const beforeForm = requests.length
+    const invalidForm = await evaluate(`(async () => {
+      const input = ${input};
+      document.querySelector('[name=url]').value = input.url;
+      document.querySelector('[name=subject]').value = input.subject;
+      document.querySelector('[name=token]').value = input.token;
+      document.querySelector('[name=body]').value = ' ';
+      document.querySelector('[name=tags]').value = 'one,,two';
+      document.querySelector('#note-form').requestSubmit();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return { body: document.querySelector('#body-error').textContent, tags: document.querySelector('#tags-error').textContent, tokenCleared: document.querySelector('[name=token]').value === '' };
+    })()`)
+    assert.equal(invalidForm.body, 'Enter a note body.')
+    assert.equal(invalidForm.tags, 'Enter a name for each tag; remove extra commas.')
+    assert.equal(invalidForm.tokenCleared, true)
+    assert.equal(requests.length, beforeForm, 'invalid_form_sent_request')
+    const savedForm = await evaluate(`(async () => {
+      const input = ${input};
+      document.querySelector('[name=token]').value = input.token;
+      document.querySelector('[name=body]').value = 'browser validated form';
+      document.querySelector('[name=tags]').value = '';
+      document.querySelector('#note-form').requestSubmit();
+      for (let i = 0; i < 200 && document.querySelector('#save-note').disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
+      return { message: document.querySelector('#note-result').textContent, tokenCleared: document.querySelector('[name=token]').value === '', body: document.querySelector('[name=body]').value, recoveryHidden: document.querySelector('#recover-note').hidden };
+    })()`)
+    assert.match(savedForm.message, /^Saved note \d+: browser validated form$/)
+    assert.equal(savedForm.tokenCleared, true)
+    assert.equal(savedForm.body, '')
+    assert.equal(savedForm.recoveryHidden, true)
+    assert.equal(requests.slice(beforeForm).filter(req => req.method === 'POST' && req.path.startsWith('/rest/v1/rpc/create_note_with_tags_once')).length, 1)
+    assert.ok(requests.slice(beforeForm).every(req => !req.cookie), 'form_credentials_leaked')
+    const recoveryForm = await evaluate(`(async () => {
+      const input = ${input}, originalFetch = globalThis.fetch, payloads = [];
+      let lose = true;
+      globalThis.fetch = async (url, init) => {
+        const response = await originalFetch(url, init);
+        if (String(url).includes('/rpc/create_note_with_tags_once')) {
+          payloads.push(init.body);
+          if (lose) { lose = false; await response.arrayBuffer(); throw new TypeError('test response lost after commit'); }
+        }
+        return response;
+      };
+      try {
+        document.querySelector('[name=token]').value = input.token;
+        document.querySelector('[name=body]').value = 'browser pending form';
+        document.querySelector('#note-form').requestSubmit();
+        for (let i = 0; i < 200 && !document.querySelector('#note-result').textContent.includes('No response'); i++) await new Promise(resolve => setTimeout(resolve, 20));
+        const pending = !document.querySelector('#recover-note').hidden && document.querySelector('#save-note').disabled && document.querySelector('[name=body]').disabled && document.querySelector('[name=url]').disabled && document.querySelector('[name=subject]').disabled;
+        const callsBeforeRecovery = payloads.length;
+        document.querySelector('[name=token]').value = input.token;
+        document.querySelector('[name=body]').value = 'must not change pending payload';
+        document.querySelector('#recover-note').click();
+        for (let i = 0; i < 200 && document.querySelector('#save-note').disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
+        return { pending, callsBeforeRecovery, calls: payloads.length, samePayload: payloads[0] === payloads[1], message: document.querySelector('#note-result').textContent, tokenCleared: document.querySelector('[name=token]').value === '', recoveryHidden: document.querySelector('#recover-note').hidden };
+      } finally { globalThis.fetch = originalFetch; }
+    })()`)
+    assert.equal(recoveryForm.pending, true)
+    assert.equal(recoveryForm.callsBeforeRecovery, 1)
+    assert.equal(recoveryForm.calls, 2)
+    assert.equal(recoveryForm.samePayload, true)
+    assert.match(recoveryForm.message, /^Saved note \d+: browser pending form$/)
+    assert.equal(recoveryForm.tokenCleared, true)
+    assert.equal(recoveryForm.recoveryHidden, true)
     const before = requests.length
     await navigate(origins.denied)
     const denied = await evaluate(`(async () => { const input=${input}; const {readBrowserNotes}=await import('/client.js'); const result=await readBrowserNotes({url:input.url,subject:input.subject,accessToken:()=>input.token,signal:AbortSignal.timeout(5000),expectedSchemaFingerprint:input.expectedSchemaFingerprint}); return {status:result.status,hasError:Boolean(result.error)} })()`)

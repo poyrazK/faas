@@ -9734,6 +9734,11 @@ const (
 	DataAPIMaxRelations       = 1000
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
+
+	// Data API diagnostics is a bounded CLI analysis of retained request logs,
+	// not a plan quota or a change to runtime log retention.
+	DataAPIDiagnosticsMaxBytes   = 16 << 20
+	DataAPIDiagnosticsMaxRecords = 100000
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

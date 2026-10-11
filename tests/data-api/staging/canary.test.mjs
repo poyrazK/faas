@@ -256,6 +256,7 @@ async function journey(t, failure = '') {
         assert.doesNotMatch(JSON.stringify(config), /private-test-token|eyJ/)
         assert.match(await readFile(join(config.migrate.directory, 'gregale.yaml'), 'utf8'), /node release.mjs/)
         assert.equal(await readFile(join(config.migrate.directory, 'rpc-runtime/types.mjs'), 'utf8'), await readFile(join(runner.repoRoot, 'cmd/gregale/templates/data-api/types.mjs'), 'utf8'))
+        assert.equal(await readFile(join(config.migrate.directory, 'rpc-runtime/type-render.mjs'), 'utf8'), await readFile(join(runner.repoRoot, 'cmd/gregale/templates/data-api/type-render.mjs'), 'utf8'))
         syncCount++
         if (syncCount > 1) assert.ok(config.check.command.includes('priority.ts'))
         const hash = syncCount === 1 ? fingerprint : 'b'.repeat(64)

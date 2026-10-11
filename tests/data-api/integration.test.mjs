@@ -217,7 +217,7 @@ test('staging owner release grants RPCs, compiles contracts and survives role re
   await cp(new URL('./staging/migrate.mjs', import.meta.url), join(directory, 'migrate.mjs'))
   for (const file of ['release.mjs', 'rpc-permissions.mjs']) await cp(join(repoRoot, 'cmd/gregale/templates/data-api-starter/migrations', file), join(directory, file))
   await mkdir(join(directory, 'rpc-runtime'))
-  for (const file of ['types.mjs', 'config.mjs']) await cp(new URL(file, runtime), join(directory, 'rpc-runtime', file))
+  for (const file of ['types.mjs', 'type-render.mjs', 'config.mjs']) await cp(new URL(file, runtime), join(directory, 'rpc-runtime', file))
   for (const file of ['package.json', 'package-lock.json']) await cp(new URL(file, runtime), join(directory, file))
   await command('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: directory, env: process.env })
   const migrate = () => command(process.execPath, [join(directory, 'migrate.mjs')], { cwd: directory, env: { ...process.env, MIGRATION_DATABASE_URL: migrationURL.toString() } })
