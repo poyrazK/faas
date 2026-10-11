@@ -68,31 +68,50 @@ func (q *Quotas) loadRegistry(ctx context.Context, key string, r *quotaRecord) e
 		if !validScopeKey(hash) {
 			return durableentity.ErrCorrupt
 		}
-		body, version, err := q.Store.Get(ctx, registryPath(key, index, hash), registryShardBytes)
-		if errors.Is(err, durableentity.ErrNotFound) {
-			return durableentity.ErrCorrupt
+		var shard registryShard
+		var err error
+		if q.RegistryCache != nil {
+			shard, err = q.RegistryCache.read(ctx, key, index, hash)
+		} else {
+			shard, _, err = readRegistryShard(ctx, q.Store, key, index, hash)
 		}
 		if err != nil {
 			return err
-		}
-		var shard registryShard
-		if version == "" || registryDigest(body) != hash || json.Unmarshal(body, &shard) != nil || shard.Scope != key || shard.Index != index || len(shard.Entities) > 64 || len(shard.Retirements) > 256 {
-			return durableentity.ErrCorrupt
-		}
-		for _, e := range shard.Entities {
-			if !validScopeKey(e.Key) || registryIndex(e.Key) != index {
-				return durableentity.ErrCorrupt
-			}
-		}
-		for _, e := range shard.Retirements {
-			if !validScopeKey(e.EntityKey) || registryIndex(e.EntityKey) != index {
-				return durableentity.ErrCorrupt
-			}
 		}
 		r.Entities = append(r.Entities, shard.Entities...)
 		r.Retirements = append(r.Retirements, shard.Retirements...)
 	}
 	return nil
+}
+
+func readRegistryShard(ctx context.Context, store durableentity.ObjectStore, scope string, index int, hash string) (registryShard, int64, error) {
+	body, version, err := store.Get(ctx, registryPath(scope, index, hash), registryShardBytes)
+	if errors.Is(err, durableentity.ErrNotFound) {
+		return registryShard{}, 0, durableentity.ErrCorrupt
+	}
+	if err != nil {
+		return registryShard{}, 0, err
+	}
+	var shard registryShard
+	if version == "" || len(body) > registryShardBytes || registryDigest(body) != hash || json.Unmarshal(body, &shard) != nil || shard.Scope != scope || shard.Index != index || len(shard.Entities) > 64 || len(shard.Retirements) > 256 {
+		return registryShard{}, 0, durableentity.ErrCorrupt
+	}
+	seen := map[string]bool{}
+	for _, e := range shard.Entities {
+		if !validScopeKey(e.Key) || registryIndex(e.Key) != index || e.Bytes <= 0 || e.Bytes > 64<<20 || seen[e.Key] {
+			return registryShard{}, 0, durableentity.ErrCorrupt
+		}
+		seen[e.Key] = true
+	}
+	for _, e := range shard.Retirements {
+		if !validScopeKey(e.EntityKey) || registryIndex(e.EntityKey) != index {
+			return registryShard{}, 0, durableentity.ErrCorrupt
+		}
+	}
+	if !validQuotaRetirements(quotaRecord{Schema: 4, Entities: shard.Entities, Retirements: shard.Retirements}) {
+		return registryShard{}, 0, durableentity.ErrCorrupt
+	}
+	return shard, int64(len(body))*4 + 1024, nil
 }
 
 // All mutations, including policy changes, must use this serializer. The single

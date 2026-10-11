@@ -58,14 +58,15 @@ names and do not replace entity-level inspection.
 
 Readers verify shard hashes, scope, shard index, provider version, bounds,
 uniqueness and retirement/reservation consistency. Missing or corrupt referenced
-shards fail closed. Uncertain shard writes cannot publish a root; uncertain root
+shards fail closed on cache misses. Uncertain shard writes cannot publish a root; uncertain root
 writes require inspection and exact replay. A definite root conflict makes an
 admission retry read the newly committed retirement fence. Credit and its receipt
 remain atomic and replay-safe across schema upgrades and policy changes.
 
-Reads currently hydrate all 16 bounded shards. Unchanged shards are reused;
-changed shards use content-addressed conditional creates. The single quota root
-remains a contention point, and provider latency can increase. Superseded and
+Reads hydrate all 16 bounded shards through a node-local verified-shard cache.
+Unchanged shards are reused;
+changed shards use content-addressed conditional creates. The quota root is read fresh on every operation and remains a contention point.
+Cold reads and evictions still require provider reads. Superseded and
 unpublished shard versions are retained conservatively, are control-plane storage
 outside the customer reservation budget, and have no automatic garbage collector.
 Never delete them based on one root scan: readers and concurrent writers may
@@ -93,3 +94,49 @@ reader rejection, shard visibility/corruption fail-closed behavior, multi-node
 admission racing retirement and migration, preserved recovery charges, cursor
 expiry, cold-read latency, and safe rollback to management disabled while keeping
 schema-4-capable binaries. No production flag or deployment is changed here.
+
+## Bounded immutable-shard cache
+
+Tenant quota startup attaches a cache to its exact private object store. It holds
+at most 256 entries with an 8 MiB retained-memory accounting budget and allows
+at most 16 simultaneous shard fetches. Accounting charges four times serialized
+body size plus 1,024 bytes per entry to cover decoded data and entry overhead;
+it is a conservative cache accounting limit, not a process RSS limit. Per-call
+slice copies and bounded in-flight buffers are separate. The constructor also
+supports smaller test budgets and rejects bounds above 64 MiB, 4,096 entries or
+64 concurrent fetches. A nil cache keeps uncached library behavior.
+
+Cache keys include the complete private shard path: scope, shard index and
+content hash. Only bodies with a provider version, matching hash/scope/index,
+bounded size/counts, valid unique reservations and valid retirement receipts are
+retained. Aggregate root validation still runs for every hydration, including
+operation uniqueness across shards. Readers receive separate entity/retirement
+slice copies, so sorting, pruning, credit or policy mutation cannot change cached
+state. Quota roots and ownership/manifests are never cached. A warm cache cannot
+bypass an unavailable root or a newly committed retirement fence.
+
+Concurrent requests for a missing shard share one synchronous provider fetch.
+Waiters use their own cancellation/deadline. Canceling a waiter does not cancel
+the leader. If the leader's context ends, live waiters retry under their own
+contexts; errors are not retained. Requests for other shards wait cancelably
+when the concurrent-fetch bound is reached. LRU eviction enforces both retained
+byte accounting and entry limits. Oversize valid shards can be served without
+being retained. No background goroutine survives the provider call.
+
+When all referenced hashes are warm, a hydration reads only the current quota
+root from the provider. A changed hash forces verification of that shard; the
+other immutable shards remain reusable. This reduces repeated provider GETs,
+not root writes or contention. Cache hits deliberately do not recheck an
+immutable object's provider version, deletion or corruption: the previously
+verified body remains valid for the hash asserted by the fresh root. Metadata
+retention and provider-health checks must not assume warm caches detect provider
+faults. Restart/cold-cache acceptance must verify missing/corrupt references fail
+closed. Provider metadata garbage collection is still not implemented.
+
+Remote regression coverage exercises read counts, fresh-root failure, changed
+hashes, isolated caller mutations, warm admission racing retirement, byte/entry
+LRU bounds, oversize entries, concurrent fetch coalescing, leader/waiter
+cancellation, fetch-cap waiting, corruption recovery and scope isolation. Native
+acceptance must measure warm/cold GET counts and latency, heap use under cache
+churn, concurrent cancellation and multi-node retirement with independently
+warm caches. No production flag or placement changes are part of this cache.

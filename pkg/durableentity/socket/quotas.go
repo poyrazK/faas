@@ -33,9 +33,10 @@ func (l TenantLimits) valid() bool {
 // account/app/immutable environment/tenant. Entity reservations are conservative
 // high-water caps, not provider billing or a scan of legacy data.
 type Quotas struct {
-	Store  durableentity.ObjectStore
-	Limits TenantLimits
-	Now    func() time.Time
+	Store         durableentity.ObjectStore
+	Limits        TenantLimits
+	Now           func() time.Time
+	RegistryCache *RegistryCache
 }
 type quotaScope struct{ Account, App, Environment, Tenant string }
 type connectionLease struct {

@@ -23,8 +23,8 @@ actor and time for exact replay. Scope-bound paginated cursors reject any root
 revision change. Permanent fences and recovery-byte charges are never evicted.
 
 Consequences: at most 1,024 active and 4,096 retired identities per scope, with
-hash-distribution and byte bounds; 16 additional object reads per hydration;
+hash-distribution and byte bounds; up to 16 additional object reads on cold hydration;
 retained historical metadata and a central CAS bottleneck. Production rollout
-requires schema-aware fleet deployment and native provider acceptance. Future
-work can add authenticated immutable-shard caching and reachability-safe metadata
-collection; neither is assumed for correctness today.
+requires schema-aware fleet deployment and native provider acceptance. A bounded node-local cache now reuses authenticated immutable shards while every
+quota root remains fresh. Future work can add reachability-safe metadata
+collection; caching confers no independent quota or ownership authority.

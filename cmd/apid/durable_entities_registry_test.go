@@ -16,6 +16,11 @@ func TestDurableEntitySocketRegistryAuthorizationMigrationAndListing(t *testing.
 	e.s.durableEntityQuotaMigrationEnabled = true
 	e.s.durableEntityQuotaPolicyEnabled = true
 	e.s.durableEntityRegistryEnabled = true
+	cache, cacheErr := entitysocket.NewRegistryCache(q.Store, 8<<20, 256, 16)
+	if cacheErr != nil {
+		t.Fatal(cacheErr)
+	}
+	q.RegistryCache = cache
 	if r := e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("seed"), nil); r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
 	}

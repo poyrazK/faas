@@ -129,7 +129,11 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 		if err != nil {
 			return err
 		}
-		tenantQuotas = &entitysocket.Quotas{Store: store, Limits: limits}
+		cache, err := entitysocket.NewRegistryCache(store, 8<<20, 256, 16)
+		if err != nil {
+			return err
+		}
+		tenantQuotas = &entitysocket.Quotas{Store: store, Limits: limits, RegistryCache: cache}
 	}
 	// The request budget is shorter than this lease. We deliberately avoid a
 	// renewal writer racing every transition in the first synchronous slice.
