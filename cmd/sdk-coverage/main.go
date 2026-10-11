@@ -724,6 +724,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-plans/{plan_id}":                                          "UpdateAPIConsumerPlanLimits",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                          "ListAPIConsumerPlanAssignments",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                         "AssignAPIConsumerPlan",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts":                              "ListAPIConsumerUsageAlerts",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                          "ListAPIConsumerUsageStatements",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                         "CreateAPIConsumerUsageStatement",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}":           "GetAPIConsumerUsageStatement",

@@ -553,10 +553,11 @@ jobs:
       - name: Exercise app and function deployments through production ingress
         env:
           GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT_VALUE: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
-            "env RELEASE_SHA='${DESIRED_RELEASE}' RUN_ID='${GITHUB_RUN_ID_VALUE}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
+            "env RELEASE_SHA='${DESIRED_RELEASE}' RUN_ID='${GITHUB_RUN_ID_VALUE}' RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT_VALUE}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh
 
       # OFF BY DEFAULT — see the rollback_on_gate_failure input. The acceptance

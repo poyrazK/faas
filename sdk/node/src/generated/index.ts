@@ -61,6 +61,8 @@ export type { APIConsumerRateCardListResponse } from './models/APIConsumerRateCa
 export type { APIConsumerRateCardResponse } from './models/APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './models/APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './models/APIConsumerResponse.js';
+export type { APIConsumerUsageAlertListResponse } from './models/APIConsumerUsageAlertListResponse.js';
+export type { APIConsumerUsageAlertResponse } from './models/APIConsumerUsageAlertResponse.js';
 export type { APIConsumerUsageBucketResponse } from './models/APIConsumerUsageBucketResponse.js';
 export type { APIConsumerUsageCompletenessResponse } from './models/APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './models/APIConsumerUsageQuoteBucketResponse.js';
@@ -71,6 +73,7 @@ export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './models/
 export type { APIConsumerUsageStatementHandoffResponse } from './models/APIConsumerUsageStatementHandoffResponse.js';
 export type { APIConsumerUsageStatementListResponse } from './models/APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './models/APIConsumerUsageStatementResponse.js';
+export type { APIConsumerUsageThresholdWebhookPayload } from './models/APIConsumerUsageThresholdWebhookPayload.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
 export type { APIKeyResponse } from './models/APIKeyResponse.js';
 export type { AppBindingInventory } from './models/AppBindingInventory.js';

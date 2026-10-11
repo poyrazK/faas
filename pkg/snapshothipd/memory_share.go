@@ -18,7 +18,7 @@ var shareSnapshotMemory = func(ctx context.Context, index *storage.MemoryShareIn
 	return index.ShareSnapshotMemory(ctx, backend, memKey, layerKeys)
 }
 
-// memorySharer runs ADR-911 page sharing off the replica path: one pass reads
+// memorySharer runs ADR-956 page sharing off the replica path: one pass reads
 // the app layer and the memory file, so it must not delay marking a replica
 // ready or claiming the next job.
 type memorySharer struct {
@@ -36,7 +36,7 @@ func newMemorySharer() *memorySharer {
 	}
 }
 
-// WithMemorySharing turns ADR-911 snapshot memory page sharing on or off.
+// WithMemorySharing turns ADR-956 snapshot memory page sharing on or off.
 func (r *Runner) WithMemorySharing(enabled bool) *Runner {
 	if enabled {
 		r.memory = newMemorySharer()

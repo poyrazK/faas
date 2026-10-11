@@ -760,6 +760,15 @@ type Engine struct {
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 
+	// workerScaleIn holds each worker pool's recent demand recommendations
+	// for the scale-in stabilization window. It is per schedd and in
+	// memory: a restart forgets it, and the pool then holds its size for
+	// one window before shrinking.
+	workerScaleIn *workerScaleInStabilizer
+	// workerStops tracks worker stops the pool reconciler runs in the
+	// background (see worker_stop.go).
+	workerStops *workerStopTracker
+
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
 	// the report's node_signature (ADR-053). Populated by the
@@ -904,6 +913,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
+		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
@@ -945,6 +956,14 @@ func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
 // counter. Returns the engine for builder-style wiring.
 func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
 	e.ops = ops
+	return e
+}
+
+// WithWorkerScaleInStabilization replaces the worker-pool scale-in window.
+// Zero or negative disables stabilization so computed demand shrinks a pool
+// on the tick that observes it.
+func (e *Engine) WithWorkerScaleInStabilization(window time.Duration) *Engine {
+	e.workerScaleIn = newWorkerScaleInStabilizer(window)
 	return e
 }
 
@@ -3082,7 +3101,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if secretPolicyBlocksSnapshots {
 		choice.coldReason = secretPolicyColdReason
 	} else {
-		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), e.guestRAMMB(ctx, dep.ID, app.RAMMB), app.AppProtocol)
 	}
 	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
@@ -5964,6 +5983,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if dep.EnvironmentWorkloadHeld() {
 		return nil
 	}
+	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
+		return err
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load workload settings: %w", err)
@@ -8375,6 +8397,24 @@ func (e *Engine) chooseWakeSnapshot(ctx context.Context, deploymentID, plan stri
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: snap}
 	}
 	return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
+}
+
+// guestRAMMB is the memory vmmd boots a deployment's guest with: the app's RAM
+// plus explicitly allocated companion RAM (fcvm.wakeGuestMemoryMiB). Snapshot
+// RAM checks compare against it; production-us rc.251 rejected every companion
+// deployment's snapshot against the app RAM alone. An unknown companion shape
+// returns 0, which skips the check and leaves vmmd's restore gate in charge.
+func (e *Engine) guestRAMMB(ctx context.Context, deploymentID string, appRAMMB int) int {
+	if appRAMMB <= 0 {
+		return appRAMMB
+	}
+	sidecarMBs, err := e.store.DeploymentSidecarRAMs(ctx, deploymentID)
+	if err != nil {
+		e.log.Warn("wake: companion RAM unknown; deferring snapshot RAM check to vmmd",
+			"deployment_id", deploymentID, "err", err)
+		return 0
+	}
+	return api.BillableRAMMBWithSidecars(appRAMMB, sidecarMBs) - api.PerVMOverheadMB
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different

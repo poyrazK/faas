@@ -33,6 +33,10 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 	if !s.authorizeBucketData(w, r, b, permission) {
 		return
 	}
+	if err := objectstorage.ValidateConditionalPut(provider, api.ObjectWriteConditions{IfMatch: req.IfMatch, IfNoneMatch: req.IfNoneMatch}); err != nil {
+		bucketProblem(w, err)
+		return
+	}
 	if req.VersionID != "" {
 		if _, capable := provider.(objectstorage.VersionReadPresigner); !capable {
 			bucketProblem(w, objectstorage.ErrUnsupported)

@@ -168,12 +168,15 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 	return out, nil
 }
 func (s *PgStore) FinishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	return s.finishTrackedObjectUpload(ctx, c, false)
+	return s.finishTrackedObjectUpload(ctx, c, false, false)
 }
 func (s *PgStore) FinishTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	return s.finishTrackedObjectUpload(ctx, c, true)
+	return s.finishTrackedObjectUpload(ctx, c, true, false)
 }
-func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, recovery bool) (ObjectUploadCompletion, error) {
+func (s *PgStore) FailPreparedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	return s.finishTrackedObjectUpload(ctx, c, false, true)
+}
+func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, recovery, preparedOnly bool) (ObjectUploadCompletion, error) {
 	if !validTrackedUploadFinish(c) || !validTrackedUploadCursor(c) {
 		return c, ErrConflict
 	}
@@ -182,6 +185,10 @@ func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadC
 		return old, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// The locked phase makes preflight rejection exclusive with dispatch.
+	if preparedOnly && (c.Status != "failed" || old.WritePhase != ObjectUploadPrepared && old.Status != "failed") {
+		return old, ErrConflict
+	}
 	if recovery && (!validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
 		return old, ErrConflict
 	}

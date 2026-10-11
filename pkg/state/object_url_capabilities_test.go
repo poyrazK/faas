@@ -17,6 +17,7 @@ type objectURLTestStore interface {
 	state.Store
 	state.ObjectS3CredentialBindingStore
 	state.ObjectURLCapabilityStore
+	state.ObjectPreparedUploadFailureStore
 	state.ObjectTrackedGatewayUploadStore
 	state.ObjectBucketAccessStore
 }
@@ -44,6 +45,7 @@ func objectURLCapabilitySuite(t *testing.T, st objectURLTestStore) {
 	size := int64(10)
 	c := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: b.AccountID, BucketID: b.ID, AccessKeyID: access, SecretSealed: []byte("sealed"), KID: "recipient", Label: "url", Permission: state.ObjectBucketPermissionWrite, Status: state.ObjectS3CredentialStatusActive}
 	c.URL = &state.ObjectURLCapability{Request: api.ObjectSignRequest{Method: "PUT", Key: "object", ExpiresIn: 300, SizeBytes: &size, ContentType: "application/octet-stream", Metadata: map[string]string{"color": "blue"}, Encryption: &api.ObjectEncryption{Algorithm: "AES256"}}, APIKeyID: k.ID, ReceiptID: uuid.NewString(), ExpiresAt: time.Now().UTC().Add(4 * time.Minute).Truncate(time.Microsecond)}
+	c.URL.Request.IfNoneMatch = "*"
 	intent := state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: "object", Bytes: 10, ContentType: c.URL.Request.ContentType, Status: "pending", Encryption: state.ObjectEncryptionSnapshot{AccountID: uuid.MustParse(b.AccountID).String(), Selection: *c.URL.Request.Encryption}}
 	var wins atomic.Int32
 	var wg sync.WaitGroup
@@ -79,7 +81,7 @@ func objectURLCapabilitySuite(t *testing.T, st objectURLTestStore) {
 		t.Fatal("URL projected into binding", err)
 	}
 	resolved, _, err := st.ResolveObjectS3Credential(ctx, access)
-	if err != nil || resolved.URL == nil || resolved.URL.Request.Metadata["color"] != "blue" {
+	if err != nil || resolved.URL == nil || resolved.URL.Request.IfNoneMatch != "*" || resolved.URL.Request.Metadata["color"] != "blue" {
 		t.Fatal("URL descriptor lost", err)
 	}
 	resolved.URL.Request.Metadata["color"] = "red"
@@ -125,6 +127,15 @@ func objectURLCapabilitySuite(t *testing.T, st objectURLTestStore) {
 	if wins.Load() != 1 {
 		t.Fatal("duplicate URL dispatch", wins.Load())
 	}
+	rejected := saved
+	rejected.Status, rejected.ErrorCode = "failed", "dispatch_failed"
+	if _, err = st.FailPreparedObjectUpload(ctx, rejected); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("losing preflight settled a dispatched URL", err)
+	}
+	stillPending, err := st.GetObjectUploadReceipt(ctx, b.AccountID, b.AppID, "", c.ID, intent.ID)
+	if err != nil || stillPending.Status != "pending" || stillPending.WritePhase != state.ObjectUploadDispatched {
+		t.Fatal("concurrent native write lost its receipt", err)
+	}
 	if err = st.DeleteAPIKey(ctx, b.AccountID, k.ID); err != nil {
 		t.Fatal("issuer deletion blocked by URL", err)
 	}
@@ -141,6 +152,28 @@ func objectURLCapabilitySuite(t *testing.T, st objectURLTestStore) {
 	if _, err = st.DispatchObjectURLUpload(ctx, b.AccountID, b.ID, intent.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("settled URL replayed", err)
 	}
+	preflight := c
+	preflight.ID = uuid.NewString()
+	preflight.AccessKeyID, _, err = api.GenerateObjectS3Credential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight.URL = c.URL.Clone()
+	preflight.URL.APIKeyID = ""
+	preflight.URL.ReceiptID = uuid.NewString()
+	preflight.URL.Request.Key = "rejected"
+	preparedRejection := intent
+	preparedRejection.ID, preparedRejection.SubjectID, preparedRejection.Key = preflight.URL.ReceiptID, preflight.ID, "rejected"
+	if _, preparedRejection, err = st.IssueObjectURLCredential(ctx, preflight, preparedRejection, p); err != nil {
+		t.Fatal(err)
+	}
+	preparedRejection.Status, preparedRejection.ErrorCode = "failed", "dispatch_failed"
+	if rejected, err := st.FailPreparedObjectUpload(ctx, preparedRejection); err != nil || rejected.Status != "failed" || rejected.WritePhase != state.ObjectUploadSettled {
+		t.Fatal("unstarted URL rejection remained pending", err)
+	}
+	if _, err = st.DispatchObjectURLUpload(ctx, b.AccountID, b.ID, preparedRejection.ID); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("rejected URL dispatched after settlement", err)
+	}
 	// A URL still being staged cannot dispatch once expiry makes its
 	// prepared journal eligible for recovery.
 	expired := c
@@ -154,6 +187,8 @@ func objectURLCapabilitySuite(t *testing.T, st objectURLTestStore) {
 	expired.URL.ReceiptID = uuid.NewString()
 	expired.URL.Request.Key = "expired"
 	expired.URL.Request.ExpiresIn = 1
+	expired.URL.Request.IfNoneMatch = ""
+	expired.URL.Request.IfMatch = `"current"`
 	expired.URL.ExpiresAt = time.Now().Add(300 * time.Millisecond).UTC().Truncate(time.Microsecond)
 	prepared := intent
 	prepared.ID = expired.URL.ReceiptID
@@ -161,6 +196,10 @@ func objectURLCapabilitySuite(t *testing.T, st objectURLTestStore) {
 	prepared.Key = "expired"
 	if _, prepared, err = st.IssueObjectURLCredential(ctx, expired, prepared, p); err != nil {
 		t.Fatal(err)
+	}
+	matched, _, err := st.ResolveObjectS3Credential(ctx, expired.AccessKeyID)
+	if err != nil || matched.URL == nil || matched.URL.Request.IfMatch != `"current"` || matched.URL.Request.IfNoneMatch != "" {
+		t.Fatal("replacement condition lost", err)
 	}
 	due, err := st.DueTrackedObjectUploads(ctx, api.ObjectUploadRecoveryBatch)
 	if err != nil || len(due) != 0 {

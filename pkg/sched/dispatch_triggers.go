@@ -298,13 +298,34 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 	if len(triggers) == 0 {
 		return
 	}
-	// Cache per-app+plan lookup so the per-record rate-limit gate
-	// (review finding #4: was hardcoded to api.PlanFree) can
-	// re-use the AccountPlan across the loop. The whole batch
-	// for one trigger is one wake plan; the cache halves the
-	// per-tick Postgres load when many triggers share an app.
+	resolvePlan := l.triggerPlanResolver(ctx)
+	for i := range triggers {
+		t := triggers[i]
+		if queuePushLaneEligible(t) {
+			l.scheduleQueuePushLanes(ctx, t, store)
+			continue
+		}
+		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
+			if errors.Is(err, errTriggerGatewayDispatch) {
+				continue
+			}
+			l.log.Warn("sched trigger tick: dispatch",
+				"trigger_id", t.ID.String(),
+				"kind", t.Kind,
+				"err", err)
+		}
+	}
+}
+
+// triggerPlanResolver caches per-app plan lookups so the per-record
+// rate-limit gate (review finding #4: was hardcoded to api.PlanFree) can
+// re-use the AccountPlan across one tick. The whole batch for one trigger is
+// one wake plan; the cache halves the per-tick Postgres load when many
+// triggers share an app. The cache is not safe for concurrent use, so each
+// push-queue lane builds its own.
+func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 	planCache := map[string]api.Plan{}
-	resolvePlan := func(appID string) api.Plan {
+	return func(appID string) api.Plan {
 		if p, ok := planCache[appID]; ok {
 			return p
 		}
@@ -322,15 +343,6 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 		}
 		planCache[appID] = acct.Plan
 		return acct.Plan
-	}
-	for i := range triggers {
-		t := triggers[i]
-		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
-			l.log.Warn("sched trigger tick: dispatch",
-				"trigger_id", t.ID.String(),
-				"kind", t.Kind,
-				"err", err)
-		}
 	}
 }
 
@@ -807,7 +819,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				}
 			}
 		}
-		return nil
+		// Settled and logged above. The sentinel tells push-queue lanes
+		// (ADR-933) to back off; the serial path ignores it.
+		return fmt.Errorf("%w: %w", errTriggerGatewayDispatch, postErr)
 	}
 
 	var resp triggerDispatchResponse

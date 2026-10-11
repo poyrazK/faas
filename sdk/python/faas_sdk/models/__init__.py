@@ -103,6 +103,8 @@ from .api_consumer_rate_card_response_unit import APIConsumerRateCardResponseUni
 from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
+from .api_consumer_usage_alert_list_response import APIConsumerUsageAlertListResponse
+from .api_consumer_usage_alert_response import APIConsumerUsageAlertResponse
 from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
 from .api_consumer_usage_completeness_response import APIConsumerUsageCompletenessResponse
 from .api_consumer_usage_completeness_response_status import APIConsumerUsageCompletenessResponseStatus
@@ -114,6 +116,7 @@ from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerU
 from .api_consumer_usage_statement_handoff_response import APIConsumerUsageStatementHandoffResponse
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
+from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
@@ -1913,6 +1916,7 @@ from .object_s3_credential_secret import ObjectS3CredentialSecret
 from .object_s3_credential_secret_addressing_style import ObjectS3CredentialSecretAddressingStyle
 from .object_s3_credential_status import ObjectS3CredentialStatus
 from .object_sign_request import ObjectSignRequest
+from .object_sign_request_if_none_match import ObjectSignRequestIfNoneMatch
 from .object_sign_request_metadata import ObjectSignRequestMetadata
 from .object_sign_request_method import ObjectSignRequestMethod
 from .object_sign_request_tags import ObjectSignRequestTags
@@ -3647,6 +3651,8 @@ __all__ = (
     "APIConsumerRateCardTier",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
+    "APIConsumerUsageAlertListResponse",
+    "APIConsumerUsageAlertResponse",
     "APIConsumerUsageBucketResponse",
     "APIConsumerUsageCompletenessResponse",
     "APIConsumerUsageCompletenessResponseStatus",
@@ -3658,6 +3664,7 @@ __all__ = (
     "APIConsumerUsageStatementHandoffResponse",
     "APIConsumerUsageStatementListResponse",
     "APIConsumerUsageStatementResponse",
+    "APIConsumerUsageThresholdWebhookPayload",
     "APIConsumerUsageStatementResponseStatus",
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
@@ -5404,6 +5411,7 @@ __all__ = (
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
     "ObjectSignRequest",
+    "ObjectSignRequestIfNoneMatch",
     "ObjectSignRequestMetadata",
     "ObjectSignRequestMethod",
     "ObjectSignRequestTags",

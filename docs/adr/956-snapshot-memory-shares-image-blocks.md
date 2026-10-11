@@ -1,4 +1,4 @@
-# ADR-911 · Snapshot memory shares the image blocks the guest page cache copied
+# ADR-956 · Snapshot memory shares the image blocks the guest page cache copied
 
 - **Status:** proposed
 - **Date:** 2026-10-10

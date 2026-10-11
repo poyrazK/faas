@@ -425,6 +425,9 @@ func stageAppUpper(staging string) error {
 	if err := os.Mkdir(upper, 0o755); err != nil {
 		return fmt.Errorf("rootfs: create app upper path: %w", err)
 	}
+	if err := chmodImageDirectory(upper, 0o755); err != nil {
+		return fmt.Errorf("rootfs: app upper permissions: %w", err)
+	}
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return fmt.Errorf("rootfs: read app staging: %w", err)
@@ -491,7 +494,7 @@ func ensureRuntimeDirectory(staging, rel string) error {
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
 	}
-	return os.MkdirAll(path, 0o755)
+	return mkdirImageDirectories(path, 0o755)
 }
 
 // publishExt4 mkfs-es the staging tree into a temp file (or directly into
@@ -1316,10 +1319,15 @@ func injectFunctionRunner(staging, runnerPath string) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	dst := filepath.Join(staging, "usr", "local", "bin", "faas-runner")
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := mkdirImageDirectories(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return "", fmt.Errorf("rootfs: open function runner: %w", err)
+	}
+	_, writeErr := f.Write(data)
+	if err := errors.Join(writeErr, f.Chmod(0o755), f.Close()); err != nil {
 		return "", fmt.Errorf("rootfs: write function runner: %w", err)
 	}
 	return "sha256:" + hex.EncodeToString(sum[:]), nil

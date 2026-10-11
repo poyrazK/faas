@@ -2,7 +2,7 @@
 
 package fcvm
 
-// adr: 911 — a VM restores from a memory file whose pages share image blocks.
+// adr: 956 — a VM restores from a memory file whose pages share image blocks.
 
 import (
 	"context"
