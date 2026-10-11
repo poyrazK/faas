@@ -25,7 +25,7 @@ func (r *PostgresRouteResolver) Route(ctx context.Context, routeID string) (AIRo
 		return AIRoute{}, ErrRouteNotFound
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT route.account_id::text, target.integration_id::text, COALESCE(target.model, '')
+		SELECT route.account_id::text, route.format, target.integration_id::text, COALESCE(target.model, '')
 		  FROM outbound_ai_routes route
 		  JOIN outbound_ai_route_targets target ON target.route_id = route.id
 		 WHERE route.id = $1
@@ -37,7 +37,7 @@ func (r *PostgresRouteResolver) Route(ctx context.Context, routeID string) (AIRo
 	route := AIRoute{ID: routeID}
 	for rows.Next() {
 		var target AIRouteTarget
-		if err := rows.Scan(&route.AccountID, &target.IntegrationID, &target.Model); err != nil {
+		if err := rows.Scan(&route.AccountID, &route.Format, &target.IntegrationID, &target.Model); err != nil {
 			return AIRoute{}, err
 		}
 		route.Targets = append(route.Targets, target)

@@ -28,10 +28,13 @@ type AIRouteTarget struct {
 	Model         string
 }
 
-// AIRoute is an account-owned ordered list of same-format AI integrations.
+// AIRoute is an account-owned ordered list of AI integrations. A native
+// route's targets share one provider; an openai route translates OpenAI chat
+// completions for each target (ADR-984).
 type AIRoute struct {
 	ID        string
 	AccountID string
+	Format    string
 	Targets   []AIRouteTarget
 }
 
@@ -163,20 +166,43 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "outbound_request_unreadable", "Outbound request body could not be read", "")
 		return
 	}
+	translated := route.Format == api.OutboundAIRouteFormatOpenAI
+	if translated && (!replayable || r.Method != http.MethodPost || !strings.HasSuffix(providerPath, "/chat/completions")) {
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
+			"OpenAI-format routes accept buffered chat completions requests only", "")
+		return
+	}
 	targets := route.Targets
 	if !replayable {
 		targets = targets[:1]
 	}
+	ctx := withRouteID(r.Context(), route.ID)
 	for index, target := range targets {
-		attemptBody := body
-		if target.Model != "" && replayable {
+		attemptBody, attemptPath, attemptQuery := body, providerPath, r.URL.RawQuery
+		var translator aiResponseTranslator
+		if translated {
+			translation, translateErr := h.translateRouteTarget(ctx, target, providerPath, r.URL.RawQuery, body)
+			if translateErr != nil {
+				h.Metrics.ObserveAITranslation("unknown", "unsupported")
+				writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
+					"The request cannot be translated for this route's targets", "")
+				return
+			}
+			attemptBody, attemptPath, attemptQuery, translator = translation.body, translation.path, translation.rawQuery, translation.translator
+		} else if target.Model != "" && replayable {
 			if rewritten, rewriteErr := withModel(body, target.Model); rewriteErr == nil {
 				attemptBody = rewritten
 			}
 		}
-		attempt := routeAttemptRequest(r, target.IntegrationID, providerPath, attemptBody, replayable)
+		attempt := routeAttemptRequest(r.WithContext(ctx), target.IntegrationID, attemptPath, attemptQuery, attemptBody, replayable)
 		writer := newRouteAttemptWriter(w, target.IntegrationID, index < len(targets)-1)
-		h.ServeHTTP(writer, attempt)
+		if translator != nil {
+			translating := newTranslatingWriter(writer, translator)
+			h.ServeHTTP(translating, attempt)
+			translating.finish()
+		} else {
+			h.ServeHTTP(writer, attempt)
+		}
 		if !writer.discarded {
 			if !writer.committed {
 				writer.WriteHeader(http.StatusOK)
@@ -208,9 +234,27 @@ func bufferRouteBody(r *http.Request) ([]byte, bool, error) {
 	return body, true, nil
 }
 
-func routeAttemptRequest(r *http.Request, integrationID, providerPath string, body []byte, replayable bool) *http.Request {
+// translateRouteTarget rewrites an openai-format route's request for one
+// target's provider. A target whose integration cannot be resolved is sent
+// unchanged, so the ordinary path reports and falls back past it.
+func (h *Handler) translateRouteTarget(ctx context.Context, target AIRouteTarget, providerPath, rawQuery string, body []byte) (routeTranslation, error) {
+	integration, err := h.Resolver.Integration(ctx, target.IntegrationID)
+	if err != nil {
+		return routeTranslation{path: providerPath, rawQuery: rawQuery, body: body}, nil
+	}
+	translation, err := translateRouteRequest(integration.AIProvider, providerPath, rawQuery, body, target.Model)
+	if err != nil {
+		return routeTranslation{}, err
+	}
+	if translation.translator != nil {
+		h.Metrics.ObserveAITranslation(integration.AIProvider, "translated")
+	}
+	return translation, nil
+}
+
+func routeAttemptRequest(r *http.Request, integrationID, providerPath, rawQuery string, body []byte, replayable bool) *http.Request {
 	attempt := r.Clone(r.Context())
-	attempt.URL = &url.URL{Path: Prefix + integrationID + providerPath, RawQuery: r.URL.RawQuery}
+	attempt.URL = &url.URL{Path: Prefix + integrationID + providerPath, RawQuery: rawQuery}
 	if escaped := Prefix + url.PathEscape(integrationID) + providerPath; escaped != attempt.URL.Path {
 		attempt.URL.RawPath = escaped
 	}

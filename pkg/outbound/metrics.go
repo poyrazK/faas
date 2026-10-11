@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,6 +28,9 @@ type Metrics struct {
 	relayConnections       *prometheus.CounterVec
 	aiCost                 *prometheus.CounterVec
 	aiRouteFallbacks       *prometheus.CounterVec
+	aiTranslations         *prometheus.CounterVec
+	aiBudgetAlerts         *prometheus.CounterVec
+	credentialKeyEvents    *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -103,6 +107,18 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_route_fallbacks_total",
 			Help: "AI route calls that moved past a target, by bounded reason (rejected, provider_status, or transport).",
 		}, []string{"reason"}),
+		aiTranslations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_translations_total",
+			Help: "OpenAI-format route attempts translated for another provider, by target provider and outcome (translated or unsupported).",
+		}, []string{"provider", "outcome"}),
+		aiBudgetAlerts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_budget_alerts_total",
+			Help: "AI budget threshold alerts recorded at settlement, by budget and threshold percent.",
+		}, []string{"budget", "threshold"}),
+		credentialKeyEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_credential_key_events_total",
+			Help: "Provider key pool events by integration and bounded event (cooldown, rotated, or exhausted).",
+		}, []string{"integration_id", "event"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -121,6 +137,9 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.relayConnections,
 		m.aiCost,
 		m.aiRouteFallbacks,
+		m.aiTranslations,
+		m.aiBudgetAlerts,
+		m.credentialKeyEvents,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -252,6 +271,27 @@ func (m *Metrics) ObserveAIRouteFallback(reason string) {
 		return
 	}
 	m.aiRouteFallbacks.WithLabelValues(reason).Inc()
+}
+
+func (m *Metrics) ObserveAITranslation(provider, outcome string) {
+	if m == nil || m.aiTranslations == nil {
+		return
+	}
+	m.aiTranslations.WithLabelValues(provider, outcome).Inc()
+}
+
+func (m *Metrics) ObserveAIBudgetAlert(budget string, thresholdPercent int) {
+	if m == nil || m.aiBudgetAlerts == nil {
+		return
+	}
+	m.aiBudgetAlerts.WithLabelValues(budget, strconv.Itoa(thresholdPercent)).Inc()
+}
+
+func (m *Metrics) ObserveCredentialKey(integrationID, event string) {
+	if m == nil || m.credentialKeyEvents == nil {
+		return
+	}
+	m.credentialKeyEvents.WithLabelValues(integrationID, event).Inc()
 }
 
 func (m *Metrics) ObserveRelayConnection(outcome string) {
