@@ -54,7 +54,9 @@ func NewPoolWorkload(ctx context.Context, config Config) (*PoolWorkload, error) 
 		return nil, ErrProbe
 	}
 	if err := p.readMarker(ctx); err != nil {
-		p.Close()
+		// Construction has not published the workload or started checks.
+		p.reader.Close()
+		p.writer.Close()
 		return nil, ErrProbe
 	}
 	p.ready.Store(true)
