@@ -179,6 +179,9 @@ func (m *MemStore) EventReceiptAttempts(ctx context.Context, accountID, source, 
 func (m *MemStore) setInvocationLocked(id string, inv Invocation) {
 	old := m.invocations[id]
 	now := time.Now().UTC()
+	if old.ID != "" && (old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) || old.ReplayRootInvocationID != inv.ReplayRootInvocationID || old.ReplayedFromInvocationID != inv.ReplayedFromInvocationID || (old.State == InvocationCompleted && (inv.State != InvocationCompleted || !equalCoverageTime(old.CompletedAt, inv.CompletedAt)))) {
+		m.loseExecutionCoverageLocked(old.AppID, "execution_replaced", now)
+	}
 	if old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) {
 		m.captureRecoveryInvocationResultLocked(old, now)
 	}
@@ -257,6 +260,7 @@ func invocationAttemptOutcome(old, inv Invocation) string {
 func (m *MemStore) deleteInvocationAttemptsLocked(id string) {
 	for key, row := range m.invocationAttemptHistory {
 		if row.InvocationID == id {
+			m.loseExecutionCoverageLocked(row.appID, "attempt_deleted", time.Now().UTC())
 			delete(m.invocationAttemptHistory, key)
 		}
 	}
@@ -296,6 +300,7 @@ func (m *MemStore) PruneInvocationAttemptHistory(_ context.Context, now time.Tim
 		ids = ids[:limit]
 	}
 	for _, id := range ids {
+		m.loseExecutionCoverageLocked(m.invocationAttemptHistory[id].appID, "attempt_deleted", time.Now().UTC())
 		delete(m.invocationAttemptHistory, id)
 	}
 	return len(ids), nil

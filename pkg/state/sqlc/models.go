@@ -2547,6 +2547,16 @@ type EventDeliverySlot struct {
 	SubscriptionID string
 }
 
+type EventExecutionCoverage struct {
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	StartedAt      pgtype.Timestamptz
+	BaselineKnown  bool
+	LostAt         pgtype.Timestamptz
+	LossReason     string
+}
+
 type EventFanoutAttemptHistory struct {
 	ID                int64
 	OutboxID          int64

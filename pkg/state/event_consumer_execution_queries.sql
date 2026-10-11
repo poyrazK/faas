@@ -38,3 +38,11 @@ FROM invocation_attempt_history
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND root_invocation_id=ANY(sqlc.arg(roots)::uuid[])
  AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz
  AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventConsumerExecutionCoverage :one
+SELECT started_at,baseline_known,lost_at,loss_reason,
+ EXISTS (SELECT 1 FROM invocation_attempt_history h WHERE h.account_id=sqlc.arg(account_id)::uuid
+  AND h.app_id=sqlc.arg(app_id)::uuid AND h.finished_at>=sqlc.arg(since_at)::timestamptz
+  AND h.finished_at<=sqlc.arg(now_at)::timestamptz AND h.retain_until<=sqlc.arg(now_at)::timestamptz) AS attempts_expired
+FROM event_execution_coverage WHERE account_id=sqlc.arg(account_id)::uuid
+ AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid;

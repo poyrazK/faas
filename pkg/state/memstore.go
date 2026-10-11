@@ -138,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventExecutionCoverage               map[string]executionCoverage
 	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
 	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
 	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
@@ -6476,6 +6477,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for key, v := range m.invocations {
 		if v.AppID == id {
+			m.loseExecutionCoverageLocked(v.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, key)
 			delete(m.eventDeliverySlots, key)
 			m.deleteInvocationAttemptsLocked(key)
@@ -25911,6 +25913,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		}
 		if inv, ok := m.invocations[id]; ok {
 			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
+			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)

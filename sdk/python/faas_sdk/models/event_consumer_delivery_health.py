@@ -34,8 +34,9 @@ class EventConsumerDeliveryHealth:
     execution: EventConsumerExecutionHealth
     """Current retained execution states for admitted application event deliveries and retained handler replays.
     Attempts and successful completion latency use the requested window. Counts are bounded observations, include
-    backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical
-    coverage is always incomplete."""
+    backfills, and are not unique event counts. Version filtering and routing failures are excluded. History
+    completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines
+    remain unknown and evidence loss is partial."""
     pending_sample: EventConsumerPendingSample
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""

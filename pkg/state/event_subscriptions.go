@@ -360,6 +360,10 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	// Include the app id in the map key so two apps can declare the same
 	// source/type/filter without colliding in the in-memory implementation.
 	m.eventSubscriptions[mapKey] = subscription
+	if m.eventExecutionCoverage == nil {
+		m.eventExecutionCoverage = map[string]executionCoverage{}
+	}
+	m.eventExecutionCoverage[subscription.ID] = executionCoverage{app: subscription.AppID, started: now, baseline: true}
 	return subscription, true, nil
 }
 

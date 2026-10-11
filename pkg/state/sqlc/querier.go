@@ -606,6 +606,7 @@ type Querier interface {
 	EventCircuitSave(ctx context.Context, db DBTX, arg EventCircuitSaveParams) (int64, error)
 	EventCircuitWindow(ctx context.Context, db DBTX, arg EventCircuitWindowParams) (EventCircuitWindowRow, error)
 	EventConsumerExecutionAttempts(ctx context.Context, db DBTX, arg EventConsumerExecutionAttemptsParams) (EventConsumerExecutionAttemptsRow, error)
+	EventConsumerExecutionCoverage(ctx context.Context, db DBTX, arg EventConsumerExecutionCoverageParams) (EventConsumerExecutionCoverageRow, error)
 	EventConsumerExecutionInvocations(ctx context.Context, db DBTX, arg EventConsumerExecutionInvocationsParams) ([]EventConsumerExecutionInvocationsRow, error)
 	// Admission roots include settled receipts and materialized backfill recipients.
 	EventConsumerExecutionRoots(ctx context.Context, db DBTX, arg EventConsumerExecutionRootsParams) ([]EventConsumerExecutionRootsRow, error)

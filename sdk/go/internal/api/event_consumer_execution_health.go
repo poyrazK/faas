@@ -9,6 +9,10 @@ import (
 
 // Execution counts describe retained invocations, including handler replays.
 type EventConsumerExecutionHealth struct {
+	CoverageStartedAt            *time.Time `json:"coverage_started_at,omitempty"`
+	CoverageLostAt               *time.Time `json:"coverage_lost_at,omitempty"`
+	HistoryStatus                string     `json:"history_status"`
+	HistoryReason                string     `json:"history_reason"`
 	LatestSuccessfulCompletionAt *time.Time `json:"latest_successful_completion_at,omitempty"`
 	SubscriptionID               string     `json:"subscription_id"`
 	AppID                        string     `json:"app_id"`

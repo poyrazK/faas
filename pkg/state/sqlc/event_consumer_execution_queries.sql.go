@@ -55,6 +55,50 @@ func (q *Queries) EventConsumerExecutionAttempts(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const eventConsumerExecutionCoverage = `-- name: EventConsumerExecutionCoverage :one
+SELECT started_at,baseline_known,lost_at,loss_reason,
+ EXISTS (SELECT 1 FROM invocation_attempt_history h WHERE h.account_id=$1::uuid
+  AND h.app_id=$2::uuid AND h.finished_at>=$3::timestamptz
+  AND h.finished_at<=$4::timestamptz AND h.retain_until<=$4::timestamptz) AS attempts_expired
+FROM event_execution_coverage WHERE account_id=$1::uuid
+ AND app_id=$2::uuid AND subscription_id=$5::uuid
+`
+
+type EventConsumerExecutionCoverageParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SinceAt        pgtype.Timestamptz
+	NowAt          pgtype.Timestamptz
+	SubscriptionID pgtype.UUID
+}
+
+type EventConsumerExecutionCoverageRow struct {
+	StartedAt       pgtype.Timestamptz
+	BaselineKnown   bool
+	LostAt          pgtype.Timestamptz
+	LossReason      string
+	AttemptsExpired bool
+}
+
+func (q *Queries) EventConsumerExecutionCoverage(ctx context.Context, db DBTX, arg EventConsumerExecutionCoverageParams) (EventConsumerExecutionCoverageRow, error) {
+	row := db.QueryRow(ctx, eventConsumerExecutionCoverage,
+		arg.AccountID,
+		arg.AppID,
+		arg.SinceAt,
+		arg.NowAt,
+		arg.SubscriptionID,
+	)
+	var i EventConsumerExecutionCoverageRow
+	err := row.Scan(
+		&i.StartedAt,
+		&i.BaselineKnown,
+		&i.LostAt,
+		&i.LossReason,
+		&i.AttemptsExpired,
+	)
+	return i, err
+}
+
 const eventConsumerExecutionInvocations = `-- name: EventConsumerExecutionInvocations :many
 SELECT id,state,attempts,completed_at,coalesce(replay_root_invocation_id::text,'')::text AS replay_root,
  coalesce(replayed_from_invocation_id::text,'')::text AS replay_parent

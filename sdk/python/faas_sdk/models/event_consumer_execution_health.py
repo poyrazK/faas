@@ -11,6 +11,10 @@ from ..models.event_consumer_execution_health_coverage import (
     EventConsumerExecutionHealthCoverage,
     check_event_consumer_execution_health_coverage,
 )
+from ..models.event_consumer_execution_health_history_status import (
+    EventConsumerExecutionHealthHistoryStatus,
+    check_event_consumer_execution_health_history_status,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EventConsumerExecutionHealth")
@@ -20,8 +24,9 @@ T = TypeVar("T", bound="EventConsumerExecutionHealth")
 class EventConsumerExecutionHealth:
     """Current retained execution states for admitted application event deliveries and retained handler replays. Attempts
     and successful completion latency use the requested window. Counts are bounded observations, include backfills, and
-    are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always
-    incomplete.
+    are not unique event counts. Version filtering and routing failures are excluded. History completeness is
+    established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and
+    evidence loss is partial.
 
     """
 
@@ -31,7 +36,8 @@ class EventConsumerExecutionHealth:
     window_start: datetime.datetime
     coverage: EventConsumerExecutionHealthCoverage
     history_complete: bool
-    """Receipt, invocation, and attempt retention make this an incomplete historical observation."""
+    """True only for an instrumented, fully covered window with intact evidence and no truncation or unknown
+    outcomes."""
     truncated: bool
     """More than 1000 retained delivery roots or 5000 linked invocations existed."""
     retained_roots: int
@@ -58,6 +64,13 @@ class EventConsumerExecutionHealth:
     latest_successful_completion_at: datetime.datetime | Unset = UNSET
     """Latest valid successful completion among the bounded retained executions; absent when no such completion is
     retained. Not an all-time watermark and not restricted to the attempt window."""
+    history_status: EventConsumerExecutionHealthHistoryStatus | Unset = UNSET
+    history_reason: str | Unset = UNSET
+    """Stable explanation of coverage eligibility or evidence loss."""
+    coverage_started_at: datetime.datetime | Unset = UNSET
+    """Durable collection start; absent when no coverage record exists."""
+    coverage_lost_at: datetime.datetime | Unset = UNSET
+    """First persisted evidence loss; loss is not automatically cleared."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)
@@ -120,6 +133,20 @@ class EventConsumerExecutionHealth:
         if not isinstance(self.latest_successful_completion_at, Unset):
             latest_successful_completion_at = self.latest_successful_completion_at.isoformat()
 
+        history_status: str | Unset = UNSET
+        if not isinstance(self.history_status, Unset):
+            history_status = self.history_status
+
+        history_reason = self.history_reason
+
+        coverage_started_at: str | Unset = UNSET
+        if not isinstance(self.coverage_started_at, Unset):
+            coverage_started_at = self.coverage_started_at.isoformat()
+
+        coverage_lost_at: str | Unset = UNSET
+        if not isinstance(self.coverage_lost_at, Unset):
+            coverage_lost_at = self.coverage_lost_at.isoformat()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -156,6 +183,14 @@ class EventConsumerExecutionHealth:
         )
         if latest_successful_completion_at is not UNSET:
             field_dict["latest_successful_completion_at"] = latest_successful_completion_at
+        if history_status is not UNSET:
+            field_dict["history_status"] = history_status
+        if history_reason is not UNSET:
+            field_dict["history_reason"] = history_reason
+        if coverage_started_at is not UNSET:
+            field_dict["coverage_started_at"] = coverage_started_at
+        if coverage_lost_at is not UNSET:
+            field_dict["coverage_lost_at"] = coverage_lost_at
 
         return field_dict
 
@@ -225,6 +260,29 @@ class EventConsumerExecutionHealth:
         else:
             latest_successful_completion_at = datetime.datetime.fromisoformat(_latest_successful_completion_at)
 
+        _history_status = d.pop("history_status", UNSET)
+        history_status: EventConsumerExecutionHealthHistoryStatus | Unset
+        if isinstance(_history_status, Unset):
+            history_status = UNSET
+        else:
+            history_status = check_event_consumer_execution_health_history_status(_history_status)
+
+        history_reason = d.pop("history_reason", UNSET)
+
+        _coverage_started_at = d.pop("coverage_started_at", UNSET)
+        coverage_started_at: datetime.datetime | Unset
+        if isinstance(_coverage_started_at, Unset):
+            coverage_started_at = UNSET
+        else:
+            coverage_started_at = datetime.datetime.fromisoformat(_coverage_started_at)
+
+        _coverage_lost_at = d.pop("coverage_lost_at", UNSET)
+        coverage_lost_at: datetime.datetime | Unset
+        if isinstance(_coverage_lost_at, Unset):
+            coverage_lost_at = UNSET
+        else:
+            coverage_lost_at = datetime.datetime.fromisoformat(_coverage_lost_at)
+
         event_consumer_execution_health = cls(
             subscription_id=subscription_id,
             app_id=app_id,
@@ -255,6 +313,10 @@ class EventConsumerExecutionHealth:
             dead_letter_rate_per_second=dead_letter_rate_per_second,
             completion_latency_p95_seconds=completion_latency_p95_seconds,
             latest_successful_completion_at=latest_successful_completion_at,
+            history_status=history_status,
+            history_reason=history_reason,
+            coverage_started_at=coverage_started_at,
+            coverage_lost_at=coverage_lost_at,
         )
 
         return event_consumer_execution_health

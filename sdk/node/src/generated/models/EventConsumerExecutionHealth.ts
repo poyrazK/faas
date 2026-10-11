@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always incomplete.
+ * Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. History completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial.
  */
 export type EventConsumerExecutionHealth = {
   /**
@@ -16,9 +16,22 @@ export type EventConsumerExecutionHealth = {
   window_start: string;
   coverage: 'bounded_retained_execution_roots';
   /**
-   * Receipt, invocation, and attempt retention make this an incomplete historical observation.
+   * True only for an instrumented, fully covered window with intact evidence and no truncation or unknown outcomes.
    */
   history_complete: boolean;
+  history_status?: 'complete' | 'partial' | 'unknown';
+  /**
+   * Stable explanation of coverage eligibility or evidence loss.
+   */
+  history_reason?: string;
+  /**
+   * Durable collection start; absent when no coverage record exists.
+   */
+  coverage_started_at?: string;
+  /**
+   * First persisted evidence loss; loss is not automatically cleared.
+   */
+  coverage_lost_at?: string;
   /**
    * More than 1000 retained delivery roots or 5000 linked invocations existed.
    */

@@ -53,6 +53,7 @@ func cmdEventsSubscriptionDeliveryHealth(args []string) int {
 func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	r, e, sample := out.Routing, out.Execution, out.PendingSample
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | pending routing %d | processing routing %d | oldest pending %.0fs\n", oneLine(r.SubscriptionID), r.PendingRecipients, r.ProcessingRecipients, r.OldestAgeSeconds)
+	_, _ = fmt.Fprintf(osStdout, "Execution history %s (%s) | collection start %v | evidence lost %v\n", oneLine(e.HistoryStatus), oneLine(e.HistoryReason), e.CoverageStartedAt, e.CoverageLostAt)
 	_, _ = fmt.Fprintf(osStdout, "Retained executions: queued %d | running %d | retrying %d | dead letters %d | truncated %t | history complete %t\n", e.Queued, e.Running, e.Retrying, e.DeadLettered, e.Truncated, e.HistoryComplete)
 	if e.LatestSuccessfulCompletionAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Latest retained successful completion: %s\n", e.LatestSuccessfulCompletionAt.Format("2006-01-02T15:04:05.999999999Z07:00"))

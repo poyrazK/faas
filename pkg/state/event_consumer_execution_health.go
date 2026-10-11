@@ -23,7 +23,7 @@ type executionHealthRoot struct {
 }
 
 func newConsumerExecutionHealth(app, sub string, since, now time.Time) api.EventConsumerExecutionHealth {
-	return api.EventConsumerExecutionHealth{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app), ObservedAt: now, WindowStart: since, Coverage: "bounded_retained_execution_roots"}
+	return api.EventConsumerExecutionHealth{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app), ObservedAt: now, WindowStart: since, Coverage: "bounded_retained_execution_roots", HistoryStatus: "unknown", HistoryReason: "baseline_unknown"}
 }
 func finishConsumerExecutionHealth(out *api.EventConsumerExecutionHealth, latencies []float64) {
 	if n := out.SuccessfulAttempts + out.FailedAttempts; n > 0 {
@@ -102,6 +102,12 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 	} else if err != nil {
 		return out, err
 	}
+	coverage, err := q.EventConsumerExecutionCoverage(ctx, tx, sqlc.EventConsumerExecutionCoverageParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), SinceAt: pgtypeFromTime(since), NowAt: pgtypeFromTime(now)})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return out, err
+	}
+	tracked := err == nil
+	c := executionCoverage{started: timeFromPgtype(coverage.StartedAt), baseline: coverage.BaselineKnown, lost: timestamptzToTimePtr(coverage.LostAt), reason: coverage.LossReason}
 	candidates, err := q.EventConsumerExecutionRoots(ctx, tx, sqlc.EventConsumerExecutionRootsParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: canonicalMemUUID(sub), NowAt: pgtypeFromTime(now), RootLimit: api.EventConsumerExecutionRootsMax + 1})
 	if err != nil {
 		return out, err
@@ -145,6 +151,9 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 	}
 	out.RetainedRoots = int64(len(roots))
 	if len(ids) == 0 {
+		if tracked {
+			applyExecutionCoverage(&out, c, coverage.AttemptsExpired)
+		}
 		return out, tx.Commit(ctx)
 	}
 	executions, err := q.EventConsumerExecutionInvocations(ctx, tx, sqlc.EventConsumerExecutionInvocationsParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), NowAt: pgtypeFromTime(now), Roots: ids, InvocationLimit: api.EventConsumerExecutionInvocationsMax + 1})
@@ -178,6 +187,9 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 	}
 	out.SuccessfulAttempts, out.FailedAttempts, out.UnknownAttempts, out.WindowDeadLetters = attempts.SuccessfulAttempts, attempts.FailedAttempts, attempts.UnknownAttempts, attempts.DeadLetterAttempts
 	finishConsumerExecutionHealth(&out, latencies)
+	if tracked {
+		applyExecutionCoverage(&out, c, coverage.AttemptsExpired)
+	}
 	return out, tx.Commit(ctx)
 }
 func (m *MemStore) GetEventConsumerExecutionHealth(ctx context.Context, account, app, sub string, since, now time.Time) (api.EventConsumerExecutionHealth, error) {
@@ -298,6 +310,16 @@ func (m *MemStore) GetEventConsumerExecutionHealth(ctx context.Context, account,
 		}
 	}
 	finishConsumerExecutionHealth(&out, latencies)
+	if c, ok := m.eventExecutionCoverage[canonicalMemUUID(sub)]; ok {
+		expired := false
+		for _, h := range m.invocationAttemptHistory {
+			if sameMemUUID(h.accountID, account) && sameMemUUID(h.appID, app) && h.FinishedAt != nil && !h.FinishedAt.Before(since) && !h.FinishedAt.After(now) && !h.RetainUntil.After(now) {
+				expired = true
+				break
+			}
+		}
+		applyExecutionCoverage(&out, c, expired)
+	}
 	return out, nil
 }
 

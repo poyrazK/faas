@@ -901,6 +901,12 @@ func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.
 		}
 		_, held := holds[work.ID]
 		if work.Delivered && work.DeliveredAt.Before(before) && !held {
+			for _, recipient := range work.RecipientSnapshot {
+				m.loseSubscriptionExecutionCoverageLocked(recipient.ID, "receipt_deleted", time.Now().UTC())
+			}
+			for _, recipient := range work.routingRecipients {
+				m.loseSubscriptionExecutionCoverageLocked(recipient.Recipient.ID, "receipt_deleted", time.Now().UTC())
+			}
 			delete(m.eventFanout, key)
 			for receiptKey, receipt := range m.webhookAutomationReceipts {
 				if receipt.outboxID == work.ID {

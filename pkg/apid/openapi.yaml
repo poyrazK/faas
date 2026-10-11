@@ -53721,7 +53721,7 @@ components:
     EventConsumerExecutionHealth:
       type: object
       additionalProperties: false
-      description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always incomplete.'
+      description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. History completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial.'
       required: [subscription_id, app_id, observed_at, window_start, coverage, history_complete, truncated, retained_roots, missing_roots, executions, queued, running, retrying, succeeded, failed, expired, dead_lettered, cancelled, superseded, unknown, successful_attempts, failed_attempts, unknown_attempts, window_completions, window_dead_letters, handler_failure_pct, dead_letter_rate_per_second, completion_latency_p95_seconds]
       properties:
         latest_successful_completion_at: { type: string, format: date-time, description: Latest valid successful completion among the bounded retained executions; absent when no such completion is retained. Not an all-time watermark and not restricted to the attempt window. }
@@ -53730,7 +53730,11 @@ components:
         observed_at: { type: string, format: date-time }
         window_start: { type: string, format: date-time }
         coverage: { type: string, enum: [bounded_retained_execution_roots] }
-        history_complete: { type: boolean, enum: [false], description: 'Receipt, invocation, and attempt retention make this an incomplete historical observation.' }
+        history_complete: { type: boolean, description: 'True only for an instrumented, fully covered window with intact evidence and no truncation or unknown outcomes.' }
+        history_status: { type: string, enum: [complete, partial, unknown] }
+        history_reason: { type: string, description: 'Stable explanation of coverage eligibility or evidence loss.' }
+        coverage_started_at: { type: string, format: date-time, description: 'Durable collection start; absent when no coverage record exists.' }
+        coverage_lost_at: { type: string, format: date-time, description: 'First persisted evidence loss; loss is not automatically cleared.' }
         truncated: { type: boolean, description: 'More than 1000 retained delivery roots or 5000 linked invocations existed.' }
         retained_roots: { type: integer, format: int64, minimum: 0 }
         missing_roots: { type: integer, format: int64, minimum: 0 }

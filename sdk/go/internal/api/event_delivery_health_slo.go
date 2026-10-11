@@ -149,6 +149,9 @@ func deliveryHealthSLOObservation(h EventConsumerDeliveryHealth, out EventDelive
 		}
 		if !e.HistoryComplete {
 			out.Reason = "history_incomplete"
+			if e.HistoryReason != "" {
+				out.Reason = e.HistoryReason
+			}
 		} else if e.Truncated {
 			out.Reason = "history_truncated"
 		}

@@ -8458,6 +8458,44 @@ END $$;
 
 
 --
+-- Name: lose_event_execution_coverage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lose_event_execution_coverage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='event_fanout_outbox' THEN
+  UPDATE event_execution_coverage c SET lost_at=clock_timestamp(),loss_reason='receipt_deleted'
+  WHERE c.lost_at IS NULL AND (
+   EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(OLD.recipient_snapshot,'[]'::jsonb)) r WHERE r->>'id'=c.subscription_id::text)
+   OR EXISTS (SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=OLD.id AND r.subscription_id=c.subscription_id::text));
+ ELSIF TG_TABLE_NAME='event_fanout_recipients' THEN
+  UPDATE event_execution_coverage SET lost_at=clock_timestamp(),loss_reason='recipient_deleted'
+  WHERE lost_at IS NULL AND subscription_id::text=OLD.subscription_id;
+ ELSE
+  IF TG_OP='UPDATE' THEN
+   IF OLD.replay_generation IS NOT DISTINCT FROM NEW.replay_generation
+   AND OLD.created_at IS NOT DISTINCT FROM NEW.created_at AND OLD.app_id IS NOT DISTINCT FROM NEW.app_id
+   AND OLD.account_id IS NOT DISTINCT FROM NEW.account_id
+   AND OLD.replay_root_invocation_id IS NOT DISTINCT FROM NEW.replay_root_invocation_id
+   AND OLD.replayed_from_invocation_id IS NOT DISTINCT FROM NEW.replayed_from_invocation_id
+   AND (OLD.state<>'completed' OR (NEW.state='completed' AND OLD.completed_at IS NOT DISTINCT FROM NEW.completed_at)) THEN
+    RETURN NEW;
+   END IF;
+  END IF;
+  -- Lost invocation associations cannot reliably be mapped to one subscription.
+  UPDATE event_execution_coverage SET lost_at=clock_timestamp(),
+   loss_reason=CASE WHEN TG_OP='UPDATE' THEN 'execution_replaced'
+    WHEN TG_TABLE_NAME='invocations' THEN 'invocation_deleted' ELSE 'attempt_deleted' END
+  WHERE lost_at IS NULL AND app_id=OLD.app_id;
+ END IF;
+ IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
+ RETURN OLD;
+END $$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11818,6 +11856,20 @@ BEGIN
  ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
   NEW.serving_ended_at := now();
  END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: start_event_execution_coverage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.start_event_execution_coverage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known)
+ VALUES(NEW.id,NEW.account_id,NEW.app_id,clock_timestamp(),true) ON CONFLICT DO NOTHING;
  RETURN NEW;
 END $$;
 
@@ -16941,6 +16993,23 @@ CREATE TABLE public.event_delivery_slots (
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
     subscription_id text NOT NULL
+);
+
+
+--
+-- Name: event_execution_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_coverage (
+    subscription_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    baseline_known boolean NOT NULL,
+    lost_at timestamp with time zone,
+    loss_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT event_execution_coverage_check CHECK (((lost_at IS NULL) = (loss_reason = ''::text))),
+    CONSTRAINT event_execution_coverage_loss_reason_check CHECK ((loss_reason = ANY (ARRAY[''::text, 'receipt_deleted'::text, 'recipient_deleted'::text, 'invocation_deleted'::text, 'attempt_deleted'::text, 'execution_replaced'::text])))
 );
 
 
@@ -28622,6 +28691,14 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 
 --
+-- Name: event_execution_coverage event_execution_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_coverage
+    ADD CONSTRAINT event_execution_coverage_pkey PRIMARY KEY (subscription_id);
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34976,6 +35053,20 @@ CREATE INDEX event_delivery_slots_consumer ON public.event_delivery_slots USING 
 
 
 --
+-- Name: event_execution_attempt_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_attempt_window_idx ON public.invocation_attempt_history USING btree (account_id, app_id, finished_at) INCLUDE (retain_until) WHERE (finished_at IS NOT NULL);
+
+
+--
+-- Name: event_execution_coverage_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_coverage_app_idx ON public.event_execution_coverage USING btree (app_id);
+
+
+--
 -- Name: event_fanout_attempt_history_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -40744,6 +40835,34 @@ CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON
 
 
 --
+-- Name: invocation_attempt_history event_execution_attempt_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_attempt_loss BEFORE DELETE ON public.invocation_attempt_history FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
+-- Name: invocations event_execution_invocation_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_invocation_loss BEFORE DELETE OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
+-- Name: event_fanout_outbox event_execution_receipt_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_receipt_loss BEFORE DELETE ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
+-- Name: event_fanout_recipients event_execution_recipient_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_recipient_loss BEFORE DELETE ON public.event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
 -- Name: event_fanout_outbox event_fanout_ordering_snapshot; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42659,6 +42778,13 @@ CREATE TRIGGER snapshot_stale_after_app_ram_change AFTER UPDATE OF ram_mb ON pub
 --
 
 CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status ON public.deployments FOR EACH ROW WHEN (((new.status = ANY (ARRAY['failed'::text, 'cancelled'::text])) AND (old.status IS DISTINCT FROM new.status))) EXECUTE FUNCTION public.snapshot_stale_after_terminal_deployment();
+
+
+--
+-- Name: event_subscriptions start_event_execution_coverage; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER start_event_execution_coverage AFTER INSERT ON public.event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.start_event_execution_coverage();
 
 
 --
@@ -45507,6 +45633,14 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 ALTER TABLE ONLY public.event_delivery_slots
     ADD CONSTRAINT event_delivery_slots_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_coverage event_execution_coverage_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_coverage
+    ADD CONSTRAINT event_execution_coverage_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
