@@ -55,7 +55,9 @@ type Handler struct {
 	WorkflowAuthorizer        WorkflowAuthorizer
 	workflowClient            *http.Client
 	CredentialResolver        ManagedCredentialResolver
-	managedAuthorization      map[string]string
+	// Routes resolves AI fallback routes (ADR-983); nil disables /r/.
+	Routes               RouteResolver
+	managedAuthorization map[string]string
 	responseCache             *outboundResponseCache
 }
 
@@ -162,6 +164,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodConnect {
 		writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "CONNECT is not supported", "")
+		return
+	}
+	if strings.HasPrefix(r.URL.EscapedPath(), RoutePrefix) {
+		h.serveRoute(w, r)
 		return
 	}
 	// Split before unescaping so an encoded slash remains part of a provider
@@ -562,6 +568,17 @@ func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integratio
 }
 
 func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request, integration Integration) (ExecutionIdentity, bool, bool) {
+	if identity, granted, ok := relayExecutionFromContext(r.Context()); ok {
+		// ADR-983: a Run's relay connection names the integrations its grant
+		// allowed; the execution authorizer below still checks the current
+		// grant and lease on every request.
+		_, allowed := granted[integration.ID]
+		if !allowed || integration.OwnerKind != IntegrationOwnerCustomer || integration.ProviderAuthMode != ProviderAuthManaged || integration.CredentialSource != CredentialSourceCustomerSealed {
+			writeProblem(w, http.StatusForbidden, "outbound_execution_not_authorized", "This Run is not authorized for the outbound integration", "")
+			return ExecutionIdentity{}, true, false
+		}
+		return identity, true, true
+	}
 	rawToken := r.Header.Get(ExecutionIdentityHeader)
 	if rawToken == "" {
 		return ExecutionIdentity{}, false, true

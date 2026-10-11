@@ -557,6 +557,139 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-prices:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the AI integration whose price list is read or replaced.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundIntegrationAIPrices
+      summary: Read the AI price list in effect.
+      description: Requires MFA and read scope (ADR-983).
+      responses:
+        '200':
+          description: The price list in effect.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPriceListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationAIPrices
+      summary: Replace a customer AI integration's price list.
+      description: Requires MFA and deploy-write scope (ADR-983). The new list prices calls settled from now on; earlier lists stay for costs already recorded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIPricesRequest' }
+      responses:
+        '204': { description: Price list replaced; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes:
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIRoutes
+      summary: List the account's AI fallback routes.
+      description: Requires MFA and read scope (ADR-983).
+      responses:
+        '200':
+          description: AI routes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIRoute
+      summary: Create an AI fallback route over same-format managed AI integrations.
+      description: Requires MFA and deploy-write scope (ADR-983). Every target must be an enabled managed AI integration of this account with the same ai_provider. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIRouteRequest' }
+      responses:
+        '201':
+          description: Route created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRoute' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: A route with this name already exists. }
+        '429': { description: The account has reached its AI route limit. }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes/{route}:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRoute
+      summary: Read one AI fallback route.
+      description: Requires MFA and read scope.
+      responses:
+        '200':
+          description: The route.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRoute' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIRoute
+      summary: Delete an AI fallback route.
+      description: Requires MFA and deploy-write scope.
+      responses:
+        '204': { description: Route deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes/{route}/targets:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIRouteTargets
+      summary: Replace an AI route's ordered targets.
+      description: Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIRouteTargetsRequest' }
+      responses:
+        '204': { description: Targets replaced. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/runs:
     parameters:
       - name: integration
@@ -810,6 +943,30 @@ paths:
             schema: { $ref: '#/components/schemas/PutOutboundBindingDailyRequestBudgetRequest' }
       responses:
         '204': { description: Binding budget updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the app's bound AI integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundBindingAIBudget
+      summary: Set or clear an app's own daily AI token limit on an AI integration.
+      description: Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled input plus output tokens reach the limit; other apps are unaffected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundBindingAIBudgetRequest' }
+      responses:
+        '204': { description: App AI token limit updated; no body returned. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -44961,6 +45118,18 @@ components:
           minimum: 1
           maximum: 100000000000
           description: UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means no limit.
+        ai_daily_cost_limit_millicents:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: UTC-day cost limit priced from the integration's price list (ADR-983).
+        ai_monthly_cost_limit_millicents:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: Calendar-month cost limit priced from the integration's price list (ADR-983).
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -45012,6 +45181,16 @@ components:
           format: int64
           minimum: 1
           maximum: 100000000000
+        daily_cost_limit_millicents:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+        monthly_cost_limit_millicents:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
@@ -45026,6 +45205,7 @@ components:
         cached_input_tokens: { type: integer, format: int64, minimum: 0 }
         cache_write_tokens: { type: integer, format: int64, minimum: 0 }
         output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0, description: Priced from the list in effect at each call and rounded up per call; zero without a price list. }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -45043,6 +45223,11 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIUsageItem' }
+        daily_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        daily_cost_limit_millicents: { type: [integer, 'null'], format: int64 }
+        month: { type: string, description: 'Calendar month of usage_date as YYYY-MM.' }
+        monthly_cost_millicents: { type: integer, format: int64, minimum: 0, description: Settled cost of the month through usage_date. }
+        monthly_cost_limit_millicents: { type: [integer, 'null'], format: int64 }
     OutboundRequestPolicy:
       type: object
       description: Effective customer-selected per-integration policy, bounded by the account plan.
@@ -45173,6 +45358,95 @@ components:
           maximum: 100000000
           description: Optional per-binding daily admitted-request limit.
         created_at: { type: string, format: date-time }
+        ai_daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+          description: This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983).
+    PutOutboundBindingAIBudgetRequest:
+      type: object
+      description: Set or clear (null) an app binding's daily AI token limit.
+      required: [daily_token_limit]
+      properties:
+        daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+    OutboundAIPriceEntry:
+      type: object
+      description: Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins), in millicents per million tokens. Absent cached or cache-write prices use the input price.
+      required: [model_prefix, input_millicents_per_mtok, output_millicents_per_mtok]
+      properties:
+        model_prefix: { type: string, minLength: 1, maxLength: 128 }
+        input_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        cached_input_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        cache_write_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        output_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+    PutOutboundAIPricesRequest:
+      type: object
+      description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          maxItems: 64
+          items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }
+    OutboundAIPriceListResponse:
+      type: object
+      description: The price list in effect; effective_from is null when none was ever set, and cost is then zero.
+      required: [effective_from, entries]
+      properties:
+        effective_from: { type: [string, 'null'], format: date-time }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }
+    OutboundAIRouteTarget:
+      type: object
+      description: One ordered fallback step; model replaces the request's "model" for this target.
+      required: [integration_id]
+      properties:
+        integration_id: { type: string, format: uuid }
+        model: { type: string, maxLength: 128 }
+    OutboundAIRoute:
+      type: object
+      description: An ordered list of same-format managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-983).
+      required: [id, name, targets, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    OutboundAIRouteList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIRoute' }
+    CreateOutboundAIRouteRequest:
+      type: object
+      required: [name, targets]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+    PutOutboundAIRouteTargetsRequest:
+      type: object
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
     UpdateOutboundBindingPolicyRequest:
       type: object
       description: Explicit nonempty method and path subsets for a bound app.

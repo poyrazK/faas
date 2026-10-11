@@ -35,6 +35,8 @@ type OutboundIntegrationOffer struct {
 	RequestPolicy        api.OutboundRequestPolicy
 	AIProvider           string
 	AIDailyTokenLimit    *int64
+	AIDailyCostLimit     *int64
+	AIMonthlyCostLimit   *int64
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
@@ -49,26 +51,57 @@ type OutboundAIUsageItem struct {
 	CachedInputTokens    int64
 	CacheWriteTokens     int64
 	OutputTokens         int64
+	CostMillicents       int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.
 // DailyTokenCount is the live admission counter for today and the sum of
-// rollup tokens for an earlier day.
+// rollup tokens for an earlier day. Costs are settled rollup sums for the
+// day and for its calendar month through that day (ADR-983).
 type OutboundAIUsage struct {
-	UsageDate       string
-	AIProvider      string
-	DailyTokenCount int64
-	DailyTokenLimit *int64
-	ResetsAt        time.Time
-	Items           []OutboundAIUsageItem
+	UsageDate             string
+	AIProvider            string
+	DailyTokenCount       int64
+	DailyTokenLimit       *int64
+	ResetsAt              time.Time
+	Items                 []OutboundAIUsageItem
+	DailyCostMillicents   int64
+	DailyCostLimit        *int64
+	Month                 string
+	MonthlyCostMillicents int64
+	MonthlyCostLimit      *int64
+}
+
+// OutboundAIPolicy is the complete customer AI gateway setting (ADR-979,
+// ADR-983). An empty Provider turns AI handling off and requires no limits.
+type OutboundAIPolicy struct {
+	Provider         string
+	DailyTokenLimit  *int64
+	DailyCostLimit   *int64
+	MonthlyCostLimit *int64
+}
+
+func (p OutboundAIPolicy) valid() bool {
+	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
+		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit)
+}
+
+// OutboundAIPriceList is the current price list; EffectiveFrom is nil when
+// the integration has never had one.
+type OutboundAIPriceList struct {
+	EffectiveFrom *time.Time
+	Entries       []api.OutboundAIPriceEntry
 }
 
 // OutboundAIStore owns customer AI gateway settings and reads the usage
 // rollups that outboundd writes. It is separate from OutboundBindingStore so
 // existing binding implementations do not change.
 type OutboundAIStore interface {
-	SetOutboundAIPolicy(ctx context.Context, accountID, integrationID, provider string, dailyTokenLimit *int64) error
+	SetOutboundAIPolicy(ctx context.Context, accountID, integrationID string, policy OutboundAIPolicy) error
 	GetOutboundAIUsage(ctx context.Context, accountID, integrationID, usageDate string) (OutboundAIUsage, error)
+	SetOutboundBindingAITokenLimit(ctx context.Context, accountID, appID, integrationID string, limit *int64) error
+	GetOutboundAIPrices(ctx context.Context, accountID, integrationID string) (OutboundAIPriceList, error)
+	SetOutboundAIPrices(ctx context.Context, accountID, integrationID string, entries []api.OutboundAIPriceEntry) error
 }
 
 // validOutboundAIUsageDate accepts a YYYY-MM-DD UTC date inside the rollup
@@ -107,6 +140,8 @@ type OutboundAppBinding struct {
 	OutboundIntegrationOffer
 	AppID                    string
 	BindingDailyRequestLimit *int64
+	// BindingAIDailyTokenLimit is this app's own AI token limit (ADR-983).
+	BindingAIDailyTokenLimit *int64
 	RouteMethods             []string
 	RoutePathPrefixes        []string
 	CreatedAt                time.Time

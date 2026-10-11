@@ -19,15 +19,15 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 		limit := *in.DailyRequestLimit
 		in.DailyRequestLimit = &limit
 	}
-	if in.AIDailyTokenLimit != nil {
-		limit := *in.AIDailyTokenLimit
-		in.AIDailyTokenLimit = &limit
-	}
+	in.AIDailyTokenLimit = copyInt64Ptr(in.AIDailyTokenLimit)
+	in.AIDailyCostLimit = copyInt64Ptr(in.AIDailyCostLimit)
+	in.AIMonthlyCostLimit = copyInt64Ptr(in.AIMonthlyCostLimit)
 	return in
 }
 
 func copyOutboundBinding(in OutboundAppBinding) OutboundAppBinding {
 	in.OutboundIntegrationOffer = copyOutboundOffer(in.OutboundIntegrationOffer)
+	in.BindingAIDailyTokenLimit = copyInt64Ptr(in.BindingAIDailyTokenLimit)
 	if in.BindingDailyRequestLimit != nil {
 		limit := *in.BindingDailyRequestLimit
 		in.BindingDailyRequestLimit = &limit

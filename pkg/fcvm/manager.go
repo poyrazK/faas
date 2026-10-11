@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -746,6 +747,9 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	// outboundRelayEnabled advertises vmmd's streaming relay to
+	// outbound-enabled Runs (ADR-983).
+	outboundRelayEnabled      atomic.Bool
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
 	nativeRecoveryFlight      *nativeRecoveryInitFlight
@@ -2770,6 +2774,31 @@ func (m *Manager) ExecutionOutboundIdentity(instance, integrationID string) (acc
 		}
 	}
 	return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: integration not granted", instance)
+}
+
+// SetOutboundRelayEnabled records whether vmmd serves the ADR-982 relay, so
+// outbound-enabled Runs are told to stream through it (ADR-983).
+func (m *Manager) SetOutboundRelayEnabled(enabled bool) {
+	if m != nil {
+		m.outboundRelayEnabled.Store(enabled)
+	}
+}
+
+// ExecutionRelayIdentity returns the lease-fenced Runs principal and the
+// Run's granted integrations for a relay connection (ADR-983). Unlike
+// ExecutionOutboundIdentity the integration is not known yet, so the grant
+// list travels with the connection and outboundd checks every request.
+func (m *Manager) ExecutionRelayIdentity(instance string) (accountID, executionID, leaseToken string, integrationIDs []string, err error) {
+	if m == nil {
+		return "", "", "", nil, fmt.Errorf("fcvm: execution relay identity %s: not authorized", instance)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.ExecutionOnly || inst.ExecutionID == "" || inst.ExecutionLeaseToken == "" || len(inst.ExecutionOutboundIntegrationIDs) == 0 {
+		return "", "", "", nil, fmt.Errorf("fcvm: execution relay identity %s: not authorized", instance)
+	}
+	return inst.AccountID, inst.ExecutionID, inst.ExecutionLeaseToken, append([]string(nil), inst.ExecutionOutboundIntegrationIDs...), nil
 }
 
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account

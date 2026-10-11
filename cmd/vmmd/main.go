@@ -1359,6 +1359,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer relayRecv.Close()
 	}
+	// ADR-983: Runs stream through the relay only when this vmmd serves it.
+	mgr.SetOutboundRelayEnabled(relayRecvErr == nil && relayDial != nil && identitySigner != nil)
 	// Workstream E: serve live, non-sensitive app configuration through the
 	// instance-bound guest metadata endpoint. The receiver only returns rows
 	// for the deployment/app/account attached to the Firecracker stream.

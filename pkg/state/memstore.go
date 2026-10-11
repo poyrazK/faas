@@ -275,6 +275,8 @@ type MemStore struct {
 	objectUploadCompletions     map[string]ObjectUploadCompletion
 	outboundIntegrationOffers   map[string]OutboundIntegrationOffer
 	outboundAIUsage             map[string][]OutboundAIUsageItem
+	outboundAIPrices            map[string]OutboundAIPriceList
+	outboundAIRoutes            map[string]OutboundAIRoute
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex

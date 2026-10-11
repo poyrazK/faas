@@ -36,11 +36,57 @@ func (c *Client) SetOutboundIntegrationRequestPolicy(ctx context.Context, integr
 	return c.do(ctx, "PUT", path, PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil)
 }
 
-// SetOutboundIntegrationAIPolicy replaces a customer integration's AI gateway
-// provider and optional daily token limit; an empty provider turns it off.
-func (c *Client) SetOutboundIntegrationAIPolicy(ctx context.Context, integrationID, provider string, dailyTokenLimit *int64) error {
+// SetOutboundIntegrationAIPolicy replaces a customer integration's complete AI
+// gateway policy (provider, token and cost limits); an empty provider turns
+// it off.
+func (c *Client) SetOutboundIntegrationAIPolicy(ctx context.Context, integrationID string, policy PutOutboundAIPolicyRequest) error {
 	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai"
-	return c.do(ctx, "PUT", path, PutOutboundAIPolicyRequest{AIProvider: provider, DailyTokenLimit: dailyTokenLimit}, nil)
+	return c.do(ctx, "PUT", path, policy, nil)
+}
+
+// GetOutboundIntegrationAIPrices returns the price list in effect.
+func (c *Client) GetOutboundIntegrationAIPrices(ctx context.Context, integrationID string) (OutboundAIPriceListResponse, error) {
+	var out OutboundAIPriceListResponse
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-prices"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// SetOutboundIntegrationAIPrices replaces the price list, effective now.
+func (c *Client) SetOutboundIntegrationAIPrices(ctx context.Context, integrationID string, entries []OutboundAIPriceEntry) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-prices"
+	if entries == nil {
+		entries = []OutboundAIPriceEntry{}
+	}
+	return c.do(ctx, "PUT", path, PutOutboundAIPricesRequest{Entries: entries}, nil)
+}
+
+// SetOutboundBindingAIBudget sets or clears one app's daily AI token limit.
+func (c *Client) SetOutboundBindingAIBudget(ctx context.Context, slug, integrationID string, dailyTokenLimit *int64) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/ai-budget"
+	return c.do(ctx, "PUT", path, PutOutboundBindingAIBudgetRequest{DailyTokenLimit: dailyTokenLimit}, nil)
+}
+
+func (c *Client) ListOutboundAIRoutes(ctx context.Context) (OutboundAIRouteList, error) {
+	var out OutboundAIRouteList
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes", nil, &out)
+}
+
+func (c *Client) CreateOutboundAIRoute(ctx context.Context, req CreateOutboundAIRouteRequest) (OutboundAIRoute, error) {
+	var out OutboundAIRoute
+	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes", req, &out)
+}
+
+func (c *Client) GetOutboundAIRoute(ctx context.Context, routeID string) (OutboundAIRoute, error) {
+	var out OutboundAIRoute
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID), nil, &out)
+}
+
+func (c *Client) SetOutboundAIRouteTargets(ctx context.Context, routeID string, targets []OutboundAIRouteTarget) error {
+	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", PutOutboundAIRouteTargetsRequest{Targets: targets}, nil)
+}
+
+func (c *Client) DeleteOutboundAIRoute(ctx context.Context, routeID string) error {
+	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID), nil, nil)
 }
 
 // GetOutboundIntegrationAIUsage reads one UTC day (YYYY-MM-DD, empty for

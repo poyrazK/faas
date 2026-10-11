@@ -9,13 +9,41 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound/relaywire"
 )
 
 // RelayIdentityVerifier authenticates the connection-scoped assertion vmmd
-// attaches to an app relay connection (ADR-982).
+// attaches to an app (ADR-982) or Run (ADR-983) relay connection.
 type RelayIdentityVerifier interface {
 	VerifyRelay(rawToken string) (WorkloadIdentity, error)
+	VerifyExecutionRelay(rawToken string) (ExecutionIdentity, error)
+}
+
+// relayPrincipal is the verified caller of one relay connection: an app, or
+// a Run with the integrations its scheduler grant named.
+type relayPrincipal struct {
+	app                   WorkloadIdentity
+	execution             *ExecutionIdentity
+	executionIntegrations map[string]struct{}
+}
+
+func (p relayPrincipal) accountID() string {
+	if p.execution != nil {
+		return p.execution.AccountID
+	}
+	return p.app.AccountID
+}
+
+type relayPrincipalKey struct{}
+
+func withRelayPrincipal(ctx context.Context, principal relayPrincipal) context.Context {
+	return context.WithValue(ctx, relayPrincipalKey{}, principal)
+}
+
+func relayPrincipalFromContext(ctx context.Context) (relayPrincipal, bool) {
+	principal, ok := ctx.Value(relayPrincipalKey{}).(relayPrincipal)
+	return principal, ok && (principal.execution != nil || principal.app.AppID != "")
 }
 
 const (
@@ -25,17 +53,24 @@ const (
 	relayMaxPendingHandshakes = 256
 )
 
-type relayIdentityKey struct{}
-
 func withRelayIdentity(ctx context.Context, identity WorkloadIdentity) context.Context {
-	return context.WithValue(ctx, relayIdentityKey{}, identity)
+	return withRelayPrincipal(ctx, relayPrincipal{app: identity})
 }
 
 // relayIdentityFromContext returns the verified app for a relay request.
-// Requests on the ordinary listener never carry one.
+// Requests on the ordinary listener and Run relays never carry one.
 func relayIdentityFromContext(ctx context.Context) (WorkloadIdentity, bool) {
-	identity, ok := ctx.Value(relayIdentityKey{}).(WorkloadIdentity)
-	return identity, ok && identity.AppID != ""
+	principal, ok := relayPrincipalFromContext(ctx)
+	return principal.app, ok && principal.execution == nil
+}
+
+// relayExecutionFromContext returns the verified Run of a relay request.
+func relayExecutionFromContext(ctx context.Context) (ExecutionIdentity, map[string]struct{}, bool) {
+	principal, ok := relayPrincipalFromContext(ctx)
+	if !ok || principal.execution == nil {
+		return ExecutionIdentity{}, nil, false
+	}
+	return *principal.execution, principal.executionIntegrations, true
 }
 
 // relayIdentityHeaders are caller-controlled identity channels. A relay
@@ -65,7 +100,7 @@ func NewRelayServer(handler http.Handler, verifier RelayIdentityVerifier, readHe
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
 		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
 			if relay, ok := conn.(*relayConn); ok {
-				return withRelayIdentity(ctx, relay.identity)
+				return withRelayPrincipal(ctx, relay.principal)
 			}
 			return ctx
 		},
@@ -93,7 +128,7 @@ func NewRelayListener(inner net.Listener, verifier RelayIdentityVerifier, metric
 
 type relayConn struct {
 	net.Conn
-	identity WorkloadIdentity
+	principal relayPrincipal
 }
 
 type relayListener struct {
@@ -130,7 +165,7 @@ func (l *relayListener) acceptLoop() {
 
 func (l *relayListener) handshake(conn net.Conn) {
 	defer func() { <-l.pending }()
-	identity, err := readRelayIdentity(conn, l.verifier)
+	principal, err := readRelayPrincipal(conn, l.verifier)
 	if err != nil {
 		l.metrics.ObserveRelayConnection("rejected")
 		l.log.Debug("outbound relay: rejected connection", "remote", conn.RemoteAddr().String(), "err", err)
@@ -139,30 +174,45 @@ func (l *relayListener) handshake(conn net.Conn) {
 	}
 	l.metrics.ObserveRelayConnection("accepted")
 	select {
-	case l.conns <- &relayConn{Conn: conn, identity: identity}:
+	case l.conns <- &relayConn{Conn: conn, principal: principal}:
 	case <-l.done:
 		_ = conn.Close()
 	}
 }
 
-// readRelayIdentity reads the preamble under a deadline. For a TLS listener
+// readRelayPrincipal reads the preamble under a deadline. For a TLS listener
 // this first Read also completes the mTLS handshake and node verification.
-func readRelayIdentity(conn net.Conn, verifier RelayIdentityVerifier) (WorkloadIdentity, error) {
+// An app assertion carries no grant list; a Run assertion must carry its
+// granted integrations (ADR-983).
+func readRelayPrincipal(conn net.Conn, verifier RelayIdentityVerifier) (relayPrincipal, error) {
 	if err := conn.SetDeadline(time.Now().Add(relayPreambleTimeout)); err != nil {
-		return WorkloadIdentity{}, err
+		return relayPrincipal{}, err
 	}
 	preamble, err := relaywire.Read(conn)
 	if err != nil {
-		return WorkloadIdentity{}, err
+		return relayPrincipal{}, err
 	}
-	identity, err := verifier.VerifyRelay(preamble.Assertion)
-	if err != nil {
-		return WorkloadIdentity{}, err
+	var principal relayPrincipal
+	if identity, appErr := verifier.VerifyRelay(preamble.Assertion); appErr == nil && len(preamble.ExecutionIntegrations) == 0 {
+		principal = relayPrincipal{app: identity}
+	} else {
+		execution, execErr := verifier.VerifyExecutionRelay(preamble.Assertion)
+		if execErr != nil {
+			return relayPrincipal{}, errors.Join(appErr, execErr)
+		}
+		granted, normalizeErr := api.NormalizeExecutionIntegrationIDs(preamble.ExecutionIntegrations)
+		if normalizeErr != nil || len(granted) == 0 {
+			return relayPrincipal{}, errors.New("outbound relay: a Run relay needs its granted integrations")
+		}
+		principal = relayPrincipal{execution: &execution, executionIntegrations: make(map[string]struct{}, len(granted))}
+		for _, id := range granted {
+			principal.executionIntegrations[id] = struct{}{}
+		}
 	}
 	if err := conn.SetDeadline(time.Time{}); err != nil {
-		return WorkloadIdentity{}, err
+		return relayPrincipal{}, err
 	}
-	return identity, nil
+	return principal, nil
 }
 
 func (l *relayListener) Accept() (net.Conn, error) {

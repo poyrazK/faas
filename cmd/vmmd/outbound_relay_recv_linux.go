@@ -55,13 +55,9 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 	if r.signer == nil || r.dial == nil || r.mgr == nil {
 		return "", nil
 	}
-	appID, accountID, err := r.mgr.InstanceIdentity(instance)
-	if err != nil || appID == "" || accountID == "" {
-		return "protocol", fmt.Errorf("outbound relay: instance identity unavailable")
-	}
-	token, err := r.signer.Mint(r.now(), accountID, appID, instance, workloadidentity.OutboundRelayAudience)
+	preamble, err := r.relayPreamble(instance)
 	if err != nil {
-		return "protocol", fmt.Errorf("outbound relay: mint assertion: %w", err)
+		return "protocol", err
 	}
 	dialCtx, cancel := context.WithTimeout(r.ctx, outboundRelayDialTimeout)
 	upstream, err := r.dial(dialCtx)
@@ -70,11 +66,33 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 		return "write", fmt.Errorf("outbound relay: dial outboundd: %w", err)
 	}
 	defer func() { _ = upstream.Close() }()
-	if err := relaywire.Write(upstream, relaywire.Preamble{Assertion: token.AccessToken}); err != nil {
+	if err := relaywire.Write(upstream, preamble); err != nil {
 		return "write", err
 	}
 	spliceOutboundRelay(guest, upstream)
 	return "", nil
+}
+
+// relayPreamble identifies the instance as a Run with granted integrations
+// (ADR-983) or as an app (ADR-982). A Run without grants, or any other
+// instance, gets no relay.
+func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamble, error) {
+	if accountID, executionID, leaseToken, integrations, err := r.mgr.ExecutionRelayIdentity(instance); err == nil {
+		token, mintErr := r.signer.MintExecution(r.now(), accountID, executionID, leaseToken, workloadidentity.OutboundRelayAudience)
+		if mintErr != nil {
+			return relaywire.Preamble{}, fmt.Errorf("outbound relay: mint execution assertion: %w", mintErr)
+		}
+		return relaywire.Preamble{Assertion: token.BearerValue(), ExecutionIntegrations: integrations}, nil
+	}
+	appID, accountID, err := r.mgr.InstanceIdentity(instance)
+	if err != nil || appID == "" || accountID == "" {
+		return relaywire.Preamble{}, fmt.Errorf("outbound relay: instance identity unavailable")
+	}
+	token, err := r.signer.Mint(r.now(), accountID, appID, instance, workloadidentity.OutboundRelayAudience)
+	if err != nil {
+		return relaywire.Preamble{}, fmt.Errorf("outbound relay: mint assertion: %w", err)
+	}
+	return relaywire.Preamble{Assertion: token.AccessToken}, nil
 }
 
 // spliceOutboundRelay copies both directions and forwards half-closes. When

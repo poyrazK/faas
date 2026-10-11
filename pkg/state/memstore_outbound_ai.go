@@ -9,9 +9,17 @@ import (
 
 var _ OutboundAIStore = (*MemStore)(nil)
 
+func copyInt64Ptr(in *int64) *int64 {
+	if in == nil {
+		return nil
+	}
+	value := *in
+	return &value
+}
+
 // SetOutboundAIPolicy mirrors the PgStore customer-only AI settings update.
-func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integrationID, provider string, dailyTokenLimit *int64) error {
-	if !api.ValidOutboundAIPolicy(provider, dailyTokenLimit) {
+func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integrationID string, policy OutboundAIPolicy) error {
+	if !policy.valid() {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -20,17 +28,15 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" || !offer.Enabled {
 		return ErrNotFound
 	}
-	offer.AIProvider = provider
-	offer.AIDailyTokenLimit = nil
-	if dailyTokenLimit != nil {
-		limit := *dailyTokenLimit
-		offer.AIDailyTokenLimit = &limit
-	}
+	offer.AIProvider = policy.Provider
+	offer.AIDailyTokenLimit = copyInt64Ptr(policy.DailyTokenLimit)
+	offer.AIDailyCostLimit = copyInt64Ptr(policy.DailyCostLimit)
+	offer.AIMonthlyCostLimit = copyInt64Ptr(policy.MonthlyCostLimit)
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }
 
-// GetOutboundAIUsage reports settings with no usage: in development and
+// GetOutboundAIUsage reports settings with seeded rollups: in development and
 // tests nothing writes rollups unless SeedOutboundAIUsage is called.
 func (m *MemStore) GetOutboundAIUsage(_ context.Context, accountID, integrationID, usageDate string) (OutboundAIUsage, error) {
 	now := time.Now().UTC()
@@ -48,15 +54,19 @@ func (m *MemStore) GetOutboundAIUsage(_ context.Context, accountID, integrationI
 		return OutboundAIUsage{}, ErrNotFound
 	}
 	usage := OutboundAIUsage{
-		UsageDate: usageDate, AIProvider: offer.AIProvider, ResetsAt: day.AddDate(0, 0, 1),
-		Items: append([]OutboundAIUsageItem{}, m.outboundAIUsage[integrationID+"/"+usageDate]...),
-	}
-	if offer.AIDailyTokenLimit != nil {
-		limit := *offer.AIDailyTokenLimit
-		usage.DailyTokenLimit = &limit
+		UsageDate: usageDate, AIProvider: offer.AIProvider, ResetsAt: day.AddDate(0, 0, 1), Month: day.Format("2006-01"),
+		Items:           append([]OutboundAIUsageItem{}, m.outboundAIUsage[integrationID+"/"+usageDate]...),
+		DailyTokenLimit: copyInt64Ptr(offer.AIDailyTokenLimit), DailyCostLimit: copyInt64Ptr(offer.AIDailyCostLimit),
+		MonthlyCostLimit: copyInt64Ptr(offer.AIMonthlyCostLimit),
 	}
 	for _, item := range usage.Items {
 		usage.DailyTokenCount += item.InputTokens + item.OutputTokens
+		usage.DailyCostMillicents += item.CostMillicents
+	}
+	for monthDay := time.Date(day.Year(), day.Month(), 1, 0, 0, 0, 0, time.UTC); !monthDay.After(day); monthDay = monthDay.AddDate(0, 0, 1) {
+		for _, item := range m.outboundAIUsage[integrationID+"/"+monthDay.Format("2006-01-02")] {
+			usage.MonthlyCostMillicents += item.CostMillicents
+		}
 	}
 	return usage, nil
 }
@@ -70,4 +80,60 @@ func (m *MemStore) SeedOutboundAIUsage(integrationID, usageDate string, items ..
 	}
 	key := integrationID + "/" + usageDate
 	m.outboundAIUsage[key] = append(m.outboundAIUsage[key], items...)
+}
+
+// SetOutboundBindingAITokenLimit mirrors the PgStore per-app limit update.
+func (m *MemStore) SetOutboundBindingAITokenLimit(_ context.Context, accountID, appID, integrationID string, limit *int64) error {
+	if limit != nil && (*limit < 1 || *limit > api.MaxOutboundAITokensPerDay) {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.AIProvider == "" {
+		return ErrNotFound
+	}
+	key := appID + "|" + integrationID
+	binding, ok := m.outboundAppBindings[key]
+	if !ok || binding.AccountID != accountID {
+		return ErrNotFound
+	}
+	binding.BindingAIDailyTokenLimit = copyInt64Ptr(limit)
+	m.outboundAppBindings[key] = binding
+	return nil
+}
+
+// GetOutboundAIPrices returns the newest price list set through the store.
+func (m *MemStore) GetOutboundAIPrices(_ context.Context, accountID, integrationID string) (OutboundAIPriceList, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID {
+		return OutboundAIPriceList{}, ErrNotFound
+	}
+	list, ok := m.outboundAIPrices[integrationID]
+	if !ok {
+		return OutboundAIPriceList{Entries: make([]api.OutboundAIPriceEntry, 0)}, nil
+	}
+	effective := *list.EffectiveFrom
+	return OutboundAIPriceList{EffectiveFrom: &effective, Entries: append([]api.OutboundAIPriceEntry{}, list.Entries...)}, nil
+}
+
+// SetOutboundAIPrices replaces the price list for a customer integration.
+func (m *MemStore) SetOutboundAIPrices(_ context.Context, accountID, integrationID string, entries []api.OutboundAIPriceEntry) error {
+	if !api.ValidOutboundAIPriceEntries(entries) {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" {
+		return ErrNotFound
+	}
+	if m.outboundAIPrices == nil {
+		m.outboundAIPrices = make(map[string]OutboundAIPriceList)
+	}
+	now := time.Now().UTC()
+	m.outboundAIPrices[integrationID] = OutboundAIPriceList{EffectiveFrom: &now, Entries: append([]api.OutboundAIPriceEntry{}, entries...)}
+	return nil
 }

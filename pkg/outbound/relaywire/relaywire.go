@@ -16,9 +16,12 @@ import (
 // is at most 8 KiB, so the frame leaves room for the envelope.
 const MaxPreambleBytes = 12 << 10
 
-// Preamble carries the vmmd-minted relay assertion for the connection.
+// Preamble carries the vmmd-minted relay assertion for the connection. For a
+// Run (ADR-983) it also lists the integrations granted to that Run; the
+// mTLS channel from vmmd authenticates the list like the assertion itself.
 type Preamble struct {
-	Assertion string `json:"assertion"`
+	Assertion             string   `json:"assertion"`
+	ExecutionIntegrations []string `json:"execution_integrations,omitempty"`
 }
 
 // Write encodes one length-prefixed preamble frame.

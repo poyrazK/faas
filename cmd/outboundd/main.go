@@ -198,6 +198,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
+	// ADR-983: AI fallback routes are served on relay connections.
+	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
+		return err
+	}
 	go runAIUsagePrune(ctx, backend, log)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
 	if err != nil {
