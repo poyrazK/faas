@@ -32,6 +32,7 @@ type secretsUnsetBatchReceipt struct {
 	RestartRequested    bool                 `json:"restart_requested"`
 	WakeID              string               `json:"wake_id,omitempty"`
 	WaitForAckRequested bool                 `json:"wait_for_ack_requested"`
+	Warnings            []string             `json:"warnings,omitempty"`
 }
 
 func batchRemoval(key string, row api.AppSecretRevocationResponse) secretBatchRemoval {
@@ -78,14 +79,22 @@ func executeSecretsUnsetBatch(client *Client, app string, keys []string, scope s
 	}
 	if restart {
 		restartCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		out, err := client.RestartAppFresh(restartCtx, app)
+		wakeID, parked, err := restartAfterSecretChange(restartCtx, client, app)
 		cancel()
 		if err != nil {
 			return fail("Secrets removed, but restart was not confirmed", err)
 		}
-		receipt.RestartRequested, receipt.WakeID = true, out.WakeID
-		if out.WakeID == "" {
-			return fail("Restart identifier missing", errors.New("restart was accepted without a wake identifier; inspect current operations before retrying"))
+		if parked {
+			restart = false
+			receipt.Warnings = append(receipt.Warnings, parkedSecretChangeNote)
+			if !jsonOutput {
+				PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			}
+		} else {
+			receipt.RestartRequested, receipt.WakeID = true, wakeID
+			if wakeID == "" {
+				return fail("Restart identifier missing", errors.New("restart was accepted without a wake identifier; inspect current operations before retrying"))
+			}
 		}
 	}
 	if wait {
@@ -111,7 +120,7 @@ func executeSecretsUnsetBatch(client *Client, app string, keys []string, scope s
 	}
 	if restart {
 		PrintOK(osStdout, "One restart requested after all removals (wake_id=%s)", receipt.WakeID)
-	} else {
+	} else if len(receipt.Warnings) == 0 {
 		PrintWarn(osStdout, "Running instances may retain removed secrets until reload or their next cold wake.")
 	}
 	printSecretUpdateNextSteps(app, scope, receipt.WakeID, keys...)

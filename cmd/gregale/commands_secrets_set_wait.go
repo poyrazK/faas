@@ -51,27 +51,35 @@ func runSecretUpdateWait(parent context.Context, client *Client, app, scope stri
 	}
 	receipt.ObservedDeliveryVersions = versions
 	if restart {
-		out, err := client.RestartAppFresh(ctx, app)
+		wakeID, parked, err := restartAfterSecretChange(ctx, client, app)
 		if err != nil {
 			return fail("Restart failed", err)
 		}
-		receipt.RestartRequested, receipt.WakeID = true, out.WakeID
-		if out.WakeID == "" {
-			return fail("Restart identifier missing", errors.New("restart accepted without a wake_id"))
-		}
-		if !jsonOutput {
-			PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", out.WakeID)
-		}
-		instance, err := waitForAppWake(ctx, client, app, out.WakeID, timeout, 250*time.Millisecond)
-		if err != nil {
-			return fail("Waiting for restarted app failed", err)
-		}
-		if instance.ID == "" {
-			return fail("Restart instance missing", errors.New("running instance did not include an ID"))
-		}
-		receipt.InstanceID = instance.ID
-		if !jsonOutput {
-			PrintOK(osStdout, "Restart reached running (wake_id=%s, instance_id=%s)", out.WakeID, instance.ID)
+		if parked {
+			restart = false
+			receipt.Warnings = append(receipt.Warnings, parkedSecretChangeNote)
+			if !jsonOutput {
+				PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			}
+		} else {
+			receipt.RestartRequested, receipt.WakeID = true, wakeID
+			if wakeID == "" {
+				return fail("Restart identifier missing", errors.New("restart accepted without a wake_id"))
+			}
+			if !jsonOutput {
+				PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", wakeID)
+			}
+			instance, err := waitForAppWake(ctx, client, app, wakeID, timeout, 250*time.Millisecond)
+			if err != nil {
+				return fail("Waiting for restarted app failed", err)
+			}
+			if instance.ID == "" {
+				return fail("Restart instance missing", errors.New("running instance did not include an ID"))
+			}
+			receipt.InstanceID = instance.ID
+			if !jsonOutput {
+				PrintOK(osStdout, "Restart reached running (wake_id=%s, instance_id=%s)", wakeID, instance.ID)
+			}
 		}
 	}
 	if !jsonOutput {
@@ -129,7 +137,7 @@ func runSecretUpdateWait(parent context.Context, client *Client, app, scope stri
 			receipt.AcknowledgementStatus = "confirmed"
 			if len(noTargets) > 0 {
 				receipt.AcknowledgementStatus = "no_active_targets"
-				receipt.Warnings = []string{fmt.Sprintf("No active authorized runtimes for %v; no application acknowledgement was observed for these keys. Values remain available for future cold wakes.", noTargets)}
+				receipt.Warnings = append(receipt.Warnings, fmt.Sprintf("No active authorized runtimes for %v; no application acknowledgement was observed for these keys. Values remain available for future cold wakes.", noTargets))
 			}
 			if jsonOutput {
 				return emit()
