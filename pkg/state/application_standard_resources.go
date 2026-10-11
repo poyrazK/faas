@@ -88,10 +88,18 @@ func prepareStandardPublisher(in ApplicationStandardPublisherCreate) (api.Applic
 		return api.ApplicationStandardPublisher{}, fmt.Errorf("invalid publisher public key: %w", ErrInvalidArgument)
 	}
 	pub, ok := key.(*ecdsa.PublicKey)
-	if !ok || pub.Curve != elliptic.P256() || !pub.IsOnCurve(pub.X, pub.Y) {
+	if !ok || pub.Curve != elliptic.P256() {
 		return api.ApplicationStandardPublisher{}, fmt.Errorf("publisher must use an ECDSA P-256 public key: %w", ErrInvalidArgument)
 	}
-	canonical, err := x509.MarshalPKIXPublicKey(pub)
+	encoded, err := pub.Bytes()
+	if err != nil {
+		return api.ApplicationStandardPublisher{}, fmt.Errorf("invalid publisher public key: %w", ErrInvalidArgument)
+	}
+	canonicalPub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded)
+	if err != nil {
+		return api.ApplicationStandardPublisher{}, fmt.Errorf("invalid publisher public key: %w", ErrInvalidArgument)
+	}
+	canonical, err := x509.MarshalPKIXPublicKey(canonicalPub)
 	if err != nil {
 		return api.ApplicationStandardPublisher{}, err
 	}
