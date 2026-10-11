@@ -18,8 +18,26 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 }
 
 // WatchCommitRecoveryStatusWithRetry permits a bounded total number of transient read retries.
-func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (CommitRecoveryStatusResult, error) {
-	var out CommitRecoveryStatusResult
+func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (out CommitRecoveryStatusResult, err error) {
+	started := time.Now()
+	passes, usedRetries := 0, 0
+	reason := "read_failure"
+	summary := func(stopReason string) *CommitRecoveryMonitoring {
+		return &CommitRecoveryMonitoring{StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out)}
+	}
+	defer func() {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reason = "timeout"
+		} else if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			reason = "cancelled"
+		} else {
+			var validation *Problem
+			if errors.As(err, &validation) && validation.Code == CodeValidation {
+				reason = "validation_failure"
+			}
+		}
+		out.Monitoring = summary(reason)
+	}()
 	if _, ok := ctx.Deadline(); !ok || interval < CommitRecoveryWatchIntervalMin || interval > CommitRecoveryWatchIntervalMax || readRetries < 0 || readRetries > CommitRecoveryWatchReadRetriesMax {
 		return out, ErrValidation("watch requires a deadline and a valid polling interval")
 	}
@@ -38,13 +56,16 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 			}
 		}
 	}
-	usedRetries := 0
 	for {
+		passes++
 		out, err = c.getCommitRecoveryStatus(ctx, plan, applied, previous, refresh, limit, pages)
 		delay := interval
 		if err != nil {
 			retryAfter, retryable := commitRecoveryReadRetry(err)
 			if !retryable || usedRetries >= readRetries || ctx.Err() != nil {
+				if retryable && readRetries > 0 && usedRetries >= readRetries {
+					reason = "retry_exhausted"
+				}
 				return out, err
 			}
 			usedRetries++
@@ -59,6 +80,7 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 				delay = retryAfter
 			}
 		}
+		out.Monitoring = summary("running")
 		if progress != nil {
 			snapshot, copyErr := cloneCommitRecoveryWatchInputs(plan, applied, &out)
 			if copyErr != nil {
@@ -70,6 +92,7 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 			return out, ctx.Err()
 		}
 		if err == nil && CommitRecoveryStatusSettled(out) {
+			reason = "settled"
 			return out, nil
 		}
 		previous = &out

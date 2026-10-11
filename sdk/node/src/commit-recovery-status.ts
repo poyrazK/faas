@@ -24,7 +24,11 @@ export interface CommitRecoveryStatusItem {
   observed_at?: string; expected_generation?: number; generation?: number; generation_relation?: string;
   recipient?: EventReceiptRecipientResponse;
 }
+export interface CommitRecoveryMonitoring {
+  stop_reason: string; passes: number; retries_consumed: number; elapsed_ms: number; acknowledged_executions_terminal: boolean;
+}
 export interface CommitRecoveryStatusResult {
+  monitoring?: CommitRecoveryMonitoring;
   source_id: string; refreshing?: boolean; subscription_id?: string; remaining: number; items: CommitRecoveryStatusItem[]; counts: Record<string, number>; complete: boolean;
 }
 export class CommitRecoveryStatusError extends Error {
@@ -221,11 +225,17 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   if (signal?.aborted) abort();
   const timer = setTimeout(abort, timeoutMs), started = performance.now();
   let out: CommitRecoveryStatusResult = { source_id: source, items: [], counts: {}, remaining: 0, complete: false };
-  let usedRetries = 0;
+  let usedRetries = 0, passes = 0;
+  let reason = 'read_failure', phase = 'read';
+  const summarize = (stop_reason: string): CommitRecoveryMonitoring => ({
+    stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
+    acknowledged_executions_terminal: commitRecoveryStatusSettled(out),
+  });
   try {
     for (;;) {
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
       let delay = intervalMs, failed = false;
+      passes++;
       try {
         out = await getCommitRecoveryStatus(source, fixedPlan, fixedApplied, {
           limit, recipientPages,
@@ -236,13 +246,19 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
         if (!(error instanceof CommitRecoveryStatusError)) throw error;
         out = error.result;
         const retryAfter = recoveryReadRetry(error.cause);
-        if (retryAfter === undefined || usedRetries >= readRetries || controller.signal.aborted) throw error;
+        if (retryAfter === undefined || usedRetries >= readRetries || controller.signal.aborted) {
+          if (retryAfter !== undefined && readRetries > 0 && usedRetries >= readRetries) reason = 'retry_exhausted';
+          throw error;
+        }
         usedRetries++; failed = true;
         delay = Math.max(Math.min(60000, intervalMs * 2 ** (usedRetries - 1)), retryAfter);
       }
+      out.monitoring = summarize('running');
+      phase = 'callback';
       onProgress?.(structuredClone(out));
+      phase = 'read';
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
-      if (!failed && commitRecoveryStatusSettled(out)) return out;
+      if (!failed && commitRecoveryStatusSettled(out)) { out.monitoring = summarize('settled'); return out; }
       previous = out; refresh = !failed && out.remaining === 0;
       await new Promise<void>(resolve => {
         const done = () => { clearTimeout(poll); controller.signal.removeEventListener('abort', done); resolve(); };
@@ -252,6 +268,12 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
       });
     }
   } catch (error) {
+    if (error instanceof CommitRecoveryStatusError) out = error.result;
+    if (signal?.aborted) reason = 'cancelled';
+    else if (controller.signal.aborted || performance.now() - started >= timeoutMs) reason = 'timeout';
+    else if (phase === 'callback') reason = 'callback_failure';
+    else if (recoveryValidationFailure(error)) reason = 'validation_failure';
+    out.monitoring = summarize(reason);
     if (error instanceof CommitRecoveryStatusError) throw error;
     throw new CommitRecoveryStatusError(out, error);
   } finally {
@@ -282,4 +304,11 @@ function recoveryReadRetry(error: unknown): number | undefined {
   if (['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET'].includes(typed.code ?? '')) return 0;
   if (error instanceof TypeError && error.message === 'fetch failed') return 0;
   return undefined;
+}
+
+function recoveryValidationFailure(error: unknown): boolean {
+  if (error instanceof TypeError) return error.message !== 'fetch failed';
+  if (error instanceof AggregateError) return error.errors.some(recoveryValidationFailure);
+  if (error instanceof CommitRecoveryStatusError || error instanceof CommitDeliveryReportError) return recoveryValidationFailure(error.cause);
+  return false;
 }

@@ -37,8 +37,18 @@ type CommitRecoveryStatusChange struct {
 	ObservedAt         *time.Time      `json:"observed_at,omitempty"`
 }
 
+// CommitRecoveryMonitoring describes this watch invocation, not delivery success.
+type CommitRecoveryMonitoring struct {
+	StopReason                     string `json:"stop_reason"`
+	Passes                         int    `json:"passes"`
+	RetriesConsumed                int    `json:"retries_consumed"`
+	ElapsedMS                      int64  `json:"elapsed_ms"`
+	AcknowledgedExecutionsTerminal bool   `json:"acknowledged_executions_terminal"`
+}
+
 // CommitRecoveryStatusResult samples delivery evidence without submitting recovery.
 type CommitRecoveryStatusResult struct {
+	Monitoring     *CommitRecoveryMonitoring  `json:"monitoring,omitempty"`
 	Refreshing     bool                       `json:"refreshing,omitempty"`
 	SubscriptionID string                     `json:"subscription_id,omitempty"`
 	Remaining      int                        `json:"remaining"`

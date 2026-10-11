@@ -413,3 +413,6 @@ type CommitRecoveryStatusChange = api.CommitRecoveryStatusChange
 func CommitRecoveryStatusSettled(out CommitRecoveryStatusResult) bool {
 	return api.CommitRecoveryStatusSettled(out)
 }
+
+// CommitRecoveryMonitoring describes a bounded watch invocation.
+type CommitRecoveryMonitoring = api.CommitRecoveryMonitoring

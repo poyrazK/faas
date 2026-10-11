@@ -477,11 +477,24 @@ async def awatch_commit_recovery_status(
     out: dict[str, Any] = {"source_id": str(source), "items": [], "counts": {}, "remaining": 0, "complete": False}
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
-    used_retries = 0
+    used_retries, passes = 0, 0
+    reason, phase = "read_failure", "read"
+
+    def summarize(stop_reason: str) -> dict[str, Any]:
+        return {
+            "stop_reason": stop_reason,
+            "passes": passes,
+            "retries_consumed": used_retries,
+            "elapsed_ms": max(0, int((loop.time() - (deadline - timeout)) * 1000)),
+            "acknowledged_executions_terminal": commit_recovery_status_settled(out),
+        }
+
+    timeout_scope = asyncio.timeout(timeout)
     try:
-        async with asyncio.timeout(timeout):
+        async with timeout_scope:
             while True:
                 delay, failed = interval, False
+                passes += 1
                 try:
                     out = await aget_commit_recovery_status(
                         client,
@@ -498,21 +511,38 @@ async def awatch_commit_recovery_status(
                     out = error.result
                     retry_after = _read_retry(error.__cause__)
                     if retry_after is None or used_retries >= read_retries:
+                        if retry_after is not None and read_retries > 0 and used_retries >= read_retries:
+                            reason = "retry_exhausted"
                         raise
                     used_retries += 1
                     failed = True
                     delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
+                out["monitoring"] = summarize("running")
+                phase = "callback"
                 if on_progress is not None:
                     on_progress(copy.deepcopy(out))
+                phase = "read"
                 if loop.time() >= deadline:
                     raise TimeoutError("watch deadline exceeded")
                 if not failed and commit_recovery_status_settled(out):
+                    out["monitoring"] = summarize("settled")
                     return out
                 previous, refreshing = out, not failed and out["remaining"] == 0
                 await asyncio.sleep(delay)
-    except CommitRecoveryStatusError:
-        raise
     except (Exception, asyncio.CancelledError) as error:
+        if isinstance(error, CommitRecoveryStatusError):
+            out = error.result
+        if timeout_scope.expired() or loop.time() >= deadline:
+            reason = "timeout"
+        elif _watch_cancelled(error):
+            reason = "cancelled"
+        elif phase == "callback":
+            reason = "callback_failure"
+        elif _watch_validation_failure(error):
+            reason = "validation_failure"
+        out["monitoring"] = summarize(reason)
+        if isinstance(error, CommitRecoveryStatusError):
+            raise
         raise CommitRecoveryStatusError(out) from error
 
 
@@ -545,3 +575,17 @@ def _read_retry(error: BaseException | None) -> float | None:
     if isinstance(error, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)):
         return 0.0
     return None
+
+
+def _watch_cancelled(error: BaseException | None) -> bool:
+    if isinstance(error, asyncio.CancelledError):
+        return True
+    return error is not None and _watch_cancelled(error.__cause__)
+
+
+def _watch_validation_failure(error: BaseException | None) -> bool:
+    if isinstance(error, (ValueError, TypeError)):
+        return True
+    if isinstance(error, _CommitRecoveryReadErrors):
+        return any(_watch_validation_failure(cause) for cause in error.errors)
+    return error is not None and _watch_validation_failure(error.__cause__)

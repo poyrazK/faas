@@ -2417,3 +2417,6 @@ Use `watchCommitRecoveryStatus` for bounded recovery monitoring with detached pr
 
 
 Opt into transient recovery-watch read retries with `readRetries`. The total budget is 0..20, defaults to zero, and shares the overall timeout. Partial results reach progress callbacks before backoff; permanent errors stop immediately. See [retry behavior](../../docs/gregale-commit.md#retry-transient-monitoring-reads).
+
+
+Recovery watch results include `monitoring` with stop reason, started passes, consumed retries, elapsed milliseconds and conservative terminal coverage. Progress snapshots report running; final results and attached errors report the outcome. Counters restart on resume. See [structured outcomes](../../docs/gregale-commit.md#structured-monitoring-outcomes).

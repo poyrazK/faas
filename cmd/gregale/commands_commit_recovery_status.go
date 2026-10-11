@@ -129,6 +129,9 @@ func cmdCommitRecoveryStatus(args []string) int {
 	}
 	checkpointCode := 0
 	if checkpointErr != nil {
+		if out.Monitoring != nil {
+			out.Monitoring.StopReason = "checkpoint_failure"
+		}
 		checkpointCode = printErr("Cannot save recovery checkpoint", checkpointErr)
 	}
 	if code := jsonOut(writeJSON(out)); code != 0 {

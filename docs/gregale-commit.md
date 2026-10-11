@@ -1341,3 +1341,47 @@ preserves headers on typed errors; direct generated service calls can use
 only available body metadata. Python default detailed responses preserve
 headers, while raised generated UnexpectedStatus errors retain only status.
 See [ADR-944](adr/944-transient-commit-recovery-watch-read-retries.md).
+
+
+### Structured monitoring outcomes
+
+Watch results and attached SDK error results include a monitoring object:
+
+~~~json
+{
+  "monitoring": {
+    "stop_reason": "timeout",
+    "passes": 8,
+    "retries_consumed": 2,
+    "elapsed_ms": 120000,
+    "acknowledged_executions_terminal": false
+  }
+}
+~~~
+
+Progress callbacks and intermediate checkpoints report running. Final results
+report settled, timeout, cancelled, read_failure, retry_exhausted,
+validation_failure, callback_failure (Node/Python) or checkpoint_failure (CLI).
+Authentication failures keep their original errors and report read_failure.
+SDK option errors rejected before the watch starts can remain ordinary
+validation exceptions without a status result.
+
+Passes includes every started bounded observation call, even failed calls.
+Retries_consumed counts authorized retry waits against this invocation's total
+budget. Elapsed_ms measures watch time, including reads, callbacks and waits;
+CLI final saving/output occurs afterward. Restarting from a checkpoint starts
+new monitoring counters. Saved counters never grant additional retry budget
+or prove delivery completion.
+
+Acknowledged_executions_terminal uses the conservative watch settlement rule:
+coverage must be complete, queued attempts need matching terminal evidence,
+and unknown/read-error attempts prevent settlement. When no queued attempt
+exists, the flag can be true; rejected/skipped/not_attempted outcomes remain
+explicit. A terminal failed execution is not a successful delivery. Continue
+checking row statuses and attempts as well as the monitoring stop reason.
+The existing complete field still describes observation coverage only.
+
+Final successful checkpoint saves include the final summary. If saving fails,
+stdout reports checkpoint_failure; the checkpoint may still contain the last
+running snapshot. Plain status reads/resume/refresh omit monitoring metadata.
+See [ADR-945](adr/945-structured-commit-recovery-monitoring-outcomes.md).
