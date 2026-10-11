@@ -9388,3 +9388,22 @@ through an unproven cascade or be treated as ordinary copied configuration.
 Published release withdrawal, separately deleted managed-secret normalization,
 whole-stage terminal compensation and public full-stage admission remain gated.
 Native provider qualification remains deferred.
+
+### Workload configuration borrower guard
+
+The private leased borrower report authenticates the original materialization and
+completed native workload retirement before returning six bounded counts:
+foreign deployment pins, promotion prepared/previous specs, queue runtime sets,
+and invocation work/queue admissions. Original clone deployment pins are retained
+and excluded from the foreign-pin count. Cross-environment spec references and
+queue/admission rows with an inconsistent environment/spec pair still count.
+Configuration cleanup now refuses to delete copied settings while any of these
+borrowers remain, even when native VM retirement has completed. The same clock,
+operation, App and worker locks cover authentication, inventory and deletion.
+
+This is an inventory and deletion guard, not operational retirement authority.
+It never deletes promotion history, queue projections or invocation admissions,
+and does not clear whole-stage compensation blockers. Their owning protocols
+must close and retire those references before workload specs/heads/pins can be
+removed. A PostgreSQL foreign-key inventory test requires explicit review when
+another table begins borrowing workload specs. Live qualification remains deferred.

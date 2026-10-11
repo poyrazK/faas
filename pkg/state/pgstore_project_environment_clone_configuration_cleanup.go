@@ -45,6 +45,13 @@ func (s *PgStore) CleanupProjectEnvironmentCloneConfigurationForLease(ctx contex
 		if !blocked.Valid || blocked.Bool {
 			return ErrConflict
 		}
+		borrowers, err := readCloneWorkloadBorrowersTx(ctx, tx, op, native)
+		if err != nil {
+			return err
+		}
+		if borrowers.blocked() {
+			return ErrConflict
+		}
 		if err = deleteCloneConfigurationTx(ctx, tx, op, native.Plan.EnvironmentID); err != nil {
 			return err
 		}

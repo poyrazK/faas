@@ -49663,6 +49663,46 @@ func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const readCloneWorkloadConfigurationBorrowers = `-- name: ReadCloneWorkloadConfigurationBorrowers :one
+SELECT
+ (SELECT count(*) FROM project_environment_workload_deployment_specs p JOIN project_environment_workload_specs s ON s.id=p.spec_id
+  WHERE s.environment_id=$1::uuid AND NOT EXISTS(
+   SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$2::uuid AND w.target_deployment_id=p.deployment_id AND w.app_id=s.app_id)) AS foreign_deployment_pins,
+ (SELECT count(*) FROM project_environment_promotion_workload_specs p WHERE p.prepared_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS promotion_prepared_specs,
+ (SELECT count(*) FROM project_environment_promotion_workload_specs p WHERE p.previous_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS promotion_previous_specs,
+ (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS queue_runtime_sets,
+ (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS invocation_work_admissions,
+ (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS invocation_queue_admissions
+`
+
+type ReadCloneWorkloadConfigurationBorrowersParams struct {
+	EnvironmentID pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+type ReadCloneWorkloadConfigurationBorrowersRow struct {
+	ForeignDeploymentPins     int64
+	PromotionPreparedSpecs    int64
+	PromotionPreviousSpecs    int64
+	QueueRuntimeSets          int64
+	InvocationWorkAdmissions  int64
+	InvocationQueueAdmissions int64
+}
+
+func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneWorkloadConfigurationBorrowersParams) (ReadCloneWorkloadConfigurationBorrowersRow, error) {
+	row := db.QueryRow(ctx, readCloneWorkloadConfigurationBorrowers, arg.EnvironmentID, arg.OperationID)
+	var i ReadCloneWorkloadConfigurationBorrowersRow
+	err := row.Scan(
+		&i.ForeignDeploymentPins,
+		&i.PromotionPreparedSpecs,
+		&i.PromotionPreviousSpecs,
+		&i.QueueRuntimeSets,
+		&i.InvocationWorkAdmissions,
+		&i.InvocationQueueAdmissions,
+	)
+	return i, err
+}
+
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
 SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE id=$1
 `

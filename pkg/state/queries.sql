@@ -15754,3 +15754,14 @@ DELETE FROM project_environment_edge_policies WHERE project_id=sqlc.arg(project_
 
 -- name: DeleteCloneConfigurationProjectEnvironmentRoutePolicies :exec
 DELETE FROM project_environment_route_policies WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text;
+
+-- name: ReadCloneWorkloadConfigurationBorrowers :one
+SELECT
+ (SELECT count(*) FROM project_environment_workload_deployment_specs p JOIN project_environment_workload_specs s ON s.id=p.spec_id
+  WHERE s.environment_id=sqlc.arg(environment_id)::uuid AND NOT EXISTS(
+   SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=sqlc.arg(operation_id)::uuid AND w.target_deployment_id=p.deployment_id AND w.app_id=s.app_id)) AS foreign_deployment_pins,
+ (SELECT count(*) FROM project_environment_promotion_workload_specs p WHERE p.prepared_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=sqlc.arg(environment_id)::uuid)) AS promotion_prepared_specs,
+ (SELECT count(*) FROM project_environment_promotion_workload_specs p WHERE p.previous_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=sqlc.arg(environment_id)::uuid)) AS promotion_previous_specs,
+ (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=sqlc.arg(environment_id)::uuid)) AS queue_runtime_sets,
+ (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=sqlc.arg(environment_id)::uuid)) AS invocation_work_admissions,
+ (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=sqlc.arg(environment_id)::uuid)) AS invocation_queue_admissions;
