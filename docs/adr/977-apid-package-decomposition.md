@@ -1,0 +1,28 @@
+# ADR-977: Decompose cmd/apid into pkg/apid domain packages
+
+- **Status:** accepted
+- **Date:** 2026-10-11
+- **Decision:** apid code moves out of `package main` into `pkg/apid/<domain>` packages, one domain per PR, without changing behaviour. `apidsource` and `runtimeupgrade` already live there.
+  - **Shared kit.** `pkg/apid/httpkit` holds the stateless request/response helpers every domain needs. These are JSON encode/decode, the not-found and customer problem writers, principal and session-account context, and the `AppLoader` interface that `*middleware.Middleware` satisfies. It never sees `*server`.
+  - **Facades, not call-site churn.** `cmd/apid` keeps one-line facades (`writeJSON`, `decodeJSON`, `s.notFound`, `principalFrom`, …) that delegate to `httpkit`, so existing call sites stay untouched. New and lifted code calls `httpkit` directly. This is the same pattern as `cmd/apid/auth_facade.go` (ADR-046).
+  - **Domain shape.** A domain package exposes a `Handlers` struct with explicit dependencies: `state.Store`, `*slog.Logger`, an `AppLoader`, and the `server` fields that domain owns, which move off `server`. Handler methods are exported.
+  - **Routing stays put.** The route table and the auth chain stay in `cmd/apid/server.go` `handler()`; a route changes only from `s.listBuckets` to `s.objects.ListBuckets`.
+  - **Ownership guard.** The `apid-control-plane-only` depguard rule covers `**/pkg/apid/**` as well as `**/cmd/apid/**`.
+  - **Order.**
+    - Shared kit (this ADR's first PR).
+    - A self-contained pilot (`durable`).
+    - Domains that depend only on the shared core: grpc, githubd, audit, object, operations, realtime, then the small groups.
+    - `handlers_ext.go`, auth, project and dashboard last.
+- **Why:** On `main` at `3752031153`, `cmd/apid` is one package with 757 source files (178k lines) and 744 in-package test files (171k lines), and 2,458 methods hang off `*server` (116 fields). Go compiles a package as one unit, so every `go test ./cmd/apid` builds about 350k lines at once, with a compiler peak of about 7.5 GB even with `-c=1 -dwarf=false`. Several agents or developers testing apid in parallel push a 36 GB workstation into sustained swap (about 800 GB swapped out in one day), and a one-line change to any handler recompiles everything. The coupling is narrower than the package suggests:
+  - A parser-level coupling map shows only about 6 helpers used across most domains: `writeJSON`, `decodeJSON`, `s.loadApp`, `s.notFound`, plus a few problem writers.
+  - Only 15 of the 116 `server` fields are used by more than 3 domains. Most fields cluster by prefix around one domain.
+- **Consequences:**
+  - **Separate compilation.** An extracted domain's tests compile as their own package, and `cmd/apid` shrinks with each move. A change to one domain no longer recompiles the others.
+  - **Router tests stay.** Tests that need the full router and auth chain (the `newServer` harness) stay in `cmd/apid`. Domain packages get small local harnesses.
+  - **Facades are temporary.** A facade can be deleted once no `cmd/apid` caller is left.
+  - **Kit stays stateless.** Code that needs `*server` state does not belong in `httpkit`. It takes the dependency explicitly instead.
+  - **Same ownership boundary.** `pkg/apid/**` is apid code: other daemons import only the existing `pkg/apid` router predicate, never domain packages.
+- **Rejected alternatives:**
+  - **Build flags and serializing builds only.** `-c=1`, `-dwarf=false` and a build lock trim or spread the peak, but the compiler still holds the whole package.
+  - **One big move.** It would be unreviewable, and it would conflict with every in-flight PR that touches `cmd/apid`.
+  - **`cmd/apid/internal/<domain>`.** This blocks other importers by construction, but it diverges from the existing `pkg/apid/apidsource` and `pkg/apid/runtimeupgrade` layout. Importers can be fenced with depguard if that becomes necessary.

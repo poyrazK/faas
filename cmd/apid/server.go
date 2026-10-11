@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -4341,30 +4341,13 @@ func (s *server) cliAuthSubmitChain(h http.Handler) http.Handler {
 // authenticated call would land in the "anonymous" bucket).
 type accountHandler func(w http.ResponseWriter, r *http.Request, acct state.Account)
 
-// principal is the authenticated caller. Key is nil when the caller
-// authenticated via the dashboard session cookie (in which case the
-// caller is implicitly treated as having the "admin" scope by
-// requireScope). See ADR-034.
-type principal struct {
-	Acct state.Account
-	Key  *state.APIKey
-}
+// principal is the authenticated caller; see httpkit.Principal (ADR-034).
+type principal = httpkit.Principal
 
 // principalFrom returns the principal stashed in r.Context() by s.auth.
 // Returns ok=false if s.auth did not run (e.g. tests that wire a
-// handler directly to httptest). Bridges to pkg/auth so that both
-// cmd/apid's observeWrap and pkg/auth.RequireScope read the same
-// stamped value — without the bridge, the two surfaces would each
-// look at their own (separate) ctx key and requireScope would
-// 500/CodeCapacity on every apid route (PR-1 pkg/auth extraction,
-// ADR-044).
-func principalFrom(r *http.Request) (principal, bool) {
-	acct, key, ok := authmw.AccountFromContext(r)
-	if !ok {
-		return principal{}, false
-	}
-	return principal{Acct: acct, Key: key}, true
-}
+// handler directly to httptest). See httpkit.PrincipalFrom.
+func principalFrom(r *http.Request) (principal, bool) { return httpkit.PrincipalFrom(r) }
 
 // principalHasScope reports whether the principal carries at least one
 // of the allowed scopes. Session-cookie principals (Key == nil) are
@@ -4743,52 +4726,19 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
+// writeJSON, decodeJSON, decodeJSONSized and notFound are facades over
+// pkg/apid/httpkit (ADR-977); new and lifted code calls httpkit directly.
+func writeJSON(w http.ResponseWriter, status int, v any) { httpkit.WriteJSON(w, status, v) }
 
-const defaultJSONBodyMaxBytes int64 = 1 << 20
+const defaultJSONBodyMaxBytes = httpkit.DefaultJSONBodyMaxBytes
 
-func decodeJSON(r *http.Request, v any) error {
-	return decodeJSONSized(r, v, defaultJSONBodyMaxBytes)
-}
+func decodeJSON(r *http.Request, v any) error { return httpkit.DecodeJSON(r, v) }
 
-// decodeJSONSized is the single bounded JSON decoder for apid control-plane
-// requests. It rejects unknown fields and consumes the remainder so both
-// Content-Length and chunked requests are held to the same byte cap.
 func decodeJSONSized(r *http.Request, v any, maxBytes int64) error {
-	if maxBytes <= 0 {
-		maxBytes = defaultJSONBodyMaxBytes
-	}
-	if r.Body == nil {
-		return io.EOF
-	}
-	if r.ContentLength > maxBytes {
-		return &http.MaxBytesError{Limit: maxBytes}
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	// Consume the remainder so chunked requests with a valid JSON prefix
-	// and an oversized/trailing payload cannot evade the reader cap.
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return errors.New("request body must contain a single JSON value")
-		}
-		return err
-	}
-	return nil
+	return httpkit.DecodeJSONSized(r, v, maxBytes)
 }
 
-// notFound writes a 404 problem, distinguishing missing rows.
-func (s *server) notFound(w http.ResponseWriter, what string) {
-	api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what))
-}
+func (s *server) notFound(w http.ResponseWriter, what string) { httpkit.NotFound(w, what) }
 
 // loadApp resolves a slug to an account-scoped App, collapsing cross-account
 // lookups to 404 per the handler convention. Returns the resolved app or

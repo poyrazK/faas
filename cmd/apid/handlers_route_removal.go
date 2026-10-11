@@ -8,8 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -189,24 +190,7 @@ func (s *server) getRouteRemovalCheck(w http.ResponseWriter, r *http.Request, ac
 	writeJSON(w, http.StatusOK, check)
 }
 func routeRemovalBlockedProblem(err error) *api.Problem {
-	var gate *state.RouteGateBlockedError
-	var lifecycleDB *pgconn.PgError
-	if errors.As(err, &gate) {
-		return api.NewProblem(http.StatusConflict, api.CodeRouteGateBlocked, "Route lifecycle blocked traffic", strings.Join(gate.Decision.Reasons, ", ")).WithHint("Resolve lifecycle findings and approve any changed successor for the exact captures before retrying production traffic.")
-	}
-	if errors.As(err, &lifecycleDB) && lifecycleDB.ConstraintName == "production_lifecycle_required" {
-		return api.NewProblem(http.StatusConflict, api.CodeRouteGateBlocked, "Route lifecycle review required", "The transaction has no current lifecycle authorization.").WithHint("Refresh capture and lifecycle review, then retry the production traffic change.")
-	}
-
-	var blocked *state.RouteRemovalBlockedError
-	if !errors.As(err, &blocked) {
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.ConstraintName != "route_removal_required" {
-			return nil
-		}
-		blocked = &state.RouteRemovalBlockedError{Reason: pgErr.Detail}
-	}
-	return api.NewProblem(http.StatusConflict, api.CodeRouteRemovalRequired, "Route removal policy blocked traffic", strings.TrimSpace(blocked.Reason)).WithHint("Read /v1/apps/{slug}/route-removal/check?deployment_id=UUID; obtain a fresh authenticated approval for the exact production baseline, candidate contracts and successor mapping before increasing traffic.")
+	return httpkit.RouteRemovalBlockedProblem(err)
 }
 func (s *server) routeRemovalError(w http.ResponseWriter, err error) {
 	if p := routeRemovalBlockedProblem(err); p != nil {

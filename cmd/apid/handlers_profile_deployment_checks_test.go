@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -150,7 +150,7 @@ func TestCPUProfileAutomaticDashboardPolicyCSRF(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/dashboard/apps/"+app.Slug+"/profiles/deployment-policy", strings.NewReader(v.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.SetPathValue("slug", app.Slug)
-		r = r.WithContext(context.WithValue(r.Context(), accountContextKey{}, e.acct))
+		r = r.WithContext(WithAccount(r.Context(), e.acct))
 		if cookie != "" {
 			r.AddCookie(&http.Cookie{Name: profileDeploymentPolicyCookie, Value: cookie})
 		}
