@@ -1002,8 +1002,29 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
+	usageMinute := time.Now().UTC().Truncate(time.Minute).Add(-time.Hour)
+	const usageMBSeconds = int64(264 * 60)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, uuid.NewString(), usageMinute,
+		usageMBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage before purge: %v", err)
+	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	// ADR-968: the purge keeps the app's usage rows; they are the
+	// account's billing evidence for the month.
+	usage, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, usageMinute)
+	if err != nil {
+		t.Fatalf("UsageByMonth after purge: %v", err)
+	}
+	var retained int64
+	for _, row := range usage {
+		if row.AppID == fx.App.ID {
+			retained += row.MBSeconds
+		}
+	}
+	if retained != usageMBSeconds {
+		t.Fatalf("purged app usage = %d mb_seconds, want %d retained", retained, usageMBSeconds)
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)

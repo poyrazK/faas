@@ -4741,8 +4741,13 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"app_secrets", `delete from app_secrets where app_id = $1`},
 		{"app_trusted_signers", `delete from app_trusted_signers where app_id = $1`},
 		{"builder_usage", `delete from builder_usage where app_id = $1`},
-		{"usage_minutes", `delete from usage_minutes where app_id = $1`},
-		{"usage_daily", `delete from usage_daily where app_id = $1`},
+		// usage_minutes and usage_daily are deliberately retained (ADR-968):
+		// they are the account's billing evidence. The month's included
+		// allowance, overage deliveries, the spend cap, invoice credits and
+		// the reconciler all sum them, so a mid-month purge would hand the
+		// deleted app's usage back as allowance. Neither table has an FK to
+		// apps; the 13-month usage retention cron and account deletion
+		// remove them.
 		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
 		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
 		{"log_events", `delete from log_events where app_id = $1`},
@@ -21628,9 +21633,10 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 }
 
 // CurrentMonthOverageCents returns the account's derived compute overage in
-// integer cents for the current UTC month. It removes the account plan's
-// included calendar-month allowance before converting the remainder to
-// cents. Integer math only — never float on money (CLAUDE.md).
+// integer cents for the current UTC month. It removes the month's included
+// allowance (the largest plan grant recorded this month, ADR-968) before
+// converting the remainder to cents. Integer math only — never float on
+// money (CLAUDE.md).
 //
 // Hand-written: the formula is meterd-internal and not on the read
 // surface. The migration on usage_minutes is unchanged; we SELECT
@@ -21658,7 +21664,21 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 		accountID, monthStart).Scan(&mbSeconds, &plan); err != nil {
 		return 0, err
 	}
-	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
+	snapshots, err := s.ListFinancialPriceSnapshots(ctx, accountID, monthStart)
+	if err != nil {
+		return 0, err
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+}
+
+// monthOverageCents applies the month's recorded plan history (ADR-968):
+// the largest grant activated so far, never less than the current plan's
+// allowance, whose activation may not be captured yet. This is the same
+// allowance the provider pusher removes, so the spend cap, the dashboard and
+// the provider agree.
+func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64) int64 {
+	included := max(MonthComputeIncludedMBSeconds(current, snapshots, now), api.IncludedMBSeconds(current))
+	return api.OverageCentsForBillableMBSeconds(api.BillableMBSecondsAbove(included, mbSeconds))
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows

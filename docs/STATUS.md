@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Local billing integrity: delivery finality, hard spend cap, plan history — 2026-10-11
+
+[ADR-968](adr/968-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
+billing gaps. The provider pusher delivers an hour only once every minute up to its end
+is recorded compute-complete or older than the catch-up bound, so late catch-up rows
+can no longer land in a delivered hour. The spend cap bills exactly up to the cap,
+settles capped hours without later back-billing, and schedd parks capped accounts:
+explicit-deployment admissions check the cap, the reaper parks via `appMustPark`, warm
+pools are reclaimed and queued job tasks deferred. App purge keeps `usage_minutes` and
+`usage_daily`. The month's allowance follows recorded plan activations (largest grant
+so far) in the pusher, `CurrentMonthOverageCents` and `OverageMBSecondsForRange`.
+`pkg/meter`, `pkg/billing`, `pkg/billing/reconciler` and `pkg/api` tests pass locally
+(one known timing-flaky loop health test aside). The new `pkg/state` and `pkg/sched`
+tests are written but unrun; PG conformance, `make lint` and a live Polar sandbox
+delivery remain unrun.
+No PR, deployment setting or provider configuration changed.
+
 ## Local built validators and project publication — 2026-10-10
 
 [ADR-948](adr/948-built-validator-artifacts-and-project-publication.md) adds explicit

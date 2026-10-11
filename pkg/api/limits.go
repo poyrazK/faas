@@ -8306,6 +8306,17 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 const MeterCatchUpWindow = 24 * time.Hour
 const MeterCatchUpMinutesPerTick = 15
 
+// MeterUsageFinalAfter is how long after a minute starts meterd may still write
+// compute usage for it: the catch-up window, the sampler's newest-closed-minute
+// offset, and one tick of skew. The provider pusher delivers an hour only when
+// every minute up to its end is recorded compute-complete or older than this,
+// so late catch-up rows can never land in an hour already delivered (ADR-968).
+const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
+
+// SpendCapJobDeferInterval is how long a queued job task of an account at its
+// monthly spend cap waits before the dispatcher re-checks the cap (ADR-968).
+const SpendCapJobDeferInterval = time.Minute
+
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).
 func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
