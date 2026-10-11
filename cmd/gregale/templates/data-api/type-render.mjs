@@ -66,4 +66,3 @@ export function generate(snapshot, hash = fingerprint(snapshot)) {
   if (Buffer.byteLength(result) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
   return result
 }
-

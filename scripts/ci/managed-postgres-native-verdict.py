@@ -8,6 +8,7 @@ PHASES = (
     "release_and_initial_restore",
     "manual_task_without_migration_secret",
     "running_rotation_and_retirement",
+    "pooled_disconnect_recovery",
     "rotated_snapshot_restore",
     "parked_rotation_scheduler_recovery",
     "independent_cleanup",
@@ -37,4 +38,4 @@ if __name__ == "__main__":
             verify(source)
     except (OSError, ValueError, IndexError) as error:
         raise SystemExit(str(error)) from None
-    print("All six PostgreSQL deployment, SQL, rotation, restore and cleanup phases passed.")
+    print("All seven PostgreSQL deployment, pooled SQL, rotation, restore and cleanup phases passed.")

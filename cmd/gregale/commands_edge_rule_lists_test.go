@@ -77,6 +77,33 @@ func TestCmdEdgeRuleListsCreateAndUpdate(t *testing.T) {
 	}
 }
 
+// The usage line and every help example put the list name first
+// (`create office-ips --kind ip --item ...`). Hunt #9 H9-44: the standard
+// flag parser stopped at the name, so the documented form was a usage error
+// for create and update and only flags-before-name worked.
+func TestCmdEdgeRuleListsNameBeforeFlags(t *testing.T) {
+	resetJSONEnv(t)
+	var method, path string
+	var body map[string]any
+	edgeRuleListServer(t, &method, &path, &body)
+	oldOut := osStdout
+	osStdout = &bytes.Buffer{}
+	defer func() { osStdout = oldOut }()
+
+	if code := cmdEdgeRuleLists([]string{"create", "office", "--kind", "ip", "--item", "203.0.113.0/24", "--description", "HQ"}); code != 0 {
+		t.Fatalf("create office --kind ip = %d, want 0", code)
+	}
+	if method != http.MethodPost || body["name"] != "office" || body["kind"] != "ip" || body["description"] != "HQ" {
+		t.Fatalf("create sent %s %s %v", method, path, body)
+	}
+	if code := cmdEdgeRuleLists([]string{"update", "office", "--add", "10.0.0.1"}); code != 0 {
+		t.Fatalf("update office --add = %d, want 0", code)
+	}
+	if method != http.MethodPatch || path != "/v1/edge-rule-lists/office" || !reflect.DeepEqual(body["add"], []any{"10.0.0.1"}) {
+		t.Fatalf("update sent %s %s %v", method, path, body)
+	}
+}
+
 func TestCmdEdgeRuleListsList_JSON(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

@@ -63,6 +63,8 @@ guest-init runs a restore reseed barrier for Node and Python workloads.
      DRBG). Then it reseeds a xoshiro128** `Math.random` replacement with
      urandom XOR nonce, and drains Node's `randomUUID` (128-entry) and
      `randomInt` (6 KiB) caches so they refill from the reseeded OpenSSL.
+     Amended by ADR-981: the reply marks both caches stale instead, and the
+     first call that reads one drains it.
    - **Python:** `random.seed()`, `ssl.RAND_add()` when `ssl` is loaded, and
      numpy's legacy global generator when numpy is loaded.
 4. **Fail closed.** A registered process that answers late, answers `err`, or

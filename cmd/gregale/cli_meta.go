@@ -516,7 +516,6 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "confirm account deletion without prompting", Bool: true},
 			}},
 			{Name: "restore", Short: "Cancel a pending deletion"},
-
 			{Name: "status", Short: "Show account status"},
 			{Name: "dpa", Short: "Show DPA metadata", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "write DPA metadata to a file", Value: "PATH"},

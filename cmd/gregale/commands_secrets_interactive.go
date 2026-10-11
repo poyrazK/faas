@@ -165,11 +165,15 @@ func secretsSetInteractive(app, scope, class string) int {
 		if err := ctx.Err(); err != nil {
 			return startInputExit(err)
 		}
-		out, err := client.RestartAppFresh(ctx, app)
+		wakeID, parked, err := restartAfterSecretChange(ctx, client, app)
 		if err != nil {
 			return printErr("Secrets saved, but restart failed", err)
 		}
-		PrintOK(osStdout, "Restart requested (wake_id=%s)", out.WakeID)
+		if parked {
+			PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			return 0
+		}
+		PrintOK(osStdout, "Restart requested (wake_id=%s)", wakeID)
 	}
 	return 0
 }

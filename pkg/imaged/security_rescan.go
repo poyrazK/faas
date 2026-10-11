@@ -152,6 +152,13 @@ func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
 		if verifyErr == nil {
 			continue
 		}
+		if errors.Is(verifyErr, errTrustedPublishersUnavailable) {
+			// The trust list could not be read, which says nothing about
+			// the image. Stop the sweep; the next signer change or restart
+			// revalidates.
+			l.log.Warn("imaged: signature revalidation skipped", "deployment", dep.ID, "app", app.ID, "err", verifyErr)
+			return
+		}
 
 		reason := "security_signature_unavailable"
 		auditKind := "app.signature_invalid"
