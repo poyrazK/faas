@@ -1,6 +1,6 @@
 package main
 
-// adr: 934 — a missing request row is a retryable outcome, not a delivery.
+// adr: 957 — a missing request row is a retryable outcome, not a delivery.
 
 import (
 	"context"

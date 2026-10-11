@@ -15,3 +15,5 @@
   - Tying the allowance to the card version, resetting whenever a new card takes effect, was rejected because a price change mid-month would hand out a second allowance.
   - Storing a running allowance balance was rejected because it is mutable state that late usage and retries must keep consistent; deriving the split from the immutable ledger needs no balance.
   - Graduated volume tiers are deferred. They can reuse the same minute-order consumption with several thresholds.
+
+Migration headers retain the original billing-branch ADR number 844 to preserve published migration bytes; this decision is now numbered 950.

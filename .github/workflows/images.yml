@@ -378,6 +378,15 @@ jobs:
               exit 1
             fi
             echo "OK: ${REF}@${DIGEST} reports ${BUILDKIT_OUTPUT}"
+            RAILPACK_OUTPUT=$(docker run --rm \
+              --platform "linux/${ARCH}" \
+              --entrypoint /usr/local/bin/railpack \
+              "${REF}@${DIGEST}" --version)
+            if [[ "$RAILPACK_OUTPUT" != "railpack version ${RAILPACK_VERSION}" ]]; then
+              echo "::error::railpack version mismatch on ${ARCH}: ${RAILPACK_OUTPUT}"
+              exit 1
+            fi
+            echo "OK: ${REF}@${DIGEST} reports ${RAILPACK_OUTPUT}"
           done
 
       - name: Install pinned Grype

@@ -21,3 +21,5 @@
   - Starting a new plan at the next month boundary was rejected because upgrades should take effect immediately.
   - Process-local token buckets for plan limits were rejected because a hard cap must hold across replicas.
   - Billing counters for the cap were rejected because ledger delivery is asynchronous, so caps enforced from billed usage would overshoot.
+
+Migration headers retain the original billing-branch ADR number 847 to preserve published migration bytes; this decision is now numbered 953.

@@ -20,3 +20,5 @@
   - Storing a completeness verdict on each statement revision would freeze a lossy, retention-bound signal into the immutable financial record and need a migration. Recomputing on demand reflects telemetry as it is.
   - Matching individual requests would need a shared request ID in both the outbox and telemetry, plus telemetry without sampling. That costs too much on the hot path for a reconciliation aid.
   - Comparing all requests, including errors, would report every rate-limit rejection and platform failure as a discrepancy.
+
+Migration headers retain the original billing-branch ADR number 848 to preserve published migration bytes; this decision is now numbered 954.

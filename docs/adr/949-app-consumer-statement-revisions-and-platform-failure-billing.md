@@ -21,3 +21,5 @@
   - Allowing overlapping periods to be handed off would make double billing possible.
   - Tagging every gateway error site as unbillable would be fragile: there are dozens of sites, and new ones would bill by default.
   - Billing nothing for any 5xx would undercharge for genuine application failures that consumed guest compute.
+
+Migration headers retain the original billing-branch ADR number 843 to preserve published migration bytes; this decision is now numbered 949.

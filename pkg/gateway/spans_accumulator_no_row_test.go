@@ -1,6 +1,6 @@
 package gateway
 
-// adr: 934 — spans that arrive before their request row are retried and merged.
+// adr: 957 — spans that arrive before their request row are retried and merged.
 
 import (
 	"context"

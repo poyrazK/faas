@@ -10907,7 +10907,7 @@ type DebugTelemetrySpan struct {
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
 	// DependencyName is the bounded grouping identity of an app_dependency
-	// span (ADR-934): "SELECT orders", an HTTP host, an RPC method. It never
+	// span (ADR-958): "SELECT orders", an HTTP host, an RPC method. It never
 	// carries literals, paths, query strings or credentials.
 	DependencyName string `json:"dependency_name,omitempty"`
 }
@@ -11055,7 +11055,7 @@ type DebugDependencyLatencyResponse struct {
 }
 
 // DebugDependencyDeploymentComparison splits dependency latency by deployment
-// instead of by time (ADR-934 §5). In each item the Baseline* fields describe
+// instead of by time (ADR-958 §5). In each item the Baseline* fields describe
 // the previous deployment and the Current* fields the compared deployment;
 // Regression uses the same thresholds as the time-split history. Items are
 // regressions first, then by current p95.
@@ -11235,7 +11235,7 @@ type DebugRequestEvidenceResponse struct {
 	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
 	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
 	// DependencyComparison compares this route's dependencies on the request's
-	// deployment with the previous deployment (ADR-934 §5); absent without a
+	// deployment with the previous deployment (ADR-958 §5); absent without a
 	// prior deployment that has retained spans.
 	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
 	Spans                []DebugTelemetrySpan                 `json:"spans"`
@@ -11517,7 +11517,7 @@ type DebugRegressionItem struct {
 	DismissedUntil  string `json:"dismissed_until,omitempty"`
 	ResolvedAt      string `json:"resolved_at,omitempty"`
 	// SuspectedDependency is the dependency whose p95 regressed most between
-	// the previous and this deployment on the route (ADR-934 §5); absent when
+	// the previous and this deployment on the route (ADR-958 §5); absent when
 	// no dependency regressed or no spans were retained.
 	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
 }

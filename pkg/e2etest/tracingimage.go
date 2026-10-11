@@ -55,7 +55,7 @@ func tracingServerBinary() ([]byte, error) {
 
 // TracingImage is a scratch-style OCI image whose only process is an HTTP
 // server with an OpenTelemetry SDK compiled in and no tracing configuration
-// of its own (ADR-934). It serves :8080 and /healthz.
+// of its own (ADR-958). It serves :8080 and /healthz.
 func TracingImage(repo string) (fakeImage, string) {
 	binary, err := tracingServerBinary()
 	if err != nil {

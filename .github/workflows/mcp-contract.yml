@@ -50,6 +50,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
+        # Match the shared CI cache to avoid Docker Hub pull limits.
         image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: mcp

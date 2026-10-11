@@ -25,12 +25,12 @@ func TestRestoreValidationSDKPreservesIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := faas.DurableEntityRestoreRequest{Namespace: "counters", Key: "counter", RequestID: "stable", ExpectedVersion: ^uint64(0), Export: faas.DurableEntityStateExport{Version: 1, Data: json.RawMessage(`{}`)}}
-	verdict, err := client.ValidateDurableEntityRestore(t.Context(), "counter", request)
+	verdict, err := client.ValidateDurableEntityRestore(faas.SDKTestContext(t), "counter", request)
 	if err != nil || !verdict.Valid || verdict.ExpectedVersion != ^uint64(0) {
 		t.Fatal(verdict, err)
 	}
 	request.RequestID = ""
-	if _, err := client.ValidateDurableEntityRestore(t.Context(), "counter", request); err == nil || calls != 1 {
+	if _, err := client.ValidateDurableEntityRestore(faas.SDKTestContext(t), "counter", request); err == nil || calls != 1 {
 		t.Fatal("missing ID reached API")
 	}
 }

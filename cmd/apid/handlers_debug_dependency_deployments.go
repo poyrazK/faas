@@ -1,4 +1,4 @@
-// Deployment-split dependency comparison (ADR-934 §5): the same rollup as
+// Deployment-split dependency comparison (ADR-958 §5): the same rollup as
 // the time-split dependency history, with the previous deployment as the
 // baseline and the compared deployment as current. This is what turns
 // retained app spans into "postgresql SELECT orders p95 82 → 191 ms since

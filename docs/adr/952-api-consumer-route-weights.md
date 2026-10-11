@@ -16,3 +16,5 @@
   - Weighting at the gateway would need every gateway to hold rate cards and would freeze weights into the immutable ledger, so changing a price would not re-weight unbilled usage.
   - Adding the route to the per-minute total's key would change every reader of the ledger and its aggregates.
   - Billing by measured guest duration instead was left for a separate compute meter; weights are predictable and auditable from request counts.
+
+Migration headers retain the original billing-branch ADR number 846 to preserve published migration bytes; this decision is now numbered 952.

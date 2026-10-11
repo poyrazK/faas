@@ -103,10 +103,7 @@ func (p *GCS) PresignTrackedPut(ctx context.Context, bucket string, r SignReques
 	if r.SizeBytes == nil || !validGCSReceipt(r.Key, receipt, *r.SizeBytes) || r.Method != http.MethodPut || !c.Valid() {
 		return SignedRequest{}, ErrInvalid
 	}
-	if !c.Empty() {
-		return SignedRequest{}, ErrUnsupported
-	}
-	return p.presignGCS(ctx, bucket, r, http.Header{"x-goog-meta-" + ReservedUploadReceiptMetadataKey: {receipt}})
+	return p.presignGCSConditionalPut(ctx, bucket, r, c, http.Header{"x-goog-meta-" + ReservedUploadReceiptMetadataKey: {receipt}})
 }
 
 func (p *GCS) verifyWriteAcknowledgment(headers http.Header) (UploadResult, error) {

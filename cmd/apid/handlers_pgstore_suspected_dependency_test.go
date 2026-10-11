@@ -2,7 +2,7 @@
 
 package main
 
-// adr: 934 — regression alerts carry the suspected dependency end to end.
+// adr: 957 — regression alerts carry the suspected dependency end to end.
 
 import (
 	"context"
