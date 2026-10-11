@@ -9,12 +9,13 @@
 ## Context
 
 The fleet pins Firecracker v1.7.0 and builds guest kernel 6.1.134 from the
-Firecracker v1.7.0 guest config. Firecracker supports a minor release for at
-least six months, and v1.7 left support on 2024-09-18 ([release
-policy](https://github.com/firecracker-microvm/firecracker/blob/main/docs/RELEASE_POLICY.md)).
-The current supported releases are v1.16 and v1.17. Guest kernel 6.1 reached
-its minimum end of support on 2026-09-02; guest 6.18 is supported from
-v1.16.1 ([kernel policy](https://github.com/firecracker-microvm/firecracker/blob/main/docs/kernel-policy.md)).
+Firecracker v1.7.0 guest config. Upstream maintains its two newest minor
+releases, currently v1.16 and v1.17 ([release
+policy](https://github.com/firecracker-microvm/firecracker/blob/main/docs/RELEASE_POLICY.md)),
+and supports guest 6.18 from v1.16.1 ([kernel
+policy](https://github.com/firecracker-microvm/firecracker/blob/main/docs/kernel-policy.md)).
+Releases since v1.7 add VMGenID, VMClock, balloon free page reporting and
+huge pages on snapshot load.
 
 Gregale uses a narrow slice of Firecracker: config-file boot, `PATCH /vm`,
 Full snapshots with the File memory backend, vsock, virtio-rng and jailer
