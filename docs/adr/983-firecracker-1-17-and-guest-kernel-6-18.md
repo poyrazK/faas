@@ -59,6 +59,40 @@ Firecracker metrics, so no API change is needed.
 3. Rollback reinstalls v1.7.0 and the 6.1 kernel. Snapshots taken on v1.17
    go stale and cold-boot; no state is lost because snapshots are cache.
 
+## Qualification (n2 test node, 2026-10-11)
+
+Firecracker 1.17.0 ran from a private PATH; the 6.18.54 kernel was built with
+`scripts/build-firecracker-kernel.sh` (`sha256 3bb13ba5…`). The whole
+`pkg/fcvm` metal package ran with the `run-native-metal-smoke.sh` fixtures,
+once on 1.7.0 / 6.1.134 and once on 1.17.0 / 6.18.54:
+
+| | 1.7 / 6.1 | 1.17 / 6.18 |
+|---|---|---|
+| Metal package (top-level tests) | 1,055 pass, 35 fail, 31 skip | 1,056 pass, 34 fail, 31 skip |
+| Network-namespace batch | 7/7 | 7/7 |
+| New leaks after the run | none | none |
+| Restore, 30 wakes (p50 / p90) | 253 / 284 ms | 268 / 287 ms |
+| Cold boot, HelloBoot ×10 (median) | 1.15 s | 1.46 s |
+
+- No test fails only on 1.17. The 34 shared failures are host conditions:
+  in-test leak checks trip on 14 chroots another session leaked on
+  2026-10-08/09, plus fixtures this node lacks (public egress URL).
+- A v1.7 snapshot cannot be loaded by v1.17 (`bitcode serialization error`),
+  confirming the cold-boot path in decision 3.
+- Firecracker 1.17 with the old 6.1 kernel cold-boots as fast as 1.7
+  (median 1.16 s), and both kernels reach the network at the same time, so the
+  cold-boot cost comes from the 6.18 guest after kernel init.
+
+Open before rollout:
+
+1. Find the ~300 ms the 6.18 guest adds to cold boot in the guest-init /
+   vmmd readiness path (vsock characterization and readiness are the next
+   suspects; a direct boot with virtio-rng shows no gap to HTTP readiness).
+2. The 6.18 guest prints `PCI: Fatal: No config space access function found`
+   under `quiet`, which reaches the app's console log on every cold boot.
+   Firecracker also logs failed guest port I/O at 0xcf8/0xcfc. Decide between
+   disabling `CONFIG_PCI` locally and adjusting the boot arguments.
+
 ## Consequences
 
 - Every app cold-boots once after its node upgrades.
