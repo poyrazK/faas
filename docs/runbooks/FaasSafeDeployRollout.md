@@ -148,6 +148,15 @@ these staging checks against an app with a known-good predecessor:
   `canary_progression_circuit_breaker_total{event="abort_crash_loop"}`
   increases. With the `liveness_restarts_total` family missing, confirm the
   stage holds with `hold_signal_unavailable` instead.
+- **Rollback outcome (ADR-911, `FaasRollbackNotRestored`,
+  `FaasRollbackRecoverySlow`):** after a plain rollback, read the receipt with
+  `gregale rollback status <app> --operation <id>`. `complete` carries
+  `recovery_ms`; `failed` carries `code` and `error` and means the release
+  the rollback meant to replace is still serving. For a failed automatic 5xx
+  rollback, confirm which release serves, then roll back explicitly with
+  `--to <revision>` or deploy a fix; `rollback_target_not_activated` with a
+  smoke error code points at the target's post-readiness smoke, and
+  `rollback_timeout` at a restore or cold boot that never finished.
 - **Default policy fallback (ADR-911):** with meterd stopped and its lease
   expired, deploy a flag-free release of a live app. Confirm the deploy
   succeeds with an immediate cutover and `rollback_on_5xx=true`, and apid

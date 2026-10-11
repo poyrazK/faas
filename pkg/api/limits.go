@@ -267,6 +267,15 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Verified rollback outcomes (ADR-911). apid resolves each plain rollback
+// every RollbackOutcomeCheckInterval: complete once the target serves,
+// failed when it leaves activation without serving or when
+// RollbackOutcomeTimeout passes. The timeout covers a cold-boot activation
+// with the post-readiness smoke; the drill's recovery was under 10 s.
+const RollbackOutcomeCheckInterval = 5 * time.Second
+const RollbackOutcomeTimeout = 10 * time.Minute
+const RollbackOutcomeBatchSize = 100
+
 // CanaryLowTrafficMaxHold bounds how long the canary circuit breaker holds a
 // stage past its dwell time only because too few requests arrived to compare
 // the candidate with its predecessor (ADR-911). After the bound, the stage

@@ -68,6 +68,23 @@ rollback or a completed canary restores the release that was just replaced.
 A rollback that fails its readiness or hosting check leaves the current
 release serving. The target returns to `superseded` with the error recorded,
 so it remains available for another rollback.
+
+`gregale rollback APP` waits until the previous release actually serves
+again and reports how long it took:
+
+```
+✓ Rolled back: 3add53b1-… serves again after 8.3 s
+```
+
+If the rollback cannot restore the previous release, the command exits
+non-zero with the reason. Every rollback, including an automatic 5xx
+rollback, has a receipt you can read later; `--no-wait` returns as soon as
+the rollback is requested and prints its id:
+
+```bash
+gregale rollback status my-api --operation <id> --wait
+```
+
 See [`gregale deployments`](cli-reference.md#deployments) for deployment
 history and annotations.
 

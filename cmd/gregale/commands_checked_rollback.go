@@ -40,6 +40,9 @@ func pollRollbackOperation(ctx context.Context, client rollbackOperationClient, 
 		}
 		last = got
 		if got.Status == "failed" {
+			if got.Error != "" {
+				return last, fmt.Errorf("rollback failed: %s: %s", got.Code, got.Error)
+			}
 			return last, fmt.Errorf("rollback failed: %s", got.Code)
 		}
 		if got.Status == "complete" {

@@ -48052,7 +48052,7 @@ components:
 
     RollbackOperation:
       type: object
-      description: Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
+      description: Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-911) reports preparing until its target serves (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
       required: [id, app_id, scope, target_deployment_id, current_deployment_id, status, service, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -48072,6 +48072,18 @@ components:
         updated_at: { type: string, format: date-time }
         completed_at: { type: [string, "null"], format: date-time }
         audit_id: { type: string }
+        trigger:
+          type: string
+          enum: [manual, auto_5xx, alert]
+          description: What started a plain rollback. Absent for a checked rollback.
+        recovery_ms:
+          type: integer
+          minimum: 0
+          description: Milliseconds from the plain rollback request until its target served. Present once a plain rollback is complete.
+        error:
+          type: string
+          maxLength: 1024
+          description: Why a failed plain rollback did not restore the previous release; code carries the stable error code.
 
     RollbackRequest:
       description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app and is superseded or live with zero traffic."

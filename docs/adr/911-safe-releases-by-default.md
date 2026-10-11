@@ -109,6 +109,37 @@ Promotion clears the marker in the same transaction, so a refused or failed
 activation keeps it for the next attempt. Automatic promotion of a fresh
 deployment is unchanged.
 
+### Verified rollback outcomes
+
+A plain rollback was recorded when requested — the 5xx worker marked the
+release auto-rolled-back and logged "release rolled back" as soon as the
+readiness request was queued — so a rollback that never served looked like
+one that did. That is how the fence bug above stayed invisible.
+
+Each plain rollback now opens a `deployment_rollbacks` row (`preparing`,
+with its trigger: `manual`, `alert`, or `auto_5xx`). apid's outcome worker
+resolves it every `RollbackOutcomeCheckInterval` (5 s):
+
+- `complete` when the target's `rollout_completed_at` is stamped after the
+  request (promotion stamps it; preparation clears it), with the recovery
+  time measured on the database clock from request to promotion and a
+  `deploy.rolled_back` audit row whose id is the receipt;
+- `failed` when the target returns to `superseded`, `failed`, or
+  `cancelled` without serving, is deleted, or has not served within
+  `RollbackOutcomeTimeout` (10 min).
+
+A newer rollback of the same target fails the older preparing row
+(`rollback_superseded`). The finish is conditional on `preparing`, so
+concurrent apid replicas resolve a row once. Outcomes are exported as
+`apid_rollback_outcomes_total{trigger,outcome}` and
+`apid_rollback_recovery_seconds{trigger}`; `FaasRollbackNotRestored` pages on
+any failed outcome and `FaasRollbackRecoverySlow` warns when p95 recovery
+exceeds the 60 s scorecard bar. The receipt is served by the existing
+`GET /v1/apps/{slug}/rollbacks/{id}` endpoint in the checked-rollback shape,
+and `gregale rollback APP` waits for it by default (`--no-wait` restores the
+request-only behaviour). Customer release-webhook events for rollback
+outcomes are a follow-up.
+
 ### Bounded low-traffic hold
 
 `api.CanaryLowTrafficMaxHold` (5 minutes) bounds a hold that exists only

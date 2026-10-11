@@ -122,9 +122,15 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		t.Logf("DRILL low_traffic_advance seconds=%.0f", time.Since(started).Seconds())
 
 		rollbackStarted := time.Now()
-		if raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-quiet/rollback", map[string]any{}); status/100 != 2 {
+		raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-quiet/rollback", map[string]any{})
+		if status/100 != 2 {
 			t.Fatalf("rollback: status=%d body=%s", status, raw)
 		}
+		var accepted api.DeploymentResponse
+		if err := json.Unmarshal(raw, &accepted); err != nil || accepted.RollbackOperation == nil || accepted.RollbackOperation.Status != "preparing" {
+			t.Fatalf("rollback receipt = %+v (err %v); want a preparing receipt", accepted.RollbackOperation, err)
+		}
+		receiptID := accepted.RollbackOperation.ID
 		// Log the target's progress so a slow rollback is distinguishable from
 		// a stuck one in the drill record.
 		lastLogged := time.Time{}
@@ -142,6 +148,13 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		if recovery > 60*time.Second {
 			t.Errorf("rollback recovery %.1fs exceeds the 60s scorecard bar", recovery.Seconds())
 		}
+		// ADR-911: the outcome worker must record the same success, with the
+		// measured recovery and a committed audit receipt.
+		receipt := d.waitRollbackReceipt(t, "sr-quiet", receiptID, time.Minute)
+		if receipt.Status != "complete" || receipt.RecoveryMS == nil || receipt.AuditID == "" {
+			t.Fatalf("rollback receipt = %+v; want complete with recovery_ms and audit_id", receipt)
+		}
+		t.Logf("DRILL rollback_receipt status=%s recovery_ms=%d trigger=%s", receipt.Status, *receipt.RecoveryMS, receipt.Trigger)
 	})
 
 	t.Run("bad release aborts and restores the predecessor", func(t *testing.T) {
@@ -277,6 +290,22 @@ func (d *safeReleaseDrill) logBreakerInput(t *testing.T, appID, candidateID, sta
 	sr, s5, sp95, _, _, _, _, sErr := d.store.RequestTelemetryCircuitBreakerSummary(ctx, appID, stableID, since, now)
 	t.Logf("DRILL breaker_input candidate=%d/%d p95=%.0f stable=%d/%d p95=%.0f errs=%v/%v",
 		c5, cr, cp95, s5, sr, sp95, cErr, sErr)
+}
+
+func (d *safeReleaseDrill) waitRollbackReceipt(t *testing.T, slug, id string, timeout time.Duration) api.RollbackOperation {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		raw, status := doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/"+slug+"/rollbacks/"+id, nil)
+		var receipt api.RollbackOperation
+		if status == http.StatusOK && json.Unmarshal(raw, &receipt) == nil && receipt.Status != "preparing" {
+			return receipt
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rollback receipt %s still %q after %s (status %d body %s)", id, receipt.Status, timeout, status, raw)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func (d *safeReleaseDrill) waitLease(ready bool, timeout time.Duration) {

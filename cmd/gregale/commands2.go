@@ -4235,7 +4235,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4263,7 +4263,7 @@ func cmdRollback(args []string) int {
 	var to, current, reason string
 	checked := false
 	var err error
-	wait := false
+	wait, noWait := false, false
 	timeout, interval := 10*time.Minute, 2*time.Second
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
@@ -4279,6 +4279,8 @@ func cmdRollback(args []string) int {
 			to = a[len("--to="):]
 		case a == "--wait":
 			wait = true
+		case a == "--no-wait":
+			noWait = true
 		case a == "--expected-current" || a == "--reason" || a == "--timeout" || a == "--poll-interval":
 			i++
 			if i >= len(rest) {
@@ -4323,6 +4325,9 @@ func cmdRollback(args []string) int {
 			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
 	}
+	if wait && noWait {
+		return printErr("Invalid rollback", errors.New("--wait and --no-wait are mutually exclusive"))
+	}
 	if err := validateRollbackFlags(checked, to, current, reason, wait, timeout, interval); err != nil {
 		return printErr("Invalid rollback", err)
 	}
@@ -4336,6 +4341,12 @@ func cmdRollback(args []string) int {
 	dep, err := client.RollbackTo(context.Background(), slug, to)
 	if err != nil {
 		return printErr("Rollback failed", err)
+	}
+	// ADR-911: a plain rollback waits until the previous release actually
+	// serves again and reports the measured recovery. An older server that
+	// returns no receipt keeps the request-only output below.
+	if !noWait && dep.RollbackOperation != nil && dep.RollbackOperation.ID != "" {
+		return waitPlainRollback(client, slug, *dep.RollbackOperation, timeout, interval)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(dep))
@@ -4364,19 +4375,10 @@ func validateRollbackFlags(checked bool, to, current, reason string, wait bool, 
 	switch {
 	case checked && current == "":
 		return errors.New("--expected-current requires a deployment id or vN revision")
-	case current == "" && (wait || reason != ""):
-		var used []string
-		if reason != "" {
-			used = append(used, "--reason")
-		}
-		if wait {
-			used = append(used, "--wait")
-		}
-		verb, pronoun := "applies", "it"
-		if len(used) > 1 {
-			verb, pronoun = "apply", "them"
-		}
-		return fmt.Errorf("%s only %s to a checked rollback: add --to <deployment|vN> --expected-current <deployment|vN>, or drop %s", strings.Join(used, " and "), verb, pronoun)
+	case current == "" && reason != "":
+		// A plain rollback waits for its outcome by default (ADR-911), so
+		// --wait is accepted there; only --reason needs the checked form.
+		return errors.New("--reason only applies to a checked rollback: add --to <deployment|vN> --expected-current <deployment|vN>, or drop it")
 	case current != "" && to == "":
 		return errors.New("a checked rollback (--expected-current) also needs --to <deployment|vN>")
 	case timeout <= 0:

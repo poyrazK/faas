@@ -99,6 +99,11 @@ func (s *server) getCheckedRollback(w http.ResponseWriter, r *http.Request, acct
 	}
 	operation, err := store.GetCheckedRollback(r.Context(), acct.ID, app.ID, id.String())
 	if errors.Is(err, state.ErrNotFound) {
+		// ADR-911: plain rollbacks share this receipt endpoint.
+		if plain, ok := s.plainRollbackOperation(r.Context(), acct.ID, app.ID, id.String()); ok {
+			writeJSON(w, http.StatusOK, plain)
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Rollback not found", "No such rollback operation for this app."))
 		return
 	}

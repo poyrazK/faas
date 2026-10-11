@@ -187,7 +187,9 @@ type MemStore struct {
 	featureFlagVersions         map[string][]FeatureFlagVersion
 	safeReleaseWorkerLeaseUntil time.Time
 	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-911).
-	rollbackPrepared          map[string]time.Time
+	rollbackPrepared map[string]time.Time
+	// rollbackRecords mirrors deployment_rollbacks (ADR-911).
+	rollbackRecords           map[string]RollbackRecord
 	requestAuditEvents        map[string]RequestAuditRecord
 	discoveredAPIRoutes       map[string]DiscoveredAPIRoute
 	discoveryReceipts         map[string]struct{}

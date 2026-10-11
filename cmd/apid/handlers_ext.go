@@ -2323,12 +2323,18 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 
-	target, problem := s.rollbackAppCore(r, acct, app, req)
+	trigger := state.RollbackTriggerManual
+	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
+		trigger = state.RollbackTriggerAlert
+	}
+	target, operation, problem := s.rollbackAppCore(r, acct, app, req, trigger)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
+	response := s.deploymentResponse(target, app)
+	response.RollbackOperation = operation
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -2362,8 +2368,10 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
-// two entry points cannot drift.
-func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+// two entry points cannot drift. It also opens the ADR-911 outcome ledger
+// row; the returned receipt is nil only when that write failed, and the
+// rollback itself still proceeds.
+func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
@@ -2384,27 +2392,27 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		// reference so the operator sees the string they typed.
 		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
 		if problem != nil {
-			return state.Deployment{}, problem
+			return state.Deployment{}, nil, problem
 		}
 		req.TargetDeploymentID = &resolved
 		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
 		if err != nil {
 			switch {
 			case errors.Is(err, state.ErrNoRollbackTarget):
-				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
+				return state.Deployment{}, nil, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
 				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
 				if readErr != nil {
-					return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
+					return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
 						"Gregale could not load the rollback target right now.",
 						"Retry the request in a moment; if it continues, contact support.", readErr)
 				}
 				if candidate.Status == state.DeployLive {
-					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
+					return state.Deployment{}, nil, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
 				}
-				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
+				return state.Deployment{}, nil, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
-				return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
+				return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
 					"Gregale could not load the rollback target right now.",
 					"Retry the request in a moment; if it continues, contact support.", err)
 			}
@@ -2412,60 +2420,60 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	} else {
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
+			return state.Deployment{}, nil, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
 	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
 		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
 		if err != nil {
-			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+			return state.Deployment{}, nil, api.ErrCapacity("could not read rollback release policy")
 		}
 		if policy.Mode == "enforce" {
-			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+			return state.Deployment{}, nil, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
 		}
 	}
 
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
-		return state.Deployment{}, problem
+		return state.Deployment{}, nil, problem
 	}
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return state.Deployment{}, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
+		return state.Deployment{}, nil, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
 			"Gregale could not load the current deployment right now.",
 			"Retry the request in a moment; if it continues, contact support.", err)
 	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
-			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
+			return state.Deployment{}, nil, api.ErrCapacity("could not evaluate API contract")
 		}
 		if check.Diff.Blocking() {
 			problem := contractGateProblem(check.Diff)
-			return state.Deployment{}, problem
+			return state.Deployment{}, nil, problem
 		}
 	}
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
-			return state.Deployment{}, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
+			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
-		return state.Deployment{}, api.ErrCapacity("could not prepare rollback target")
+		return state.Deployment{}, nil, api.ErrCapacity("could not prepare rollback target")
 	}
 	primePayload, marshalErr := json.Marshal(map[string]string{
 		"app_id": app.ID, "deployment_id": target.ID,
 	})
 	if marshalErr != nil {
 		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
-		return state.Deployment{}, api.ErrCapacity("could not encode rollback readiness request")
+		return state.Deployment{}, nil, api.ErrCapacity("could not encode rollback readiness request")
 	}
 	if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		// NotifySnapshotPrime is durable in production, so an error means no
 		// handoff committed. Restore eligibility while leaving the current live
 		// deployment untouched.
 		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
-		return state.Deployment{}, api.ErrCapacity("could not queue rollback readiness check")
+		return state.Deployment{}, nil, api.ErrCapacity("could not queue rollback readiness check")
 	}
 	s.log.Info("app rollback readiness requested", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
 	s.audit.Emit(ctx, "app.rollback_requested", &acct.ID, map[string]any{
@@ -2508,7 +2516,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		activity.DeploymentID = &targetID
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
-	return target, nil
+	return target, s.recordRollbackRequest(ctx, acct, app, target, current.ID, trigger), nil
 }
 
 func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.Deployment) *api.Problem {

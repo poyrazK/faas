@@ -8925,14 +8925,15 @@ Show bearer token rotation state
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback [<subcommand>] <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
 | `--reason <TEXT>` | one-line reason of at most 256 bytes; requires --expected-current |  |
-| `--wait` | wait for binding checks and service handoff completion; requires --expected-current |  |
+| `--wait` | wait until the rollback completes (default for a plain rollback; a checked rollback waits only with this flag) |  |
+| `--no-wait` | return once a plain rollback is requested instead of waiting for the previous release to serve |  |
 | `--timeout <duration>` | wait deadline (default 10m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
 | `--json` | machine-readable output |  |
