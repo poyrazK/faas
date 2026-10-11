@@ -149,7 +149,7 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 	return nil
 }
 
-func (m *MemStore) updateReadinessNotification(_ context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+func (m *MemStore) updateReadinessNotification(_ context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req readinessCoordinationUpdate, operator bool) (api.OperationWorkflowReadinessNotification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out api.OperationWorkflowReadinessNotification

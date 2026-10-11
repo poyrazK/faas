@@ -2221,6 +2221,11 @@ from .operation_workflow_readiness_change_status import OperationWorkflowReadine
 from .operation_workflow_readiness_comparison_request import OperationWorkflowReadinessComparisonRequest
 from .operation_workflow_readiness_comparison_request_change import OperationWorkflowReadinessComparisonRequestChange
 from .operation_workflow_readiness_comparison_response import OperationWorkflowReadinessComparisonResponse
+from .operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
+from .operation_workflow_readiness_completion_evidence import OperationWorkflowReadinessCompletionEvidence
+from .operation_workflow_readiness_completion_outcome import OperationWorkflowReadinessCompletionOutcome
+from .operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
+from .operation_workflow_readiness_completion_request_outcome import OperationWorkflowReadinessCompletionRequestOutcome
 from .operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
 from .operation_workflow_readiness_coordination_request import OperationWorkflowReadinessCoordinationRequest
 from .operation_workflow_readiness_coordination_request_status import (
@@ -5784,6 +5789,11 @@ __all__ = (
     "OperationWorkflowReadinessComparisonRequest",
     "OperationWorkflowReadinessComparisonRequestChange",
     "OperationWorkflowReadinessComparisonResponse",
+    "OperationWorkflowReadinessCompletion",
+    "OperationWorkflowReadinessCompletionEvidence",
+    "OperationWorkflowReadinessCompletionOutcome",
+    "OperationWorkflowReadinessCompletionRequest",
+    "OperationWorkflowReadinessCompletionRequestOutcome",
     "OperationWorkflowReadinessCoordination",
     "OperationWorkflowReadinessCoordinationRequest",
     "OperationWorkflowReadinessCoordinationRequestStatus",

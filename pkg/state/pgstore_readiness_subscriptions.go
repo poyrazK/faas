@@ -186,7 +186,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req readinessCoordinationUpdate, operator bool) (api.OperationWorkflowReadinessNotification, error) {
 	var out api.OperationWorkflowReadinessNotification
 	a, _ := operationUUID(account)
 	p, _ := operationUUID(app)

@@ -1158,6 +1158,9 @@ export type { OperationWorkflowPrerequisiteRecovery } from './models/OperationWo
 export type { OperationWorkflowReadinessChange } from './models/OperationWorkflowReadinessChange.js';
 export type { OperationWorkflowReadinessComparisonRequest } from './models/OperationWorkflowReadinessComparisonRequest.js';
 export type { OperationWorkflowReadinessComparisonResponse } from './models/OperationWorkflowReadinessComparisonResponse.js';
+export type { OperationWorkflowReadinessCompletion } from './models/OperationWorkflowReadinessCompletion.js';
+export type { OperationWorkflowReadinessCompletionEvidence } from './models/OperationWorkflowReadinessCompletionEvidence.js';
+export type { OperationWorkflowReadinessCompletionRequest } from './models/OperationWorkflowReadinessCompletionRequest.js';
 export type { OperationWorkflowReadinessCoordination } from './models/OperationWorkflowReadinessCoordination.js';
 export type { OperationWorkflowReadinessCoordinationRequest } from './models/OperationWorkflowReadinessCoordinationRequest.js';
 export type { OperationWorkflowReadinessDueReminder } from './models/OperationWorkflowReadinessDueReminder.js';

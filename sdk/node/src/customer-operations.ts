@@ -711,8 +711,8 @@ function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscript
  return new URLSearchParams({app_id: options.appID, scope: options.scope});
 }
 
-export interface OperationWorkflowReadinessCoordinationRequest { revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
-export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
+export interface OperationWorkflowReadinessCoordinationRequest { completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
+export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { completion?: OperationWorkflowReadinessCompletion; updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
 export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
 export interface OperationWorkflowReadinessNotificationCheck { handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
@@ -721,3 +721,7 @@ export interface OperationWorkflowReadinessFollowUp { reminder?: OperationWorkfl
 export interface OperationWorkflowReadinessFollowUpsResponse { due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
 
 export interface OperationWorkflowReadinessDueReminder { id: string; due_at: string; created_at: string }
+
+export interface OperationWorkflowReadinessCompletionRequest { outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[] }
+export interface OperationWorkflowReadinessCompletion { outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[]; completed_at: string; completed_by: string; evidence: OperationWorkflowReadinessCompletionEvidence }
+export interface OperationWorkflowReadinessCompletionEvidence { checked_at: string; status: string; explanation: string; reporting_operation_id?: string; state_revision?: number; evidence_complete: boolean; remaining_reasons: string[]; pending_verification_count: number; warnings: string[] }

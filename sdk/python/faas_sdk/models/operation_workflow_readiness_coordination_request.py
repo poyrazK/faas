@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
@@ -11,6 +11,10 @@ from ..models.operation_workflow_readiness_coordination_request_status import (
     check_operation_workflow_readiness_coordination_request_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
+
 
 T = TypeVar("T", bound="OperationWorkflowReadinessCoordinationRequest")
 
@@ -34,6 +38,9 @@ class OperationWorkflowReadinessCoordinationRequest:
     note: str
     """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
     evidence."""
+    completion: OperationWorkflowReadinessCompletionRequest | Unset = UNSET
+    """An asserted coordination outcome with a required note; resolved requires at least one retained evidence
+    Operation. Closing does not prove business resolution."""
     follow_up_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReadinessCoordinationRequest.follow_up_at. Shared coordination value; does not alter
     application evidence."""
@@ -46,6 +53,10 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = self.owner
 
         note = self.note
+
+        completion: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.completion, Unset):
+            completion = self.completion.to_dict()
 
         follow_up_at: str | Unset = UNSET
         if not isinstance(self.follow_up_at, Unset):
@@ -61,6 +72,8 @@ class OperationWorkflowReadinessCoordinationRequest:
                 "note": note,
             }
         )
+        if completion is not UNSET:
+            field_dict["completion"] = completion
         if follow_up_at is not UNSET:
             field_dict["follow_up_at"] = follow_up_at
 
@@ -68,6 +81,8 @@ class OperationWorkflowReadinessCoordinationRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
+
         d = dict(src_dict)
         revision = d.pop("revision")
 
@@ -76,6 +91,13 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = d.pop("owner")
 
         note = d.pop("note")
+
+        _completion = d.pop("completion", UNSET)
+        completion: OperationWorkflowReadinessCompletionRequest | Unset
+        if isinstance(_completion, Unset):
+            completion = UNSET
+        else:
+            completion = OperationWorkflowReadinessCompletionRequest.from_dict(_completion)
 
         _follow_up_at = d.pop("follow_up_at", UNSET)
         follow_up_at: datetime.datetime | Unset
@@ -89,6 +111,7 @@ class OperationWorkflowReadinessCoordinationRequest:
             status=status,
             owner=owner,
             note=note,
+            completion=completion,
             follow_up_at=follow_up_at,
         )
 

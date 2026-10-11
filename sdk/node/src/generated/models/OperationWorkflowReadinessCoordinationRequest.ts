@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReadinessCompletionRequest } from './OperationWorkflowReadinessCompletionRequest.js';
 /**
  * OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordinationRequest = {
+  completion?: OperationWorkflowReadinessCompletionRequest;
   /**
    * OperationWorkflowReadinessCoordinationRequest.revision. Shared coordination value; does not alter application evidence.
    */

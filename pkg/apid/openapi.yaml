@@ -75007,6 +75007,8 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        completion:
+          $ref: '#/components/schemas/OperationWorkflowReadinessCompletionRequest'
         revision:
           type: integer
           format: int64
@@ -75048,6 +75050,8 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        completion:
+          $ref: '#/components/schemas/OperationWorkflowReadinessCompletion'
         revision:
           type: integer
           format: int64
@@ -75103,6 +75107,144 @@ components:
       - note
       - updated_at
       - updated_by
+    OperationWorkflowReadinessCompletionRequest:
+      type: object
+      description: An asserted coordination outcome with a required note; resolved requires at least one retained evidence Operation.
+        Closing does not prove business resolution.
+      additionalProperties: false
+      properties:
+        outcome:
+          type: string
+          description: OperationWorkflowReadinessCompletionRequest.outcome. Retained follow-up completion value; never changes
+            application evidence.
+          enum:
+          - resolved
+          - no_longer_applicable
+          - handed_off
+        note:
+          type: string
+          description: OperationWorkflowReadinessCompletionRequest.note. Retained follow-up completion value; never changes application
+            evidence.
+          minLength: 1
+          maxLength: 1024
+        evidence_operation_ids:
+          type: array
+          description: OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
+            never changes application evidence.
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+      required:
+      - outcome
+      - note
+      - evidence_operation_ids
+    OperationWorkflowReadinessCompletion:
+      type: object
+      description: Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write evidence
+        check. Retained with the original notification.
+      additionalProperties: false
+      properties:
+        outcome:
+          type: string
+          description: OperationWorkflowReadinessCompletion.outcome. Retained follow-up completion value; never changes application
+            evidence.
+          enum:
+          - resolved
+          - no_longer_applicable
+          - handed_off
+        note:
+          type: string
+          description: OperationWorkflowReadinessCompletion.note. Retained follow-up completion value; never changes application
+            evidence.
+          maxLength: 1024
+        evidence_operation_ids:
+          type: array
+          description: OperationWorkflowReadinessCompletion.evidence_operation_ids. Retained follow-up completion value; never
+            changes application evidence.
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        completed_at:
+          type: string
+          description: OperationWorkflowReadinessCompletion.completed_at. Retained follow-up completion value; never changes application
+            evidence.
+          format: date-time
+        completed_by:
+          type: string
+          description: OperationWorkflowReadinessCompletion.completed_by. Retained follow-up completion value; never changes application
+            evidence.
+        evidence:
+          $ref: '#/components/schemas/OperationWorkflowReadinessCompletionEvidence'
+      required:
+      - outcome
+      - note
+      - evidence_operation_ids
+      - completed_at
+      - completed_by
+      - evidence
+    OperationWorkflowReadinessCompletionEvidence:
+      type: object
+      description: Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
+        after this observation. Explicit boundaries never imply readiness.
+      additionalProperties: false
+      properties:
+        checked_at:
+          type: string
+          description: OperationWorkflowReadinessCompletionEvidence.checked_at. Retained follow-up completion value; never changes
+            application evidence.
+          format: date-time
+        status:
+          type: string
+          description: OperationWorkflowReadinessCompletionEvidence.status. Retained follow-up completion value; never changes
+            application evidence.
+        explanation:
+          type: string
+          description: OperationWorkflowReadinessCompletionEvidence.explanation. Retained follow-up completion value; never changes
+            application evidence.
+        reporting_operation_id:
+          type: string
+          description: OperationWorkflowReadinessCompletionEvidence.reporting_operation_id. Retained follow-up completion value;
+            never changes application evidence.
+          format: uuid
+        state_revision:
+          type: integer
+          description: OperationWorkflowReadinessCompletionEvidence.state_revision. Retained follow-up completion value; never
+            changes application evidence.
+          format: int64
+        evidence_complete:
+          type: boolean
+          description: OperationWorkflowReadinessCompletionEvidence.evidence_complete. Retained follow-up completion value; never
+            changes application evidence.
+        remaining_reasons:
+          type: array
+          description: OperationWorkflowReadinessCompletionEvidence.remaining_reasons. Retained follow-up completion value; never
+            changes application evidence.
+          items:
+            type: string
+        pending_verification_count:
+          type: integer
+          description: OperationWorkflowReadinessCompletionEvidence.pending_verification_count. Retained follow-up completion
+            value; never changes application evidence.
+          format: int64
+        warnings:
+          type: array
+          description: OperationWorkflowReadinessCompletionEvidence.warnings. Retained follow-up completion value; never changes
+            application evidence.
+          items:
+            type: string
+      required:
+      - checked_at
+      - status
+      - explanation
+      - evidence_complete
+      - remaining_reasons
+      - pending_verification_count
+      - warnings
+
     OperationWorkflowReadinessHandoff:
       type: object
       description: Advisory handoff context for the same checked workflow observation; scheduling-time evidence is not retained.

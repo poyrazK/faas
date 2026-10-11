@@ -57,22 +57,24 @@ type OperationWorkflowReadinessInboxResponse struct {
 
 // Coordination is shared inbox bookkeeping, never business workflow evidence.
 type OperationWorkflowReadinessCoordination struct {
-	Revision       int64      `json:"revision"`
-	Status         string     `json:"status"`
-	Owner          string     `json:"owner"`
-	Note           string     `json:"note"`
-	FollowUpAt     *time.Time `json:"follow_up_at,omitempty"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	UpdatedBy      string     `json:"updated_by"`
-	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
-	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
+	Completion     *OperationWorkflowReadinessCompletion `json:"completion,omitempty"`
+	Revision       int64                                 `json:"revision"`
+	Status         string                                `json:"status"`
+	Owner          string                                `json:"owner"`
+	Note           string                                `json:"note"`
+	FollowUpAt     *time.Time                            `json:"follow_up_at,omitempty"`
+	UpdatedAt      time.Time                             `json:"updated_at"`
+	UpdatedBy      string                                `json:"updated_by"`
+	AcknowledgedAt *time.Time                            `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy string                                `json:"acknowledged_by,omitempty"`
 }
 type OperationWorkflowReadinessCoordinationRequest struct {
-	Revision   int64      `json:"revision"`
-	Status     string     `json:"status"`
-	Owner      string     `json:"owner"`
-	Note       string     `json:"note"`
-	FollowUpAt *time.Time `json:"follow_up_at,omitempty"`
+	Completion *OperationWorkflowReadinessCompletionRequest `json:"completion,omitempty"`
+	Revision   int64                                        `json:"revision"`
+	Status     string                                       `json:"status"`
+	Owner      string                                       `json:"owner"`
+	Note       string                                       `json:"note"`
+	FollowUpAt *time.Time                                   `json:"follow_up_at,omitempty"`
 }
 
 // Handoff summarizes retained application evidence; it never authorizes execution.
@@ -138,4 +140,32 @@ type OperationWorkflowReadinessDueReminder struct {
 	ID        string    `json:"id"`
 	DueAt     time.Time `json:"due_at"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Completion closes coordination only; outcome is an operator/customer assertion.
+type OperationWorkflowReadinessCompletionRequest struct {
+	Outcome              string   `json:"outcome"`
+	Note                 string   `json:"note"`
+	EvidenceOperationIDs []string `json:"evidence_operation_ids"`
+}
+type OperationWorkflowReadinessCompletion struct {
+	Outcome              string                                       `json:"outcome"`
+	Note                 string                                       `json:"note"`
+	EvidenceOperationIDs []string                                     `json:"evidence_operation_ids"`
+	CompletedAt          time.Time                                    `json:"completed_at"`
+	CompletedBy          string                                       `json:"completed_by"`
+	Evidence             OperationWorkflowReadinessCompletionEvidence `json:"evidence"`
+}
+
+// Evidence records the advisory pre-write observation, not execution authority.
+type OperationWorkflowReadinessCompletionEvidence struct {
+	CheckedAt                time.Time `json:"checked_at"`
+	Status                   string    `json:"status"`
+	Explanation              string    `json:"explanation"`
+	ReportingOperationID     string    `json:"reporting_operation_id,omitempty"`
+	StateRevision            int64     `json:"state_revision,omitempty"`
+	EvidenceComplete         bool      `json:"evidence_complete"`
+	RemainingReasons         []string  `json:"remaining_reasons"`
+	PendingVerificationCount int64     `json:"pending_verification_count"`
+	Warnings                 []string  `json:"warnings"`
 }

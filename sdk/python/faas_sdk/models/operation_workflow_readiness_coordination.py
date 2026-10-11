@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
@@ -11,6 +11,10 @@ from ..models.operation_workflow_readiness_coordination_status import (
     check_operation_workflow_readiness_coordination_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
+
 
 T = TypeVar("T", bound="OperationWorkflowReadinessCoordination")
 
@@ -39,6 +43,9 @@ class OperationWorkflowReadinessCoordination:
     updated_by: str
     """OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter application
     evidence."""
+    completion: OperationWorkflowReadinessCompletion | Unset = UNSET
+    """Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write
+    evidence check. Retained with the original notification."""
     follow_up_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReadinessCoordination.follow_up_at. Shared coordination value; does not alter application
     evidence."""
@@ -62,6 +69,10 @@ class OperationWorkflowReadinessCoordination:
 
         updated_by = self.updated_by
 
+        completion: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.completion, Unset):
+            completion = self.completion.to_dict()
+
         follow_up_at: str | Unset = UNSET
         if not isinstance(self.follow_up_at, Unset):
             follow_up_at = self.follow_up_at.isoformat()
@@ -84,6 +95,8 @@ class OperationWorkflowReadinessCoordination:
                 "updated_by": updated_by,
             }
         )
+        if completion is not UNSET:
+            field_dict["completion"] = completion
         if follow_up_at is not UNSET:
             field_dict["follow_up_at"] = follow_up_at
         if acknowledged_at is not UNSET:
@@ -95,6 +108,8 @@ class OperationWorkflowReadinessCoordination:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
+
         d = dict(src_dict)
         revision = d.pop("revision")
 
@@ -107,6 +122,13 @@ class OperationWorkflowReadinessCoordination:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         updated_by = d.pop("updated_by")
+
+        _completion = d.pop("completion", UNSET)
+        completion: OperationWorkflowReadinessCompletion | Unset
+        if isinstance(_completion, Unset):
+            completion = UNSET
+        else:
+            completion = OperationWorkflowReadinessCompletion.from_dict(_completion)
 
         _follow_up_at = d.pop("follow_up_at", UNSET)
         follow_up_at: datetime.datetime | Unset
@@ -131,6 +153,7 @@ class OperationWorkflowReadinessCoordination:
             note=note,
             updated_at=updated_at,
             updated_by=updated_by,
+            completion=completion,
             follow_up_at=follow_up_at,
             acknowledged_at=acknowledged_at,
             acknowledged_by=acknowledged_by,

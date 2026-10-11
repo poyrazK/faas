@@ -33,7 +33,8 @@ type readinessSubscriptionRecord struct {
 	NextEvaluation time.Time                                  `json:"-"`
 }
 type readinessSubscriptionBackend interface {
-	updateReadinessNotification(context.Context, string, string, string, string, string, int64, string, api.OperationWorkflowReadinessCoordinationRequest, bool) (api.OperationWorkflowReadinessNotification, error)
+	OperationByID(context.Context, string, string, string) (Operation, error)
+	updateReadinessNotification(context.Context, string, string, string, string, string, int64, string, readinessCoordinationUpdate, bool) (api.OperationWorkflowReadinessNotification, error)
 	readinessQueueStore
 	AppByID(context.Context, string) (App, error)
 	GetPlatformTenant(context.Context, string, string) (PlatformTenant, error)

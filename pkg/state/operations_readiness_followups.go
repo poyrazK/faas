@@ -32,9 +32,13 @@ func updateReadinessNotification(ctx context.Context, store readinessSubscriptio
 		}
 		req.FollowUpAt = &t
 	}
-	return store.updateReadinessNotification(ctx, account, tenant, app, scope, uuid.MustParse(id).String(), sequence, actor, req, operator)
+	prepared, err := prepareReadinessCompletion(ctx, store, account, tenant, app, scope, id, sequence, req, operator)
+	if err != nil {
+		return out, err
+	}
+	return store.updateReadinessNotification(ctx, account, tenant, app, scope, uuid.MustParse(id).String(), sequence, actor, prepared, operator)
 }
-func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, actor string, req api.OperationWorkflowReadinessCoordinationRequest) (api.OperationWorkflowReadinessNotification, error) {
+func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, actor string, req readinessCoordinationUpdate) (api.OperationWorkflowReadinessNotification, error) {
 	revision := int64(0)
 	if n.Coordination != nil {
 		revision = n.Coordination.Revision
@@ -42,8 +46,23 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if revision != req.Revision {
 		return n, ErrConflict
 	}
+	if n.Coordination != nil && n.Coordination.Completion != nil && (req.Completion != nil || req.FollowUpAt != nil) {
+		return n, ErrConflict
+	}
+	if req.Completion != nil && (req.PreparedCompletion == nil || n.Coordination == nil || n.Coordination.FollowUpAt == nil) {
+		return n, ErrConflict
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	c := &api.OperationWorkflowReadinessCoordination{Revision: revision + 1, Status: req.Status, Owner: req.Owner, Note: req.Note, FollowUpAt: req.FollowUpAt, UpdatedAt: now, UpdatedBy: actor}
+	if n.Coordination != nil {
+		c.Completion = n.Coordination.Completion
+	}
+	if req.PreparedCompletion != nil {
+		completion := *req.PreparedCompletion
+		completion.CompletedAt, completion.CompletedBy = now, actor
+		c.Completion = &completion
+		c.FollowUpAt = nil
+	}
 	if req.Status == "acknowledged" {
 		c.AcknowledgedAt = &now
 		c.AcknowledgedBy = actor

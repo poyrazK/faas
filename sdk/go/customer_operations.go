@@ -275,3 +275,8 @@ type OperationWorkflowReadinessDueReminder = api.OperationWorkflowReadinessDueRe
 
 // OperationWorkflowReadinessHandoff is an advisory brief for checked notification evidence.
 type OperationWorkflowReadinessHandoff = api.OperationWorkflowReadinessHandoff
+
+// Evidence-backed follow-up completion remains shared coordination.
+type OperationWorkflowReadinessCompletionRequest = api.OperationWorkflowReadinessCompletionRequest
+type OperationWorkflowReadinessCompletion = api.OperationWorkflowReadinessCompletion
+type OperationWorkflowReadinessCompletionEvidence = api.OperationWorkflowReadinessCompletionEvidence

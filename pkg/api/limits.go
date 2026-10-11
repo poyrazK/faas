@@ -9692,3 +9692,6 @@ const OperationWorkflowReadinessFollowUpCandidatesMax = OperationWorkflowReadine
 const OperationWorkflowReadinessReminderBatchMax = 100
 const OperationWorkflowReadinessReminderPollInterval = 30 * time.Second
 const OperationWorkflowReadinessReminderPublishTimeout = 10 * time.Second
+
+// Evidence-backed readiness completion references are bounded per retained notification.
+const OperationWorkflowReadinessCompletionEvidenceMax = 8
