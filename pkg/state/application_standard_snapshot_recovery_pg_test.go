@@ -6,6 +6,7 @@ package state
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -19,6 +20,17 @@ import (
 )
 
 func TestPgApplicationStandardLedgerRecoveryPreservesMeasuredPromotion(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
+	}
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Skipf("ledger recovery database is unavailable: %v", err)
+	}
+	if !strings.HasPrefix(config.ConnConfig.Host, "/") || config.ConnConfig.TLSConfig != nil {
+		t.Skip("ledger recovery acceptance requires PostgreSQL through a local Unix socket")
+	}
 	if _, err := exec.LookPath("pg_dump"); err != nil {
 		t.Skip("ledger recovery requires PostgreSQL 16 pg_dump")
 	}

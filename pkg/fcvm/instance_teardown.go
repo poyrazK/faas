@@ -124,6 +124,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.pendingCleanup, lease.Instance)
 	delete(m.pendingProcessExits, lease.Instance)
 	delete(m.processGenerations, lease.Instance)
+	delete(m.processStartedAt, lease.Instance)
 	delete(m.waking, lease.Instance)
 	delete(m.live, lease.Instance)
 	delete(m.qualificationInstances, lease.Instance)

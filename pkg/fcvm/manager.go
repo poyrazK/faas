@@ -837,6 +837,7 @@ type Manager struct {
 	namespaceProbe        func(string) (*resourceAsset, error) // tests inject kernel observations
 	namespaceContext      func() (*resourceMountIdentity, error)
 	processGenerations    map[string]uint64
+	processStartedAt      map[string]time.Time
 	nextProcessGeneration uint64
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
@@ -1224,6 +1225,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		instanceFlights:                   make(map[string]*instanceFlight),
 		pendingProcessExits:               make(map[string]int),
 		processGenerations:                make(map[string]uint64),
+		processStartedAt:                  make(map[string]time.Time),
 		waking:                            make(map[string]struct{}),
 		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
@@ -4559,6 +4561,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// carry the actual attempt used by the replacement cold boot.
 	m.mu.Lock()
 	lease.processGeneration = m.processGenerations[lease.Instance]
+	lease.profileStartedAt = m.processStartedAt[lease.Instance]
 	m.mu.Unlock()
 	// Marked before the error check so a FAILED bringUp still reports
 	// how long it burned — that is the phase most likely to hold a
@@ -5323,10 +5326,14 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	if m.processGenerations == nil {
 		m.processGenerations = make(map[string]uint64)
 	}
+	if m.processStartedAt == nil {
+		m.processStartedAt = make(map[string]time.Time)
+	}
 	m.nextProcessGeneration++
 	lease.processGeneration = m.nextProcessGeneration
 	lease.profileStartedAt = time.Now()
 	m.processGenerations[lease.Instance] = lease.processGeneration
+	m.processStartedAt[lease.Instance] = lease.profileStartedAt
 	delete(m.pendingProcessExits, lease.Instance)
 	return lease
 }

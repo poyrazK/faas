@@ -169,7 +169,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 					return fmt.Errorf("rootfs: invalid empty whiteout %q", hdr.Name)
 				}
 				if opts.preserveWhiteouts {
-					if err := applyOverlayWhiteout(filepath.Dir(target), victimName, target); err != nil {
+					if err := applyOverlayWhiteout(filepath.Dir(target), victimName); err != nil {
 						return fmt.Errorf("rootfs: whiteout %s: %w", victimName, err)
 					}
 				} else {

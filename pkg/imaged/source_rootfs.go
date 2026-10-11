@@ -15,11 +15,12 @@ import (
 type sourceBuildRootfsBinding struct {
 	Approval   state.BuildExportPublication `json:"-"`
 	Base       state.BaseImageProducer      `json:"-"`
+	ExportPath string                       `json:"-"`
 	IntentHash string                       `json:"-"`
 }
 
 func (h *Handler) prepareSourceBuildRootfsBinding(ctx context.Context, app state.App, dep state.Deployment, approval state.BuildExportPublication) (sourceBuildRootfsBinding, error) {
-	binding := sourceBuildRootfsBinding{Approval: approval}
+	binding := sourceBuildRootfsBinding{Approval: approval, ExportPath: dep.RootfsPath}
 	hash, err := state.SourceBuildRootfsIntentHash(app, dep)
 	if err != nil {
 		return binding, err

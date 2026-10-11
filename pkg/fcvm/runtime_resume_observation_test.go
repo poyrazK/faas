@@ -118,7 +118,11 @@ func captureResumeHookPeer(c net.Conn, ack byte, drop bool, cancel context.Cance
 	}
 	if !drop {
 		result.acked = time.Now().UnixNano()
-		_, result.err = c.Write([]byte{ack})
+		response := []byte{ack}
+		if ack == 0 {
+			response = append(response, resumeCapUserspaceReseed)
+		}
+		_, result.err = c.Write(response)
 	}
 	return
 }

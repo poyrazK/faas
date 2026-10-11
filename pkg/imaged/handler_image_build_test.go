@@ -379,7 +379,7 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	if findNotify(notif, db.NotifySnapshotPrime) == nil {
 		t.Fatal("expected snapshot_prime notification")
 	}
-	if got.ImageDigest != dep.ImageDigest || resolved.mutableReads != 0 {
+	if got.ImageDigest != resolved.selected || resolved.mutableReads != 0 {
 		t.Fatalf("conversion reread or overwrote intent: stored=%q reads=%d", got.ImageDigest, resolved.mutableReads)
 	}
 	if len(b.fullRootfsCalls) != 1 {

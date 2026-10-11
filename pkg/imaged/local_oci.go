@@ -465,7 +465,11 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if !ok {
 		return fmt.Errorf("imaged: source build digest store is unavailable")
 	}
-	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, dep.RootfsPath, digest); err != nil {
+	exportPath := dep.RootfsPath
+	if source != nil && source.ExportPath != "" {
+		exportPath = source.ExportPath
+	}
+	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, exportPath, digest); err != nil {
 		return fmt.Errorf("imaged: pin source build digest: %w", err)
 	}
 	dep.ImageDigest = digest

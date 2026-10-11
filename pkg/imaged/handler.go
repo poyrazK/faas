@@ -3606,7 +3606,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 
 	var promoteErr error
-	if !checkedRollback && dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+	if !checkedRollback && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3915,7 +3915,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	// local file.
 	switch dep.Kind {
 	case state.DeploymentKindImage:
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
+		if app.Type == state.AppTypeFunction {
 			if err := h.buildFunctionLayer(ctx, app, dep, acct, nil); err != nil {
 				return err
 			}

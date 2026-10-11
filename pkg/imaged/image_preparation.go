@@ -197,7 +197,7 @@ func (h *Handler) openImagePreparationStage(ctx context.Context, app state.App, 
 func (h *Handler) buildSnapshotBootLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
 	switch dep.Kind {
 	case state.DeploymentKindImage:
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
+		if app.Type == state.AppTypeFunction {
 			return h.buildFunctionLayer(ctx, app, dep, acct, nil)
 		}
 		return h.buildImageLayer(ctx, app, dep, acct)

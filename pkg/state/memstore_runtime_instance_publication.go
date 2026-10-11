@@ -18,12 +18,25 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 	if err != nil {
 		return Instance{}, err
 	}
+	if _, managed := m.instanceApplicationStandardAdmissions[p.InstanceID]; managed && p.AdmissionReceipt == nil && p.PromotionReceipt == nil {
+		return Instance{}, ErrApplicationStandardRuntimeStale
+	}
+	acceptance, err := m.prepareRuntimeUpgradeAcceptanceLocked(p)
+	if err != nil {
+		return Instance{}, err
+	}
 	if p.AdmissionReceipt != nil || p.PromotionReceipt != nil {
 		instance, err := m.publishOwnedStandardRuntimeLocked(ctx, p)
 		if err != nil {
 			return Instance{}, err
 		}
 		m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
+		if acceptance != nil {
+			if m.runtimeUpgradeAcceptances == nil {
+				m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
+			}
+			m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
+		}
 		return instance, nil
 	}
 	prior := instance
@@ -40,6 +53,12 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 		}
 	}
 	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
+	if acceptance != nil {
+		if m.runtimeUpgradeAcceptances == nil {
+			m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
+		}
+		m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
+	}
 	return instance, nil
 }
 
@@ -70,30 +89,6 @@ func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublicati
 		if !ok || proof.WakeID != p.WakeID || proof.NodeID != p.NodeID || proof.Fence != p.ConfigFence {
 			return Instance{}, ErrConflict
 		}
-	}
-	acceptance, err := m.prepareRuntimeUpgradeAcceptanceLocked(p)
-	if err != nil {
-		return Instance{}, err
-	}
-	prior := instance
-	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
-	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[p.InstanceID], instance); err != nil {
-		return Instance{}, err
-	}
-	m.instances[p.InstanceID] = instance
-	if p.Inputs != nil && p.targetState() == string(StateRunning) {
-		if err := m.recordInstanceRuntimeConfigReceiptLocked(p.InstanceID, p.WakeID, *p.Inputs); err != nil {
-			m.instances[p.InstanceID] = prior
-			return Instance{}, err
-		}
-	}
-	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
-	if acceptance != nil {
-		if m.runtimeUpgradeAcceptances == nil {
-			m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
-		}
-		m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
 	}
 	return instance, nil
 }

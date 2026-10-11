@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/ociref"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,16 +36,27 @@ func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep 
 func (h *Handler) prepareContainerWorkloadImage(ctx context.Context, app state.App, dep state.Deployment, workload, ref string, auth *oci.BasicAuth) (preparedContainerWorkload, error) {
 	resolved, err := h.resolveContainerWorkloadImage(ctx, ref, auth)
 	prepared := preparedContainerWorkload{ImageResolution: resolved}
-	if err == nil && !api.ValidDeploymentImage(ref) {
+	verificationRef := ref
+	_, resolverBacked := h.oci.(oci.ImageResolver)
+	// Only the deployment's primary image has a mutable database column to
+	// pin. Sidecar intent lives in its own declaration, so its signature must
+	// remain bound to that declared reference. Legacy pullers do not return
+	// a verifiable immutable source and keep their historical behavior.
+	if err == nil && resolverBacked && workload == "" && !api.ValidDeploymentImage(ref) {
 		pins, ok := h.store.(state.DeploymentImageReferenceStore)
 		if !ok {
 			err = fmt.Errorf("imaged: image reference pinning unavailable")
 		} else if pinErr := pins.PinDeploymentImageReference(ctx, dep.ID, ref, resolved.SourceReference); pinErr != nil {
 			err = fmt.Errorf("imaged: pin image source: %w", pinErr)
+		} else {
+			// The state record is checked against the now-pinned deployment
+			// row. Bind it to that immutable source, not the mutable tag that
+			// was replaced by the compare-and-set above.
+			verificationRef = resolved.SourceReference
 		}
 	}
 	if err == nil && (app.RequireSigned || app.SecurityPolicy.RequiresSignedImage()) {
-		prepared.Verification, err = h.recordContainerWorkloadSignature(ctx, app, dep, workload, ref, resolved, auth)
+		prepared.Verification, err = h.recordContainerWorkloadSignature(ctx, app, dep, workload, verificationRef, resolved, auth)
 	}
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "container image admission")
@@ -71,11 +83,9 @@ func (h *Handler) resolveContainerWorkloadImage(ctx context.Context, ref string,
 	// Preserve legacy unsigned puller behavior when no immutable digest is
 	// available. Signed inputs require canonical evidence; production resolves
 	// content with ImageResolver above.
-	if parsed, err := oci.ParseReference(ref); err == nil {
+	if parsed, err := oci.ParseReference(ref); err == nil && ociref.ValidateDigest(digest) == nil {
 		parsed.Tag, parsed.Digest = "", digest
-		if _, err := oci.ParseReference(parsed.String()); err == nil {
-			pinned = parsed.String()
-		}
+		pinned = parsed.String()
 	}
 	return oci.ImageResolution{SourceReference: pinned, SourceDigest: digest, Reference: pinned, Digest: digest}, nil
 }
