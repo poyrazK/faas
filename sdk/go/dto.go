@@ -501,3 +501,11 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, acks []EventDeliveryHealthAcknowledgement) (EventDeliveryHealthCheckpoint, error) {
 	return api.AcknowledgeEventDeliveryHealthAlerts(saved, acks)
 }
+
+// EventDeliveryHealthSLOOptions configures sustained window targets.
+type EventDeliveryHealthSLOOptions = api.EventDeliveryHealthSLOOptions
+type EventDeliveryHealthSLOObservation = api.EventDeliveryHealthSLOObservation
+
+func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options EventDeliveryHealthSLOOptions) ([]EventDeliveryHealthSLOObservation, error) {
+	return api.EvaluateEventConsumerDeliverySLO(h, options)
+}

@@ -9713,3 +9713,10 @@ const EventDeliveryHealthAlertSequenceMax uint64 = 9007199254740991
 
 // EventDeliveryHealthAcknowledgementHistoryMax bounds exact acknowledgement retries.
 const EventDeliveryHealthAcknowledgementHistoryMax = 1024
+
+// EventDeliveryHealthSLO defaults require meaningful traffic and sustained breaches.
+const EventDeliveryHealthSLOMinimumSamplesDefault int64 = 10
+const EventDeliveryHealthSLOSustainDefault = time.Minute
+
+const EventDeliveryHealthSLOPercentageMin = 0.000001
+const EventDeliveryHealthSLOPercentageMax = 100.0

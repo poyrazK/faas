@@ -38,6 +38,18 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold <= 0 {
 		return false
 	}
+	if strings.HasPrefix(metric, "slo.") {
+		switch metric {
+		case "slo.routing_latency_p95_seconds", "slo.completion_latency_p95_seconds":
+			return threshold >= EventDeliveryHealthWatchThresholdMin.Seconds() && threshold <= EventDeliveryHealthWatchThresholdMax.Seconds()
+		case "slo.retry_rate_per_second", "slo.dead_letter_rate_per_second":
+			return threshold <= float64(EventDeliveryHealthWatchCountMax)
+		case "slo.routing_failure_pct":
+			return threshold >= EventDeliveryHealthSLOPercentageMin && threshold <= EventDeliveryHealthSLOPercentageMax
+		default:
+			return false
+		}
+	}
 	count := metric == "retrying_executions" || metric == "dead_lettered_executions"
 	switch metric {
 	case "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions":
@@ -73,6 +85,13 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 	for _, c := range saved.Conditions {
 		if _, exists := metrics[c.Metric]; exists || !deliveryHealthMetricThreshold(c.Metric, c.Threshold) || math.IsNaN(c.Value) || math.IsInf(c.Value, 0) || c.Value < 0 {
 			return ErrValidation("invalid checkpoint condition")
+		}
+		if strings.HasPrefix(c.Metric, "slo.") {
+			if c.MinimumSamples < 1 || c.MinimumSamples > EventDeliveryHealthWatchCountMax || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
+				return ErrValidation("invalid checkpoint SLO configuration")
+			}
+		} else if c.MinimumSamples != 0 || c.SustainSeconds != 0 {
+			return ErrValidation("unexpected checkpoint SLO configuration")
 		}
 		if c.State != "clear" && c.State != "unknown" && c.State != "firing" {
 			return ErrValidation("invalid checkpoint condition state")
@@ -111,7 +130,7 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 	for _, a := range history {
 		c, known := metrics[a.Metric]
 		n, ok := deliveryHealthIncidentSequence(a.IncidentID, saved.Session)
-		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
+		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || a.MinimumSamples != c.MinimumSamples || a.SustainSeconds != c.SustainSeconds || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
 			return ErrValidation("invalid checkpoint pending alert")
 		}
 		switch a.Transition {
@@ -210,7 +229,7 @@ func restoreDeliveryHealthCheckpoint(out *EventDeliveryHealthWatchResult, condit
 	}
 	for i, c := range conditions {
 		previous := saved.Conditions[i]
-		if c.Metric != previous.Metric || c.Threshold != previous.Threshold {
+		if c.Metric != previous.Metric || c.Threshold != previous.Threshold || c.MinimumSamples != previous.MinimumSamples || c.SustainSeconds != previous.SustainSeconds {
 			return ErrValidation("checkpoint thresholds mismatch")
 		}
 		c.observedAt = previous.ObservedAt

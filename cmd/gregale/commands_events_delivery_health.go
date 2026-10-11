@@ -83,6 +83,7 @@ type deliveryHealthWatchFlags struct {
 	checkpoint        *string
 	ackInbox          *string
 	options           api.EventDeliveryHealthWatchOptions
+	slo               api.EventDeliveryHealthSLOOptions
 }
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
@@ -137,16 +138,36 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 		f.options.WaitingReasonDurations[reason] = d
 		return nil
 	})
+	fs.DurationVar(&f.slo.RoutingLatency, "slo-routing-latency", 0, "recorded routing p95 latency target; zero disables")
+	fs.DurationVar(&f.slo.CompletionLatency, "slo-completion-latency", 0, "successful completion p95 target; incomplete history is unknown")
+	fs.Float64Var(&f.slo.RetryRatePerSecond, "slo-retry-rate", 0, "recorded routing retries/second target; zero disables")
+	fs.Float64Var(&f.slo.DeadLetterRatePerSecond, "slo-dead-letter-rate", 0, "dead letters/second target; incomplete history is unknown")
+	fs.Float64Var(&f.slo.RoutingFailureBudgetPct, "slo-routing-failure-budget", 0, "recorded terminal routing failure budget percentage; zero disables")
+	fs.Int64Var(&f.slo.MinimumSamples, "slo-min-samples", api.EventDeliveryHealthSLOMinimumSamplesDefault, "minimum window samples for each SLO")
+	fs.DurationVar(&f.slo.Sustain, "slo-sustain", api.EventDeliveryHealthSLOSustainDefault, "consecutive fresh breach duration before SLO alert")
 	return f
 }
 
 func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 	var err error
+	sloSelected, sloTarget := false, false
 	fs.Visit(func(option *flag.Flag) {
+		if strings.HasPrefix(option.Name, "slo-") {
+			sloSelected = true
+			if option.Name != "slo-min-samples" && option.Name != "slo-sustain" {
+				sloTarget = true
+			}
+		}
 		if !*f.watch && option.Name != "window" && option.Name != "watch" {
 			err = fmt.Errorf("--%s requires --watch", option.Name)
 		}
 	})
+	if sloSelected && !sloTarget {
+		return fmt.Errorf("SLO sample/sustain settings require an SLO target")
+	}
+	if sloSelected {
+		f.options.SLO = &f.slo
+	}
 	if *f.ackInbox != "" && *f.checkpoint == "" {
 		return fmt.Errorf("--ack-inbox requires --checkpoint")
 	}
@@ -206,6 +227,9 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 	} else {
 		if result.Health != nil {
 			printEventConsumerDeliveryHealth(*result.Health)
+		}
+		for _, v := range result.SLO {
+			_, _ = fmt.Fprintf(osStdout, "SLO %s: %s (%s) | value %.6f | target %.6f | samples %d/%d | coverage %s | budget burn %.3fx\n", v.Metric, v.Status, v.Reason, v.Value, v.Threshold, v.Samples, v.MinimumSamples, v.Coverage, v.ErrorBudgetBurnRate)
 		}
 		_, _ = fmt.Fprintf(osStdout, "Watch stopped: %s | observations %d | alert sequence %d\n", result.StopReason, result.Observations, result.Sequence)
 	}

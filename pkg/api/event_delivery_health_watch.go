@@ -24,6 +24,7 @@ type EventDeliveryHealthWatchOptions struct {
 	WaitingReasonDurations map[string]time.Duration
 	DurableAlerts          bool
 	Resume                 *EventDeliveryHealthCheckpoint
+	SLO                    *EventDeliveryHealthSLOOptions
 	OnProgress             func(EventDeliveryHealthWatchResult) error
 	// PollAcknowledgements runs synchronously between observations with detached state.
 	PollAcknowledgements func(context.Context, EventDeliveryHealthCheckpoint) ([]EventDeliveryHealthAcknowledgement, error)
@@ -40,19 +41,24 @@ type EventDeliveryHealthAlert struct {
 	At             time.Time `json:"at"`
 	Value          float64   `json:"value"`
 	Threshold      float64   `json:"threshold"`
+	MinimumSamples int64     `json:"minimum_samples,omitempty"`
+	SustainSeconds float64   `json:"sustain_seconds,omitempty"`
 }
 
 type EventDeliveryHealthCondition struct {
-	Metric     string    `json:"metric"`
-	State      string    `json:"state"`
-	Value      float64   `json:"value"`
-	Threshold  float64   `json:"threshold"`
-	IncidentID string    `json:"incident_id,omitempty"`
-	ObservedAt time.Time `json:"observed_at"`
+	Metric         string    `json:"metric"`
+	State          string    `json:"state"`
+	Value          float64   `json:"value"`
+	Threshold      float64   `json:"threshold"`
+	IncidentID     string    `json:"incident_id,omitempty"`
+	ObservedAt     time.Time `json:"observed_at"`
+	MinimumSamples int64     `json:"minimum_samples,omitempty"`
+	SustainSeconds float64   `json:"sustain_seconds,omitempty"`
 }
 
 type EventDeliveryHealthWatchResult struct {
-	Checkpoint     *EventDeliveryHealthCheckpoint `json:"checkpoint,omitempty"`
+	Checkpoint     *EventDeliveryHealthCheckpoint      `json:"checkpoint,omitempty"`
+	SLO            []EventDeliveryHealthSLOObservation `json:"slo,omitempty"`
 	reserved       int
 	queueFull      bool
 	AppID          string                         `json:"app_id,omitempty"`
@@ -110,6 +116,12 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 		}
 		enabled = true
 	}
+	if o.SLO != nil {
+		if err := o.SLO.validate(); err != nil {
+			return err
+		}
+		enabled = true
+	}
 	if !enabled {
 		return ErrValidation("enable at least one delivery health threshold")
 	}
@@ -147,6 +159,11 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "waiting_reason." + reason + ".seconds", State: "unknown", Threshold: d.Seconds()}, sustained: true})
 		}
 	}
+	if o.SLO != nil {
+		for _, v := range sloTargets(*o.SLO) {
+			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.Metric, State: "unknown", Threshold: v.Threshold, MinimumSamples: o.SLO.MinimumSamples, SustainSeconds: o.SLO.Sustain.Seconds()}})
+		}
+	}
 	return out
 }
 
@@ -155,6 +172,10 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 // persist progress before delivering notifications. PollAcknowledgements can
 // remove processed alerts between observations through the same progress hook.
 func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
+	if o.SLO != nil {
+		snapshot := *o.SLO
+		o.SLO = &snapshot
+	}
 	out := EventDeliveryHealthWatchResult{SubscriptionID: strings.ToLower(sub), StopReason: "validation_failure", Conditions: []EventDeliveryHealthCondition{}, Alerts: []EventDeliveryHealthAlert{}}
 	if err := o.validate(); err != nil {
 		return out, err
@@ -206,6 +227,9 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 		}
 		out.Observations++
 		out.Health = &health
+		if o.SLO != nil {
+			out.SLO, _ = EvaluateEventConsumerDeliverySLO(health, *o.SLO)
+		}
 		binding := health.Routing.AppID != "" && strings.EqualFold(health.Routing.AppID, health.Execution.AppID) && strings.EqualFold(health.Routing.SubscriptionID, sub) && strings.EqualFold(health.Execution.SubscriptionID, sub)
 		if appID == "" && binding {
 			appID = health.Routing.AppID
@@ -214,6 +238,14 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 		binding = binding && strings.EqualFold(appID, health.Routing.AppID)
 		for _, condition := range conditions {
 			value, valid, observed := deliveryHealthValue(health, condition.Metric)
+			if strings.HasPrefix(condition.Metric, "slo.") {
+				for _, v := range out.SLO {
+					if v.Metric == condition.Metric {
+						value, valid, observed = v.Value, v.Status == "eligible", v.ObservedAt
+						break
+					}
+				}
+			}
 			updateDeliveryHealthCondition(&out, condition, value, binding && valid, observed, now, o.MaxAge)
 		}
 		collectDeliveryHealthConditions(&out, conditions)
@@ -307,8 +339,11 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 	}
 	c.Value = value
 	breached := value >= c.Threshold && (!c.sustained || c.samples >= 2)
+	if c.SustainSeconds > 0 {
+		breached = updateDeliveryHealthSLOSustain(c, value, now)
+	}
 	if c.resuming {
-		if c.sustained && rawPositive && !breached {
+		if ((c.sustained && rawPositive) || (c.SustainSeconds > 0 && value >= c.Threshold)) && !breached {
 			c.State = "unknown"
 			return
 		}
@@ -345,7 +380,7 @@ func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deli
 }
 
 func appendDeliveryHealthAlert(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, transition, reason string) {
-	alert := EventDeliveryHealthAlert{AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold}
+	alert := EventDeliveryHealthAlert{AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold, MinimumSamples: c.MinimumSamples, SustainSeconds: c.SustainSeconds}
 	out.Alerts = append(out.Alerts, alert)
 	if out.Checkpoint != nil {
 		out.Checkpoint.Pending = append(out.Checkpoint.Pending, alert)
