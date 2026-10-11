@@ -229,6 +229,34 @@ month-end statement. `statement-draft` and `statement-finalize` print a
 warning when the check finds gaps. The check is advisory: it never blocks
 finalizing and stores nothing.
 
+### Send statements to Stripe
+
+Turn finalized statements into draft invoices in your own Stripe account
+instead of retyping totals. Store a restricted key once, with read and write
+access to invoices and invoice items; it is read from stdin and sealed at rest:
+
+```bash
+gregale account stripe connect < stripe-key.txt
+gregale consumers statement-export my-api CONSUMER_ID STATEMENT_ID
+gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMENT_ID
+```
+
+- **Customer.** Use `--customer cus_…`, or set the consumer's or tenant's
+  `external_ref` to its Stripe customer ID.
+- **Invoice lines.** Each rate card and unit price becomes one invoice item,
+  and free requests show as no-charge items. If rounding each item to the cent
+  would change the total, a rounding item keeps the invoice equal to the
+  statement total rounded to the cent.
+- **Drafts only.** Gregale never finalizes or sends the invoice, and it leaves
+  other pending items on the customer alone. Review the draft and send it
+  from Stripe.
+- **Handoff.** The export records the statement's handoff with the Stripe
+  invoice ID, so the usual rule that a revision is invoiced once applies.
+- **Retries.** If Stripe fails part-way, run the export again: it resumes the
+  same draft invoice and never adds an item twice.
+- **Currencies.** Only two-decimal currencies are supported, such as EUR, USD
+  and GBP.
+
 ## Customers across several apps
 
 To bill one customer across several apps, link their consumers to a
@@ -268,8 +296,8 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   finds such losses only while request telemetry still holds the period
   (14 days) and only where telemetry was not sampled. Reconcile with your own
   records before closing a high-value invoice.
-- Gregale records the handoff to your billing system but never charges your
-  customers.
+- Gregale records the handoff to your billing system, or creates a draft
+  invoice in your own Stripe, but never charges your customers.
 
 See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-billing.md),
 [ADR-950](adr/950-api-consumer-monthly-allowances.md),
@@ -277,8 +305,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-952](adr/952-api-consumer-route-weights.md),
 [ADR-953](adr/953-api-consumer-plans.md),
 [ADR-954](adr/954-api-consumer-usage-completeness.md),
-[ADR-849](adr/849-api-consumer-usage-alerts.md), and
-[ADR-975](adr/975-platform-tenant-allowances-and-tiers.md) for the billing rules.
+[ADR-849](adr/849-api-consumer-usage-alerts.md),
+[ADR-975](adr/975-platform-tenant-allowances-and-tiers.md), and
+[ADR-1300](adr/1300-stripe-statement-invoice-exports.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

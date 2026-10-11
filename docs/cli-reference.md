@@ -9,7 +9,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`menu`](#menu) | Choose a common task and open its guided command |
 | [`start`](#start) | Get your first app live with a few guided prompts |
-| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
+| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo\|stripe) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
@@ -717,7 +717,7 @@ gregale start
 
 ## account
 
-Manage the local account (account export|delete|restore|status|dpa|slo)
+Manage the local account (account export|delete|restore|status|dpa|slo|stripe)
 
 `gregale account [<subcommand>]`
 
@@ -765,6 +765,12 @@ Show DPA metadata
 ### account slo
 
 Account-wide SLO panel
+
+### account stripe
+
+Connect, show, or disconnect the Stripe key for statement invoice exports; connect reads the key from stdin
+
+`gregale account stripe {connect|status|disconnect}`
 
 
 ## add
@@ -7322,6 +7328,16 @@ Record your invoice reference for a finalized revision
 |---|---|---|
 | `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
 
+### consumers statement-export
+
+Create a draft Stripe invoice for a finalized revision and record its handoff
+
+`gregale consumers statement-export [--customer <cus_ID>] <slug> <consumer-id> <statement-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--customer <cus_ID>` | Stripe customer ID (default: the consumer&#39;s external_ref when it is one) |  |
+
 ### consumers plans
 
 List an app&#39;s consumer plans
@@ -7616,6 +7632,18 @@ Record your invoice reference for a finalized revision
 | `--id <UUID>` | platform tenant UUID | required |
 | `--statement-id <UUID>` | statement revision UUID | required |
 | `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
+
+### platform-tenants statement-export
+
+Create a draft Stripe invoice for a finalized revision and record its handoff
+
+`gregale platform-tenants statement-export --id <UUID> --statement-id <UUID> [--customer <cus_ID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--statement-id <UUID>` | statement revision UUID | required |
+| `--customer <cus_ID>` | Stripe customer ID (default: the tenant&#39;s external_ref when it is one) |  |
 
 
 ## edge-rule-lists

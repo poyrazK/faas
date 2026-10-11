@@ -13,9 +13,11 @@ import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsRespo
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
+import type { BillingConnectionResponse } from '../models/BillingConnectionResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { PutStripeConnectionRequest } from '../models/PutStripeConnectionRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
@@ -562,6 +564,63 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+      },
+    });
+  }
+  /**
+   * Describe the account's Stripe key for statement invoice exports.
+   * @returns BillingConnectionResponse The connection; the key itself is never returned.
+   * @throws ApiError
+   */
+  public static getStripeConnection(): CancelablePromise<BillingConnectionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-connections/stripe',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Store or replace the account's Stripe key.
+   * Checks the key against Stripe, then seals it at rest. Use a restricted
+   * key (rk_live_… or rk_test_…) with read and write access to invoices
+   * and invoice items. Only the last four characters and the mode are
+   * ever returned.
+   *
+   * @returns BillingConnectionResponse The stored connection.
+   * @throws ApiError
+   */
+  public static putStripeConnection({
+    requestBody,
+  }: {
+    requestBody: PutStripeConnectionRequest,
+  }): CancelablePromise<BillingConnectionResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-connections/stripe',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        422: `Not a Stripe secret or restricted key, or Stripe rejected it.`,
+        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Remove the account's Stripe key.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteStripeConnection(): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/billing-connections/stripe',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

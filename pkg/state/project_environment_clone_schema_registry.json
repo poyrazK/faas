@@ -10,6 +10,19 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_billing_connections",
+    "columns": [
+      "account_id",
+      "created_at",
+      "key_last4",
+      "livemode",
+      "provider",
+      "sealed_secret",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_credits",
     "columns": [
       "account_id",
@@ -9975,6 +9988,25 @@
       "requests",
       "tail_seconds",
       "tx_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "usage_statement_invoice_exports",
+    "columns": [
+      "account_id",
+      "amount_minor",
+      "completed_at",
+      "created_at",
+      "currency",
+      "customer",
+      "id",
+      "livemode",
+      "provider",
+      "provider_invoice_id",
+      "source_kind",
+      "statement_id",
+      "status"
     ],
     "kind": "operational"
   },

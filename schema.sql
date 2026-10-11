@@ -3144,6 +3144,30 @@ $$;
 SET default_table_access_method = heap;
 
 --
+-- Name: account_billing_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_billing_connections (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    sealed_secret bytea NOT NULL,
+    key_last4 text NOT NULL,
+    livemode boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
+    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = 'stripe'::text))
+);
+
+
+--
+-- Name: TABLE account_billing_connections; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_billing_connections IS 'Sealed credentials for exporting usage statements to the account''s own payment provider; only key_last4 and livemode are ever returned.';
+
+
+--
 -- Name: environment_workload_qualification_requests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18728,6 +18752,39 @@ CREATE TABLE public.deployment_revision_pins (
 
 
 --
+-- Name: usage_statement_invoice_exports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.usage_statement_invoice_exports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    statement_id uuid NOT NULL,
+    provider text NOT NULL,
+    customer text NOT NULL,
+    status text DEFAULT 'creating'::text NOT NULL,
+    provider_invoice_id text,
+    currency text NOT NULL,
+    amount_minor bigint NOT NULL,
+    livemode boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
+    CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: TABLE usage_statement_invoice_exports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.usage_statement_invoice_exports IS 'One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.';
+
+
+--
 -- Name: workflow_code_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31588,6 +31645,14 @@ ALTER TABLE ONLY public.account_async_quota
 
 
 --
+-- Name: account_billing_connections account_billing_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_billing_connections
+    ADD CONSTRAINT account_billing_connections_pkey PRIMARY KEY (account_id, provider);
+
+
+--
 -- Name: account_credits account_credits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38257,6 +38322,22 @@ ALTER TABLE ONLY public.usage_daily
 
 ALTER TABLE ONLY public.usage_minutes
     ADD CONSTRAINT usage_minutes_pkey PRIMARY KEY (instance_id, minute);
+
+
+--
+-- Name: usage_statement_invoice_exports usage_statement_invoice_exports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_statement_invoice_exports
+    ADD CONSTRAINT usage_statement_invoice_exports_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: usage_statement_invoice_exports usage_statement_invoice_exports_statement_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_statement_invoice_exports
+    ADD CONSTRAINT usage_statement_invoice_exports_statement_uniq UNIQUE (source_kind, statement_id);
 
 
 --
@@ -45083,6 +45164,13 @@ CREATE INDEX usage_minutes_org_id_idx ON public.usage_minutes USING btree (org_i
 
 
 --
+-- Name: usage_statement_invoice_exports_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_statement_invoice_exports_account_idx ON public.usage_statement_invoice_exports USING btree (account_id, created_at DESC);
+
+
+--
 -- Name: warm_hint_node_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -49533,6 +49621,14 @@ CREATE TRIGGER zz_environment_secret_reference_shadow BEFORE INSERT OR UPDATE ON
 
 ALTER TABLE ONLY public.account_async_quota
     ADD CONSTRAINT account_async_quota_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_billing_connections account_billing_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_billing_connections
+    ADD CONSTRAINT account_billing_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -58109,6 +58205,14 @@ ALTER TABLE ONLY public.usage_daily
 
 ALTER TABLE ONLY public.usage_minutes
     ADD CONSTRAINT usage_minutes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: usage_statement_invoice_exports usage_statement_invoice_exports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_statement_invoice_exports
+    ADD CONSTRAINT usage_statement_invoice_exports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

@@ -26,6 +26,8 @@ import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsum
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
+import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -559,6 +561,107 @@ export class ConsumersService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read the app consumer statement's Stripe invoice export.
+   * @returns StatementInvoiceExportResponse The app consumer statement's export.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageStatementStripeInvoice({
+    slug,
+    consumerId,
+    statementId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose statement is exported.
+     */
+    consumerId: string,
+    /**
+     * Finalized statement revision to export.
+     */
+    statementId: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Export a finalized app consumer statement as a draft Stripe invoice.
+   * Exports one finalized app consumer statement revision.
+   * Creates a draft invoice in the account's own Stripe (connect it with
+   * PUT /v1/account/billing-connections/stripe) with one item per rate card
+   * and unit price, plus a rounding item when needed so the invoice equals
+   * the statement total rounded to the cent. The draft is never finalized
+   * or sent. On success the statement's handoff records the Stripe invoice
+   * ID. Retrying after a failure resumes the same invoice and skips items
+   * Stripe already holds; repeating a completed export returns it.
+   * Two-decimal currencies only.
+   *
+   * @returns StatementInvoiceExportResponse The completed app consumer statement export.
+   * @throws ApiError
+   */
+  public static exportApiConsumerUsageStatementToStripe({
+    slug,
+    consumerId,
+    statementId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose statement is exported.
+     */
+    consumerId: string,
+    /**
+     * Finalized statement revision to export.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateStatementInvoiceRequest,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The app consumer statement or customer cannot be invoiced, or Stripe rejected the request.`,
+        502: `Stripe could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
       },
     });
   }

@@ -36,6 +36,7 @@ var consumerVerbPositionals = map[string][]string{
 	"statement-show":     {"slug", "consumer-id", "statement-id"},
 	"statement-finalize": {"slug", "consumer-id", "statement-id"},
 	"statement-handoff":  {"slug", "consumer-id", "statement-id"},
+	"statement-export":   {"slug", "consumer-id", "statement-id"},
 	"plans":              {"slug"},
 	"plan-create":        {"slug"},
 	"plan-update":        {"slug"},
@@ -44,7 +45,7 @@ var consumerVerbPositionals = map[string][]string{
 	"usage-alerts":       {"slug", "consumer-id"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -55,6 +56,7 @@ type consumerFlags struct {
 	priceMillicents, includedUnits     int64
 	periodStart, periodEnd, month      string
 	invoiceID                          string
+	customer                           string
 	tiers                              multiFlag
 	weights                            multiFlag
 	plan                               string
@@ -74,6 +76,7 @@ var consumerVerbFlags = map[string][]string{
 	"set-plan":          {"plan", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
+	"statement-export":  {"customer"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -107,6 +110,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM (instead of --period-start/--period-end)")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference (statement-handoff)")
+	fs.StringVar(&f.customer, "customer", "", "Stripe customer ID cus_… (statement-export; default: the consumer's external_ref)")
 	fs.StringVar(&f.plan, "plan", "", "consumer plan name; \"default\" is the app default plan")
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
 	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
@@ -192,6 +196,8 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 			return nil, err
 		}
 		return api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &start, PeriodEnd: &end}, nil
+	case "statement-export":
+		return api.CreateStatementInvoiceRequest{Customer: strings.TrimSpace(f.customer)}, nil
 	case "statement-handoff":
 		if strings.TrimSpace(f.invoiceID) == "" {
 			return nil, errors.New("--invoice-id is required")
@@ -432,6 +438,8 @@ func callConsumerStatements(ctx context.Context, client *Client, verb string, ar
 		return client.FinalizeAPIConsumerUsageStatement(ctx, slug, consumerID, args[2])
 	case "statement-handoff":
 		return client.ClaimAPIConsumerUsageStatement(ctx, slug, consumerID, args[2], request.(api.ClaimAPIConsumerUsageStatementRequest))
+	case "statement-export":
+		return client.ExportAPIConsumerUsageStatementToStripe(ctx, slug, consumerID, args[2], request.(api.CreateStatementInvoiceRequest))
 	}
 	return nil, fmt.Errorf("unknown consumers verb %q", verb)
 }
@@ -552,6 +560,8 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		}
 	case api.APIConsumerUsageCompletenessResponse:
 		printUsageCompleteness(tw, v)
+	case api.StatementInvoiceExportResponse:
+		printStatementInvoiceExport(tw, v)
 	case api.APIConsumerUsageStatementHandoffResponse:
 		_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s\nAmount\t%s\n", v.StatementID, v.ExternalInvoiceID, formatMillicents(v.Currency, v.AmountMillicents))
 	default:

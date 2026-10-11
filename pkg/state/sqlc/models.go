@@ -93,6 +93,17 @@ type AccountAsyncQuotum struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// Sealed credentials for exporting usage statements to the account's own payment provider; only key_last4 and livemode are ever returned.
+type AccountBillingConnection struct {
+	AccountID    pgtype.UUID
+	Provider     string
+	SealedSecret []byte
+	KeyLast4     string
+	Livemode     bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 // Operator-issued EUR-cent credits; one credit cent offsets one GB-RAM-hour of overage at the current public rate.
 type AccountCredit struct {
 	ID             pgtype.UUID
@@ -8680,6 +8691,23 @@ type UsageMonthly struct {
 	NetRxBytes     int64
 	ColdBootCount  int64
 	BuilderSeconds int64
+}
+
+// One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.
+type UsageStatementInvoiceExport struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SourceKind        string
+	StatementID       pgtype.UUID
+	Provider          string
+	Customer          string
+	Status            string
+	ProviderInvoiceID pgtype.Text
+	Currency          string
+	AmountMinor       int64
+	Livemode          bool
+	CreatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
 }
 
 type WarmHint struct {

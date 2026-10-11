@@ -25,6 +25,7 @@ import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenant
 import type { CreatePlatformTenantSelfConsumerRequest } from '../models/CreatePlatformTenantSelfConsumerRequest.js';
 import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePlatformTenantSelfHostnameRequest.js';
 import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
+import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
 import type { PlanPlatformTenantReconciliationRequest } from '../models/PlanPlatformTenantReconciliationRequest.js';
@@ -72,6 +73,7 @@ import type { SetPlatformTenantCredentialPolicyRequest } from '../models/SetPlat
 import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
+import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdatePlatformTenantWebhookRequest } from '../models/UpdatePlatformTenantWebhookRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -1203,6 +1205,95 @@ export class PlatformTenantsService {
       errors: {
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read the platform tenant statement's Stripe invoice export.
+   * @returns StatementInvoiceExportResponse The platform tenant statement's export.
+   * @throws ApiError
+   */
+  public static getPlatformTenantStatementStripeInvoice({
+    id,
+    statementId,
+  }: {
+    /**
+     * Platform tenant whose statement is exported.
+     */
+    id: string,
+    /**
+     * Finalized cross-app statement revision to export.
+     */
+    statementId: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/stripe-invoice',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Export a finalized platform tenant statement as a draft Stripe invoice.
+   * Exports one finalized platform tenant statement revision.
+   * Creates a draft invoice in the account's own Stripe (connect it with
+   * PUT /v1/account/billing-connections/stripe) with one item per rate card
+   * and unit price, plus a rounding item when needed so the invoice equals
+   * the statement total rounded to the cent. The draft is never finalized
+   * or sent. On success the statement's handoff records the Stripe invoice
+   * ID. Retrying after a failure resumes the same invoice and skips items
+   * Stripe already holds; repeating a completed export returns it.
+   * Two-decimal currencies only.
+   *
+   * @returns StatementInvoiceExportResponse The completed platform tenant statement export.
+   * @throws ApiError
+   */
+  public static exportPlatformTenantStatementToStripe({
+    id,
+    statementId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose statement is exported.
+     */
+    id: string,
+    /**
+     * Finalized cross-app statement revision to export.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateStatementInvoiceRequest,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/stripe-invoice',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The platform tenant statement or customer cannot be invoiced, or Stripe rejected the request.`,
+        502: `Stripe could not be reached (\`billing_provider_unavailable\`); retry to resume the platform tenant statement export.`,
       },
     });
   }
