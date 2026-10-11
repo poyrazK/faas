@@ -342,7 +342,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		// The guest may send an Authorization header, but it cannot replace
 		// or read the provider credential held by outboundd.
-		upstreamReq.Header.Set("Authorization", managedAuthorization)
+		applyManagedCredential(upstreamReq.Header, integration, managedAuthorization)
 	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body
@@ -512,6 +512,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+	if identity, ok := relayIdentityFromContext(r.Context()); ok {
+		// ADR-981: the relay connection's platform identity is the caller.
+		// Token-authenticated integrations stay unreachable through it.
+		if integration.ProviderAuthMode != ProviderAuthManaged {
+			writeProblem(w, http.StatusForbidden, "outbound_relay_not_supported", "This outbound integration is not available through the app relay", "")
+			return "", false
+		}
+		return identity.AppID, true
+	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		if h.IdentityVerifier == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Outbound workload identity is unavailable", "1")

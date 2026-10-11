@@ -32,6 +32,10 @@ type manifestInternalHost struct {
 
 const manifestGatewayEgressPort = 9092
 const manifestAppErrorsPort = 9093
+
+// manifestOutboundRelayPort is outboundd's ADR-981 app relay listener on the
+// control plane; the nftables role opens it to compute CIDRs.
+const manifestOutboundRelayPort = 8096
 const manifestGithubdPort = 50053
 
 // manifestPrivateHostsGroupVarsThreshold keeps the generated inventory
@@ -352,6 +356,9 @@ func renderManifestInternalHosts(m *manifest.Manifest) ([]manifestInternalHost, 
 			// is independent of the provider or the host's public IP.
 			entry.Names = append(entry.Names, "apid.faas")
 			entry.Names = append(entry.Names, "githubd.faas")
+			// ADR-981: compute vmmd dials the outboundd app relay by this
+			// name, which matches the outboundd/server leaf SAN.
+			entry.Names = append(entry.Names, "outboundd.faas")
 		}
 		internalHosts = append(internalHosts, entry)
 	}
@@ -438,6 +445,7 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 		fmt.Fprintf(&b, "faas_gatewayd_egress_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestGatewayEgressPort))
 		fmt.Fprintf(&b, "faas_gatewayd_app_errors_target: %q\n", fmt.Sprintf("tcp://apid.faas:%d", manifestAppErrorsPort))
 		fmt.Fprintf(&b, "faas_githubd_target_url: %q\n", fmt.Sprintf("tcp://githubd.faas:%d", manifestGithubdPort))
+		fmt.Fprintf(&b, "faas_vmmd_outbound_relay_target: %q\n", fmt.Sprintf("tcp://outboundd.faas:%d", manifestOutboundRelayPort))
 		b.WriteString("faas_gateway_listen: \"0.0.0.0:8080\"\n")
 		// Multi-host safety cluster PR-9 (audit F8-B): emit
 		// faas_public_listen_addr so the ansible role passes

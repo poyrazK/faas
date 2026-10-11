@@ -199,6 +199,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	go runAIUsagePrune(ctx, backend, log)
+	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
+	if err != nil {
+		return err
+	}
 	readyProbe := &wire.ReadyzProbe{}
 	pgSignal, stopPGSignal := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
 	readyProbe.RegisterSignal(pgSignal, stopPGSignal)
@@ -244,6 +248,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		_ = server.Shutdown(shutdownCtx)
 		if metricsServer != nil {
 			_ = metricsServer.Shutdown(shutdownCtx)
+		}
+		if shutdownRelay != nil {
+			shutdownRelay(shutdownCtx)
 		}
 	}()
 	// All startup dependencies (config, Postgres, policy resolution, and the

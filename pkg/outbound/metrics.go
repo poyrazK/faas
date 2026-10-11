@@ -24,6 +24,7 @@ type Metrics struct {
 	aiTokens               *prometheus.CounterVec
 	aiTimeToFirstByte      *prometheus.HistogramVec
 	aiUsageRecordEvents    *prometheus.CounterVec
+	relayConnections       *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -88,6 +89,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_usage_record_events_total",
 			Help: "AI usage settlement writes by integration and bounded event (recorded, state_error, or unavailable).",
 		}, []string{"integration_id", "event"}),
+		relayConnections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_relay_connections_total",
+			Help: "App relay connections from vmmd by bounded outcome (accepted, rejected, or overload).",
+		}, []string{"outcome"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -103,6 +108,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiTokens,
 		m.aiTimeToFirstByte,
 		m.aiUsageRecordEvents,
+		m.relayConnections,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -220,6 +226,13 @@ func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, u
 			m.aiTokens.WithLabelValues(integrationID, kind).Add(float64(value))
 		}
 	}
+}
+
+func (m *Metrics) ObserveRelayConnection(outcome string) {
+	if m == nil || m.relayConnections == nil {
+		return
+	}
+	m.relayConnections.WithLabelValues(outcome).Inc()
 }
 
 func (m *Metrics) ObserveAIUsageRecord(integrationID, event string) {

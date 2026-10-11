@@ -564,6 +564,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT` | vmmd, shared | `default` |  |  | `` | optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts |
 | `FAAS_VMMD_NODE_KEY_PATH` | vmmd | `default` |  |  | `` |  |
+| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box app outbound relay (ADR-981); vmmd_service 99-faas-outbound-relay.conf |
+| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/outboundd-client leaf (ADR-981) |
+| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/outboundd-client leaf (ADR-981) |
+| `FAAS_VMMD_OUTBOUND_RELAY_TARGET` | vmmd | `dropin` |  |  | `` | outboundd relay listener for app outbound integrations: unix:// on a single box, tcp:// with client mTLS on a split box; empty closes the relay (ADR-981) |
 | `FAAS_VMMD_RAW_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_RESOURCE_JOURNAL_DIR` | vmmd, shared | `default` |  |  | `` | optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it) |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |

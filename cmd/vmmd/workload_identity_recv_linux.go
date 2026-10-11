@@ -86,6 +86,11 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 		_ = r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_request"})
 		return "protocol", fmt.Errorf("workload identity request: %w", err)
 	}
+	if req.Audience == workloadidentity.OutboundRelayAudience {
+		// ADR-981: the relay audience is minted only by vmmd for its own
+		// outboundd connections, never for guest code.
+		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_audience"}))
+	}
 	if r.signer == nil {
 		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "identity_not_configured"}))
 	}

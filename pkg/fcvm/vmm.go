@@ -2120,6 +2120,10 @@ const (
 	// requests from the guest metadata endpoint. The listener is bound per
 	// instance, so the stream itself supplies the app/account identity.
 	VsockRuntimeConfigHostPort uint32 = 1031
+	// VsockOutboundRelayHostPort carries an app's HTTP bytes for managed
+	// outbound integrations (ADR-981). vmmd splices them to outboundd after a
+	// relay assertion for the instance bound to this listener.
+	VsockOutboundRelayHostPort uint32 = 1032
 )
 
 // GuestVsockStreamHandler handles one guest-initiated stream. The instance is

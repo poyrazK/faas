@@ -436,7 +436,59 @@ AI metrics keep the bounded integration label and never include model names:
 OpenTelemetry GenAI attributes (`gen_ai.system`, `gen_ai.response.model` and
 `gen_ai.usage.*`).
 
-Apps reach these integrations the same way as any managed integration: through
-an operator-routed, guest-reachable gateway origin, or through the ADR-424
-broker for Runs. A default app route and a loopback base URL for stock SDKs are
-not part of this release.
+Apps reach these integrations through the app relay below, so stock SDKs work
+with only a base URL:
+
+```sh
+OPENAI_BASE_URL="$GREGALE_OUTBOUND_URL/i/$INTEGRATION_ID/v1"   OPENAI_API_KEY=unused
+ANTHROPIC_BASE_URL="$GREGALE_OUTBOUND_URL/i/$INTEGRATION_ID"   ANTHROPIC_API_KEY=unused
+```
+
+The SDK's placeholder key is replaced by the integration's credential.
+Anthropic integrations receive it in `x-api-key`, with any `Bearer ` prefix
+removed.
+
+## App relay
+
+Every app VM has `GREGALE_OUTBOUND_URL=http://127.0.0.1:2774`. Requests to
+`$GREGALE_OUTBOUND_URL/i/<integration-id>/<provider path>` reach `outboundd` as
+the calling app, with no network route, gateway token or identity header.
+Streaming works in both directions. See
+[ADR-981](../adr/981-app-outbound-relay.md).
+
+How a request travels:
+
+1. guest-init forwards each loopback connection unchanged over the VM's vsock
+   port 1032.
+2. vmmd identifies the instance from that per-VM listener, mints a short-lived
+   relay assertion, and splices the bytes to `outboundd`'s relay listener.
+3. `outboundd` checks the assertion once per connection and then handles the
+   requests as that app.
+
+Only managed integrations are reachable this way. Token-authenticated
+integrations return `403 outbound_relay_not_supported`. Bindings, route
+policy, budgets, caching and AI usage all apply as usual.
+
+Enable the relay in two places:
+
+- **outboundd.toml.** Set `relay_listen`:
+  - Single box: `unix:///run/faas/outboundd-relay.sock`.
+  - Split box: `tcp://0.0.0.0:8096`, with `relay_tls_cert_path`,
+    `relay_tls_key_path` and `relay_tls_ca_path` pointing at the
+    `outboundd/server` leaf and the fleet CA.
+
+  The relay needs `workload_identity_jwks_path`. On a split box, clients must
+  present a fleet certificate whose name is a registered compute node.
+- **vmmd.** Set `faas_vmmd_outbound_relay_target`:
+  - The manifest renders `tcp://outboundd.faas:8096` for compute hosts.
+  - Single-box hosts set the Unix socket path.
+
+  The TCP target uses the `vmmd/outboundd-client` node-identity leaf. Issue
+  the two new leaves (`outboundd/server`, `vmmd/outboundd-client`) with the
+  usual PKI run. Until they exist, vmmd logs `outbound relay disabled` and
+  keeps the relay closed. VM hosting is unaffected.
+
+The control-plane firewall opens TCP 8096 to compute CIDRs. When the relay is
+off, apps get an immediate connection error from `GREGALE_OUTBOUND_URL`.
+`outbound_relay_connections_total` counts accepted, rejected and overload
+connections. Qualification candidates never get the relay.

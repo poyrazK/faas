@@ -22,6 +22,19 @@ metrics_addr = "127.0.0.1:9108"
 # write_timeout = "2m"
 # idle_timeout = "2m"
 
+# ADR-981 app relay. Apps call GREGALE_OUTBOUND_URL (http://127.0.0.1:2774)
+# inside the VM; vmmd splices those connections here with a relay assertion,
+# so apps need no route, token or provider key. Requires the workload
+# identity JWKS below. Single box (vmmd sets
+# FAAS_VMMD_OUTBOUND_RELAY_TARGET=unix:///run/faas/outboundd-relay.sock):
+# relay_listen = "unix:///run/faas/outboundd-relay.sock"
+# Split box (compute vmmd dials tcp://outboundd.faas:8096 with its
+# node-identity vmmd/outboundd-client leaf):
+# relay_listen = "tcp://0.0.0.0:8096"
+# relay_tls_cert_path = "/etc/faas/tls/outboundd/server.crt"
+# relay_tls_key_path = "/etc/faas/tls/outboundd/server.key"
+# relay_tls_ca_path = "/etc/faas/tls/ca/ca.crt"
+
 # Required for managed integrations, including integrations customers create
 # through the API. Install a
 # public JWKS published by vmmd (never its signing private key) at this path.

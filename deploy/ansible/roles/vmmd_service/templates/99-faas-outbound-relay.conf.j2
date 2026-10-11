@@ -1,0 +1,18 @@
+[Service]
+{% set relay_target = faas_vmmd_outbound_relay_target | default('') %}
+{% if relay_target | length > 0 %}
+# App outbound relay (ADR-981). vmmd splices each app's loopback
+# GREGALE_OUTBOUND_URL connection to outboundd's relay listener after a
+# relay assertion for the instance. A tcp:// target uses vmmd's
+# node-identity outboundd-client leaf; until that leaf exists vmmd logs an
+# error and keeps the relay closed.
+Environment=FAAS_VMMD_OUTBOUND_RELAY_TARGET={{ relay_target }}
+{% if relay_target is match('tcp://') %}
+Environment=FAAS_VMMD_OUTBOUND_CLIENT_TLS_CERT_PATH={{ vmmd_outbound_client_tls_cert_path }}
+Environment=FAAS_VMMD_OUTBOUND_CLIENT_TLS_KEY_PATH={{ vmmd_outbound_client_tls_key_path }}
+Environment=FAAS_VMMD_OUTBOUND_CLIENT_TLS_CA_PATH={{ vmmd_outbound_client_tls_ca_path }}
+{% endif %}
+{% else %}
+# App outbound relay disabled: no relay target for this host. Apps get a
+# connection error from GREGALE_OUTBOUND_URL (ADR-981).
+{% endif %}

@@ -29,6 +29,13 @@ type Config struct {
 	Integrations             map[string]IntegrationConfig `toml:"integrations"`
 	WorkloadIdentityJWKSPath string                       `toml:"workload_identity_jwks_path"`
 	WorkloadIdentityIssuer   string                       `toml:"workload_identity_issuer"`
+	// RelayListen enables the app relay listener for vmmd (ADR-981):
+	// "unix:///run/faas/outboundd-relay.sock" on a single box, or
+	// "tcp://host:port" with the relay_tls_* mTLS material on a split box.
+	RelayListen      string `toml:"relay_listen"`
+	RelayTLSCertPath string `toml:"relay_tls_cert_path"`
+	RelayTLSKeyPath  string `toml:"relay_tls_key_path"`
+	RelayTLSCAPath   string `toml:"relay_tls_ca_path"`
 }
 
 func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {

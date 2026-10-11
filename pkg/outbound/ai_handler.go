@@ -5,10 +5,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // AIUsageBackend settles AI token usage after a response (ADR-979). It adds
@@ -65,6 +68,20 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 		_ = controller.SetWriteDeadline(deadline)
 	}
 	return controller
+}
+
+// applyManagedCredential sets the provider credential header. Anthropic
+// expects API keys in x-api-key, so an Anthropic AI integration sends the
+// stored value there (without a "Bearer " prefix) and drops any
+// caller-supplied Authorization or x-api-key (ADR-981). Every other managed
+// integration keeps replacing Authorization only.
+func applyManagedCredential(header http.Header, integration Integration, credential string) {
+	if integration.AIProvider == api.OutboundAIProviderAnthropic {
+		header.Del("Authorization")
+		header.Set("X-Api-Key", strings.TrimPrefix(credential, "Bearer "))
+		return
+	}
+	header.Set("Authorization", credential)
 }
 
 // observeAIResponse starts usage extraction for an AI integration's

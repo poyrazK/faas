@@ -85,6 +85,9 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_githubd_target_url: "tcp://githubd.faas:50053"`) {
 		t.Errorf("compute host vars missing source-ref mTLS target:\n%s", computeVars)
 	}
+	if !strings.Contains(computeVars, `faas_vmmd_outbound_relay_target: "tcp://outboundd.faas:8096"`) {
+		t.Errorf("compute host vars missing ADR-981 outbound relay target:\n%s", computeVars)
+	}
 	if !strings.Contains(computeVars, `faas_vmmd_schedd_target: "tcp://10.42.0.2:7100"`) {
 		t.Errorf("compute host vars missing scheduler target:\n%s", computeVars)
 	}
@@ -261,7 +264,7 @@ func TestRenderManifestAnsibleFiles_HostnameEndpointsUseOverlayBoundary(t *testi
 		`faas_private_dns_zone: "gregale.dev"`,
 		`faas_private_hosts:`,
 		`- inventory_host: "fsn-1"`,
-		`names: ["fsn-1.gregale.dev", "schedd.faas", "apid.faas", "githubd.faas"]`,
+		`names: ["fsn-1.gregale.dev", "schedd.faas", "apid.faas", "githubd.faas", "outboundd.faas"]`,
 		`- inventory_host: "fsn-2"`,
 		`names: ["fsn-2.gregale.dev", "vmmd.faas", "egress.faas"]`,
 	} {

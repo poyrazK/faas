@@ -1344,6 +1344,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer identityRecv.Close()
 	}
+	// ADR-981: apps reach managed outbound integrations through a loopback
+	// relay. An unset target, or one whose mTLS material is missing (for
+	// example before the outboundd-client leaf is issued), leaves the relay
+	// closed instead of failing VM hosting; plaintext TCP is never used.
+	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
+	if relayTargetErr != nil {
+		log.Error("vmmd: outbound relay disabled", "err", relayTargetErr)
+		relayDial = nil
+	}
+	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)
+	if relayRecvErr != nil {
+		log.Warn("vmmd: outbound relay receiver unavailable", "err", relayRecvErr, "goos", runtime.GOOS)
+	} else {
+		defer relayRecv.Close()
+	}
 	// Workstream E: serve live, non-sensitive app configuration through the
 	// instance-bound guest metadata endpoint. The receiver only returns rows
 	// for the deployment/app/account attached to the Firecracker stream.
