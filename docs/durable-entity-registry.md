@@ -58,8 +58,8 @@ names and do not replace entity-level inspection.
 
 Readers verify shard hashes, scope, shard index, provider version, bounds,
 uniqueness and retirement/reservation consistency. Missing or corrupt referenced
-shards fail closed on cache misses. Uncertain shard writes cannot publish a root; uncertain root
-writes require inspection and exact replay. A definite root conflict makes an
+shards fail closed on cache misses. Uncertain shard writes cannot publish a root;
+uncertain root writes require inspection and exact replay. A definite root conflict makes an
 admission retry read the newly committed retirement fence. Credit and its receipt
 remain atomic and replay-safe across schema upgrades and policy changes.
 
@@ -81,11 +81,12 @@ acknowledgements, corruption, shard and tenant-budget bounds, and admission
 interleaved with retirement. Operator API coverage checks authorization, exact
 replay, listing, disabled routes and configuration prerequisites.
 
-Source commit `070d605adae00ad42cd02932c07c89981e608845` passed
-[remote CI 38156802430](https://github.com/poyrazK/faas/actions/runs/38156802430):
-four durable Go packages under the race detector, seven new registry tests,
+Source commit `2f30387a42a6e2e164e4e94b9104d16b212b4c3a` passed
+[remote CI 38160932763](https://github.com/poyrazK/faas/actions/runs/38160932763):
+four durable Go packages under the race detector, seven registry tests and seven
+cache tests (including three eviction subcases),
 focused CLI/generated contract checks, 29 focused API race tests (including two
-registry tests), 16 Node SDK tests and packed-starter acceptance. No local build,
+registry tests using the cache), 16 Node SDK tests and packed-starter acceptance. No local build,
 test or native run was performed.
 
 Native GCS/KVM acceptance remains required before production enablement. The
