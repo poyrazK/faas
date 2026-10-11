@@ -15,7 +15,7 @@
     - `handlers_ext.go`, auth, project and dashboard last.
 - **Why:** On `main` at `3752031153`, `cmd/apid` is one package with 757 source files (178k lines) and 744 in-package test files (171k lines), and 2,458 methods hang off `*server` (116 fields). Go compiles a package as one unit, so every `go test ./cmd/apid` builds about 350k lines at once, with a compiler peak of about 7.5 GB even with `-c=1 -dwarf=false`. Several agents or developers testing apid in parallel push a 36 GB workstation into sustained swap (about 800 GB swapped out in one day), and a one-line change to any handler recompiles everything. The coupling is narrower than the package suggests:
   - A parser-level coupling map shows only about 6 helpers used across most domains: `writeJSON`, `decodeJSON`, `s.loadApp`, `s.notFound`, plus a few problem writers.
-  - Only 15 of the 116 `server` fields are used by more than 3 domains. Most fields cluster by prefix around one domain.
+  - Only 19 of the 116 `server` fields are used by more than 3 domains, led by `store`, `log`, `audit`, `notif` and `ops`. Most fields cluster by prefix around one domain.
 - **Consequences:**
   - **Separate compilation.** An extracted domain's tests compile as their own package, and `cmd/apid` shrinks with each move. A change to one domain no longer recompiles the others.
   - **Router tests stay.** Tests that need the full router and auth chain (the `newServer` harness) stay in `cmd/apid`. Domain packages get small local harnesses.
