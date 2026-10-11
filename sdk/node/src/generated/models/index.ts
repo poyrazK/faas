@@ -1154,6 +1154,8 @@ export type { OperationWorkflowReadinessComparisonRequest } from './OperationWor
 export type { OperationWorkflowReadinessComparisonResponse } from './OperationWorkflowReadinessComparisonResponse.js';
 export type { OperationWorkflowReadinessEvidence } from './OperationWorkflowReadinessEvidence.js';
 export type { OperationWorkflowReadinessEvidenceChange } from './OperationWorkflowReadinessEvidenceChange.js';
+export type { OperationWorkflowReadinessInboxResponse } from './OperationWorkflowReadinessInboxResponse.js';
+export type { OperationWorkflowReadinessNotification } from './OperationWorkflowReadinessNotification.js';
 export type { OperationWorkflowReadinessOverview } from './OperationWorkflowReadinessOverview.js';
 export type { OperationWorkflowReadinessQueueEntry } from './OperationWorkflowReadinessQueueEntry.js';
 export type { OperationWorkflowReadinessQueueResponse } from './OperationWorkflowReadinessQueueResponse.js';
@@ -1161,6 +1163,9 @@ export type { OperationWorkflowReadinessRequest } from './OperationWorkflowReadi
 export type { OperationWorkflowReadinessResponse } from './OperationWorkflowReadinessResponse.js';
 export type { OperationWorkflowReadinessSnapshot } from './OperationWorkflowReadinessSnapshot.js';
 export type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflowReadinessSnapshotEntry.js';
+export type { OperationWorkflowReadinessSubscription } from './OperationWorkflowReadinessSubscription.js';
+export type { OperationWorkflowReadinessSubscriptionRequest } from './OperationWorkflowReadinessSubscriptionRequest.js';
+export type { OperationWorkflowReadinessSubscriptionsResponse } from './OperationWorkflowReadinessSubscriptionsResponse.js';
 export type { OperationWorkflowReconciliation } from './OperationWorkflowReconciliation.js';
 export type { OperationWorkflowReconciliationPayload } from './OperationWorkflowReconciliationPayload.js';
 export type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';

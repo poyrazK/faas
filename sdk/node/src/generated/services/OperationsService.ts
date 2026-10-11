@@ -50,9 +50,13 @@ import type { OperationWorkflowPerformanceInstancesResponse } from '../models/Op
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
 import type { OperationWorkflowReadinessComparisonRequest } from '../models/OperationWorkflowReadinessComparisonRequest.js';
 import type { OperationWorkflowReadinessComparisonResponse } from '../models/OperationWorkflowReadinessComparisonResponse.js';
+import type { OperationWorkflowReadinessInboxResponse } from '../models/OperationWorkflowReadinessInboxResponse.js';
 import type { OperationWorkflowReadinessQueueResponse } from '../models/OperationWorkflowReadinessQueueResponse.js';
 import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
 import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
+import type { OperationWorkflowReadinessSubscription } from '../models/OperationWorkflowReadinessSubscription.js';
+import type { OperationWorkflowReadinessSubscriptionRequest } from '../models/OperationWorkflowReadinessSubscriptionRequest.js';
+import type { OperationWorkflowReadinessSubscriptionsResponse } from '../models/OperationWorkflowReadinessSubscriptionsResponse.js';
 import type { OperationWorkflowStateReport } from '../models/OperationWorkflowStateReport.js';
 import type { OperationWorkflowStateReportResponse } from '../models/OperationWorkflowStateReportResponse.js';
 import type { OperationWorkflowStateValidationRequest } from '../models/OperationWorkflowStateValidationRequest.js';
@@ -4701,6 +4705,422 @@ export class OperationsService {
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account create WorkflowReadinessSubscription
+   * Account durable readiness subscription create operation. Observations are bounded and advisory; execution remains application-owned. Requires account deploy-write scope and MFA.
+   * @returns OperationWorkflowReadinessSubscription Account Create readiness subscription result.
+   * @throws ApiError
+   */
+  public static createAccountWorkflowReadinessSubscription({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * CreateAccountWorkflowReadinessSubscription. Application slug.
+     */
+    slug: string,
+    /**
+     * Account subscription selectors; bounded to 4096 bytes.
+     */
+    requestBody: OperationWorkflowReadinessSubscriptionRequest,
+  }): CancelablePromise<OperationWorkflowReadinessSubscription> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account list WorkflowReadinessSubscriptions
+   * Account durable readiness subscription list operation. Observations are bounded and advisory; execution remains application-owned. Requires account read scope and MFA.
+   * @returns OperationWorkflowReadinessSubscriptionsResponse Account List readiness subscription result.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessSubscriptions({
+    slug,
+    scope,
+    tenantId,
+  }: {
+    /**
+     * ListAccountWorkflowReadinessSubscriptions. Application slug.
+     */
+    slug: string,
+    /**
+     * ListAccountWorkflowReadinessSubscriptions. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListAccountWorkflowReadinessSubscriptions. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowReadinessSubscriptionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account delete WorkflowReadinessSubscription
+   * Account durable readiness subscription delete operation. Observations are bounded and advisory; execution remains application-owned. Requires account deploy-write scope and MFA.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAccountWorkflowReadinessSubscription({
+    slug,
+    id,
+    scope,
+    tenantId,
+  }: {
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Application slug.
+     */
+    slug: string,
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Subscription UUID.
+     */
+    id: string,
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Application environment scope.
+     */
+    scope: string,
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account get WorkflowReadinessInbox
+   * Account durable readiness subscription get operation. Observations are bounded and advisory; execution remains application-owned. Requires account read scope and MFA.
+   * @returns OperationWorkflowReadinessInboxResponse Account Get readiness inbox page.
+   * @throws ApiError
+   */
+  public static getAccountWorkflowReadinessInbox({
+    slug,
+    id,
+    scope,
+    tenantId,
+    afterSequence,
+    limit,
+  }: {
+    /**
+     * GetAccountWorkflowReadinessInbox. Application slug.
+     */
+    slug: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Subscription UUID.
+     */
+    id: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Application environment scope.
+     */
+    scope: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Optional account customer selector.
+     */
+    tenantId?: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Last consumed sequence; defaults to zero.
+     */
+    afterSequence?: number,
+    /**
+     * GetAccountWorkflowReadinessInbox. Page size; defaults to 20.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessInboxResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'after_sequence': afterSequence,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer create WorkflowReadinessSubscription
+   * Customer durable readiness subscription create operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations manage scope.
+   * @returns OperationWorkflowReadinessSubscription Customer Create readiness subscription result.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfWorkflowReadinessSubscription({
+    requestBody,
+  }: {
+    /**
+     * Customer subscription selectors; bounded to 4096 bytes.
+     */
+    requestBody: (OperationWorkflowReadinessSubscriptionRequest & Record<string, any>),
+  }): CancelablePromise<OperationWorkflowReadinessSubscription> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer list WorkflowReadinessSubscriptions
+   * Customer durable readiness subscription list operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations read scope.
+   * @returns OperationWorkflowReadinessSubscriptionsResponse Customer List readiness subscription result.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessSubscriptions({
+    scope,
+    appId,
+  }: {
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessSubscriptions. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessSubscriptions. Application UUID.
+     */
+    appId: string,
+  }): CancelablePromise<OperationWorkflowReadinessSubscriptionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions',
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer delete WorkflowReadinessSubscription
+   * Customer durable readiness subscription delete operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations manage scope.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePlatformTenantSelfWorkflowReadinessSubscription({
+    id,
+    scope,
+    appId,
+  }: {
+    /**
+     * DeletePlatformTenantSelfWorkflowReadinessSubscription. Subscription UUID.
+     */
+    id: string,
+    /**
+     * DeletePlatformTenantSelfWorkflowReadinessSubscription. Application environment scope.
+     */
+    scope: string,
+    /**
+     * DeletePlatformTenantSelfWorkflowReadinessSubscription. Application UUID.
+     */
+    appId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}',
+      path: {
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer get WorkflowReadinessInbox
+   * Customer durable readiness subscription get operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations read scope.
+   * @returns OperationWorkflowReadinessInboxResponse Customer Get readiness inbox page.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowReadinessInbox({
+    id,
+    scope,
+    appId,
+    afterSequence,
+    limit,
+  }: {
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Subscription UUID.
+     */
+    id: string,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Application environment scope.
+     */
+    scope: string,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Application UUID.
+     */
+    appId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Last consumed sequence; defaults to zero.
+     */
+    afterSequence?: number,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Page size; defaults to 20.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessInboxResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications',
+      path: {
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+        'after_sequence': afterSequence,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

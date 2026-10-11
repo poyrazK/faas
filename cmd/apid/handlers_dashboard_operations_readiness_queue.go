@@ -63,7 +63,7 @@ func (s *server) renderAppWorkflowReadinessQueue(w http.ResponseWriter, r *http.
 func readinessQueueDashboardData(slug string, opts api.OperationWorkflowReadinessQueueOptions, result api.OperationWorkflowReadinessQueueResponse) dashboard.WorkflowReadinessQueueData {
 	base := dashboardCustomerOperationsURL(slug)
 	snapshotJSON, _ := json.Marshal(result.Snapshot)
-	data := dashboard.WorkflowReadinessQueueData{Options: opts, Result: result, ListURL: base, QueueURL: base + "/readiness", SnapshotJSON: string(snapshotJSON), CompareURL: "/v1/apps/" + url.PathEscape(slug) + "/workflow-readiness/compare"}
+	data := dashboard.WorkflowReadinessQueueData{Options: opts, Result: result, ListURL: base, QueueURL: base + "/readiness", SubscriptionsURL: "/v1/apps/" + url.PathEscape(slug) + "/workflow-readiness/subscriptions", SnapshotJSON: string(snapshotJSON), CompareURL: "/v1/apps/" + url.PathEscape(slug) + "/workflow-readiness/compare"}
 	for _, row := range result.Items {
 		q := url.Values{"scope": {opts.Scope}, "tenant_id": {row.PlatformTenantID}, "subject_type": {row.Subject.Type}, "subject_id": {row.Subject.ID}, "workflow": {row.Workflow}, "workflow_instance_id": {row.InstanceID}}
 		data.Items = append(data.Items, dashboard.WorkflowReadinessQueueItem{Entry: row, HistoryURL: base + "?" + q.Encode() + "#workflows", OperationURL: base + "/" + url.PathEscape(row.OperationID) + "?scope=" + url.QueryEscape(opts.Scope)})

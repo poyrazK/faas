@@ -18034,3 +18034,46 @@ WITH candidates AS (
 SELECT jsonb_build_object('current',current_state,'tenant',platform_tenant_id,
  'subject',jsonb_build_object('type',subject_type,'id',subject_id),'cohort_total',count(*) OVER())::jsonb AS instance
 FROM candidates ORDER BY updated_at DESC,cursor_key DESC LIMIT sqlc.arg(cohort_limit)::integer;
+
+-- name: CountReadinessSubscriptions :one
+SELECT count(*) FROM customer_workflow_readiness_subscriptions WHERE account_id = $1 AND app_id = $2;
+
+-- name: InsertReadinessSubscription :execrows
+INSERT INTO customer_workflow_readiness_subscriptions (id, account_id, app_id, tenant_id, operator, scope, payload, created_at, next_evaluation_at)
+SELECT $1, $2, $3, NULLIF(sqlc.arg(tenant)::text, '')::uuid, $4, $5, $6, $7, $8
+WHERE EXISTS (SELECT 1 FROM apps WHERE id=$3 AND account_id=$2)
+AND (sqlc.arg(tenant)::text='' OR EXISTS (SELECT 1 FROM platform_tenants WHERE id::text=sqlc.arg(tenant)::text AND account_id=$2));
+
+-- name: ListReadinessSubscriptions :many
+SELECT payload FROM customer_workflow_readiness_subscriptions WHERE account_id = $1 AND app_id = $2 AND operator = $3 AND scope = $4
+AND (sqlc.arg(tenant)::text = '' OR tenant_id::text = sqlc.arg(tenant)::text) ORDER BY created_at, id LIMIT $5;
+
+-- name: GetReadinessSubscription :one
+SELECT * FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND account_id = $2 AND app_id = $3 AND operator = $4 AND scope = $5
+AND (sqlc.arg(tenant)::text = '' OR tenant_id::text = sqlc.arg(tenant)::text) FOR SHARE;
+
+-- name: DeleteReadinessSubscription :execrows
+DELETE FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND account_id = $2 AND app_id = $3 AND operator = $4 AND scope = $5
+AND (sqlc.arg(tenant)::text = '' OR tenant_id::text = sqlc.arg(tenant)::text);
+
+-- name: ClaimReadinessSubscriptions :many
+WITH due AS (
+ SELECT id FROM customer_workflow_readiness_subscriptions WHERE next_evaluation_at <= sqlc.arg(now)::timestamptz
+ AND (lease_until IS NULL OR lease_until <= sqlc.arg(now)::timestamptz)
+ ORDER BY next_evaluation_at, id LIMIT sqlc.arg(batch_limit) FOR UPDATE SKIP LOCKED
+)
+UPDATE customer_workflow_readiness_subscriptions s SET lease_token = sqlc.arg(lease_token)::uuid, lease_until = sqlc.arg(lease_until)::timestamptz
+FROM due WHERE s.id = due.id RETURNING s.*;
+
+-- name: FinishReadinessSubscription :one
+UPDATE customer_workflow_readiness_subscriptions SET payload = $3, next_evaluation_at = $4, lease_token = NULL, lease_until = NULL
+WHERE id = $1 AND lease_token = $2 RETURNING id;
+
+-- name: InsertReadinessNotification :exec
+INSERT INTO customer_workflow_readiness_notifications (subscription_id, sequence, payload) VALUES ($1,$2,$3);
+
+-- name: PruneReadinessNotifications :exec
+DELETE FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence <= $2;
+
+-- name: ListReadinessNotifications :many
+SELECT payload FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence > $2 ORDER BY sequence LIMIT $3;

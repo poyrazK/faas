@@ -4792,6 +4792,60 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx co
 	return i, err
 }
 
+const claimReadinessSubscriptions = `-- name: ClaimReadinessSubscriptions :many
+WITH due AS (
+ SELECT id FROM customer_workflow_readiness_subscriptions WHERE next_evaluation_at <= $3::timestamptz
+ AND (lease_until IS NULL OR lease_until <= $3::timestamptz)
+ ORDER BY next_evaluation_at, id LIMIT $4 FOR UPDATE SKIP LOCKED
+)
+UPDATE customer_workflow_readiness_subscriptions s SET lease_token = $1::uuid, lease_until = $2::timestamptz
+FROM due WHERE s.id = due.id RETURNING s.id, s.account_id, s.app_id, s.tenant_id, s.operator, s.scope, s.payload, s.created_at, s.next_evaluation_at, s.lease_token, s.lease_until
+`
+
+type ClaimReadinessSubscriptionsParams struct {
+	LeaseToken pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
+	Now        pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ClaimReadinessSubscriptions(ctx context.Context, db DBTX, arg ClaimReadinessSubscriptionsParams) ([]CustomerWorkflowReadinessSubscription, error) {
+	rows, err := db.Query(ctx, claimReadinessSubscriptions,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.Now,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerWorkflowReadinessSubscription{}
+	for rows.Next() {
+		var i CustomerWorkflowReadinessSubscription
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.TenantID,
+			&i.Operator,
+			&i.Scope,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.NextEvaluationAt,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimRouteProbeRound = `-- name: ClaimRouteProbeRound :one
 INSERT INTO route_probe_rounds (app_id, window_start)
 VALUES ($1::text::uuid, $2)
@@ -6897,6 +6951,22 @@ func (q *Queries) CountProjectEnvironmentClonePostgresVerificationReadBudgets(ct
 	var i CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow
 	err := row.Scan(&i.Count, &i.Bytes)
 	return i, err
+}
+
+const countReadinessSubscriptions = `-- name: CountReadinessSubscriptions :one
+SELECT count(*) FROM customer_workflow_readiness_subscriptions WHERE account_id = $1 AND app_id = $2
+`
+
+type CountReadinessSubscriptionsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) CountReadinessSubscriptions(ctx context.Context, db DBTX, arg CountReadinessSubscriptionsParams) (int64, error) {
+	row := db.QueryRow(ctx, countReadinessSubscriptions, arg.AccountID, arg.AppID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countTriggersByAccount = `-- name: CountTriggersByAccount :one
@@ -9807,6 +9877,35 @@ type DeleteProductionDeadLetterEventsParams struct {
 
 func (q *Queries) DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error) {
 	result, err := db.Exec(ctx, deleteProductionDeadLetterEvents, arg.AccountID, arg.AppID, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteReadinessSubscription = `-- name: DeleteReadinessSubscription :execrows
+DELETE FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND account_id = $2 AND app_id = $3 AND operator = $4 AND scope = $5
+AND ($6::text = '' OR tenant_id::text = $6::text)
+`
+
+type DeleteReadinessSubscriptionParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Operator  bool
+	Scope     string
+	Tenant    string
+}
+
+func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteReadinessSubscription,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Operator,
+		arg.Scope,
+		arg.Tenant,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -15004,6 +15103,30 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ct
 	return i, err
 }
 
+const finishReadinessSubscription = `-- name: FinishReadinessSubscription :one
+UPDATE customer_workflow_readiness_subscriptions SET payload = $3, next_evaluation_at = $4, lease_token = NULL, lease_until = NULL
+WHERE id = $1 AND lease_token = $2 RETURNING id
+`
+
+type FinishReadinessSubscriptionParams struct {
+	ID               pgtype.UUID
+	LeaseToken       pgtype.UUID
+	Payload          []byte
+	NextEvaluationAt pgtype.Timestamptz
+}
+
+func (q *Queries) FinishReadinessSubscription(ctx context.Context, db DBTX, arg FinishReadinessSubscriptionParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, finishReadinessSubscription,
+		arg.ID,
+		arg.LeaseToken,
+		arg.Payload,
+		arg.NextEvaluationAt,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const firstCustomerOperationWorkflowEvent = `-- name: FirstCustomerOperationWorkflowEvent :one
 SELECT id, run_id, event_name, payload, received_at FROM workflow_events WHERE run_id=$1::uuid AND event_name=$2::text
 ORDER BY received_at,id LIMIT 1
@@ -17468,6 +17591,46 @@ func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, a
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
 		&i.DeploymentID,
+	)
+	return i, err
+}
+
+const getReadinessSubscription = `-- name: GetReadinessSubscription :one
+SELECT id, account_id, app_id, tenant_id, operator, scope, payload, created_at, next_evaluation_at, lease_token, lease_until FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND account_id = $2 AND app_id = $3 AND operator = $4 AND scope = $5
+AND ($6::text = '' OR tenant_id::text = $6::text) FOR SHARE
+`
+
+type GetReadinessSubscriptionParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Operator  bool
+	Scope     string
+	Tenant    string
+}
+
+func (q *Queries) GetReadinessSubscription(ctx context.Context, db DBTX, arg GetReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error) {
+	row := db.QueryRow(ctx, getReadinessSubscription,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Operator,
+		arg.Scope,
+		arg.Tenant,
+	)
+	var i CustomerWorkflowReadinessSubscription
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.TenantID,
+		&i.Operator,
+		&i.Scope,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.NextEvaluationAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
 	)
 	return i, err
 }
@@ -22766,6 +22929,58 @@ func (q *Queries) InsertPromotionFeatureFlags(ctx context.Context, db DBTX, arg 
 		arg.PreviousTargetHash,
 	)
 	return err
+}
+
+const insertReadinessNotification = `-- name: InsertReadinessNotification :exec
+INSERT INTO customer_workflow_readiness_notifications (subscription_id, sequence, payload) VALUES ($1,$2,$3)
+`
+
+type InsertReadinessNotificationParams struct {
+	SubscriptionID pgtype.UUID
+	Sequence       int64
+	Payload        []byte
+}
+
+func (q *Queries) InsertReadinessNotification(ctx context.Context, db DBTX, arg InsertReadinessNotificationParams) error {
+	_, err := db.Exec(ctx, insertReadinessNotification, arg.SubscriptionID, arg.Sequence, arg.Payload)
+	return err
+}
+
+const insertReadinessSubscription = `-- name: InsertReadinessSubscription :execrows
+INSERT INTO customer_workflow_readiness_subscriptions (id, account_id, app_id, tenant_id, operator, scope, payload, created_at, next_evaluation_at)
+SELECT $1, $2, $3, NULLIF($9::text, '')::uuid, $4, $5, $6, $7, $8
+WHERE EXISTS (SELECT 1 FROM apps WHERE id=$3 AND account_id=$2)
+AND ($9::text='' OR EXISTS (SELECT 1 FROM platform_tenants WHERE id::text=$9::text AND account_id=$2))
+`
+
+type InsertReadinessSubscriptionParams struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Operator         bool
+	Scope            string
+	Payload          []byte
+	CreatedAt        pgtype.Timestamptz
+	NextEvaluationAt pgtype.Timestamptz
+	Tenant           string
+}
+
+func (q *Queries) InsertReadinessSubscription(ctx context.Context, db DBTX, arg InsertReadinessSubscriptionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertReadinessSubscription,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Operator,
+		arg.Scope,
+		arg.Payload,
+		arg.CreatedAt,
+		arg.NextEvaluationAt,
+		arg.Tenant,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
@@ -33330,6 +33545,77 @@ func (q *Queries) ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, ar
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReadinessNotifications = `-- name: ListReadinessNotifications :many
+SELECT payload FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence > $2 ORDER BY sequence LIMIT $3
+`
+
+type ListReadinessNotificationsParams struct {
+	SubscriptionID pgtype.UUID
+	Sequence       int64
+	Limit          int32
+}
+
+func (q *Queries) ListReadinessNotifications(ctx context.Context, db DBTX, arg ListReadinessNotificationsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listReadinessNotifications, arg.SubscriptionID, arg.Sequence, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		items = append(items, payload)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReadinessSubscriptions = `-- name: ListReadinessSubscriptions :many
+SELECT payload FROM customer_workflow_readiness_subscriptions WHERE account_id = $1 AND app_id = $2 AND operator = $3 AND scope = $4
+AND ($6::text = '' OR tenant_id::text = $6::text) ORDER BY created_at, id LIMIT $5
+`
+
+type ListReadinessSubscriptionsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Operator  bool
+	Scope     string
+	Limit     int32
+	Tenant    string
+}
+
+func (q *Queries) ListReadinessSubscriptions(ctx context.Context, db DBTX, arg ListReadinessSubscriptionsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listReadinessSubscriptions,
+		arg.AccountID,
+		arg.AppID,
+		arg.Operator,
+		arg.Scope,
+		arg.Limit,
+		arg.Tenant,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		items = append(items, payload)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -50458,6 +50744,20 @@ func (q *Queries) PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const pruneReadinessNotifications = `-- name: PruneReadinessNotifications :exec
+DELETE FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence <= $2
+`
+
+type PruneReadinessNotificationsParams struct {
+	SubscriptionID pgtype.UUID
+	Sequence       int64
+}
+
+func (q *Queries) PruneReadinessNotifications(ctx context.Context, db DBTX, arg PruneReadinessNotificationsParams) error {
+	_, err := db.Exec(ctx, pruneReadinessNotifications, arg.SubscriptionID, arg.Sequence)
+	return err
 }
 
 const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec

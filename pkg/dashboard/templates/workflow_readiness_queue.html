@@ -67,6 +67,27 @@
 <div class="table-scroll"><table hidden id="readiness-changes"><thead><tr><th>Workflow / transition</th><th>Readiness change</th><th>Evidence</th></tr></thead><tbody></tbody></table></div>
 <noscript><p>Enable JavaScript to save and compare views. The API and SDKs also accept saved queue snapshots.</p></noscript>
 </section>
+<section class="card" id="readiness-subscriptions" data-url="{{.Data.SubscriptionsURL}}" data-list-url="{{.Data.ListURL}}" data-scope="{{.Data.Options.Scope}}" data-tenant="{{.Data.Options.TenantID}}" data-workflow="{{.Data.Options.Workflow}}" data-operation="{{.Data.Options.TargetOperation}}" data-owner="{{.Data.Options.Owner}}" data-unassigned="{{.Data.Options.Unassigned}}">
+<h2>Readiness subscriptions</h2>
+<p>Save a watch using this view's customer, workflow, target Operation and owner filters. Notifications stay in a durable inbox while this page is closed. New observations establish a baseline; subsequent changes can notify you. Discovery and evidence coverage are bounded.</p>
+<form id="readiness-subscription-form">
+<label>Subscription name <input name="name" required maxlength="63" pattern="[a-z][a-z0-9-]*" placeholder="warehouse-ready"></label>
+<label><input type="checkbox" name="event" value="newly_ready" checked>Newly ready</label>
+<label><input type="checkbox" name="event" value="newly_blocked" checked>Newly blocked</label>
+<label><input type="checkbox" name="event" value="reassigned" checked>Reassigned</label>
+<label><input type="checkbox" name="event" value="unavailable" checked>Evidence unavailable</label>
+<button type="submit">Create subscription</button>
+</form>
+<p>Requirement and row-limit filters apply to the queue only. Subscriptions watch all requirements on matching transitions.</p>
+<button type="button" id="readiness-subscription-refresh">Load subscriptions</button>
+<label>Inbox <select id="readiness-subscription-select"><option value="">Load a subscription</option></select></label>
+<button type="button" id="readiness-inbox-refresh">Refresh inbox</button>
+<button type="button" id="readiness-inbox-more" hidden>Load more notifications</button>
+<button type="button" id="readiness-subscription-delete">Delete subscription and inbox</button>
+<p id="readiness-subscription-message" role="status" aria-live="polite"></p>
+<ol id="readiness-inbox" aria-live="polite"></ol>
+<noscript><p>The API and SDKs can create subscriptions and read their inboxes.</p></noscript>
+</section>
 <table><thead><tr><th>Workflow</th><th>Transition</th><th>Readiness requirements</th><th>Owners and blockers</th><th>Reporting advisories</th><th>Evidence</th></tr></thead><tbody>
 {{range .Data.Items}}<tr>
 <td>{{.Entry.Workflow}} / {{.Entry.InstanceID}}<br>{{.Entry.Subject.Type}}: {{.Entry.Subject.ID}}<br>{{.Entry.PlatformTenantID}}</td>
@@ -173,5 +194,103 @@
  });
  describeSaved();
 })();
+</script>
+<script nonce="{{.Nonce}}">
+(() => {
+ const panel = document.getElementById('readiness-subscriptions');
+ const select = document.getElementById('readiness-subscription-select');
+ const message = document.getElementById('readiness-subscription-message');
+ const inbox = document.getElementById('readiness-inbox');
+ const more = document.getElementById('readiness-inbox-more');
+ const form = document.getElementById('readiness-subscription-form');
+ const create = form.querySelector('button');
+ const remove = document.getElementById('readiness-subscription-delete');
+ let after = 0, reading = false, generation = 0;
+ const ids = new Set();
+ const query = () => { const q = new URLSearchParams({scope:panel.dataset.scope}); if (panel.dataset.tenant) q.set('tenant_id',panel.dataset.tenant); return q; };
+ const text = (parent, value) => { const p = document.createElement('p'); p.textContent = value; parent.append(p); };
+ const operationLink = (parent, id, label) => {
+  if (!id) return;
+  const a = document.createElement('a'); a.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); a.textContent = label; parent.append(a,document.createElement('br'));
+ };
+ const request = async (url, options = {}) => {
+  const response = await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});
+  if (!response.ok) { let problem; try { problem = await response.json(); } catch {} throw new Error(problem?.detail || problem?.title || 'Readiness subscription request failed (' + response.status + ').'); }
+  return response.status === 204 ? undefined : response.json();
+ };
+ const reset = () => { generation++; after = 0; ids.clear(); inbox.replaceChildren(); more.hidden = true; };
+ const showNotification = (notification) => {
+  if (ids.has(notification.id)) return;
+  ids.add(notification.id);
+  const li = document.createElement('li'); li.dataset.id = notification.id;
+  text(li,notification.kind + ' · ' + notification.created_at); text(li,notification.explanation);
+  const change = notification.change;
+  if (change) {
+   text(li,change.baseline.workflow + ' / ' + change.baseline.instance_id + ' · ' + change.baseline.subject.type + ': ' + change.baseline.subject.id);
+   text(li,change.baseline.operation + ': ' + change.baseline.from_state + ' → ' + change.baseline.to_state);
+   for (const delta of change.evidence_changes || []) {
+    const fact = delta.after || delta.before;
+    text(li,fact.category + ' · ' + fact.name + ': ' + delta.kind + ' · ' + fact.status);
+    if (delta.before && delta.after && delta.before.owner !== delta.after.owner) text(li,'Owner: ' + (delta.before.owner || 'unassigned') + ' → ' + (delta.after.owner || 'unassigned'));
+    operationLink(li,delta.before?.operation_id,'Saved evidence Operation'); operationLink(li,delta.after?.operation_id,'Current evidence Operation'); operationLink(li,delta.after?.invalidation_operation_id,'Invalidation Operation');
+   }
+   if (!change.evidence_comparison_complete) text(li,'Detailed evidence is incomplete or unavailable. Missing evidence does not establish resolution.');
+   operationLink(li,change.baseline.operation_id,'Saved reporting Operation'); operationLink(li,change.current_operation_id,'Current reporting Operation');
+   const q = query();q.set('subject_type',change.baseline.subject.type);q.set('subject_id',change.baseline.subject.id);q.set('workflow',change.baseline.workflow);q.set('workflow_instance_id',change.baseline.instance_id);if (change.baseline.platform_tenant_id) q.set('tenant_id',change.baseline.platform_tenant_id);
+   const detail = document.createElement('a');detail.href = panel.dataset.listUrl + '?' + q + '#workflows';detail.textContent = 'Detailed readiness and evidence';li.append(detail);
+  }
+  inbox.append(li);
+  while (inbox.children.length > 100) { ids.delete(inbox.firstElementChild.dataset.id); inbox.firstElementChild.remove(); }
+ };
+ const read = async () => {
+  if (!select.value || reading) return;
+  const id = select.value, epoch = generation; reading = true;
+  const q = query(); q.set('after_sequence',String(after)); q.set('limit','20');
+  try {
+   const result = await request(panel.dataset.url + '/' + encodeURIComponent(id) + '/notifications?' + q);
+   if (epoch !== generation || id !== select.value) return;
+   if (result.resync_required) { ids.clear(); inbox.replaceChildren(); }
+   for (const n of result.items) showNotification(n);
+   after = result.next_sequence; more.hidden = !result.has_more;
+   const sub = result.subscription;
+   message.textContent = sub.name + ': ' + sub.status + '; last successful evaluation ' + sub.evaluated_at + '; ' + sub.watched_transition_count + ' saved transitions.' + (sub.coverage_incomplete ? ' Coverage is incomplete; narrow the workflow or customer filters.' : '') + (result.resync_required ? ' Notification history has a gap; showing retained entries.' : '') + (result.has_more ? ' More notifications are available.' : '') + (!result.items.length && !inbox.children.length ? ' No retained notifications.' : '');
+  } catch (error) { if (epoch === generation) message.textContent = error.message; }
+  finally { reading = false; }
+ };
+ const load = async (preferred) => {
+  const epoch = ++generation; const selected = preferred || select.value;
+  try {
+   const result = await request(panel.dataset.url + '?' + query());
+   if (epoch !== generation) return;
+   select.replaceChildren();
+   for (const sub of result.items) { const option = document.createElement('option');option.value = sub.id;option.textContent = sub.name + ' · ' + sub.status;select.append(option); }
+   if (!result.items.length) { const option = document.createElement('option');option.value = '';option.textContent = 'No subscriptions';select.append(option); }
+   if (result.items.some(s => s.id === selected)) select.value = selected;
+   reset(); message.textContent = result.items.length + ' subscriptions in this customer and environment scope.';
+   await read();
+  } catch (error) { if (epoch === generation) message.textContent = error.message; }
+ };
+ form.addEventListener('submit',async event => {
+  event.preventDefault(); create.disabled = true;
+  const fields = new FormData(form);
+  const body = {name:fields.get('name'),scope:panel.dataset.scope,events:fields.getAll('event'),unassigned:panel.dataset.unassigned === 'true'};
+  for (const [field,value] of Object.entries({tenant_id:panel.dataset.tenant,workflow:panel.dataset.workflow,target_operation:panel.dataset.operation,owner:panel.dataset.owner})) if (value) body[field] = value;
+  try { const sub = await request(panel.dataset.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await load(sub.id); }
+  catch (error) { message.textContent = error.message; }
+  finally { create.disabled = false; }
+ });
+ remove.addEventListener('click',async () => {
+  if (!select.value) return;remove.disabled = true;
+  try { await request(panel.dataset.url + '/' + encodeURIComponent(select.value) + '?' + query(),{method:'DELETE'});reset();await load(); }
+  catch (error) { message.textContent = error.message; }
+  finally { remove.disabled = false; }
+ });
+ select.addEventListener('change',() => { reset(); void read(); });
+ document.getElementById('readiness-subscription-refresh').addEventListener('click',() => { void load(); });
+ document.getElementById('readiness-inbox-refresh').addEventListener('click',() => { void read(); });
+ more.addEventListener('click',() => { void read(); });
+ window.setInterval(() => { if (!document.hidden) void read(); },30000);
+})();
+
 </script>
 </body></html>

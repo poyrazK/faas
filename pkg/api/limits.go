@@ -9669,3 +9669,14 @@ const OperationBusinessConditionRefreshInstructionsMaxBytes = 1024
 
 const OperationWorkflowConditionRefreshOwnersMax = 64
 const OperationWorkflowConditionRefreshEvidenceMax = 16
+
+// Readiness subscription budgets bound periodic comparison and durable inbox retention.
+const (
+	OperationWorkflowReadinessSubscriptionsPerAppMax        = 20
+	OperationWorkflowReadinessSubscriptionBatchMax          = 5
+	OperationWorkflowReadinessInboxMax                      = 100
+	OperationWorkflowReadinessSubscriptionBodyMaxBytes      = 4096
+	OperationWorkflowReadinessSubscriptionPollInterval      = 30 * time.Second
+	OperationWorkflowReadinessSubscriptionLease             = 5 * time.Minute
+	OperationWorkflowReadinessSubscriptionEvaluationTimeout = time.Minute
+)

@@ -10,24 +10,26 @@ import (
 )
 
 type operationMemory struct {
-	deliveryRetries      map[string]api.OperationDeliveryRetryResponse
-	definitions          map[string]OperationDefinition
-	operations           map[string]Operation
-	events               map[string][]api.OperationEvent
-	receipts             map[string]operationIdentityReceipt
-	executions           map[string]string
-	generations          map[string]int
-	reports              map[string]string
-	recoveries           map[string]string
-	recoveryDecisions    map[string]api.OperationRecoveryDecision
-	streams              map[string]operationStreamLease
-	jobOwners            map[string]string
-	jobExecutions        map[string]map[int]api.OperationExecution
-	workflowExecutions   map[string]map[int]api.OperationExecution
-	blobs                map[string]OperationResultBlob
-	milestones           map[string]map[string]operationMilestoneReceipt
-	workflowStates       map[string]operationWorkflowStateRecord
-	workflowStateReports map[string]operationWorkflowStateReceipt
+	readinessSubscriptions map[string]readinessSubscriptionRecord
+	readinessInbox         map[string][]api.OperationWorkflowReadinessNotification
+	deliveryRetries        map[string]api.OperationDeliveryRetryResponse
+	definitions            map[string]OperationDefinition
+	operations             map[string]Operation
+	events                 map[string][]api.OperationEvent
+	receipts               map[string]operationIdentityReceipt
+	executions             map[string]string
+	generations            map[string]int
+	reports                map[string]string
+	recoveries             map[string]string
+	recoveryDecisions      map[string]api.OperationRecoveryDecision
+	streams                map[string]operationStreamLease
+	jobOwners              map[string]string
+	jobExecutions          map[string]map[int]api.OperationExecution
+	workflowExecutions     map[string]map[int]api.OperationExecution
+	blobs                  map[string]OperationResultBlob
+	milestones             map[string]map[string]operationMilestoneReceipt
+	workflowStates         map[string]operationWorkflowStateRecord
+	workflowStateReports   map[string]operationWorkflowStateReceipt
 }
 
 func (m *MemStore) operationMemoryLocked() *operationMemory {

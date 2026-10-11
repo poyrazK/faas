@@ -36918,6 +36918,417 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
 
+  /v1/apps/{slug}/workflow-readiness/subscriptions:
+    post:
+      operationId: CreateAccountWorkflowReadinessSubscription
+      summary: Account create WorkflowReadinessSubscription
+      description: Account durable readiness subscription create operation. Observations are bounded and advisory;
+        execution remains application-owned. Requires account deploy-write scope and MFA.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: CreateAccountWorkflowReadinessSubscription. Application slug.
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Account Create readiness subscription result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessSubscription'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+      requestBody:
+        required: true
+        description: Account subscription selectors; bounded to 4096 bytes.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowReadinessSubscriptionRequest'
+    get:
+      operationId: ListAccountWorkflowReadinessSubscriptions
+      summary: Account list WorkflowReadinessSubscriptions
+      description: Account durable readiness subscription list operation. Observations are bounded and advisory; execution
+        remains application-owned. Requires account read scope and MFA.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: ListAccountWorkflowReadinessSubscriptions. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: ListAccountWorkflowReadinessSubscriptions. Application environment scope.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: ListAccountWorkflowReadinessSubscriptions. Optional account customer selector.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Account List readiness subscription result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessSubscriptionsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/workflow-readiness/subscriptions/{id}:
+    delete:
+      operationId: DeleteAccountWorkflowReadinessSubscription
+      summary: Account delete WorkflowReadinessSubscription
+      description: Account durable readiness subscription delete operation. Observations are bounded and advisory;
+        execution remains application-owned. Requires account deploy-write scope and MFA.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: DeleteAccountWorkflowReadinessSubscription. Application slug.
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: DeleteAccountWorkflowReadinessSubscription. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: DeleteAccountWorkflowReadinessSubscription. Application environment scope.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: DeleteAccountWorkflowReadinessSubscription. Optional account customer selector.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Account Delete readiness subscription result.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications:
+    get:
+      operationId: GetAccountWorkflowReadinessInbox
+      summary: Account get WorkflowReadinessInbox
+      description: Account durable readiness subscription get operation. Observations are bounded and advisory; execution
+        remains application-owned. Requires account read scope and MFA.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: GetAccountWorkflowReadinessInbox. Application slug.
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: GetAccountWorkflowReadinessInbox. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: GetAccountWorkflowReadinessInbox. Application environment scope.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: GetAccountWorkflowReadinessInbox. Optional account customer selector.
+        schema:
+          type: string
+          format: uuid
+      - name: after_sequence
+        in: query
+        description: GetAccountWorkflowReadinessInbox. Last consumed sequence; defaults to zero.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: limit
+        in: query
+        description: GetAccountWorkflowReadinessInbox. Page size; defaults to 20.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: Account Get readiness inbox page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessInboxResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/workflow-readiness/subscriptions:
+    post:
+      operationId: CreatePlatformTenantSelfWorkflowReadinessSubscription
+      summary: Customer create WorkflowReadinessSubscription
+      description: Customer durable readiness subscription create operation. Observations are bounded and advisory;
+        execution remains application-owned. Requires platform-tenant Operations manage scope.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters: []
+      responses:
+        '201':
+          description: Customer Create readiness subscription result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessSubscription'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+      requestBody:
+        required: true
+        description: Customer subscription selectors; bounded to 4096 bytes.
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/OperationWorkflowReadinessSubscriptionRequest'
+              - type: object
+                required:
+                - app_id
+    get:
+      operationId: ListPlatformTenantSelfWorkflowReadinessSubscriptions
+      summary: Customer list WorkflowReadinessSubscriptions
+      description: Customer durable readiness subscription list operation. Observations are bounded and advisory;
+        execution remains application-owned. Requires platform-tenant Operations read scope.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: scope
+        in: query
+        required: true
+        description: ListPlatformTenantSelfWorkflowReadinessSubscriptions. Application environment scope.
+        schema:
+          type: string
+      - name: app_id
+        in: query
+        required: true
+        description: ListPlatformTenantSelfWorkflowReadinessSubscriptions. Application UUID.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Customer List readiness subscription result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessSubscriptionsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}:
+    delete:
+      operationId: DeletePlatformTenantSelfWorkflowReadinessSubscription
+      summary: Customer delete WorkflowReadinessSubscription
+      description: Customer durable readiness subscription delete operation. Observations are bounded and advisory;
+        execution remains application-owned. Requires platform-tenant Operations manage scope.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: DeletePlatformTenantSelfWorkflowReadinessSubscription. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: DeletePlatformTenantSelfWorkflowReadinessSubscription. Application environment scope.
+        schema:
+          type: string
+      - name: app_id
+        in: query
+        required: true
+        description: DeletePlatformTenantSelfWorkflowReadinessSubscription. Application UUID.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Customer Delete readiness subscription result.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications:
+    get:
+      operationId: GetPlatformTenantSelfWorkflowReadinessInbox
+      summary: Customer get WorkflowReadinessInbox
+      description: Customer durable readiness subscription get operation. Observations are bounded and advisory; execution
+        remains application-owned. Requires platform-tenant Operations read scope.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: GetPlatformTenantSelfWorkflowReadinessInbox. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowReadinessInbox. Application environment scope.
+        schema:
+          type: string
+      - name: app_id
+        in: query
+        required: true
+        description: GetPlatformTenantSelfWorkflowReadinessInbox. Application UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: after_sequence
+        in: query
+        description: GetPlatformTenantSelfWorkflowReadinessInbox. Last consumed sequence; defaults to zero.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: limit
+        in: query
+        description: GetPlatformTenantSelfWorkflowReadinessInbox. Page size; defaults to 20.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: Customer Get readiness inbox page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessInboxResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
 
   securitySchemes:
@@ -73874,6 +74285,268 @@ components:
           $ref: '#/components/schemas/OperationWorkflowReadinessEvidence'
         after:
           $ref: '#/components/schemas/OperationWorkflowReadinessEvidence'
+    OperationWorkflowReadinessSubscriptionRequest:
+      type: object
+      description: Create a durable readiness inbox subscription; initial observations establish a baseline without
+        inventing readiness changes.
+      additionalProperties: false
+      properties:
+        app_id:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.app_id. Application UUID; required in customer
+            requests and omitted in account requests.
+          format: uuid
+        tenant_id:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.tenant_id. Optional account-only customer selector;
+            customer identity derives from authentication.
+          format: uuid
+        scope:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.scope. Application environment scope.
+          minLength: 1
+          maxLength: 40
+          pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+        name:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.name. Subscription name.
+          pattern: ^[a-z][a-z0-9-]*$
+          minLength: 1
+          maxLength: 63
+        workflow:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.workflow. Optional declared workflow selector.
+          maxLength: 63
+        target_operation:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.target_operation. Optional transition operation
+            selector.
+          maxLength: 63
+        owner:
+          type: string
+          description: OperationWorkflowReadinessSubscriptionRequest.owner. Optional blocker or pending verification
+            owner selector.
+          maxLength: 128
+        unassigned:
+          type: boolean
+          description: OperationWorkflowReadinessSubscriptionRequest.unassigned. Select ownerless blockers or verification
+            obligations.
+        events:
+          type: array
+          description: OperationWorkflowReadinessSubscriptionRequest.events. Readiness inbox event selectors; defaults
+            to all four when omitted.
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            description: OperationWorkflowReadinessSubscriptionRequest.events.items. Subscription event kind.
+            enum:
+            - newly_ready
+            - newly_blocked
+            - reassigned
+            - unavailable
+      required:
+      - scope
+      - name
+    OperationWorkflowReadinessSubscription:
+      type: object
+      description: Durable subscription configuration and most recent successful bounded evaluation; deletion cancels
+        future evaluations and removes its inbox.
+      additionalProperties: false
+      properties:
+        app_id:
+          type: string
+          description: OperationWorkflowReadinessSubscription.app_id. Application UUID; required in customer requests
+            and omitted in account requests.
+          format: uuid
+        tenant_id:
+          type: string
+          description: OperationWorkflowReadinessSubscription.tenant_id. Optional account-only customer selector; customer
+            identity derives from authentication.
+          format: uuid
+        scope:
+          type: string
+          description: OperationWorkflowReadinessSubscription.scope. Application environment scope.
+          minLength: 1
+          maxLength: 40
+          pattern: ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
+        name:
+          type: string
+          description: OperationWorkflowReadinessSubscription.name. Subscription name.
+          pattern: ^[a-z][a-z0-9-]*$
+          minLength: 1
+          maxLength: 63
+        workflow:
+          type: string
+          description: OperationWorkflowReadinessSubscription.workflow. Optional declared workflow selector.
+          maxLength: 63
+        target_operation:
+          type: string
+          description: OperationWorkflowReadinessSubscription.target_operation. Optional transition operation selector.
+          maxLength: 63
+        owner:
+          type: string
+          description: OperationWorkflowReadinessSubscription.owner. Optional blocker or pending verification owner
+            selector.
+          maxLength: 128
+        unassigned:
+          type: boolean
+          description: OperationWorkflowReadinessSubscription.unassigned. Select ownerless blockers or verification
+            obligations.
+        events:
+          type: array
+          description: OperationWorkflowReadinessSubscription.events. Readiness inbox event selectors; defaults to all
+            four when omitted.
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            description: OperationWorkflowReadinessSubscription.events.items. Subscription event kind.
+            enum:
+            - newly_ready
+            - newly_blocked
+            - reassigned
+            - unavailable
+        id:
+          type: string
+          description: OperationWorkflowReadinessSubscription.id. Subscription UUID.
+          format: uuid
+        created_at:
+          type: string
+          description: OperationWorkflowReadinessSubscription.created_at. Subscription creation time.
+          format: date-time
+        evaluated_at:
+          type: string
+          description: OperationWorkflowReadinessSubscription.evaluated_at. Most recent successful evaluation time.
+          format: date-time
+        status:
+          type: string
+          description: OperationWorkflowReadinessSubscription.status. Evaluation health; retrying preserves the last
+            successful baseline.
+          enum:
+          - active
+          - retrying
+        watched_transition_count:
+          type: integer
+          description: OperationWorkflowReadinessSubscription.watched_transition_count. Current saved edges within the
+            100-edge watch budget.
+          minimum: 0
+          maximum: 100
+        coverage_incomplete:
+          type: boolean
+          description: OperationWorkflowReadinessSubscription.coverage_incomplete. Discovery, evidence previews or saved-edge
+            capacity are incomplete; no exhaustive delivery guarantee is inferred.
+        latest_sequence:
+          type: integer
+          description: OperationWorkflowReadinessSubscription.latest_sequence. Latest committed inbox sequence.
+          format: int64
+          minimum: 0
+      required:
+      - id
+      - app_id
+      - scope
+      - name
+      - events
+      - created_at
+      - evaluated_at
+      - status
+      - watched_transition_count
+      - coverage_incomplete
+      - latest_sequence
+    OperationWorkflowReadinessSubscriptionsResponse:
+      type: object
+      description: Subscriptions in this ownership, application and environment scope.
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          description: OperationWorkflowReadinessSubscriptionsResponse.items. Subscriptions ordered by creation time
+            and identity.
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessSubscription'
+      required:
+      - items
+    OperationWorkflowReadinessNotification:
+      type: object
+      description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: OperationWorkflowReadinessNotification.id. Stable notification UUID.
+          format: uuid
+        sequence:
+          type: integer
+          description: OperationWorkflowReadinessNotification.sequence. Monotonic subscription-local delivery cursor.
+          format: int64
+          minimum: 1
+        kind:
+          type: string
+          description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
+          enum:
+          - newly_ready
+          - newly_blocked
+          - reassigned
+          - unavailable
+        created_at:
+          type: string
+          description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
+            notification.
+          format: date-time
+        explanation:
+          type: string
+          description: OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
+            explanation.
+        change:
+          $ref: '#/components/schemas/OperationWorkflowReadinessChange'
+      required:
+      - id
+      - sequence
+      - kind
+      - created_at
+      - explanation
+    OperationWorkflowReadinessInboxResponse:
+      type: object
+      description: Retained notification page with explicit cursor gaps; unchanged evaluations do not create entries.
+      additionalProperties: false
+      properties:
+        subscription:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSubscription'
+        items:
+          type: array
+          description: OperationWorkflowReadinessInboxResponse.items. Notifications after the supplied sequence in ascending
+            order.
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessNotification'
+        latest_sequence:
+          type: integer
+          description: OperationWorkflowReadinessInboxResponse.latest_sequence. Most recent committed subscription sequence.
+          format: int64
+          minimum: 0
+        next_sequence:
+          type: integer
+          description: OperationWorkflowReadinessInboxResponse.next_sequence. Cursor for the next page.
+          format: int64
+          minimum: 0
+        resync_required:
+          type: boolean
+          description: OperationWorkflowReadinessInboxResponse.resync_required. The supplied cursor is outside retained
+            history; the page starts at retained entries without claiming completeness.
+        has_more:
+          type: boolean
+          description: OperationWorkflowReadinessInboxResponse.has_more. More committed entries follow this page.
+      required:
+      - subscription
+      - items
+      - latest_sequence
+      - next_sequence
+      - resync_required
+      - has_more
+
   responses:
     OperationConflict:
       description: A pinned contract, idempotency payload or execution generation conflicts with the retained state.

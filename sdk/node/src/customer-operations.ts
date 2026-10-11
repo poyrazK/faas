@@ -146,6 +146,7 @@ export class GregaleOperationClient {
     if (!auth || /[\r\n]/.test(auth)) throw new Error('Operation credential unavailable');
     const h = new Headers(headers); h.set('Authorization', `Bearer ${auth}`); h.set('Content-Type', 'application/json');
     const response = await this.fetchImpl(new URL(path, this.base), { method, headers: h, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal, redirect: 'error', cache: 'no-store' });
+    if (response.status === 204) return undefined as T;
     return operationResponse<T>(response);
   }
   get apiURL(): string { return this.base.origin; }
@@ -282,6 +283,32 @@ export class GregaleOperationClient {
     return this.request('/v1/platform-tenant-self/workflow-readiness/queue?' + query, 'GET', undefined, undefined, signal);
   }
 
+  createWorkflowReadinessSubscription(body: OperationWorkflowReadinessSubscriptionRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessSubscription> {
+    readinessSubscriptionQuery({appID: body.app_id ?? '', scope: body.scope});
+    if (body.tenant_id !== undefined) throw new Error('Customer identity derives from authentication');
+    if (body.owner !== undefined && body.unassigned) throw new Error('Owner and unassigned are mutually exclusive');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions', 'POST', body, undefined, signal);
+  }
+  workflowReadinessSubscriptions(options: OperationWorkflowReadinessSubscriptionOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessSubscriptionsResponse> {
+    return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions?' + readinessSubscriptionQuery(options), 'GET', undefined, undefined, signal);
+  }
+  deleteWorkflowReadinessSubscription(id: string, options: OperationWorkflowReadinessSubscriptionOptions, signal?: AbortSignal): Promise<void> {
+    if (!UUID.test(id)) throw new Error('Valid subscription identity required');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions/' + encodeURIComponent(id) + '?' + readinessSubscriptionQuery(options), 'DELETE', undefined, undefined, signal);
+  }
+  workflowReadinessInbox(id: string, options: OperationWorkflowReadinessSubscriptionOptions & {afterSequence?: number; limit?: number}, signal?: AbortSignal): Promise<OperationWorkflowReadinessInboxResponse> {
+    if (!UUID.test(id)) throw new Error('Valid subscription identity required');
+    const q = readinessSubscriptionQuery(options);
+    if (options.afterSequence !== undefined) {
+      if (!Number.isSafeInteger(options.afterSequence) || options.afterSequence < 0) throw new Error('Invalid inbox sequence');
+      q.set('after_sequence', String(options.afterSequence));
+    }
+    if (options.limit !== undefined) {
+      if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100) throw new Error('Invalid inbox page size');
+      q.set('limit', String(options.limit));
+    }
+    return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions/' + encodeURIComponent(id) + '/notifications?' + q, 'GET', undefined, undefined, signal);
+  }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -639,4 +666,20 @@ export interface OperationWorkflowReadinessComparisonResponse {
  baseline_at: string; evaluated_at: string; baseline_transition_count: number; compared_transition_count: number;
  newly_ready_count: number; newly_blocked_count: number; changed_count: number; unchanged_count: number; unavailable_count: number; matching_change_count: number;
  items: OperationWorkflowReadinessChange[]; snapshot: OperationWorkflowReadinessSnapshot; has_more: boolean;
+}
+
+export interface OperationWorkflowReadinessSubscriptionOptions { appID: string; scope: string }
+export interface OperationWorkflowReadinessSubscriptionRequest {
+ app_id?: string; tenant_id?: string; scope: string; name: string; workflow?: string; target_operation?: string; owner?: string; unassigned?: boolean;
+ events?: ('newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable')[];
+}
+export interface OperationWorkflowReadinessSubscription extends Omit<OperationWorkflowReadinessSubscriptionRequest, 'app_id' | 'events'> {
+ id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
+}
+export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
+export interface OperationWorkflowReadinessNotification { id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
+function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
+ if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+ return new URLSearchParams({app_id: options.appID, scope: options.scope});
 }
