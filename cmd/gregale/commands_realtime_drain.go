@@ -77,7 +77,10 @@ func cmdRealtimeDrain(args []string) int {
 		return printErr("Could not drain realtime connections", err)
 	}
 	timedOut := false
-	if *wait && response.Status == "running" {
+	// A preview's only output is its result. production-us hunt #4:
+	// `drain --dry-run` printed "drain accepted; operation … is running" and
+	// never said how many connections it would close.
+	if (*wait || *dryRun) && response.Status == "running" {
 		response, timedOut, err = waitForManagedRealtimeDrain(context.Background(), client, fs.Arg(0), fs.Arg(1), response.OperationID, *timeout, response)
 		if err != nil {
 			return printErr("Could not read realtime drain status", err)

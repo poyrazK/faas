@@ -2,6 +2,7 @@ package sched
 
 // adr: 755
 import (
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -14,6 +15,7 @@ func (l *NodeLedger) reserveRegionalWarmResume(instance string, p runtimequota.C
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.ensureEnvironmentConcurrencyLocked()
 	if !recovered {
 		if err := l.regionalAdmissionBarrierLocked(); err != nil {
 			return err
@@ -30,12 +32,20 @@ func (l *NodeLedger) reserveRegionalWarmResume(instance string, p runtimequota.C
 		}
 		return runtimequota.ErrBinding
 	}
-	if !recovered && l.perApp[r.appID] >= max {
-		return state.ErrRegionalRuntimeCapacity
+	if !recovered {
+		limits, ok := api.LimitsFor(r.plan)
+		if !ok {
+			return runtimequota.ErrBinding
+		}
+		capacity := l.servingCapacityLocked(r.appID, r.environmentKey, r.production, max, limits, false)
+		if _, _, refused := capacity.refusal(); refused {
+			return state.ErrRegionalRuntimeCapacity
+		}
 	}
 	r.regionalResumePermitID = p.ID
 	r.countsConc = true
 	l.perApp[r.appID]++
+	l.addEnvironmentConcurrencyLocked(r)
 	if r.deploymentID != "" {
 		l.perAppDeployment[r.appID+"\x00"+r.deploymentID]++
 	}

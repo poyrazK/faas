@@ -37,10 +37,6 @@ func (h *Handler) callerWorkflowIdentity(w http.ResponseWriter, r *http.Request,
 	if raw == "" {
 		return nil, true
 	}
-	if r.URL.RawQuery != "" {
-		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Workflow outbound query parameters are unavailable", "")
-		return nil, false
-	}
 	if r.Header.Get(ExecutionIdentityHeader) != "" || r.Header.Get(WorkloadIdentityHeader) != "" || r.Header.Get(TokenHeader) != "" || r.Header.Get(AppHeader) != "" {
 		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound identity is ambiguous", "")
 		return nil, false
@@ -63,7 +59,7 @@ func (h *Handler) callerWorkflowIdentity(w http.ResponseWriter, r *http.Request,
 		}
 		_ = r.Body.Close()
 	}
-	identity, err := h.WorkflowAuthorizer.AuthorizeWorkflow(r.Context(), raw, integration.ID, r.Method, path, body)
+	identity, err := h.WorkflowAuthorizer.AuthorizeWorkflow(r.Context(), raw, integration.ID, r.Method, path, r.URL.RawQuery, body)
 	if err != nil || identity.AccountID != integration.AccountID {
 		status, code := http.StatusServiceUnavailable, "outbound_workflow_authorization_unavailable"
 		if errors.Is(err, ErrWorkflowNotAuthorized) || err == nil {

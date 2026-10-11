@@ -840,7 +840,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	engine.WithVerifier(verifier)
 	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
 	defer cancelAttestationWarm()
-	startLayerAttestationWarm(attestationWarmCtx, store, verifier, log)
+	startLayerAttestationWarm(attestationWarmCtx, store, verifier, func(appID string) bool {
+		app, err := store.AppByID(attestationWarmCtx, appID)
+		return err == nil && engine.OwnsApp(app)
+	}, log)
 	// Issue #561 — wire the spend-cap pause-workload seam. Engine
 	// consults the checker inside admitGate AFTER the existing
 	// min-floor branch; a cap-reached app refuses new wakes with
@@ -1578,6 +1581,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// returns an empty list.
 	grpcHandler := scheddgrpc.NewWithStats(engine, reader, ops, log).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
+		WithAppOwnership(engine.OwnsApp).
 		WithForeignReportRelay(engine)
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
@@ -1643,6 +1647,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log).
+		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
 		WithPrivateNetworkAttachmentSubscriber(privateNetworkSubscriber).
@@ -1821,6 +1826,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	trigger.WithOwnerNodeID(ownerNodeID)
+	trigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithScaleUp(trigger)
 	// The target trigger consumes the optional instance-stats reader for
 	// concurrent_requests, and the store queue reader for queue_depth.
@@ -1845,6 +1851,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	targetsTrigger.WithOwnerNodeID(ownerNodeID)
+	targetsTrigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithTargets(targetsTrigger)
 	log.Info("reactive target trigger enabled",
 		"interval", cfg.ScaleUpInterval,
@@ -1891,6 +1898,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 	)
 	floorTrigger.WithOwnerNodeID(ownerNodeID)
+	floorTrigger.WithAppOwnership(engine.OwnsApp)
 	loop.WithFloor(floorTrigger)
 	log.Info("min-instances floor reconciler enabled",
 		"interval", floorInterval,
@@ -2409,6 +2417,13 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// eventRecipientClaimsEnabled defaults to independent routing. Explicit values
+// other than 1 pause adoption without abandoning already adopted receipts.
+func eventRecipientClaimsEnabled(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || value == "1"
 }
 
 // jobsDispatchEnabled is intentionally an exact opt-in. Treating any

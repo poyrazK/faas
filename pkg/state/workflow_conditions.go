@@ -189,6 +189,7 @@ func (m *MemStore) expireWorkflowConditionLocked(run WorkflowRun, step WorkflowS
 		run.Status = WorkflowRunStatusDead
 		run.LastError = &message
 		run.FinishedAt = &now
+		m.enqueueWorkflowFinishedWebhookLocked(run, now)
 	}
 	m.workflowSteps[u.RunID][u.StepName] = step
 	m.workflowRuns[u.RunID] = run

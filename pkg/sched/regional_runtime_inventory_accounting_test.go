@@ -1,6 +1,7 @@
 package sched
 
 // adr: 764
+// adr: 792
 import (
 	"context"
 	"errors"
@@ -61,8 +62,8 @@ func TestRegionalRuntimeInventoryStartupRetainsCollectedApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newEngine(t, s, &fakeVMM{}, &fakeNotifier{}, "1.10.0") // No current cell signer.
-	if err := e.SeedLedger(t.Context()); err != nil {
-		t.Fatal(err)
+	if err := e.SeedLedger(t.Context()); !errors.Is(err, ErrRegionalRuntimeRecoveryUnresolved) {
+		t.Fatal("collected serving owner must close recovery admission", err)
 	}
 	l := e.ledger
 	if l.ResidentRAMForNode(source.Permit.NodeID) != resources.RAMMB+api.PerVMOverheadMB || l.UsedVCPUForNode(source.Permit.NodeID) != resources.VCPU || l.UsedCPUMillicoresForNode(source.Permit.NodeID) != resources.CPUMillicores || l.Concurrency(app.ID) != 1 {
@@ -254,7 +255,7 @@ func TestRegionalRuntimeInventoryUnknownRetryRemainsUnresolved(t *testing.T) {
 	entry := state.RegionalRuntimeInventoryEntry{Receipt: state.RegionalRuntimeCapacityReceipt{Permit: source.Permit, IssuedAt: &now}, Source: &source, ServingSeatsHeld: 1}
 	l := NewNodeLedger()
 	for i := 0; i < 2; i++ {
-		if err := l.retainRegionalInventory(entry, 128); !errors.Is(err, ErrRegionalRuntimeRecoveryUnresolved) {
+		if err := l.retainRegionalInventory(entry, 128, nil); !errors.Is(err, ErrRegionalRuntimeRecoveryUnresolved) {
 			t.Fatal("retry invented missing provenance", err)
 		}
 	}

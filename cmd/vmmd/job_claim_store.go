@@ -23,6 +23,9 @@ func legacyJobClaimNodeID(ctx context.Context, store state.Store) (string, error
 }
 
 func loadLegacyJobClaimStore(ctx context.Context, deps runDeps, dbURL string) (*pgxpool.Pool, *state.PgStore, string, error) {
+	if deps.openDB == nil || deps.openStore == nil {
+		return nil, nil, "", errors.New("legacy job claim store requires database opener and store constructor")
+	}
 	pool, err := deps.openDB(ctx, dbURL)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("open legacy job claim store: %w", err)

@@ -1,3 +1,4 @@
+// adr: 590
 package main
 
 import (
@@ -34,7 +35,6 @@ func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
 		t.Fatalf("empty active: %d %s", rec.Code, rec.Body.String())
 	}
 	var published []state.ProjectReleaseSet
-	var latest state.Deployment
 	for i := 0; i < 3; i++ {
 		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:" + uuid.NewString()})
 		if err != nil {
@@ -43,7 +43,6 @@ func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
 		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 			t.Fatal(err)
 		}
-		latest = dep
 		if i == 2 {
 			break
 		}
@@ -90,8 +89,8 @@ func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
 	if problem != nil || snapshot.ReleaseSetStatus != "active" || snapshot.ActiveReleaseSet == nil || snapshot.ActiveReleaseSet.ID != published[1].ID {
 		t.Fatalf("state graph: %+v %v", snapshot, problem)
 	}
-	if len(snapshot.Workloads) != 1 || snapshot.Workloads[0].AppID != app.ID || snapshot.Workloads[0].Release.DeploymentID != latest.ID {
-		t.Fatalf("existing release semantics changed: %+v", snapshot.Workloads)
+	if len(snapshot.Workloads) != 1 || snapshot.Workloads[0].AppID != app.ID || snapshot.Workloads[0].Release.DeploymentID != published[1].Members[0].DeploymentID {
+		t.Fatalf("environment state did not select the active release member: %+v", snapshot.Workloads)
 	}
 }
 

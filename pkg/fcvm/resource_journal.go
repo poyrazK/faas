@@ -393,6 +393,18 @@ func (j *ResourceJournal) lookup(instance string) (resourceJournalRecord, bool, 
 	return r, ok, nil
 }
 
+// Owns reports whether the journal holds a record for instance. A recorded
+// instance's resources belong to verified recovery and are never reclaimed by
+// name (ADR-477); a sweep may consider only unrecorded instances (ADR-631).
+// A nil journal owns nothing.
+func (j *ResourceJournal) Owns(instance string) (bool, error) {
+	if j == nil {
+		return false, nil
+	}
+	_, ok, err := j.lookup(instance)
+	return ok, err
+}
+
 func (j *ResourceJournal) Close() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()

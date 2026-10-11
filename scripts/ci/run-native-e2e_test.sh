@@ -177,6 +177,19 @@ native_e2e_lane_verdict "${work}/exclusive-operations-only.log" \
   >"${work}/exclusive-operations-only.out" 2>&1 ||
   fail "a passing stale-owner KVM test was rejected: $(cat "${work}/exclusive-operations-only.out")"
 
+managed_operation_tests=()
+while IFS= read -r selected_test; do
+  managed_operation_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests managed-operation-only "${repo_root}")
+[[ "${#managed_operation_tests[@]}" -eq 1 && \
+   "${managed_operation_tests[0]}" == "TestManagedOperationWorkflowMetal" ]] ||
+  fail "managed-operation-only does not select exactly the managed workflow recovery test"
+lane_pass_log "${work}/managed-operation-only.log" "${managed_operation_tests[@]}"
+native_e2e_lane_verdict "${work}/managed-operation-only.log" \
+  "managed operation KVM lane" "${managed_operation_tests[@]}" \
+  >"${work}/managed-operation-only.out" 2>&1 ||
+  fail "a passing managed workflow KVM test was rejected: $(cat "${work}/managed-operation-only.out")"
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -261,6 +274,24 @@ grep -Fq 'exclusive_operations_only=${{ steps.phase_exclusive_operations_only.ou
 exclusive_exclusions="$(grep -Fc "inputs.lane != 'exclusive-operations-only'" "${workflow}" || true)"
 [[ "${exclusive_exclusions}" -eq 9 ]] ||
   fail "exclusive-operations-only must skip all nine platform phases (found ${exclusive_exclusions} exclusions)"
+grep -Fq 'native_e2e_lane_tests managed-operation-only "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "the managed-operation lane does not derive its selected test for its verdict"
+grep -Fq "inputs.lane == 'managed-operation-only'" "${workflow}" ||
+  fail "the native workflow has no managed-operation-only dispatch route"
+grep -Fq 'managed_operation_only=${{ steps.phase_managed_operation_only.outcome }}' "${workflow}" ||
+  fail "the managed-operation lane outcome is absent from the native verdict"
+managed_operation_exclusions="$(grep -Fc "inputs.lane != 'managed-operation-only'" "${workflow}" || true)"
+[[ "${managed_operation_exclusions}" -eq 9 ]] ||
+  fail "managed-operation-only must skip all nine platform phases (found ${managed_operation_exclusions} exclusions)"
+managed_operation_test_minutes="$(sed -n 's/^[[:space:]]*managed-operation-only) phase_timeout=\([0-9]*\)m ;;$/\1/p' "${runner}")"
+managed_operation_unit_minutes="$(awk '
+  /id: phase_managed_operation_only$/ { in_lane = 1 }
+  in_lane && /--property=RuntimeMaxSec=/ { print; exit }
+' "${workflow}" | sed -n 's/.*--property=RuntimeMaxSec=\([0-9]*\)m .*/\1/p')"
+[[ "${managed_operation_test_minutes}" =~ ^[0-9]+$ && "${managed_operation_unit_minutes}" =~ ^[0-9]+$ ]] ||
+  fail "cannot determine managed-operation test and unit budgets"
+[[ "${managed_operation_unit_minutes}" -gt "${managed_operation_test_minutes}" ]] ||
+  fail "managed-operation unit ${managed_operation_unit_minutes}m cannot outlast test budget ${managed_operation_test_minutes}m"
 grep -Fq 'native_e2e_verdict "$log" || rc=1' "${workflow}" ||
   fail "full native e2e dispatches no longer apply the platform-wide verdict"
 

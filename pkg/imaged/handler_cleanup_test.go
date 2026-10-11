@@ -79,8 +79,11 @@ func TestSupersede_DeletesOldAppLayer_KeepsSnapshotBlob(t *testing.T) {
 		notif:    &fakeNotifier{},
 		storage:  be,
 	}
-	// keepSnap=true is the supersede path: drop the per-app ext4 but
-	// preserve the snapshot blob so one-click rollback is fast (F5).
+	// Explicit cleanup applies after retirement and after the last snapshot
+	// reference is gone. Active deployments must retain their cold-boot layer.
+	if err := store.MarkDeploymentSuperseded(context.Background(), depID); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.cleanupDeploymentFiles(context.Background(), depID, true); err != nil {
 		t.Fatalf("cleanupDeploymentFiles: %v", err)
 	}
@@ -95,6 +98,9 @@ func TestDeleteApp_UnlinksAppDir(t *testing.T) {
 	store := state.NewMemStore()
 	appsRoot, slug, appID, depID, be := newAppDir(t, store)
 	ext4Key := touchExt4(t, be, slug, depID)
+	if err := store.DeleteApp(context.Background(), appID); err != nil {
+		t.Fatal(err)
+	}
 
 	h := &Handler{
 		store:    store,

@@ -1,8 +1,9 @@
 from typing import Literal
 
-InboundWebhookEndpointResponseProvider = Literal["stripe"]
+InboundWebhookEndpointResponseProvider = Literal["generic", "stripe"]
 
 INBOUND_WEBHOOK_ENDPOINT_RESPONSE_PROVIDER_VALUES: set[InboundWebhookEndpointResponseProvider] = {
+    "generic",
     "stripe",
 }
 

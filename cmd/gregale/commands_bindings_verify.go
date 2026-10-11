@@ -44,6 +44,7 @@ type serviceBindingProbeBatchItem struct {
 	OutboundReport      *api.OutboundBindingProbeReport      `json:"outbound_report,omitempty"`
 	ObjectStorageReport *api.ObjectStorageBindingProbeReport `json:"object_storage_report,omitempty"`
 	Status              string                               `json:"status"`
+	Reason              string                               `json:"reason,omitempty"`
 	Report              *api.ServiceBindingProbeReport       `json:"report,omitempty"`
 }
 
@@ -52,6 +53,9 @@ type serviceBindingProbeBatchReport struct {
 	App          string                         `json:"app"`
 	Scope        string                         `json:"scope"`
 	Issues       []api.BindingInventoryIssue    `json:"issues,omitempty"`
+	Coverage     string                         `json:"coverage"`
+	Unsupported  int                            `json:"unsupported"`
+	NotChecked   int                            `json:"not_checked"`
 	Total        int                            `json:"total"`
 	Checked      int                            `json:"checked"`
 	Passed       int                            `json:"passed"`
@@ -444,7 +448,7 @@ func newServiceBindingProbeReport(app, service string) api.ServiceBindingProbeRe
 }
 
 func renderServiceBindingProbeBatch(batch serviceBindingProbeBatchReport) {
-	_, _ = fmt.Fprintf(osStdout, "Binding verification: %s scope=%s (%d/%d passed, %d failed, %d not checked)\n", batch.App, batch.Scope, batch.Passed, batch.Total, batch.Failed, batch.Skipped)
+	_, _ = fmt.Fprintf(osStdout, "Binding verification: %s scope=%s coverage=%s (%d/%d passed, %d failed, %d unsupported, %d skipped, %d not checked)\n", batch.App, batch.Scope, batch.Coverage, batch.Passed, batch.Total, batch.Failed, batch.Unsupported, batch.Skipped, batch.NotChecked)
 	for _, item := range batch.Bindings {
 		_, _ = fmt.Fprintln(osStdout)
 		if item.Report != nil {
@@ -459,7 +463,7 @@ func renderServiceBindingProbeBatch(batch serviceBindingProbeBatchReport) {
 			report := *item.ObjectStorageReport
 			renderObjectStorageBindingProbeReport(batch.App, report, api.AppTaskResponse{ID: report.TaskID, DeploymentID: report.DeploymentID})
 		} else {
-			_, _ = fmt.Fprintf(osStdout, "%s %s: %s\n", item.Type, item.Binding, item.Status)
+			_, _ = fmt.Fprintf(osStdout, "%s %s (%s) scope=%s: %s (%s)\n", item.Type, item.Name, item.Binding, item.Scope, item.Status, item.Reason)
 		}
 	}
 	for _, issue := range batch.Issues {

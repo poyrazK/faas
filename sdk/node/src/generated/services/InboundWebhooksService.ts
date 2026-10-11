@@ -47,7 +47,9 @@ export class InboundWebhooksService {
    * Create a provider-verified durable webhook endpoint.
    * Returns the public endpoint_url once. Gregale stores only a SHA-256
    * digest of its opaque token and an age/X25519-sealed provider signing
-   * secret. Hobby, Pro, and Scale plans are supported.
+   * secret. Providers are Stripe and generic timestamped HMAC-SHA256 senders.
+   * Generic secrets must contain at least 32 bytes of random material.
+   * Hobby, Pro, and Scale plans are supported.
    *
    * @returns InboundWebhookEndpointResponse Endpoint created; copy endpoint_url into the provider now.
    * @throws ApiError
@@ -406,12 +408,16 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Verify and durably accept a provider webhook.
+   * Verify and durably accept a Stripe or generic signed webhook.
    * This route does not use a Gregale bearer key. The opaque URL and the
    * provider signature are the trust boundary. For Stripe, the exact raw
-   * body is verified against Stripe-Signature. An exact workflow callback
-   * binding completes its callback durably instead of enqueuing an app
-   * invocation. Unmatched events keep the ordinary invocation path.
+   * body is verified against Stripe-Signature. Generic endpoints require
+   * X-Gregale-Event-ID, X-Gregale-Event-Type, X-Gregale-Timestamp and
+   * X-Gregale-Signature. The HMAC-SHA256 covers the timestamp, event ID,
+   * event type and exact raw body; timestamps must be within five minutes.
+   * An exact Stripe workflow callback binding completes its callback
+   * durably instead of enqueuing an app invocation. Unmatched events keep
+   * the ordinary invocation path.
    * Terminal callbacks are acknowledged as ignored after verification.
    * An automation-bound endpoint captures its published definition in durable
    * fanout work. Paused, unpublished or type-unmatched events are durably ignored;
@@ -423,18 +429,38 @@ export class InboundWebhooksService {
    */
   public static receiveInboundWebhook({
     token,
-    stripeSignature,
     requestBody,
+    stripeSignature,
+    xGregaleEventId,
+    xGregaleEventType,
+    xGregaleTimestamp,
+    xGregaleSignature,
   }: {
     /**
      * Opaque one-time-disclosed endpoint routing capability.
      */
     token: string,
-    /**
-     * Stripe v1 timestamped HMAC signature over the exact request body.
-     */
-    stripeSignature: string,
     requestBody: Record<string, any>,
+    /**
+     * Required for Stripe endpoints; Stripe v1 timestamped HMAC signature over the exact request body.
+     */
+    stripeSignature?: string,
+    /**
+     * Required for generic endpoints; stable event ID of 1 to 256 visible ASCII bytes, with no spaces.
+     */
+    xGregaleEventId?: string,
+    /**
+     * Required for generic endpoints; exact event type matching ^[a-z][a-z0-9_.]{0,255}$.
+     */
+    xGregaleEventType?: string,
+    /**
+     * Required for generic endpoints; Unix timestamp in seconds.
+     */
+    xGregaleTimestamp?: string,
+    /**
+     * Required for generic endpoints; sha256= followed by the lowercase hex HMAC-SHA256 digest.
+     */
+    xGregaleSignature?: string,
   }): CancelablePromise<(WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | InboundWebhookReceiptResponse)> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -444,6 +470,10 @@ export class InboundWebhooksService {
       },
       headers: {
         'Stripe-Signature': stripeSignature,
+        'X-Gregale-Event-ID': xGregaleEventId,
+        'X-Gregale-Event-Type': xGregaleEventType,
+        'X-Gregale-Timestamp': xGregaleTimestamp,
+        'X-Gregale-Signature': xGregaleSignature,
       },
       body: requestBody,
       mediaType: 'application/json',

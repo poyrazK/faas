@@ -143,6 +143,7 @@ type WorkerScaling struct {
 	Min    int     `json:"min" yaml:"min"`
 	Max    int     `json:"max" yaml:"max"`
 	Metric string  `json:"metric,omitempty" yaml:"metric,omitempty"`
+	Name   string  `json:"name,omitempty" yaml:"name,omitempty"`
 	Target float64 `json:"target,omitempty" yaml:"target,omitempty"`
 }
 
@@ -232,7 +233,7 @@ type AppManifest struct {
 	// lays the schema + admission; M-4 workstream E lands the
 	// rolling deploy / rollback / digest-pinning semantics.
 	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	// WorkerReplicas is the queue-driven autoscaling policy for worker mode.
+	// WorkerReplicas is the queue- or custom-metric autoscaling policy for worker mode.
 	WorkerReplicas *WorkerScaling `json:"worker_replicas,omitempty"`
 	// Favicon is an optional base64-encoded favicon payload for the edge
 	// /favicon.ico answer. The gateway enforces a 32 KiB maximum.
@@ -860,6 +861,13 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		r := m.WorkerReplicas
 		if r.Min < 0 || r.Max <= 0 || r.Max < r.Min {
 			return fmt.Errorf("app manifest: worker_replicas values invalid (got min=%d max=%d)", r.Min, r.Max)
+		}
+		if r.Metric == "" {
+			if r.Name != "" || r.Target != 0 {
+				return fmt.Errorf("app manifest: worker_replicas name and target require a metric")
+			}
+		} else if problem := ValidateScalingTargets("worker_replicas", []ScalingTarget{{Metric: r.Metric, Name: r.Name, Value: r.Target}}); problem != nil {
+			return fmt.Errorf("app manifest: %s", problem.Detail)
 		}
 		if r.Max > limits.WorkerReplicasMax {
 			return fmt.Errorf("app manifest: worker_replicas.max %d exceeds plan %q cap %d", r.Max, plan, limits.WorkerReplicasMax)

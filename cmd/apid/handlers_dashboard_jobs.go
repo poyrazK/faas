@@ -365,7 +365,7 @@ func (s *server) dashboardQueueDeadLetterReplay(w http.ResponseWriter, r *http.R
 		http.NotFound(w, r)
 		return
 	}
-	inv, err := s.store.InvocationByID(r.Context(), id)
+	inv, err := s.store.ProductionQueueInvocationByID(r.Context(), id)
 	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.State != state.InvocationDeadLetter {
 		http.NotFound(w, r)
 		return

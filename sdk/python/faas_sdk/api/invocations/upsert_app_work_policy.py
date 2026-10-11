@@ -9,7 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.upsert_work_policy_request import UpsertWorkPolicyRequest
 from ...models.work_policy_response import WorkPolicyResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -17,8 +17,18 @@ def _get_kwargs(
     name: str,
     *,
     body: UpsertWorkPolicyRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(if_workload_revision, Unset):
+        headers["If-Workload-Revision"] = str(if_workload_revision)
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "put",
@@ -26,6 +36,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -44,6 +55,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
@@ -53,6 +69,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -77,15 +98,20 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpsertWorkPolicyRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Response[Problem | WorkPolicyResponse]:
     """Create or update a named app work policy.
 
-     Policy changes affect new work only. Existing invocations retain their admission settings and policy
-    revision.
+     Legacy production changes affect new work only. Stage edits create immutable desired workload
+    configuration and subsequent deployments pin it; existing deployments keep their policies. Stage
+    policy execution and qualification remain unavailable until work lanes and producers are isolated.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpsertWorkPolicyRequest): App work policy settings; durations use whole
             milliseconds.
 
@@ -101,6 +127,8 @@ def sync_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     )
 
     response = client.get_httpx_client().request(
@@ -116,15 +144,20 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: UpsertWorkPolicyRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Problem | WorkPolicyResponse | None:
     """Create or update a named app work policy.
 
-     Policy changes affect new work only. Existing invocations retain their admission settings and policy
-    revision.
+     Legacy production changes affect new work only. Stage edits create immutable desired workload
+    configuration and subsequent deployments pin it; existing deployments keep their policies. Stage
+    policy execution and qualification remain unavailable until work lanes and producers are isolated.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpsertWorkPolicyRequest): App work policy settings; durations use whole
             milliseconds.
 
@@ -141,6 +174,8 @@ def sync(
         name=name,
         client=client,
         body=body,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     ).parsed
 
 
@@ -150,15 +185,20 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpsertWorkPolicyRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Response[Problem | WorkPolicyResponse]:
     """Create or update a named app work policy.
 
-     Policy changes affect new work only. Existing invocations retain their admission settings and policy
-    revision.
+     Legacy production changes affect new work only. Stage edits create immutable desired workload
+    configuration and subsequent deployments pin it; existing deployments keep their policies. Stage
+    policy execution and qualification remain unavailable until work lanes and producers are isolated.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpsertWorkPolicyRequest): App work policy settings; durations use whole
             milliseconds.
 
@@ -174,6 +214,8 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -187,15 +229,20 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: UpsertWorkPolicyRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Problem | WorkPolicyResponse | None:
     """Create or update a named app work policy.
 
-     Policy changes affect new work only. Existing invocations retain their admission settings and policy
-    revision.
+     Legacy production changes affect new work only. Stage edits create immutable desired workload
+    configuration and subsequent deployments pin it; existing deployments keep their policies. Stage
+    policy execution and qualification remain unavailable until work lanes and producers are isolated.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpsertWorkPolicyRequest): App work policy settings; durations use whole
             milliseconds.
 
@@ -213,5 +260,7 @@ async def asyncio(
             name=name,
             client=client,
             body=body,
+            environment=environment,
+            if_workload_revision=if_workload_revision,
         )
     ).parsed

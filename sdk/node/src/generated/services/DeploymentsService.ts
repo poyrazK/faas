@@ -28,6 +28,7 @@ import type { PutRegionalReleaseGrantRequest } from '../models/PutRegionalReleas
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RegionalReleaseGrantResponse } from '../models/RegionalReleaseGrantResponse.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
+import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
@@ -706,6 +707,68 @@ export class DeploymentsService {
     });
   }
   /**
+   * Deploy an immutable image after CI publishes it.
+   * Requires deploy:write or admin and the normal deployment authentication
+   * checks. App-bound deploy tokens and CI bearer tokens are accepted.
+   * The app must be a project workload configured with image:. The required
+   * image is a full registry/repository@sha256:digest reference matching that
+   * workload's declared registry and repository. A digest-pinned declaration
+   * accepts only its declared digest. Tags are rejected; send the digest
+   * returned by the build/push step after publication completes.
+   *
+   * App, normalized deployment scope, and image reference form a durable
+   * delivery identity. First delivery creates one pending OCI deployment
+   * without a source build. Repeated deliveries return the original row and
+   * its current status, including terminal states, without creating a new
+   * deployment. The first accepted configuration wins for this identity;
+   * use ordinary deployment or retry endpoints for intentional redeploys.
+   * Changing scope creates an independent delivery.
+   *
+   * Normal signature, security, plan, traffic, and account deploy-rate
+   * admission apply. The Compose main container port defaults the port
+   * override. Omitted workflows and the source release command inherit from
+   * the latest image deployment in the same scope. Image commands, service
+   * bindings, and scoped environment settings use the existing app contract.
+   * Optional overrides and rollout policies follow CreateDeploymentRequest.
+   * The project image declaration is retained. This is a CI handoff endpoint;
+   * native registry webhook payloads and registry polling are not supported.
+   *
+   * @returns DeploymentResponse The original deployment for an already accepted image delivery.
+   * @throws ApiError
+   */
+  public static publishAppImage({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateDeploymentRequest,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/image-published',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        404: `code: not_found`,
+        422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Fetch a deployment release summary and diff.
    * Returns the selected deployment, its immediately preceding release,
    * a stable field-level diff of non-secret release metadata, and the
@@ -1058,13 +1121,21 @@ export class DeploymentsService {
    *
    * With `target_deployment_id` in the body, rolls back to the
    * named deployment. The id must belong to this app and the row
-   * must have `status='superseded'`. Rolling back to the
+   * must be superseded or live with zero traffic. Rolling back to the
    * already-current live deployment is rejected (409
    * `rollback_target_already_live`). A target whose snapshot has
    * been garbage-collected is rejected (409
    * `rollback_target_snapshot_expired`).
+   * With both `target_deployment_id` and `expected_current_deployment_id`,
+   * starts an exact checked rollback. The expected deployment must still
+   * serve all traffic with no active rollout in this scope. A 202 response
+   * includes `rollback_operation`, confirming durable intent. Readiness,
+   * artifact and API contract checks precede a zero-traffic activation;
+   * fresh binding evidence is checked at the traffic transaction. Service
+   * completion also waits for the existing gateway ACK and drain handoff.
+   * Stored binding enforcement requires this exact workflow.
    *
-   * @returns DeploymentResponse The deployment that was created by rolling back to the previous version.
+   * @returns DeploymentResponse The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
    * @throws ApiError
    */
   public static rollbackApp({
@@ -1108,6 +1179,48 @@ export class DeploymentsService {
     });
   }
   /**
+   * Read an exact historical rollback operation.
+   * Read-only progress for a pinned deployment pair. Complete includes a committed routing audit; service completion also requires the matching handoff to finish. Blocked operations retry fresh evidence without choosing another deployment.
+   * @returns RollbackOperation Durable rollback progress.
+   * @throws ApiError
+   */
+  public static getRollbackOperation({
+    slug,
+    operation,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the accepted historical rollback operation.
+     */
+    operation: string,
+  }): CancelablePromise<RollbackOperation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollbacks/{operation}',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Operator manual rollout recovery (SAFE-RELEASES-R, issue
    * The operator escape hatch for a stuck canary rollout. Three
    * closed-set actions:
@@ -1138,6 +1251,23 @@ export class DeploymentsService {
    * so the operator's terminal can echo `audit_id=…`. Plan-tier
    * gated to Pro+ (Hobby / Free get 403
    * `plan_traffic_split_not_allowed`).
+   *
+   * For an exact canary abort, supply both `deployment_id` and
+   * `expected_predecessor_deployment_id`. The older predecessor must
+   * remain live and serving in the same app/scope. If its stored binding
+   * release policy enforces verification, recovery checks that exact
+   * recipient's fresh evidence and rechecks policy revisions and expiry
+   * inside the recovery transaction. Missing or changed evidence leaves
+   * traffic unchanged. Success restores the predecessor to 100 percent,
+   * aborts the selected canary, and includes an exact recovery receipt.
+   * For an exact service abort, the pinned predecessor may remain live
+   * at zero weight after cutover. The response is 202 with a
+   * `service_recovery` receipt confirming the durable request only.
+   * APID checks that recipient and ready service capacity before publishing
+   * routes; schedd then completes gateway acknowledgement and request drain.
+   * GET the exact deployment to observe `service_rollout_handoff` progress
+   * and bounded `bindings_check` blockers. Restarted workers resume the same
+   * request and never substitute a different predecessor.
    *
    * @returns RolloutTransitionResponse The post-recovery deployment + audit row id.
    * @throws ApiError

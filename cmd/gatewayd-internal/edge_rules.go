@@ -571,9 +571,9 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
 			if g.log != nil {
-				g.log.Warn("edge rule loader failed; treating as miss", "host", host, "err", err)
+				g.log.Warn("JWT policy loader failed; rejecting requests", "host", host, "err", err)
 			}
-			return nil
+			return &gateway.EdgeRuleJWTResolved{ID: "unavailable", Unavailable: true}
 		}
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.JWT
@@ -1249,6 +1249,7 @@ func compileJWTRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleJWTResolved
 			Algorithms:                     algCopy,
 			RequiredClaims:                 claimsCopy,
 			PlatformTenantExternalRefClaim: action.PlatformTenantExternalRefClaim,
+			MCP:                            action.MCP,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

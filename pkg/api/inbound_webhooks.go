@@ -2,11 +2,13 @@ package api
 
 import (
 	"regexp"
+	"strings"
 	"time"
 )
 
 var stripeWorkflowCallbackEventType = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,255}$`)
 var stripeWorkflowCallbackObjectID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+var inboundWebhookEventType = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,255}$`)
 
 func ValidStripeWorkflowCallbackMatch(eventType, objectID string) bool {
 	return stripeWorkflowCallbackEventType.MatchString(eventType) &&
@@ -16,11 +18,36 @@ func ValidStripeWorkflowCallbackMatch(eventType, objectID string) bool {
 const (
 	InboundWebhookTokenPrefix           = "gwh_"
 	InboundWebhookSigningSecretMaxBytes = 256
+	InboundWebhookGenericSecretMinBytes = 32
 	InboundWebhookNameMaxBytes          = 63
 	InboundWebhookDeliveryPathMaxBytes  = 256
+	InboundWebhookEventIDHeader         = "X-Gregale-Event-ID"
+	InboundWebhookEventTypeHeader       = "X-Gregale-Event-Type"
+	InboundWebhookTimestampHeader       = "X-Gregale-Timestamp"
+	InboundWebhookSignatureHeader       = "X-Gregale-Signature"
 )
 
-var AllowedInboundWebhookProviders = []string{"stripe"}
+var AllowedInboundWebhookProviders = []string{"stripe", "generic"}
+
+// ValidInboundWebhookEventType accepts an exact event name supplied by a
+// generic signed webhook sender. Patterns are only valid in the binding.
+func ValidInboundWebhookEventType(eventType string) bool {
+	return inboundWebhookEventType.MatchString(eventType)
+}
+
+// ValidInboundWebhookEventID keeps signed metadata printable and unambiguous
+// in the generic signature's newline-delimited canonical input.
+func ValidInboundWebhookEventID(eventID string) bool {
+	if eventID == "" || len(eventID) > WorkflowWebhookEventMaxBytes || strings.TrimSpace(eventID) != eventID {
+		return false
+	}
+	for i := 0; i < len(eventID); i++ {
+		if eventID[i] < 0x21 || eventID[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
 
 // CreateInboundWebhookEndpointRequest configures a public provider endpoint.
 // The signing secret is sealed at rest and never returned. The public routing

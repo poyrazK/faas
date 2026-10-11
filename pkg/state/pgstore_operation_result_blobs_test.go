@@ -1,3 +1,4 @@
+// adr: 521
 package state_test
 
 import (
@@ -199,6 +200,7 @@ func TestPgOperationResultBlobRetentionPins(t *testing.T) {
 			now := time.Now().UTC().Truncate(time.Microsecond)
 			operation := uuid.NewString()
 			blob := resultBlobParams(account, operation, 3, now.Add(time.Minute))
+			blob.ExecutionID = resultBlobUUID(inv.ID)
 			keys := map[string]string{}
 			if tc.bound {
 				keys["export.csv"] = blob.StorageKey
@@ -206,15 +208,34 @@ func TestPgOperationResultBlobRetentionPins(t *testing.T) {
 			record, err := json.Marshal(map[string]any{
 				"id": operation, "account_id": account, "app_id": app, "platform_tenant_id": tenant.ID,
 				"definition_id": definition, "current_invocation_id": inv.ID, "state": tc.state, "artifact_storage_keys": keys,
+				"generation": 1,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := q.InsertCustomerOperation(ctx, pool, sqlc.InsertCustomerOperationParams{
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{
 				ID: resultBlobUUID(operation), AccountID: resultBlobUUID(account), AppID: resultBlobUUID(app), TenantID: resultBlobUUID(tenant.ID),
 				DefinitionID: resultBlobUUID(definition), InvocationID: resultBlobUUID(inv.ID), State: tc.state, Record: record,
 				ExpiresAt: resultBlobTime(now.Add(tc.expires)), CreatedAt: resultBlobTime(now),
 			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := q.SetCustomerOperationExecutionIdentity(ctx, tx, sqlc.SetCustomerOperationExecutionIdentityParams{
+				OperationID: resultBlobUUID(operation), InvocationID: resultBlobUUID(inv.ID),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := q.InsertCustomerOperationExecution(ctx, tx, sqlc.InsertCustomerOperationExecutionParams{
+				OperationID: resultBlobUUID(operation), InvocationID: resultBlobUUID(inv.ID), Generation: 1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if err := q.InsertCustomerOperationBlob(ctx, pool, blob); err != nil {

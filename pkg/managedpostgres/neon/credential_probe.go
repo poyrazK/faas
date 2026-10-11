@@ -174,6 +174,11 @@ func sqlPermissionDenied(ctx context.Context, conn *pgx.Conn, query string) bool
 }
 
 func (*Provider) VerifyRestoreCredentialIsolation(ctx context.Context, source, target managedpostgres.CredentialMaterial) error {
+	return verifyRejectedCredentials(ctx, source, target)
+}
+
+// Require an authentication denial; network failures cannot prove revocation.
+func verifyRejectedCredentials(ctx context.Context, source, target managedpostgres.CredentialMaterial) error {
 	if source.Username == target.Username {
 		return managedpostgres.ErrUnavailable
 	}

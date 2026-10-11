@@ -5,8 +5,19 @@
   "mode": "stateless",
   "legacy": true,
   "allowed_origins": [],
+  "tasks": {
+    "enabled": false,
+    "database_url_env": "DATABASE_URL",
+    "owner_key_env": "MCP_TASK_OWNER_KEY",
+    "namespace_env": "FAAS_APP_ID",
+    "ttl_seconds": 86400,
+    "poll_interval_ms": 2000,
+    "worker_concurrency": 1
+  },
   "auth": {
     "mode": "open",
-    "tool_scopes": { "greet": [], "add": [], "stream_demo": [] }
+    "tool_scopes": { "greet": [], "add": [], "stream_demo": [], "build_report": [] },
+    "resource_scopes": { "greeting://welcome": [], "customer://records/{recordId}": [], "task://tasks/{taskId}": [] },
+    "prompt_scopes": { "summarize": [] }
   }
 }

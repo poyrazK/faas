@@ -32,6 +32,7 @@ type WorkflowResume struct {
 
 type WorkflowResumeOptions struct {
 	RunID, AppID, AccountID string
+	PlatformTenantID        string
 	ExpectedResumeCount     int
 }
 
@@ -230,7 +231,10 @@ func (m *MemStore) ResumeWorkflowRun(_ context.Context, opts WorkflowResumeOptio
 	if !ok || !appOK || run.AppID != app.ID || app.AccountID != opts.AccountID {
 		return nil, nil, 0, ErrWorkflowRunNotFound
 	}
-	if !account.Active() || !account.Plan.WorkflowsAllowed() || app.Status == AppDeleted || app.MaintenanceMode || app.PlatformTenantRequired {
+	if opts.PlatformTenantID != "" && run.PlatformTenantID != opts.PlatformTenantID {
+		return nil, nil, 0, ErrWorkflowRunNotFound
+	}
+	if !account.Active() || !account.Plan.WorkflowsAllowed() || app.Status == AppDeleted || app.MaintenanceMode || app.PlatformTenantRequired && run.PlatformTenantID == "" {
 		return nil, nil, 0, ErrWorkflowResumeUnavailable
 	}
 	live := false

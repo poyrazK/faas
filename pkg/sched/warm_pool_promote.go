@@ -32,9 +32,14 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if headErr != nil && !errors.Is(headErr, state.ErrNotFound) {
 		return WakeResult{}, true, regionalWarmUnavailable(headErr)
 	}
-	if !regional && e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
-		// The existing admission gate owns the at-capacity result; do not
-		// consume a warm row or emit a misleading "missing" outcome.
+	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	if err != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
+	}
+	environmentKey := runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID)
+	production := reaperProductionScope(values.Snapshot.Scope)
+	if _, _, refused := e.wakeServingCapacity(app, limits, dep.ID, environmentKey, production).refusal(); refused {
+		// The ordinary admission gate owns the capacity result.
 		return WakeResult{}, false, nil
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
@@ -48,7 +53,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 		warmCount++
-		if ins.DeploymentID != dep.ID || !instanceModeMatchesApp(app, ins) {
+		if ins.DeploymentID != dep.ID {
+			continue
+		}
+		if ins.RAMMB != app.RAMMB || !instanceModeMatchesApp(app, ins) {
+			if e.discardWarmPromotion(ctx, ins, "resource_shape_changed") {
+				warmCount--
+			}
 			continue
 		}
 		candidates = append(candidates, ins)
@@ -70,6 +81,15 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		e.observeWarmResume("missing")
 		return WakeResult{}, false, nil
 	}
+	if runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
+		for _, warm := range candidates {
+			if e.discardWarmPromotion(ctx, warm, "ephemeral_secret") {
+				warmCount--
+			}
+		}
+		return WakeResult{}, false, nil
+	}
+
 	if regional {
 		result, err := e.promoteRegionalWarmInstance(ctx, app, acct, dep, candidates[0], head.Grant)
 		if err == nil {
@@ -103,6 +123,17 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			e.observeWarmResume("stale")
 			continue
 		}
+		captured, proofErr := e.store.InstanceRuntimeConfigFence(ctx, acct.ID, app.ID, warm.ID)
+		if proofErr != nil && !errors.Is(proofErr, state.ErrNotFound) {
+			return WakeResult{}, false, fmt.Errorf("sched: warm pool: captured config: %w", proofErr)
+		}
+		if proofErr != nil || captured != values.ConfigFence {
+			if e.discardWarmPromotion(ctx, warm, "captured_config_changed") {
+				warmCount--
+			}
+			e.observeWarmResume("stale")
+			continue
+		}
 		if !e.ledger.ResidentFor(warm.ID) {
 			ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, warm.NodeID)
 			cpuBudgetMillicores := e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID)
@@ -111,8 +142,10 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			}
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-				RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-				SidecarMBs: sidecarRAM, rowShadow: true,
+				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
+				ProductionEnvironment: production,
+				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				SidecarMBs: sidecarRAM, rowShadow: true, RuntimeRunID: warm.WakeID,
 				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {
@@ -128,7 +161,18 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			return WakeResult{}, true, err
 		}
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
-		resumeErr := resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+		var resumeErr error
+		if imageHealthcheckRequiredFromDep(dep) {
+			if checked, ok := e.vmm.(interface {
+				ResumeWarmInstanceWithImageHealthcheck(context.Context, string, string) error
+			}); ok {
+				resumeErr = checked.ResumeWarmInstanceWithImageHealthcheck(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+			} else {
+				resumeErr = errors.New("sched: warm resume cannot enforce image healthcheck")
+			}
+		} else {
+			resumeErr = resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+		}
 		cancel()
 		if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
 			return WakeResult{}, true, err
@@ -148,7 +192,11 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
-		fresh, publishErr := e.store.PublishInstanceRuntime(ctx, warm.ID, string(state.StateWarm), warm.Netns, warm.HostIP, warm.GuestUID)
+		fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
+			ExpectedState: string(state.StateWarm), Fence: captured.SecretFence, ConfigFence: captured,
+			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
+		})
 		if publishErr != nil {
 			e.ledger.Release(warm.ID)
 			if !errors.Is(publishErr, state.ErrConflict) {

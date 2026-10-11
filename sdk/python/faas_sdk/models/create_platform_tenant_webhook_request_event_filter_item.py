@@ -1,6 +1,7 @@
 from typing import Literal
 
 CreatePlatformTenantWebhookRequestEventFilterItem = Literal[
+    "operation.effect",
     "platform_tenant.customer.linked",
     "platform_tenant.customer.offboarded",
     "platform_tenant.hostname.verified",
@@ -13,6 +14,7 @@ CreatePlatformTenantWebhookRequestEventFilterItem = Literal[
 CREATE_PLATFORM_TENANT_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
     CreatePlatformTenantWebhookRequestEventFilterItem
 ] = {
+    "operation.effect",
     "platform_tenant.customer.linked",
     "platform_tenant.customer.offboarded",
     "platform_tenant.hostname.verified",

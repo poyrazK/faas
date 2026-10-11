@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"maps"
 	"net/netip"
 	"strings"
 	"time"
@@ -1675,6 +1676,7 @@ type WorkerScaling struct {
 	Min    int     `json:"min"`
 	Max    int     `json:"max"`
 	Metric string  `json:"metric,omitempty"`
+	Name   string  `json:"name,omitempty"`
 	Target float64 `json:"target,omitempty"`
 }
 
@@ -1690,6 +1692,14 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	// ProjectImage preserves declared image intent (including a mutable tag).
+	// Each deployment resolves and pins its own immutable source. Command
+	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
+	ProjectImage                string                  `json:"project_image,omitempty"`
+	ProjectImageCommand         []string                `json:"project_image_command,omitempty"`
+	ProjectImagePort            int                     `json:"project_image_port,omitempty"`
+	ProjectImageHealthcheck     *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	ProjectDependencyConditions map[string]string       `json:"project_dependency_conditions,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -1781,7 +1791,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1792,8 +1802,16 @@ func (m AppManifest) IsZero() bool {
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
+	if existing.ExecutionMode == "" && desired.ProjectImage != "" {
+		existing.ExecutionMode = desired.ExecutionMode
+	}
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
+	existing.ProjectImage = desired.ProjectImage
+	existing.ProjectImageCommand = desired.ProjectImageCommand
+	existing.ProjectImagePort = desired.ProjectImagePort
+	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
@@ -2563,14 +2581,11 @@ type Deployment struct {
 	DeployedBy string `json:"deployed_by,omitempty"`
 	PRNumber   int    `json:"pr_number,omitempty"`
 
-	// RollbackOn5xx (Mega-C PR-2 / issue #961 leaf 8): when
-	// true, schedd subscribes to wake.response_5xx events on
-	// this deployment and fires the apid-internal
-	// /v1/internal/auto-rollback-on-5xx endpoint when the
-	// per-plan 5xx threshold is crossed inside the first-wake
-	// window. Pro+ only; Free/Hobby customers get a 403 on the
-	// create-deployment request (ErrPlanRollbackOn5xxNotAllowed).
-	// Default false; the column is BOOLEAN NOT NULL DEFAULT
+	// RollbackOn5xx (Mega-C PR-2 / issue #961 leaf 8): when true,
+	// apid's rollback-on-5xx worker (ADR-625) reverts this release to
+	// its predecessor once request telemetry shows the 5xx threshold
+	// crossed inside the first-wake window. Every plan may opt in
+	// (ADR-200). Default false; the column is BOOLEAN NOT NULL DEFAULT
 	// false (migration 00354).
 	RollbackOn5xx bool `json:"rollback_on_5xx,omitempty"`
 	// DisableStartupCPUBoost opts this deployment out of the bounded startup
@@ -2585,13 +2600,9 @@ type Deployment struct {
 	// the auto-rollback only fires inside this window.
 	FirstWakeAt          *time.Time `json:"first_wake_at,omitempty"`
 	First5xxWindowEndsAt *time.Time `json:"first_5xx_window_ends_at,omitempty"`
-	// First5xxCount is the running tally of wake.response_5xx
-	// events on this deployment. Incremented atomically by the
-	// BumpFirst5xxCount pgstore method on every wake.response_5xx
-	// event; schedd's AutoRollbackWatcher checks it against the
-	// per-plan threshold (plan.RollbackOn5xxThreshold()) inside the
-	// First5xxWindowEndsAt window. NOT NULL DEFAULT 0 (migration
-	// 00354); pre-feature rows backfill to 0.
+	// First5xxCount was meant to tally wake.response_5xx events; that
+	// event never shipped and ADR-625 reads request telemetry instead,
+	// so the column stays 0. NOT NULL DEFAULT 0 (migration 00354).
 	First5xxCount int `json:"first_5xx_count,omitempty"`
 	// LastAutoRollbackAt + LastAutoRollbackReason record the
 	// most-recent auto-rollback (Mega-C PR-2). Stamped by
@@ -2772,6 +2783,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
 	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
 	RetryRestartReason  string                       `json:"retry_restart_reason,omitempty"`
@@ -3343,12 +3355,13 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
-	Name       *string
-	Enabled    *bool
-	Metric     *AlertMetric
-	Comparison *AlertComparison
-	Threshold  *float64
-	WindowSpec *AlertWindowSpec
+	PostDeployRollbackWindowSeconds *int
+	Name                            *string
+	Enabled                         *bool
+	Metric                          *AlertMetric
+	Comparison                      *AlertComparison
+	Threshold                       *float64
+	WindowSpec                      *AlertWindowSpec
 	// Action (issue #976 / ADR-122 / SAFE-RELEASES-B). Pointer
 	// PATCH shape so a missing body field leaves the row alone.
 	// Validated against pkg/api.AllowedAlertRuleActions at the
@@ -3367,25 +3380,26 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	ID                  string
-	AccountID           string
-	AppID               string // empty = account-wide
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL          string
-	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes     int
-	State               AlertState
-	LastFiredAt         time.Time // zero until first fire
-	LastEvaluatedAt     time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	PostDeployRollbackWindowSeconds int
+	ID                              string
+	AccountID                       string
+	AppID                           string // empty = account-wide
+	Name                            string
+	Enabled                         bool
+	Metric                          AlertMetric
+	Comparison                      AlertComparison
+	Threshold                       float64
+	WindowSpec                      AlertWindowSpec
+	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
+	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL                      string
+	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
+	CooldownMinutes                 int
+	State                           AlertState
+	LastFiredAt                     time.Time // zero until first fire
+	LastEvaluatedAt                 time.Time
+	CreatedAt                       time.Time
+	UpdatedAt                       time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -3514,6 +3528,7 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3555,6 +3570,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventWorkflowFinished,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -3994,9 +4010,14 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
-	ID             string               `json:"id"`
-	AppID          string               `json:"app_id"`
-	AccountID      string               `json:"account_id"`
+	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
+	OperationResultVersion     int    `json:"-"`
+	ManagedOperationID         string `json:"-"`
+	ManagedOperationGeneration int64  `json:"-"`
+	ManagedOperationAccountID  string `json:"-"`
+	ID                         string `json:"id"`
+	AppID                      string `json:"app_id"`
+	AccountID                  string `json:"account_id"`
 	// OperationID is trusted claim metadata populated from the execution ledger.
 	// It is not accepted from a request header or JSON invocation envelope.
 	OperationID string `json:"-"`
@@ -4008,6 +4029,9 @@ type Invocation struct {
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
 	Source           InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request
+	// intent. Production remains NULL; stage admission persists the UUID.
+	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
 	QueueBindingID string `json:"-"`
@@ -4033,6 +4057,11 @@ type Invocation struct {
 	// ReplayGeneration fences deliveries across an operator retry-budget reset.
 	// It is ledger-owned and never accepted from customer headers or metadata.
 	ReplayGeneration int64 `json:"-"`
+	// Replay lineage is ledger-owned. Admission derives the root from the
+	// immediate parent, never from customer payloads or invocation headers.
+	ReplayedFromInvocationID string     `json:"-"`
+	ReplayRootInvocationID   string     `json:"-"`
+	ReplayRootCreatedAt      *time.Time `json:"-"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
@@ -4298,6 +4327,7 @@ const (
 // sites across pkg/sched and the test suites; only the two deadline
 // paths in the drain need to say anything beyond the default.
 type FailOptions struct {
+	Claim *InvocationClaim
 	// Outcome overrides the terminal classification on the permanent
 	// branch (retryAfter == 0). Ignored on the transient-requeue
 	// branch, which leaves the row non-terminal and therefore
@@ -4331,6 +4361,16 @@ func WithDispatchNotStarted() FailOption { return func(f *FailOptions) { f.Dispa
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithInvocationClaim fences dispatch results across retries and in-place replay.
+func WithInvocationClaim(inv Invocation) FailOption {
+	return func(f *FailOptions) {
+		f.ClaimAttempt = inv.Attempts
+		if inv.Source == InvocationAsyncInvoke || inv.Source == InvocationReplay {
+			f.Claim = &InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
+		}
+	}
 }
 
 // WithWorkClassification persists the application result and policy decision
@@ -6106,7 +6146,9 @@ type Snapshot struct {
 	MemBytes         int64
 	DiskBytes        int64
 	// StoredBytes is the physical filesystem allocation of the published
-	// mem + vmstate + private-drive artifacts. Zero identifies legacy writers.
+	// mem + vmstate + private-drive artifacts. Private-drive blocks shared
+	// with the deployment's app layer count under the layer (ADR-633).
+	// Zero identifies legacy writers.
 	StoredBytes int64
 	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals
@@ -6144,19 +6186,28 @@ const (
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
 // (spec §4.6: keep the bounded rollback window of deployment snapshots per
-// app; fleet budget pressure evicts from biggest-over-quota accounts first).
+// environment lifetime; budget pressure evicts from the largest accounts first).
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
 // AppStatus and DeploymentStatus let the GC discard snapshots that cannot
 // participate in a future wake. In particular, deleted apps and
-// failed/cancelled deployments must not consume the per-app rollback window;
+// failed/cancelled deployments must not consume the environment rollback window;
 // superseded deployments remain eligible because they are rollback targets.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
 	AppID        string
 	AccountID    string
+	// EnvironmentID retains the original lifetime, including after deletion.
+	// Legacy deployments without an environment use normalized Scope instead.
+	EnvironmentID string
+	Scope         string
+	// RuntimeOwnerInvalid marks snapshots whose original environment or pinned
+	// configuration no longer exists. These cannot occupy a rollback slot.
+	RuntimeOwnerInvalid bool
+	// DeploymentRootfsKey preserves the physical layer key across stage copies.
+	DeploymentRootfsKey string
 	// AppSlug is the apps.slug of the parent app. Populated from the
 	// snapshot → deployments → apps JOIN so the GC algorithm doesn't
 	// have to issue per-eviction DeploymentByID + AppByID lookups to
@@ -6183,11 +6234,8 @@ type SnapshotForGC struct {
 	// artifact GC sets it before attempting remote deletion.
 	DeletePending bool
 	CreatedAt     time.Time
-	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
-	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
-	// apply the two-tier rollback window only on apps that opted in to warm.
-	// Apps with warm_snapshot_enabled=false keep init rows only. Denormalised
-	// to avoid an AppByID round-trip per eviction row.
+	// AppWarmSnapshotEnabled is the deployment's pinned warm policy. Genuine
+	// unpinned legacy deployments use apps.warm_snapshot_enabled instead.
 	AppWarmSnapshotEnabled bool
 }
 
@@ -6461,8 +6509,10 @@ type AppSecretDeliveryCandidate struct {
 
 // AppSecretDeliveryResult records one runtime-start attempt for the staged
 // candidates. ErrorCode is a closed, non-sensitive reason; secret values and
-// ciphertext are intentionally absent.
+// ciphertext are intentionally absent. Fence captures the host's owned input
+// snapshot; InstanceID/WakeID identify the exact current boot attempt.
 type AppSecretDeliveryResult struct {
+	Fence       RuntimeAppSecretFence
 	AccountID   string
 	AppID       string
 	WakeID      string
@@ -6501,6 +6551,7 @@ const (
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
 type AppSecretRuntimeReloadResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6516,6 +6567,7 @@ type AppSecretRuntimeReloadResult struct {
 // AppSecretRuntimeReloadAckResult records an application-owned outcome for
 // the current secret revision. It attests only what the application reports.
 type AppSecretRuntimeReloadAckResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6974,6 +7026,10 @@ type ProjectEnvironmentPromotion struct {
 	PreviousTargetConfigSnapshot json.RawMessage
 	TargetConfigVersion          int64
 	RollbackConfigVersion        int64
+	// Expected flag identities supplied by a preview. The store freezes the
+	// actual snapshots atomically with creation; callers cannot supply payloads.
+	SourceFeatureFlagsHash         string
+	PreviousTargetFeatureFlagsHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
@@ -7448,12 +7504,13 @@ type EdgeRuleCORSAction struct {
 // algs. RequiredClaims enforces a key=value check on top of the
 // standard iss/aud/exp/nbf validation.
 type EdgeRuleJWTAction struct {
-	Issuer                         string            `json:"issuer"`
-	Audience                       []string          `json:"audience,omitempty"`
-	JWKSURL                        string            `json:"jwks_url"`
-	Algorithms                     []string          `json:"algorithms"`
-	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
-	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
+	Issuer                         string                 `json:"issuer"`
+	Audience                       []string               `json:"audience,omitempty"`
+	JWKSURL                        string                 `json:"jwks_url"`
+	Algorithms                     []string               `json:"algorithms"`
+	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
+	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =

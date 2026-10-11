@@ -12,6 +12,11 @@ umask 077
 GREGALE_API_URL="${GREGALE_API_URL:-https://api.gregale.dev}"
 GREGALE_S3_ENDPOINT="${GREGALE_S3_ENDPOINT:-https://s3.gregale.dev}"
 GREGALE_S3_REGION="${GREGALE_S3_REGION:-us-east-1}"
+GREGALE_BIN="${GREGALE_BIN:-}"
+if [[ -n "$GREGALE_BIN" && ! -x "$GREGALE_BIN" ]]; then
+  echo "GREGALE_BIN must name an executable current Gregale CLI" >&2
+  exit 2
+fi
 
 for tool in aws curl jq; do
   command -v "$tool" >/dev/null || {
@@ -21,7 +26,7 @@ for tool in aws curl jq; do
 done
 
 smoke_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gregale-s3-smoke.XXXXXX")"
-bucket_name="smoke-$(date -u +%Y%m%d%H%M%S)-$(printf '%04x' "$RANDOM")"
+bucket_name="smoke-$(date -u +%Y%m%d%H%M%S)-$(printf '%04x%04x' "$RANDOM" "$RANDOM")"
 object_key="probe/hello.txt"
 bucket_id=""
 credential_id=""
@@ -31,6 +36,7 @@ object_uploaded=false
 credential_revoked=false
 binding_deleted=false
 bucket_deleted=false
+provision_attempted=false
 
 api() {
   curl --fail-with-body --silent --show-error \
@@ -44,6 +50,19 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   cleanup_status=0
+
+  # The CLI may create the bucket before a binding/network failure prevents
+  # its final JSON response. Recover only this run's random logical name.
+  if [[ "$provision_attempted" == true && -z "$bucket_id" ]]; then
+    if api "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets" \
+      >"$smoke_tmp/cleanup-catalog.json" 2>/dev/null; then
+      bucket_id="$(jq -r --arg name "$bucket_name" \
+        '[.items[] | select(.name == $name and .scope == "default")] | if length == 1 then .[0].id else empty end' \
+        "$smoke_tmp/cleanup-catalog.json")"
+    else
+      cleanup_status=1
+    fi
+  fi
 
   if [[ "$object_uploaded" == true && -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
     aws --endpoint-url "$GREGALE_S3_ENDPOINT" --region "$GREGALE_S3_REGION" \
@@ -90,10 +109,20 @@ export AWS_CONFIG_FILE="$smoke_tmp/aws-config"
 export AWS_EC2_METADATA_DISABLED=true
 export AWS_PAGER=""
 
-api -X POST \
-  --data "$(jq -cn --arg name "$bucket_name" '{name:$name,scope:"default"}')" \
-  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets" \
-  >"$smoke_tmp/bucket.json"
+provision_attempted=true
+if [[ -n "$GREGALE_BIN" ]]; then
+  FAAS_API="$GREGALE_API_URL" "$GREGALE_BIN" --json add bucket "$bucket_name" \
+    --app "$GREGALE_APP_SLUG" --env default --region "$GREGALE_S3_REGION" \
+    --prefix "$binding_prefix" --wait-timeout 60s >"$smoke_tmp/cli-add.json"
+  jq '.bucket' "$smoke_tmp/cli-add.json" >"$smoke_tmp/bucket.json"
+  jq '.binding' "$smoke_tmp/cli-add.json" >"$smoke_tmp/binding.json"
+  binding_id="$(jq -er '.id' "$smoke_tmp/binding.json")"
+else
+  api -X POST \
+    --data "$(jq -cn --arg name "$bucket_name" '{name:$name,scope:"default"}')" \
+    "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets" \
+    >"$smoke_tmp/bucket.json"
+fi
 bucket_id="$(jq -er '.id' "$smoke_tmp/bucket.json")"
 jq -e '.state == "ready"' "$smoke_tmp/bucket.json" >/dev/null
 
@@ -101,10 +130,12 @@ jq -e '.state == "ready"' "$smoke_tmp/bucket.json" >/dev/null
 # managed secret names, binding identity, and rotation contract instead. The
 # direct S3 credential below supplies the data-plane read/write and revoke
 # checks; combining both in one run catches cross-surface cleanup leaks.
-api -X POST \
-  --data "$(jq -cn --arg prefix "$binding_prefix" '{label:"compute-smoke",permission:"read_write",prefix:$prefix}')" \
-  "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings" \
-  >"$smoke_tmp/binding.json"
+if [[ -z "$binding_id" ]]; then
+  api -X POST \
+    --data "$(jq -cn --arg prefix "$binding_prefix" '{label:"compute-smoke",permission:"read_write",prefix:$prefix}')" \
+    "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/compute-bindings" \
+    >"$smoke_tmp/binding.json"
+fi
 binding_id="$(jq -er '.id' "$smoke_tmp/binding.json")"
 jq -e --arg bucket "$bucket_id" --arg prefix "$binding_prefix" '
   .bucket_id == $bucket and .prefix == $prefix and
@@ -146,6 +177,28 @@ jq -e --arg id "$binding_id" --arg bucket "$bucket_id" --arg prefix "$binding_pr
 
 printf 'compute_binding_lifecycle=pass\n'
 
+# A ready provider bucket may still be waiting for its first complete
+# inventory. Never manufacture a report to make this readiness check pass.
+usage_ready=false
+for ((attempt=0; attempt<90; attempt++)); do
+  api "$GREGALE_API_URL/v1/account/object-storage-usage" >"$smoke_tmp/usage-before.json"
+  if jq -e '.usage.fresh == true' "$smoke_tmp/usage-before.json" >/dev/null; then
+    usage_ready=true
+    break
+  fi
+  sleep 2
+done
+[[ "$usage_ready" == true ]] || { echo "object storage usage never became fresh" >&2; exit 1; }
+
+if [[ -n "$GREGALE_BIN" ]]; then
+  for family in notifications lifecycle; do
+    FAAS_API="$GREGALE_API_URL" "$GREGALE_BIN" --json bucket "$family" get \
+      "$GREGALE_APP_SLUG" "$bucket_id" >"$smoke_tmp/cli-$family.json"
+  done
+  FAAS_API="$GREGALE_API_URL" "$GREGALE_BIN" --json bucket writes list \
+    "$GREGALE_APP_SLUG" "$bucket_id" >"$smoke_tmp/cli-writes.json"
+fi
+
 api -X POST \
   --data '{"label":"deployment-smoke","permission":"read_write"}' \
   "$GREGALE_API_URL/v1/apps/$GREGALE_APP_SLUG/buckets/$bucket_id/s3-credentials" \
@@ -170,6 +223,17 @@ aws --endpoint-url "$GREGALE_S3_ENDPOINT" --region "$GREGALE_S3_REGION" \
   s3api get-object --bucket "$bucket_name" --key "$object_key" \
   "$smoke_tmp/download" >/dev/null
 cmp "$smoke_tmp/payload" "$smoke_tmp/download"
+api "$GREGALE_API_URL/v1/account/object-storage-usage" >"$smoke_tmp/usage-after.json"
+if jq -e '.policy.accounting_mode == "gateway_safety_v1"' "$smoke_tmp/usage-after.json" >/dev/null; then
+  jq -e --slurpfile before "$smoke_tmp/usage-before.json" '
+    .billing_mode == "off" and (.charges == null) and .usage.fresh == true and
+    .usage.request_count > $before[0].usage.request_count and
+    .usage.egress_bytes > $before[0].usage.egress_bytes and
+    (.usage.unavailable_meters | index("cost_millicents") != null) and
+    (.usage.unavailable_meters | index("stored_byte_hours") != null)
+  ' "$smoke_tmp/usage-after.json" >/dev/null
+  printf 'gateway_usage_and_billing_off=pass\n'
+fi
 aws --endpoint-url "$GREGALE_S3_ENDPOINT" --region "$GREGALE_S3_REGION" \
   s3api list-objects-v2 --bucket "$bucket_name" --prefix probe/ \
   | jq -e --arg key "$object_key" '.Contents | any(.Key == $key)' >/dev/null

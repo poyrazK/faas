@@ -139,16 +139,24 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # The fleet runner is long-lived and keeps its local Go build cache
+          # between jobs; the Actions cache only helps the hosted escape hatch
+          # and otherwise costs a ~30 s save at the end of every rollout.
+          cache: ${{ inputs.hosted_runner }}
 
       - name: Install pinned config renderer
         # A per-job venv: the self-hosted fleet runner (Ubuntu 24.04) has no
         # system pip and marks its interpreter externally managed (PEP 668).
+        # Cached across jobs (see scripts/ci/ensure-ansible-toolchain.sh); it
+        # also carries the collections the converge step needs.
         run: |
           set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/ansible-venv"
-          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --quiet 'ansible-core==2.21.2'
-          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
+          toolchain="$(scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==2.21.2' deploy/ansible/requirements.yml)"
+          venv_bin="$(sed -n 's/^ANSIBLE_VENV_BIN=//p' <<<"$toolchain")"
+          collections="$(sed -n 's/^ANSIBLE_COLLECTIONS_PATH=//p' <<<"$toolchain")"
+          [[ -x "$venv_bin/ansible-playbook" && -d "$collections" ]]
+          echo "$venv_bin" >> "$GITHUB_PATH"
+          echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"
 
       - name: Install pinned cosign verifier
         env:
@@ -695,24 +703,11 @@ jobs:
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
 
           # The roles need the collections deploy/ansible/requirements.yml
-          # pins; the config-renderer venv above only has ansible-core.
-          collections="$work/collections"
-          installed=0
-          for attempt in 1 2 3; do
-            if ansible-galaxy collection install --no-cache --timeout 30 \
-              --collections-path "$collections" -r deploy/ansible/requirements.yml; then
-              installed=1
-              break
-            fi
-            if [[ $attempt != 3 ]]; then
-              sleep $((attempt * 5))
-            fi
-          done
-          if [[ $installed != 1 ]]; then
-            echo "::error::could not install the pinned Ansible collections from deploy/ansible/requirements.yml" >&2
+          # pins; the toolchain step above installed (or reused) them.
+          [[ -d "${ANSIBLE_COLLECTIONS_PATH:-}/ansible_collections/community/postgresql" ]] || {
+            echo "::error::pinned Ansible collections are missing from ANSIBLE_COLLECTIONS_PATH" >&2
             exit 1
-          fi
-          export ANSIBLE_COLLECTIONS_PATH="$collections"
+          }
 
           # The signed release's own gregalectl, matching the checked-out roles.
           "$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane \

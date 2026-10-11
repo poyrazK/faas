@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Policy for a server-enforced bindings promotion; the gate is always required on this route.
+ * Policy for a server-enforced bindings promotion; the gate is always required on this route. Stored scope policy may require a shorter age or application ACKs and disallow unsupported waivers. The response reports the effective policy.
  */
 export type BindingPromotionRequest = {
   expected_serving_deployment_id?: string;

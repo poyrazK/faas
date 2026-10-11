@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,7 +37,16 @@ func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req request
 	if !ok {
 		return
 	}
-	out, err := h.taggingService(req, key).Do(r.Context(), req.bucket, r.Method, key, selector, tags)
+	call := func(callCtx context.Context) (api.ObjectTaggingResult, error) {
+		return h.taggingService(req, key).Do(callCtx, req.bucket, r.Method, key, selector, tags)
+	}
+	var out api.ObjectTaggingResult
+	var err error
+	if r.Method == http.MethodGet {
+		out, err = call(r.Context())
+	} else {
+		out, err = objectstorageactivity.Execute(r.Context(), h.store, req.bucket, call)
+	}
 	if err != nil {
 		h.taggingError(w, r, req, err, key, selector)
 		return

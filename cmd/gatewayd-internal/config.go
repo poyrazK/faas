@@ -30,6 +30,8 @@ import (
 // e2e harness (which sets TLSConfig.Disabled=true via env) keeps working
 // without a config file.
 type Config struct {
+	// Empty keeps Operations admission closed; declared routes remain fenced.
+	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// PublicAddr is the bind address for the customer-facing listener.
 	// Defaults to ":8080" (the legacy plain-HTTP path). When TLS is enabled
 	// via the [tls] table, the public listener moves to ":443" — this

@@ -24,7 +24,7 @@ func TestCmdBindingsVerifyAllUsesInventoryLiveScope(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
 					inventoryCalls++
 					credentialConfigured := true
-					inventory := api.AppBindingInventory{App: "api", VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{
+					inventory := api.AppBindingInventory{App: "api", Complete: true, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{
 						{Type: api.BindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL", Scope: "app"},
 						{Type: api.BindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production"},
 						{Type: api.BindingTypePostgres, Name: "stage", Binding: "STAGING_URL", Scope: "staging"},
@@ -89,7 +89,7 @@ func TestCmdBindingsVerifyAllUsesInventoryLiveScope(t *testing.T) {
 				t.Fatalf("inventory calls=%d probes=%v", inventoryCalls, created)
 			}
 			var report serviceBindingProbeBatchReport
-			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || report.Scope != "production" || report.Passed != 4 || report.Checked != 4 || report.Total != 4 {
+			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || report.Scope != "production" || report.Passed != 4 || report.Checked != 4 || report.Total != 7 || report.Unsupported != 1 || report.Skipped != 2 || report.Coverage != "partial" {
 				t.Fatalf("batch=%+v err=%v", report, err)
 			}
 			if report.Bindings[0].ObjectStorageReport == nil || report.Bindings[1].OutboundReport == nil || report.Bindings[2].PostgresReport == nil || report.Bindings[3].Report == nil || (severity != "" && len(report.Issues) != 1) {
@@ -245,5 +245,104 @@ func TestCmdBindingsVerifyRejectsDeploymentSelectionChanges(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCmdBindingsVerifyAllReportsEveryOmission(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
+			calls := 0
+			inventory := api.AppBindingInventory{App: "api", Complete: true, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{
+				{Type: api.BindingTypeQueue, Name: "queue", Scope: "app", State: "enabled"},
+				{Type: api.BindingTypeOutbound, Name: "provider", Scope: "app", State: "enabled"},
+				{Type: api.BindingTypeOutbound, Name: "disabled", Scope: "app", State: "disabled"},
+				{Type: api.BindingTypePostgres, Name: "staging", Binding: "DATABASE_URL", Scope: "staging"},
+				{Type: "future", Name: "new", Scope: "app"},
+			}, Issues: []api.BindingInventoryIssue{{Type: api.BindingTypeQueue, Severity: "error", Code: "query_failed", Message: "Queue metadata unavailable."}}}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/api/bindings" {
+					t.Errorf("unexpected mutation: %s %s", r.Method, r.URL)
+				}
+				_ = json.NewEncoder(w).Encode(inventory)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_test")
+			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+			var out, errs bytes.Buffer
+			osStdout, osStderr, jsonOutput = &out, &errs, asJSON
+			defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
+			if code := cmdBindingsVerify([]string{"api", "--all"}); code != 1 {
+				t.Fatalf("exit=%d output=%s", code, out.String())
+			}
+			if calls != 1 {
+				t.Fatalf("requests=%d", calls)
+			}
+			if asJSON {
+				var report serviceBindingProbeBatchReport
+				if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+					t.Fatal(err)
+				}
+				if report.Total != 5 || len(report.Bindings) != 5 || report.Unsupported != 3 || report.Skipped != 2 || report.Coverage != "none" || len(report.Issues) != 1 {
+					t.Fatalf("report=%+v", report)
+				}
+				for _, item := range report.Bindings {
+					if item.Reason == "" {
+						t.Fatalf("silent omission: %+v", item)
+					}
+				}
+			} else {
+				for _, reason := range []string{"queue_probe_unsupported", "outbound_probe_unconfigured", "binding_disabled", "outside_deployment_scope", "unknown_binding_type"} {
+					if !strings.Contains(out.String(), reason) {
+						t.Fatalf("missing %s: %s", reason, out.String())
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCmdBindingsVerifyAllPreservesResultsWhenOutboundLookupFails(t *testing.T) {
+	probes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/api/bindings":
+			_ = json.NewEncoder(w).Encode(api.AppBindingInventory{App: "api", Complete: true, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL", Scope: "app"}, {Type: api.BindingTypeOutbound, Name: "provider", Scope: "app", State: "enabled", OutboundProbe: &api.OutboundBindingProbePolicy{Method: "GET", Path: "/health", ExpectedStatus: 200}}}})
+		case "/v1/apps/api/outbound-bindings":
+			http.Error(w, "PRIVATE_LOOKUP_ERROR", http.StatusInternalServerError)
+		case "/v1/apps/api/tasks":
+			probes++
+			var request api.CreateAppTaskRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			report := api.ServiceBindingProbeReport{Service: request.Command[1], DNS: api.ServiceBindingProbeCheck{Status: "passed"}, TLS: api.ServiceBindingProbeCheck{Status: "passed"}, Authorization: api.ServiceBindingProbeCheck{Status: "passed"}, Routing: api.ServiceBindingProbeCheck{Status: "passed"}}
+			body, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(api.AppTaskResponse{ID: "task", Status: api.AppTaskStatusSucceeded, StdoutTail: string(body), ExitCode: new(int)})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	var out, errs bytes.Buffer
+	osStdout, osStderr, jsonOutput = &out, &errs, true
+	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
+	if code := cmdBindingsVerify([]string{"api", "--all"}); code != 1 {
+		t.Fatalf("exit=%d", code)
+	}
+	var report serviceBindingProbeBatchReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Passed != 1 || report.NotChecked != 1 || report.Total != 2 || report.Coverage != "partial" || len(report.Issues) != 1 || probes != 1 || strings.Contains(out.String(), "PRIVATE_LOOKUP_ERROR") {
+		t.Fatalf("batch=%+v probes=%d output=%s", report, probes, out.String())
 	}
 }

@@ -23,6 +23,19 @@ type teardownAccountingCase struct {
 	stop    func(context.Context, *Engine, state.Instance) error
 }
 
+// retryPlan returns the RAM-counting state a failed teardown leaves behind
+// and the operation that later confirms it. ADR-640: the WAKING claim lands
+// before Destroy; COLD_BOOTING still counts RAM and concurrency, and the
+// cold-boot sweep is the retry.
+func (tc teardownAccountingCase) retryPlan() (state.State, func(context.Context, *Engine, state.Instance) error, state.State) {
+	if tc.name == string(StuckWakingTimeout) {
+		return state.StateColdBooting, func(ctx context.Context, e *Engine, i state.Instance) error {
+			return e.KillStuck(ctx, i.ID, i.AppID, StuckColdBootTimeout)
+		}, state.StateFailed
+	}
+	return tc.initial, tc.stop, tc.final
+}
+
 func teardownAccountingCases() []teardownAccountingCase {
 	cases := []teardownAccountingCase{
 		{"liveness", state.StateRunning, state.StateStopped, func(ctx context.Context, e *Engine, i state.Instance) error {
@@ -135,6 +148,8 @@ func TestEngineTeardownRetainsAccountingUntilConfirmed(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("destroy did not start")
 			}
+			held, retry, final := tc.retryPlan()
+			i.State = string(held)
 			assertAccountingRetained(t, s, e, i)
 			release()
 			select {
@@ -179,19 +194,17 @@ func TestEngineTeardownRetainsAccountingUntilConfirmed(t *testing.T) {
 			v.mu.Lock()
 			v.destroyErr = nil
 			v.mu.Unlock()
-			if err := tc.stop(ctx, restarted, i); err != nil {
+			if err := retry(ctx, restarted, i); err != nil {
 				t.Fatalf("retry teardown: %v", err)
 			}
 			if restarted.Ledger().ResidentFor(i.ID) || restarted.Ledger().ResidentRAM() != 0 || restarted.Ledger().UsedVCPU() != 0 || restarted.Ledger().Concurrency(app.ID) != 0 {
 				t.Fatal("confirmed teardown retained admission")
 			}
 			fresh, err := s.InstanceByID(ctx, i.ID)
-			if err != nil || fresh.State != string(tc.final) {
-				t.Fatalf("confirmed outcome: state=%q err=%v, want %q", fresh.State, err, tc.final)
+			if err != nil || fresh.State != string(final) {
+				t.Fatalf("confirmed outcome: state=%q err=%v, want %q", fresh.State, err, final)
 			}
-			// The waking timeout's existing fallback is COLD_BOOTING; it retains
-			// the host-port lease until the subsequent terminal transition.
-			if !tc.final.CountsForRAM() {
+			if !final.CountsForRAM() {
 				leases, err = s.ListHostPortLeases(ctx, i.NodeID, i.ID)
 				if err != nil || len(leases) != 0 {
 					t.Fatalf("confirmed teardown retained ports: leases=%v err=%v", leases, err)

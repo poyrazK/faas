@@ -36,6 +36,40 @@ func (m *MemStore) ListAutomations(_ context.Context, appID string) ([]Automatio
 	defer m.mu.Unlock()
 	return m.automationRecordsLocked(appID), nil
 }
+func (m *MemStore) ListAutomationRevisions(_ context.Context, appID, name string, opts AutomationRevisionListOptions) ([]AutomationRevision, int, error) {
+	if !validAutomationRevisionListOptions(opts) {
+		return nil, 0, ErrWorkflowInvalidPagination
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := m.automationRevisions[appID+"/"+name]
+	items := make([]AutomationRevision, len(all))
+	for i := range all {
+		items[i] = copyAutomationRevision(all[len(all)-1-i])
+	}
+	total := len(items)
+	if opts.Offset >= total {
+		return []AutomationRevision{}, total, nil
+	}
+	end := total
+	if opts.Limit < total-opts.Offset {
+		end = opts.Offset + opts.Limit
+	}
+	return items[opts.Offset:end], total, nil
+}
+func (m *MemStore) GetAutomationRevision(_ context.Context, appID, name string, version int64) (AutomationRevision, error) {
+	if version <= 0 {
+		return AutomationRevision{}, ErrAutomationRevisionNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, revision := range m.automationRevisions[appID+"/"+name] {
+		if revision.Version == version {
+			return copyAutomationRevision(revision), nil
+		}
+	}
+	return AutomationRevision{}, ErrAutomationRevisionNotFound
+}
 func (m *MemStore) EffectiveWorkflowDefinitions(_ context.Context, appID string, manifest json.RawMessage) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -78,6 +112,18 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	next.Version = m.automationVersion
 	if mutation.Action == "publish" {
 		next.PublishedVersion = next.Version
+		actorAccountID := mutation.ActorAccountID
+		if actorAccountID == "" {
+			actorAccountID = app.AccountID
+		}
+		if m.automationRevisions == nil {
+			m.automationRevisions = make(map[string][]AutomationRevision)
+		}
+		m.automationRevisions[key] = append(m.automationRevisions[key], AutomationRevision{
+			AppID: appID, Name: name, Version: next.PublishedVersion,
+			Definition: cloneWorkflowJSON(next.Published), RecordedAt: next.UpdatedAt,
+			PublishedByAccountID: actorAccountID, PublishedByAPIKeyID: mutation.ActorAPIKeyID,
+		})
 	}
 	if m.automations == nil {
 		m.automations = make(map[string]Automation)
@@ -105,6 +151,17 @@ func automationAccountGate(plan api.Plan, active bool, action string) error {
 func automationFromSQL(row sqlc.WorkflowAutomationDefinition) Automation {
 	return Automation{AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version, Draft: row.Draft, Published: row.Published, PublishedVersion: row.PublishedVersion, Enabled: row.Enabled, UpdatedAt: row.UpdatedAt.Time}
 }
+func automationRevisionFromSQL(row sqlc.WorkflowAutomationRevision) AutomationRevision {
+	revision := AutomationRevision{
+		AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version,
+		Definition: row.Definition, RecordedAt: row.RecordedAt.Time, LegacySnapshot: row.LegacySnapshot,
+		PublishedByAccountID: uuidFromPgtype(row.PublishedByAccountID).String(),
+	}
+	if row.PublishedByApiKeyID.Valid {
+		revision.PublishedByAPIKeyID = uuidFromPgtype(row.PublishedByApiKeyID).String()
+	}
+	return revision
+}
 func (s *PgStore) ListAutomations(ctx context.Context, appID string) ([]Automation, error) {
 	rows, err := sqlc.New().ListAutomations(ctx, s.pool, mustPgUUID(appID))
 	if err != nil {
@@ -115,6 +172,36 @@ func (s *PgStore) ListAutomations(ctx context.Context, appID string) ([]Automati
 		records = append(records, automationFromSQL(row))
 	}
 	return records, nil
+}
+func (s *PgStore) ListAutomationRevisions(ctx context.Context, appID, name string, opts AutomationRevisionListOptions) ([]AutomationRevision, int, error) {
+	if !validAutomationRevisionListOptions(opts) {
+		return nil, 0, ErrWorkflowInvalidPagination
+	}
+	q := sqlc.New()
+	appUUID := mustPgUUID(appID)
+	total, err := q.CountWorkflowAutomationRevisions(ctx, s.pool, sqlc.CountWorkflowAutomationRevisionsParams{AppID: appUUID, Name: name})
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := q.ListWorkflowAutomationRevisions(ctx, s.pool, sqlc.ListWorkflowAutomationRevisionsParams{AppID: appUUID, Name: name, Limit: int32(opts.Limit), Offset: int32(opts.Offset)})
+	if err != nil {
+		return nil, 0, err
+	}
+	revisions := make([]AutomationRevision, 0, len(rows))
+	for _, row := range rows {
+		revisions = append(revisions, automationRevisionFromSQL(row))
+	}
+	return revisions, int(total), nil
+}
+func (s *PgStore) GetAutomationRevision(ctx context.Context, appID, name string, version int64) (AutomationRevision, error) {
+	row, err := sqlc.New().GetWorkflowAutomationRevision(ctx, s.pool, sqlc.GetWorkflowAutomationRevisionParams{AppID: mustPgUUID(appID), Name: name, Version: version})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AutomationRevision{}, ErrAutomationRevisionNotFound
+	}
+	if err != nil {
+		return AutomationRevision{}, err
+	}
+	return automationRevisionFromSQL(row), nil
 }
 func (s *PgStore) EffectiveWorkflowDefinitions(ctx context.Context, appID string, manifest json.RawMessage) (json.RawMessage, error) {
 	if len(manifest) == 0 {
@@ -153,6 +240,9 @@ func (s *PgStore) MutateAutomation(ctx context.Context, appID, name string, muta
 	return next, nil
 }
 func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, name string, mutation AutomationMutation, plan api.Plan, accountID string) (Automation, error) {
+	if mutation.ActorAccountID == "" {
+		mutation.ActorAccountID = accountID
+	}
 	rows, err := q.ListAutomations(ctx, tx, mustPgUUID(appID))
 	if err != nil {
 		return Automation{}, err
@@ -198,6 +288,19 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 	}
 	if err != nil {
 		return Automation{}, err
+	}
+	if mutation.Action == "publish" {
+		apiKeyID := pgtype.UUID{}
+		if mutation.ActorAPIKeyID != "" {
+			apiKeyID = mustPgUUID(mutation.ActorAPIKeyID)
+		}
+		if err := q.InsertWorkflowAutomationRevision(ctx, tx, sqlc.InsertWorkflowAutomationRevisionParams{
+			AppID: mustPgUUID(appID), Name: name, Version: next.PublishedVersion,
+			Definition: next.Published, RecordedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true},
+			PublishedByAccountID: mustPgUUID(mutation.ActorAccountID), PublishedByApiKeyID: apiKeyID,
+		}); err != nil {
+			return Automation{}, err
+		}
 	}
 	if mutation.Action != "save" {
 		err = q.DeleteAutomationScheduleCursor(ctx, tx, sqlc.DeleteAutomationScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name})

@@ -10,6 +10,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -97,7 +98,7 @@ func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct stat
 				"Invoice not found", "the invoice does not exist"))
 			return
 		}
-		s.log.Error("billing refund invoice lookup failed", "invoice_id", req.InvoiceID, "err", err)
+		s.log.Error("billing refund invoice lookup failed", "invoice_id", logsanitize.Field(req.InvoiceID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("could not load invoice"))
 		return
 	}
@@ -148,10 +149,9 @@ func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct stat
 	if err != nil {
 		s.log.Error("billing refund failed",
 			"account_id", targetID,
-			"invoice_id", req.InvoiceID,
-			"provider_order_id", logsanitize.Field(invoice.ProviderInvoiceID),
-			"amount_cents", req.AmountCents,
-			"err", err)
+			"invoice_id", logsanitize.Field(req.InvoiceID), "provider_order_id", logsanitize.Field(invoice.ProviderInvoiceID),
+			slog.Int64("amount_cents", req.AmountCents),
+			"err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_refund_failed",
 			"Billing refund failed", "the provider did not accept the refund: "+err.Error()))
 		return

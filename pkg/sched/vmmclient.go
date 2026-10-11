@@ -505,6 +505,8 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
+	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
 	// readiness policy. It is separate from HealthcheckPath/GRPC, which
 	// only gate startup admission.
@@ -686,6 +688,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	if placementErr != nil {
 		return nil, placementErr
 	}
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return nil, err
 	}
@@ -714,6 +719,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 		return nil, liftErr(err)
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
+	}
+	if err := c.confirmImageHealthcheck(ctx, app, instance, resp, false); err != nil {
 		return nil, err
 	}
 	return outcomeFromProto(resp), nil
@@ -1023,6 +1031,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	if placementErr != nil {
 		return nil, placementErr
 	}
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return nil, err
 	}
@@ -1054,6 +1065,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 		return nil, liftErr(err)
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
+	}
+	if err := c.confirmImageHealthcheck(ctx, app, instance, resp, keepPaused); err != nil {
 		return nil, err
 	}
 	return outcomeFromProto(resp), nil
@@ -1444,12 +1458,27 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	if placementErr != nil {
 		return LiveMigrationAdopt{}, placementErr
 	}
+	if err := c.requireImageHealthcheckSupport(ctx, app); err != nil {
+		return LiveMigrationAdopt{}, err
+	}
 	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
 		return LiveMigrationAdopt{}, err
 	}
 	fields, _ := wire.FromContext(ctx)
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
+	}
+	// The destination's boot emits wake timeline events, which vmmd rejects
+	// without the app identity (H5-18: every migration lost its readiness and
+	// boot breakdown rows).
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instanceID
 	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
@@ -1470,6 +1499,9 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instanceID, resp.GetSupportsSecretAliases()); err != nil {
 		return LiveMigrationAdopt{}, err
+	}
+	if app.ImageHealthcheckRequired && (!resp.GetImageHealthcheckVerified() || !resp.GetSupportsImageHealthcheckMonitoring()) {
+		return LiveMigrationAdopt{}, c.rejectUnverifiedImageHealthcheck(ctx, instanceID, app)
 	}
 	return LiveMigrationAdopt{
 		HostIP:   resp.GetHostIp(),
@@ -1730,10 +1762,11 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
-		HealthcheckPath:        a.HealthcheckPath,
-		HealthcheckGrpc:        a.HealthcheckGRPC,
-		HealthcheckGrpcService: a.HealthcheckGRPCService,
-		ReadinessProbeJson:     a.ReadinessProbeJSON,
+		HealthcheckPath:          a.HealthcheckPath,
+		HealthcheckGrpc:          a.HealthcheckGRPC,
+		HealthcheckGrpcService:   a.HealthcheckGRPCService,
+		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
+		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

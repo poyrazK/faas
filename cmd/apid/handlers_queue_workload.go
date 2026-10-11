@@ -75,6 +75,9 @@ func queueWorkloadProfilePolicyEqual(app state.App, desired *api.ScalingPolicy) 
 // binding change is rolled back best-effort so callers do not observe a
 // half-created profile.
 func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -101,6 +104,14 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 	class := req.WorkloadClass
 	if class == "" {
 		class = string(app.WorkloadClass)
+	}
+	if req.WorkloadClass == "" && class != string(state.WorkloadClassWorker) && class != string(state.WorkloadClassJob) {
+		// The CLI sends no class, so naming workload_class told the caller
+		// to change a field it never set (production-us hunt #5, H5-27).
+		api.WriteProblem(w, queueBindingProblem(fmt.Sprintf(
+			"queue setup configures worker and job apps; %s is a %q app. A function app consumes a queue through a push binding (queue_bindings in gregale.yaml or `gregale queue bindings create`)",
+			app.Slug, class)))
+		return
 	}
 	if prob := validateQueueBindingClass(class); prob != nil {
 		api.WriteProblem(w, prob)

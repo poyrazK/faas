@@ -1,0 +1,53 @@
+package state
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+func projectCloneValueScopesTx(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) ([]byte, error) {
+	queries := new(sqlc.Queries)
+	appIDs, err := queries.LockProjectEnvironmentCloneApps(ctx, tx, sqlc.LockProjectEnvironmentCloneAppsParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return projectCloneValueScopesForAppsDB(ctx, tx, clone, appIDs)
+}
+
+func projectCloneValueScopesForAppsDB(ctx context.Context, tx sqlc.DBTX, clone ProjectEnvironmentClone, appIDs []string) ([]byte, error) {
+	queries := new(sqlc.Queries)
+	scopes := make(map[string]string, len(appIDs))
+	if clone.capturedValues != nil && len(clone.capturedValues) != len(appIDs) {
+		return nil, ErrConflict
+	}
+	for _, appID := range appIDs {
+		scope := clone.SourceSlug
+		if clone.capturedValues != nil {
+			scope = clone.capturedValueScopes[appID]
+			if scope == "" {
+				return nil, ErrConflict
+			}
+		} else if scope == "production" {
+			selected, err := queries.ReadProjectEnvironmentCloneProductionValueScope(ctx, tx, sqlc.ReadProjectEnvironmentCloneProductionValueScopeParams{
+				AppID: mustPgUUID(appID), ProjectID: mustPgUUID(clone.ProjectID),
+			})
+			if err != nil {
+				return nil, mapErr(err)
+			}
+			if selected == "" {
+				return nil, ErrConflict
+			}
+			scope = selected
+		}
+		scopes[appID] = scope
+	}
+	if err := validateCloneValueScopes(scopes, clone.ExpectedSourceValueScopes); err != nil {
+		return nil, err
+	}
+	return json.Marshal(scopes)
+}

@@ -27,9 +27,13 @@ type uploadTestProvider struct {
 	bucket      string
 	key         string
 	contentType string
+	beforeWrite func(context.Context)
 }
 
-func (p *uploadTestProvider) WriteObject(_ context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+func (p *uploadTestProvider) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	if p.beforeWrite != nil {
+		p.beforeWrite(ctx)
+	}
 	p.writes++
 	p.bucket = bucket
 	p.key = key

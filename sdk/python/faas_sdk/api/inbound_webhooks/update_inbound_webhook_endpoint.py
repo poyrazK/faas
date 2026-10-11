@@ -100,7 +100,8 @@ def sync_detailed(
         slug (str):
         id (UUID):
         body (UpdateInboundWebhookEndpointRequest): Omitted fields remain unchanged. A
-            signing_secret value rotates the provider secret in place.
+            signing_secret value rotates the provider secret in place; generic secrets must contain at
+            least 32 bytes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,7 +137,8 @@ def sync(
         slug (str):
         id (UUID):
         body (UpdateInboundWebhookEndpointRequest): Omitted fields remain unchanged. A
-            signing_secret value rotates the provider secret in place.
+            signing_secret value rotates the provider secret in place; generic secrets must contain at
+            least 32 bytes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,7 +169,8 @@ async def asyncio_detailed(
         slug (str):
         id (UUID):
         body (UpdateInboundWebhookEndpointRequest): Omitted fields remain unchanged. A
-            signing_secret value rotates the provider secret in place.
+            signing_secret value rotates the provider secret in place; generic secrets must contain at
+            least 32 bytes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -201,7 +204,8 @@ async def asyncio(
         slug (str):
         id (UUID):
         body (UpdateInboundWebhookEndpointRequest): Omitted fields remain unchanged. A
-            signing_secret value rotates the provider secret in place.
+            signing_secret value rotates the provider secret in place; generic secrets must contain at
+            least 32 bytes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

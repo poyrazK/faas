@@ -2,6 +2,15 @@ package objectstorage
 
 import "net/http"
 
+// Native GCS generation headers differ from S3 version headers. The selected
+// provider validates its own identity rather than guessing from response data.
+func VerifyProviderObjectWriteAcknowledgment(p Provider, headers http.Header) (UploadResult, error) {
+	if gcs, ok := p.(*GCS); ok {
+		return gcs.verifyWriteAcknowledgment(headers)
+	}
+	return VerifyObjectWriteAcknowledgment(headers)
+}
+
 // VerifyObjectWriteAcknowledgment validates native PUT identity headers before
 // a broker publishes success or settles a dispatched receipt.
 func VerifyObjectWriteAcknowledgment(headers http.Header) (UploadResult, error) {

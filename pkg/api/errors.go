@@ -646,14 +646,15 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeAutomationVersionConflict       = "automation_version_conflict"
+	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
+	CodeAutomationInvalid               = "automation_invalid"
+	CodeConflict                        = "conflict"
+	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
 	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
@@ -1825,24 +1826,26 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota              = "plan_workflows_quota"
-	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound            = "workflow_step_not_found"
-	CodeWorkflowRunNotFound             = "workflow_run_not_found"
-	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
-	CodeWorkflowEventNotFound           = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable    = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict       = "webhook_automation_conflict"
-	CodeWorkflowResumeConflict          = "workflow_resume_conflict"
-	CodeWorkflowResumeUnsafe            = "workflow_resume_unsafe"
-	CodeWorkflowResumeLimit             = "workflow_resume_limit"
-	CodeWorkflowNotRunning              = "workflow_not_running"
-	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
-	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
-	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
-	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
-	CodeWorkflowCallbackBindingConflict = "workflow_callback_binding_conflict"
+	CodePlanWorkflowsNotAllowed           = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota                = "plan_workflows_quota"
+	CodeWorkflowDAGCycle                  = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound              = "workflow_step_not_found"
+	CodeWorkflowRunNotFound               = "workflow_run_not_found"
+	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
+	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
+	CodeWorkflowEventNotFound             = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit               = "workflow_resume_limit"
+	CodeWorkflowNotRunning                = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable     = "workflow_deployment_unavailable"
+	CodeWorkflowTenantIdentityUnavailable = "workflow_tenant_identity_unavailable"
+	CodeWorkflowCallbackClosed            = "workflow_callback_closed"
+	CodeWorkflowCallbackExpired           = "workflow_callback_expired"
+	CodeWorkflowCallbackPayloadConflict   = "workflow_callback_payload_conflict"
+	CodeWorkflowCallbackBindingConflict   = "workflow_callback_binding_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1955,18 +1958,19 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
-		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -3674,6 +3678,10 @@ const (
 	// outbound problem envelope so an SDK can branch on it
 	// without parsing prose. ADR-093 §Decision.
 	CodeRequestBudgetExceeded = "request_budget_exceeded"
+	// CodeCircuitOpen is the 503 the public gateway answers when every
+	// candidate instance of an app has an open instance-health circuit
+	// (ADR-201 §2). It carries Retry-After.
+	CodeCircuitOpen = "circuit_open"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
 	CodeRequestUploadTimeout  = "request_upload_timeout"
@@ -3864,6 +3872,14 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
 }
 
+// ErrWorkflowTenantIdentityUnavailable reports that the route does not carry
+// an authenticated platform tenant identity for a tenant-required app.
+func ErrWorkflowTenantIdentityUnavailable() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowTenantIdentityUnavailable,
+		"Tenant identity required",
+		"apps that require a platform tenant must start workflow runs through the account tenant route or an authenticated platform tenant token")
+}
+
 // ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.
 func ErrWorkflowRunNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
@@ -3887,6 +3903,13 @@ func ErrWorkflowStepNotFound() *Problem {
 func ErrWorkflowNotRunning() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
 		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
+// ErrWorkflowStepRetryNotAllowed marks a retry request that cannot safely
+// resume the run's current DAG state.
+func ErrWorkflowStepRetryNotAllowed() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowStepRetryNotAllowed,
+		"Workflow step cannot be retried", "retry requires a terminal failed or dead HTTP step with no other active, failed, or dead steps and no completed downstream work.")
 }
 
 func ErrWorkflowCallbackClosed() *Problem {
@@ -3934,7 +3957,7 @@ func ErrJobTaskNotRetriable(runID, taskIndex, status string) *Problem {
 func ErrJobTaskMaxRetriesReached(runID, taskIndex string, attempts, maxRetries int) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobTaskMaxRetriesReached,
 		"Job task retry budget exhausted",
-		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d.", taskIndex, runID, attempts, maxRetries)).
+		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d. Re-run its input in a linked run with `gregale jobs replay-failed <job> %s`.", taskIndex, runID, attempts, maxRetries, runID)).
 		WithDocs(docsBase + "/jobs#retry")
 }
 

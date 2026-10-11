@@ -57,6 +57,7 @@ func cmdInspect(args []string) int {
 	// lifts the persisted failure prose (Error{Hint,Why,Fix,
 	// RelevantLogs}) from the latest failed deployment for the app.
 	// Auth required; no scope filter (errors are per-deployment).
+	app := fs.String("app", "", appSlugFlagUsage)
 	errorsFlag := fs.Bool("errors", false, "show the latest failed deployment's persisted error explanation (Hint/Why/Fix/RelevantLogs)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -66,8 +67,11 @@ func cmdInspect(args []string) int {
 		return 1
 	}
 	slug := ""
-	if len(positional) == 1 {
-		slug = positional[0]
+	if merged, mergeErr := mergeAppFlag(positional, *app, 1); mergeErr != nil {
+		PrintUsage(os.Stderr, "usage: gregale inspect [<slug>|--app SLUG]\nerror: "+mergeErr.Error(), "inspect")
+		return 1
+	} else if len(merged) == 1 {
+		slug = merged[0]
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveRequiredAppSlug("")

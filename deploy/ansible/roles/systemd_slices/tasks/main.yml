@@ -11,7 +11,7 @@
 #     `gregalectl compute-nodes sizing`, which is authoritative and is the
 #     same calculation vmmd uses for the admission ceiling. Do not treat the
 #     value below as the effective fence on a compute node.
-#   faas-cp.slice     : MemoryMax=6144M   (postgres + daemons; spec §13 budget row)
+#   faas-cp.slice     : MemoryMax=faas_cp_slice_memory_max (default 6144M; postgres + daemons; spec §13 budget row)
 #   faas-cp-build.slice : MemoryMax=5120M (one 2 GiB builder plus full-snapshot headroom)
 #
 # Per-plan sub-slices (issue #301, ADR-044):
@@ -87,6 +87,16 @@
   loop: [free, hobby, pro, scale]
   register: legacy_plan_slices
 
+- name: systemd_slices — validate faas-cp.slice limits
+  ansible.builtin.assert:
+    that:
+      - faas_cp_slice_memory_max | string is match('^[0-9]+[KMGT]?$')
+      - faas_cp_slice_cpu_quota | string is match('^[0-9]+%$')
+    fail_msg: >-
+      faas_cp_slice_memory_max must be a systemd byte size such as 3072M
+      (got {{ faas_cp_slice_memory_max }}), and faas_cp_slice_cpu_quota a
+      percentage such as 400% (got {{ faas_cp_slice_cpu_quota }}).
+
 - name: systemd_slices — write faas-cp.slice
   ansible.builtin.copy:
     dest: /etc/systemd/system/faas-cp.slice
@@ -96,11 +106,12 @@
     content: |
       [Unit]
       Description=onebox-faas control plane (postgres + daemons)
-      # spec §13 budget row: 6,144 MB total. Breakdown lives in M5 systemd units.
+      # spec §13 budget row: 6,144 MB by default; sized per host through
+      # faas_cp_slice_memory_max. Breakdown lives in M5 systemd units.
 
       [Slice]
-      MemoryMax=6144M
-      CPUQuota=400%
+      MemoryMax={{ faas_cp_slice_memory_max }}
+      CPUQuota={{ faas_cp_slice_cpu_quota }}
   register: cp_slice
 
 - name: systemd_slices — write faas-cp-build.slice

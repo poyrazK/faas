@@ -12,11 +12,15 @@ from ..models.project_environment_qualification_response_status import (
     ProjectEnvironmentQualificationResponseStatus,
     check_project_environment_qualification_response_status,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.project_environment_qualification_check import ProjectEnvironmentQualificationCheck
     from ..models.project_environment_qualification_response_secret_revision_hashes import (
         ProjectEnvironmentQualificationResponseSecretRevisionHashes,
+    )
+    from ..models.project_environment_qualification_response_workload_config_hashes import (
+        ProjectEnvironmentQualificationResponseWorkloadConfigHashes,
     )
 
 
@@ -47,6 +51,8 @@ class ProjectEnvironmentQualificationResponse:
     checks: list[ProjectEnvironmentQualificationCheck]
     created_at: datetime.datetime
     expires_at: datetime.datetime
+    workload_config_hashes: ProjectEnvironmentQualificationResponseWorkloadConfigHashes | Unset = UNSET
+    """Immutable per-workload fingerprints bound to this qualification receipt."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +79,10 @@ class ProjectEnvironmentQualificationResponse:
 
         expires_at = self.expires_at.isoformat()
 
+        workload_config_hashes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workload_config_hashes, Unset):
+            workload_config_hashes = self.workload_config_hashes.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -89,6 +99,8 @@ class ProjectEnvironmentQualificationResponse:
                 "expires_at": expires_at,
             }
         )
+        if workload_config_hashes is not UNSET:
+            field_dict["workload_config_hashes"] = workload_config_hashes
 
         return field_dict
 
@@ -97,6 +109,9 @@ class ProjectEnvironmentQualificationResponse:
         from ..models.project_environment_qualification_check import ProjectEnvironmentQualificationCheck
         from ..models.project_environment_qualification_response_secret_revision_hashes import (
             ProjectEnvironmentQualificationResponseSecretRevisionHashes,
+        )
+        from ..models.project_environment_qualification_response_workload_config_hashes import (
+            ProjectEnvironmentQualificationResponseWorkloadConfigHashes,
         )
 
         d = dict(src_dict)
@@ -127,6 +142,15 @@ class ProjectEnvironmentQualificationResponse:
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        _workload_config_hashes = d.pop("workload_config_hashes", UNSET)
+        workload_config_hashes: ProjectEnvironmentQualificationResponseWorkloadConfigHashes | Unset
+        if isinstance(_workload_config_hashes, Unset):
+            workload_config_hashes = UNSET
+        else:
+            workload_config_hashes = ProjectEnvironmentQualificationResponseWorkloadConfigHashes.from_dict(
+                _workload_config_hashes
+            )
+
         project_environment_qualification_response = cls(
             id=id,
             environment=environment,
@@ -138,6 +162,7 @@ class ProjectEnvironmentQualificationResponse:
             checks=checks,
             created_at=created_at,
             expires_at=expires_at,
+            workload_config_hashes=workload_config_hashes,
         )
 
         project_environment_qualification_response.additional_properties = d

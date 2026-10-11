@@ -126,6 +126,6 @@ func (m *MemStore) EnqueueObjectNotification(_ context.Context, in Invocation, s
 	in.Payload = bytes.Clone(in.Payload)
 	in.Headers = bytes.Clone(in.Headers)
 	in.RetryPolicyJSON = bytes.Clone(s.RetryPolicy)
-	m.invocations[in.ID] = in
+	m.setInvocationLocked(in.ID, in)
 	return nil
 }

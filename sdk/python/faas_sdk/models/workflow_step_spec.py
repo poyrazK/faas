@@ -27,21 +27,34 @@ class WorkflowStepSpec:
     """One workflow step. The canonical ADR-081 target is `run`; `path`
     and `method` remain accepted for the existing HTTP wake executor
     during the runtime migration. Exactly one of `run`, `path`,
-    `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
+    `wait_for_event`, `wait_for_callback`, `wait_for_duration`,
     `wait_for_condition`, `outbound`, `join`, or `for_each` must be supplied.
+    Set `managed_operation` on an executable HTTP step to persist its business
+    result transactionally and replay it safely when the workflow retries
+    after an uncertain response.
 
     """
 
     name: str
     run: str | Unset = UNSET
     """Named platform operation to invoke."""
+    managed_operation: bool | Unset = UNSET
+    """Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must
+    use the transactional operation SDK."""
     for_each: WorkflowForEachSpec | Unset = UNSET
-    """Sequential action over a JSON array from input or a direct dependency output.
-    Snapshots all items and resolved action inputs before dispatch. At most 128
-    items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
-    permit at most 64 UTF-8 bytes. Stops on item failure; completed items survive
-    recovery. Output is an array of item outputs in input order; an empty list
-    succeeds with []. Parent consumes zero attempts; each item has its own ledger.
+    """Bounded-concurrency action over a JSON array from input or a direct dependency
+    output. Snapshots all items and resolved action inputs before dispatch. At most
+    128 items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
+    permit at most 64 UTF-8 bytes. Omitted or zero max_parallel means one active
+    item; values up to 16 limit active items per batch. Items are admitted in
+    input order within a bounded window, and collected output always follows input
+    order. By default no new items start after a terminal item failure; already
+    active items finish and the parent fails. `on_item_failure: continue` attempts
+    later items and still marks the parent unsuccessful if any item failed.
+    Completed items survive recovery. With the default stop policy, output retains
+    the completed prefix. With continue, output includes every input position and
+    null for guarded or unsuccessful items. An empty list succeeds with []. Parent
+    consumes zero attempts; each item has its own ledger.
     """
     join: WorkflowJoinSpec | Unset = UNSET
     """Native branch join. Waits for all dependencies to finish and permits only
@@ -56,7 +69,9 @@ class WorkflowStepSpec:
     outbound: WorkflowOutboundSpec | Unset = UNSET
     """Call an existing customer managed outbound integration bound to this app.
     Credentials and fixed-origin routing remain with outboundd. Input is a
-    templated JSON body; GET and HEAD have no body and forbid explicit input.
+    templated JSON body. Path segments and query values support the workflow
+    template syntax; dynamic path values are escaped as one segment. GET and
+    HEAD have no body and forbid explicit input.
     One provider call occurs per workflow attempt. Automatic mutating retries
     require explicit provider idempotency support. Workflow outputs contain
     status and body; sensitive headers and failed-response bodies are omitted.
@@ -104,6 +119,8 @@ class WorkflowStepSpec:
         name = self.name
 
         run = self.run
+
+        managed_operation = self.managed_operation
 
         for_each: dict[str, Any] | Unset = UNSET
         if not isinstance(self.for_each, Unset):
@@ -175,6 +192,8 @@ class WorkflowStepSpec:
         )
         if run is not UNSET:
             field_dict["run"] = run
+        if managed_operation is not UNSET:
+            field_dict["managed_operation"] = managed_operation
         if for_each is not UNSET:
             field_dict["for_each"] = for_each
         if join is not UNSET:
@@ -224,6 +243,8 @@ class WorkflowStepSpec:
         name = d.pop("name")
 
         run = d.pop("run", UNSET)
+
+        managed_operation = d.pop("managed_operation", UNSET)
 
         _for_each = d.pop("for_each", UNSET)
         for_each: WorkflowForEachSpec | Unset
@@ -328,6 +349,7 @@ class WorkflowStepSpec:
         workflow_step_spec = cls(
             name=name,
             run=run,
+            managed_operation=managed_operation,
             for_each=for_each,
             join=join,
             outbound=outbound,

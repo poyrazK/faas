@@ -16,7 +16,7 @@ export type SimulateAutomationResponse = {
    */
   definition_hash: string;
   /**
-   * All roots resolved or skipped under these mocks; false for missing results, waits or evaluation errors.
+   * Every root reached a known terminal outcome under these mocks; false for missing results, unresolved retries, waits or evaluation errors.
    */
   complete: boolean;
   issues: Array<string>;

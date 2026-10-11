@@ -184,6 +184,11 @@ func TestCopyPrepareTreeClampsTrustBundlePermissions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "bundle.pem"), []byte("certificate"), 0o666); err != nil {
 		t.Fatal(err)
 	}
+	// Establish the permissive source fixture independently of the runner's
+	// umask; production preserves existing read bits while removing writes.
+	if err := os.Chmod(filepath.Join(source, "bundle.pem"), 0o666); err != nil {
+		t.Fatal(err)
+	}
 	destination := filepath.Join(t.TempDir(), "out")
 	if err := copyPrepareTree(source, destination); err != nil {
 		t.Fatalf("copyPrepareTree: %v", err)

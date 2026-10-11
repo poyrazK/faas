@@ -425,6 +425,12 @@ func TestCmdWorkersScale_UpdatesParameters(t *testing.T) {
 	if gotReq.WorkerReplicas.Min != 2 || gotReq.WorkerReplicas.Max != 50 || gotReq.WorkerReplicas.Target != 250 || gotReq.WorkerReplicas.Metric != "queue_depth" {
 		t.Errorf("unexpected WorkerReplicas: %+v", gotReq.WorkerReplicas)
 	}
+	if gotReq.ScalingPolicy == nil || gotReq.ScalingPolicy.Target == nil || gotReq.ScalingPolicy.Target.Metric != "queue_depth" {
+		t.Errorf("worker scaling policy target was not applied: %+v", gotReq.ScalingPolicy)
+	}
+	if gotReq.ScalingPolicy.MinInstances != 2 || gotReq.ScalingPolicy.MaxInstances != 50 {
+		t.Errorf("worker scaling policy bounds were not applied: %+v", gotReq.ScalingPolicy)
+	}
 	if gotReq.StopGracePeriodS == nil || *gotReq.StopGracePeriodS != 90 {
 		t.Errorf("unexpected StopGracePeriodS: %v", gotReq.StopGracePeriodS)
 	}
@@ -435,6 +441,56 @@ func TestCmdWorkersScale_UpdatesParameters(t *testing.T) {
 	out := stdout.String()
 	if !strings.Contains(out, "Worker scaling updated for my-worker") {
 		t.Errorf("missing success banner in output; got: %s", out)
+	}
+}
+
+func TestCmdWorkersScale_CustomMetricUpdatesScalingPolicy(t *testing.T) {
+	var gotReq api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/my-worker" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-w", Slug: "my-worker", Manifest: api.AppManifest{
+				ExecutionMode:  api.ExecutionModeWorker,
+				WorkerReplicas: &api.WorkerScaling{Min: 1, Max: 5, Metric: "queue_lag", Target: 100},
+			}})
+			return
+		}
+		if r.Method == http.MethodPatch {
+			_ = json.NewDecoder(r.Body).Decode(&gotReq)
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-w", Slug: "my-worker", Manifest: api.AppManifest{
+				ExecutionMode:  api.ExecutionModeWorker,
+				WorkerReplicas: &api.WorkerScaling{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
+			}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+
+	stdout, restore := captureStdout(t)
+	code := cmdWorkersScale([]string{"my-worker", "--metric", "custom", "--name", "mcp_tasks_outstanding", "--target", "4"})
+	restore()
+	if code != 0 {
+		t.Fatalf("cmdWorkersScale(custom) = %d, want 0", code)
+	}
+	if gotReq.WorkerReplicas == nil || gotReq.WorkerReplicas.Name != "mcp_tasks_outstanding" {
+		t.Fatalf("custom worker replica target not sent: %+v", gotReq.WorkerReplicas)
+	}
+	if gotReq.ScalingPolicy == nil || gotReq.ScalingPolicy.Target == nil ||
+		gotReq.ScalingPolicy.Target.Metric != api.ScalingMetricCustom ||
+		gotReq.ScalingPolicy.Target.Name != "mcp_tasks_outstanding" || gotReq.ScalingPolicy.Target.Value != 4 {
+		t.Fatalf("custom scaling policy target not sent: %+v", gotReq.ScalingPolicy)
+	}
+	if !strings.Contains(stdout.String(), "metric=custom (mcp_tasks_outstanding)") {
+		t.Errorf("custom metric name missing from output: %s", stdout.String())
 	}
 }
 
@@ -482,8 +538,17 @@ func TestCmdWorkersScale_RejectsInvalidBounds(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("cmdWorkersScale(invalid metric) = %d, want 1", code)
 	}
-	if !strings.Contains(stderr, "must be one of {queue_lag, queue_depth}") {
+	if !strings.Contains(stderr, "must be one of {queue_lag, queue_depth, custom}") {
 		t.Errorf("unexpected stderr: %s", stderr)
+	}
+
+	// A newly selected custom metric must carry an explicit target; the old
+	// queue target is in unrelated units and should not silently be reused.
+	code, stderr = runWithStderr(t, func() int {
+		return cmdWorkersScale([]string{"my-worker", "--metric", "custom", "--name", "mcp_tasks_outstanding"})
+	})
+	if code != 1 || !strings.Contains(stderr, "--target is required") {
+		t.Errorf("custom metric without a target = %d, stderr %q", code, stderr)
 	}
 
 	// invalid stop signal

@@ -22,9 +22,22 @@ func (c *Client) VerifyOAuth(ctx context.Context) error {
 	metadataURL := *u
 	metadataURL.Path = "/.well-known/oauth-protected-resource" + u.Path
 	metadataURL.RawPath = ""
-	x, _ := unauth.request(ctx, "tools/list", nil, nil, false)
+	// Candidate deployments keep the production OAuth audience. Fetch metadata
+	// from the candidate transport, while checking its canonical resource identity.
+	resource := c.Endpoint
+	if c.ExpectedAuth != nil && c.ExpectedAuth.Resource != "" {
+		resource = c.ExpectedAuth.Resource
+	}
+	canonical, err := url.Parse(resource)
+	if err != nil || canonical.Host == "" {
+		return fmt.Errorf("invalid canonical OAuth resource")
+	}
+	challengeURL := *canonical
+	challengeURL.Path = "/.well-known/oauth-protected-resource" + canonical.Path
+	challengeURL.RawPath = ""
+	x, _ := unauth.request(ctx, "server/discover", nil, nil, false)
 	scheme, _, _ := strings.Cut(x.AuthChallenge, " ")
-	if x.HTTPStatus != http.StatusUnauthorized || !strings.EqualFold(scheme, "Bearer") || !strings.Contains(x.AuthChallenge, `resource_metadata="`+metadataURL.String()+`"`) {
+	if x.HTTPStatus != http.StatusUnauthorized || !strings.EqualFold(scheme, "Bearer") || !strings.Contains(x.AuthChallenge, `resource_metadata="`+challengeURL.String()+`"`) {
 		return fmt.Errorf("OAuth endpoint must return 401 with canonical protected-resource metadata in WWW-Authenticate")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL.String(), nil)
@@ -51,7 +64,7 @@ func (c *Client) VerifyOAuth(ctx context.Context) error {
 	if len(body) > 64<<10 || json.Unmarshal(body, &metadata) != nil {
 		return fmt.Errorf("invalid protected-resource metadata")
 	}
-	if metadata.Resource != c.Endpoint || len(metadata.Servers) == 0 {
+	if metadata.Resource != resource || len(metadata.Servers) == 0 {
 		return fmt.Errorf("protected-resource metadata must identify this endpoint and an authorization server")
 	}
 	for _, issuer := range metadata.Servers {
@@ -81,6 +94,18 @@ func (c *Client) VerifyOAuth(ctx context.Context) error {
 				return fmt.Errorf("resource metadata does not advertise the configured scopes")
 			}
 		}
+	}
+	// Metadata and a missing-token challenge do not prove that bearer tokens
+	// are validated. Probe discovery only, with a known malformed credential;
+	// never send the caller's real token to metadata or execute a tool.
+	invalid, err := NewClient(c.Endpoint, "gregale-invalid-bearer-probe", ProtocolVersion)
+	if err != nil {
+		return err
+	}
+	invalid.HTTP = c.HTTP
+	x, _ = invalid.request(ctx, "server/discover", nil, nil, false)
+	if x.HTTPStatus != http.StatusUnauthorized {
+		return fmt.Errorf("OAuth endpoint must reject malformed bearer credentials with HTTP 401")
 	}
 	return nil
 }

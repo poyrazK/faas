@@ -661,7 +661,7 @@ func TestProperty_EnsureWake_BurstCoalescesToOneBoot(t *testing.T) {
 		}
 	}
 	// The wake-coord entry must be gone — no leaked map rows.
-	if _, ok := engine.wakeCoord.inflight[app.ID]; ok {
+	if len(engine.wakeCoord.inflight) != 0 {
 		t.Errorf("wake-coord entry for %q still present after final release", app.ID)
 	}
 }

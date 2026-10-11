@@ -111,7 +111,15 @@ func TestRouteHealthPostgresObservationsAndAtomicAdvance(t *testing.T) {
 			if _, err := pool.Exec(t.Context(), "UPDATE route_health_gates SET updated_at = clock_timestamp() - interval '1 hour' WHERE app_id = $1", app.ID); err != nil {
 				t.Fatal(err)
 			}
-			windows := routehealth.Windows(time.Now().UTC())
+			// Seed one adjacent window on each side of the Go-clock estimate.
+			// PostgreSQL computes report windows on its own clock, and the
+			// ingestion-lag boundary can be crossed while this fixture is seeded.
+			firstWindow := routehealth.Windows(time.Now().UTC().Add(-api.RouteHealthWindow))[0]
+			windows := make([]api.RouteHealthWindowEvidence, 0, api.RouteHealthWindows+2)
+			for i := 0; i < api.RouteHealthWindows+2; i++ {
+				start := firstWindow.Start.Add(time.Duration(i) * api.RouteHealthWindow)
+				windows = append(windows, api.RouteHealthWindowEvidence{Start: start, End: start.Add(api.RouteHealthWindow)})
+			}
 			q := &sqlc.Queries{}
 			for i, w := range windows {
 				for _, dep := range []state.Deployment{stable, d} {
@@ -120,7 +128,7 @@ func TestRouteHealthPostgresObservationsAndAtomicAdvance(t *testing.T) {
 						errorsCount := int32(0)
 						total := int32(100)
 						if dep.ID == d.ID && route.Path == "/checkout" {
-							if scenario == "regressed" || scenario == "report" || scenario == "mixed" && i == 0 {
+							if scenario == "regressed" || scenario == "report" || scenario == "mixed" && i%2 == 1 {
 								errorsCount = 10
 							}
 							if scenario == "sparse" {

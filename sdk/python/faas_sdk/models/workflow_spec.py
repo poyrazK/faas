@@ -18,11 +18,23 @@ T = TypeVar("T", bound="WorkflowSpec")
 
 @_attrs_define
 class WorkflowSpec:
-    """A named workflow DAG submitted with a deployment (ADR-081)."""
+    """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances for this
+    workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
+    max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue
+    while all action slots are occupied.
+
+    """
 
     name: str
     steps: list[WorkflowStepSpec]
     trigger: None | Unset | WorkflowTriggerSpec = UNSET
+    max_concurrent_runs: int | Unset = 0
+    """Maximum active run instances for this workflow. Omit or set 0 to rely only on the app plan limit. Pending
+    runs that have not started are queued and do not consume a slot."""
+    max_concurrent_actions: int | Unset = 0
+    """Maximum running action and condition-check steps across runs of this workflow. Omit or set 0 for no
+    additional per-workflow action cap. Event, callback, and duration waits do not consume an action slot. Runs use
+    the value from their immutable definition snapshot."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +55,10 @@ class WorkflowSpec:
         else:
             trigger = self.trigger
 
+        max_concurrent_runs = self.max_concurrent_runs
+
+        max_concurrent_actions = self.max_concurrent_actions
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,6 +69,10 @@ class WorkflowSpec:
         )
         if trigger is not UNSET:
             field_dict["trigger"] = trigger
+        if max_concurrent_runs is not UNSET:
+            field_dict["max_concurrent_runs"] = max_concurrent_runs
+        if max_concurrent_actions is not UNSET:
+            field_dict["max_concurrent_actions"] = max_concurrent_actions
 
         return field_dict
 
@@ -88,10 +108,16 @@ class WorkflowSpec:
 
         trigger = _parse_trigger(d.pop("trigger", UNSET))
 
+        max_concurrent_runs = d.pop("max_concurrent_runs", UNSET)
+
+        max_concurrent_actions = d.pop("max_concurrent_actions", UNSET)
+
         workflow_spec = cls(
             name=name,
             steps=steps,
             trigger=trigger,
+            max_concurrent_runs=max_concurrent_runs,
+            max_concurrent_actions=max_concurrent_actions,
         )
 
         workflow_spec.additional_properties = d

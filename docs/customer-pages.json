@@ -18,6 +18,7 @@
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},
     {"path": "crons", "source": "docs/event-driven.md"},
+    {"path": "data-api", "source": "docs/data-api.md"},
     {"path": "deploy-from-github", "source": "docs/deploys.md"},
     {"path": "deploy-from-source", "source": "docs/deploys.md"},
     {"path": "deploy-overrides", "source": "docs/deploy-overrides.md"},

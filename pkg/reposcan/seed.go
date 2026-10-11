@@ -100,17 +100,20 @@ const (
 // []Workload. Keeping it lighter than Workload makes per-tier
 // code shorter (the merge rule fills the empty fields).
 type workloadSeed struct {
-	computeRegion string
-	tier          Tier
-	det           detector
-	source        string // provenance string; carried into Workload.Source
-	name          string
-	rootDir       string
-	dockerfile    string
-	image         string
-	command       []string
-	commandShell  bool
-	dependsOn     []string
+	computeRegion       string
+	tier                Tier
+	det                 detector
+	source              string // provenance string; carried into Workload.Source
+	name                string
+	rootDir             string
+	dockerfile          string
+	image               string
+	healthcheck         *api.ComposeHealthcheck
+	imageSet            bool // explicit image strategy, including a Compose source build
+	command             []string
+	commandShell        bool
+	dependsOn           []string
+	dependsOnConditions map[string]string
 
 	serviceBindingPolicy      ServiceBindingPolicy
 	serviceBindingTransport   ServiceBindingTransport

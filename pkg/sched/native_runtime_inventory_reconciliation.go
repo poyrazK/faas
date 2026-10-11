@@ -39,7 +39,8 @@ type nativeRuntimeInventoryReader interface {
 
 // ObserveRegionalRuntimeInventoryPage visits retained holds across all signers.
 // Errors advance the cursor; an unavailable first node cannot starve later pages.
-// This reads no mutable app/resource fields and changes no accounting or head.
+// Physical matches use original source/resource evidence; current-attempt reads
+// are separate advisory observations. This changes no accounting or head.
 func (e *Engine) ObserveRegionalRuntimeInventoryPage(ctx context.Context, after state.RegionalRuntimeRetirementCursor) (state.RegionalRuntimeRetirementCursor, RegionalRuntimeInventoryReport, error) {
 	var report RegionalRuntimeInventoryReport
 	rows, err := e.store.ListRegionalRuntimeInventory(ctx, "", after, api.RegionalRuntimeRetirementBatch)

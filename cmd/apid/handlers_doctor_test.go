@@ -336,3 +336,31 @@ func TestRenderDomainDoctor_RouteRegistered(t *testing.T) {
 		t.Errorf("body should render the Checks h2; got %q", body)
 	}
 }
+
+// TestDoctorReportMissingRecordMatchesAddInstructions — production-us
+// reported a failing dns_record check as "A or AAAA records present" and
+// asked for an A/AAAA record, while `domains add` and points_to_gregale both
+// asked for the Gregale CNAME. The failing detail now describes the
+// observation, and the fix is the same routing record.
+func TestDoctorReportMissingRecordMatchesAddInstructions(t *testing.T) {
+	previous := appsDomainFunc
+	appsDomainFunc = func() string { return "gregale.dev." }
+	t.Cleanup(func() { appsDomainFunc = previous })
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
+
+	report := doctorReportFromObs(state.CustomDomain{Domain: "h3-test-domain.example.com"}, state.DomainDoctorObservation{
+		Domain: "h3-test-domain.example.com", ObservedAt: time.Now().UTC(), DNSCheckedAt: time.Now().UTC(),
+		DNSRecordFound: false, PointsToGregale: false, CertState: certStatusPending,
+	}, false)
+	checks := map[string]api.DomainDoctorCheck{}
+	for _, check := range report.Checks {
+		checks[check.Name] = check
+	}
+	dns := checks["dns_record"]
+	if dns.Status != string(probeFail) || strings.Contains(dns.Detail, "present") || !strings.Contains(dns.Detail, "no DNS record") {
+		t.Fatalf("dns_record = %+v, want a failing detail that says nothing resolves", dns)
+	}
+	if want := "Set CNAME h3-test-domain.example.com → gregale.dev"; dns.Remediation != want || checks["points_to_gregale"].Remediation != want {
+		t.Fatalf("remediations dns=%q points=%q, want both %q", dns.Remediation, checks["points_to_gregale"].Remediation, want)
+	}
+}

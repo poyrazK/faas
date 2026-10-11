@@ -43,6 +43,9 @@ class CreateAlertRuleRequest:
     webhook_url: str
     webhook_secret: str
     """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
+    post_deploy_rollback_window_seconds: int | Unset = UNSET
+    """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
+    action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
@@ -65,6 +68,8 @@ class CreateAlertRuleRequest:
         webhook_url = self.webhook_url
 
         webhook_secret = self.webhook_secret
+
+        post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         enabled = self.enabled
 
@@ -91,6 +96,8 @@ class CreateAlertRuleRequest:
                 "webhook_secret": webhook_secret,
             }
         )
+        if post_deploy_rollback_window_seconds is not UNSET:
+            field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
@@ -119,6 +126,8 @@ class CreateAlertRuleRequest:
 
         webhook_secret = d.pop("webhook_secret")
 
+        post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
+
         enabled = d.pop("enabled", UNSET)
 
         _failure_source = d.pop("failure_source", UNSET)
@@ -145,6 +154,7 @@ class CreateAlertRuleRequest:
             window_spec=window_spec,
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
+            post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
             cooldown_minutes=cooldown_minutes,

@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"time"
 )
@@ -21,7 +23,7 @@ func NewPostgresWorkflowAuthorizer(pool *pgxpool.Pool) (*PostgresWorkflowAuthori
 	}
 	return &PostgresWorkflowAuthorizer{pool: pool}, nil
 }
-func (a *PostgresWorkflowAuthorizer) AuthorizeWorkflow(ctx context.Context, raw, integrationID, method, path string, body []byte) (WorkflowIdentity, error) {
+func (a *PostgresWorkflowAuthorizer) AuthorizeWorkflow(ctx context.Context, raw, integrationID, method, path, rawQuery string, body []byte) (WorkflowIdentity, error) {
 	q := sqlc.New()
 	key, err := q.WorkflowOutboundSigningKey(ctx, a.pool)
 	if err != nil {
@@ -39,15 +41,24 @@ func (a *PostgresWorkflowAuthorizer) AuthorizeWorkflow(ctx context.Context, raw,
 	if !ok {
 		return WorkflowIdentity{}, errors.New("workflow outbound signing key is invalid")
 	}
-	identity, err := verifyWorkflowIdentity(raw, integrationID, method, path, body, key.KeyID, public, time.Now())
+	request := WorkflowOutboundRequest{IntegrationID: integrationID, Method: method, Path: path, RawQuery: rawQuery}
+	identity, request, err := verifyWorkflowIdentity(raw, request, body, key.KeyID, public, time.Now())
 	if err != nil {
 		return WorkflowIdentity{}, err
 	}
-	allowed, err := q.AuthorizeWorkflowOutbound(ctx, a.pool, sqlc.AuthorizeWorkflowOutboundParams{RunID: workflowUUID(identity.RunID), AppID: workflowUUID(identity.AppID), AccountID: workflowUUID(identity.AccountID), StepName: identity.StepName, Attempt: int32(identity.Attempt), AttemptToken: workflowUUID(identity.AttemptToken), IntegrationID: workflowUUID(integrationID), Method: method, Path: path})
+	queryValues := request.QueryTemplate
+	if queryValues == nil {
+		queryValues = map[string]string{}
+	}
+	queryTemplate, err := json.Marshal(queryValues)
+	if err != nil {
+		return WorkflowIdentity{}, ErrWorkflowNotAuthorized
+	}
+	allowed, err := q.AuthorizeWorkflowOutbound(ctx, a.pool, sqlc.AuthorizeWorkflowOutboundParams{RunID: workflowUUID(identity.RunID), AppID: workflowUUID(identity.AppID), AccountID: workflowUUID(identity.AccountID), StepName: identity.StepName, Attempt: int32(identity.Attempt), AttemptToken: workflowUUID(identity.AttemptToken), TenantID: identity.PlatformTenantID, IntegrationID: workflowUUID(integrationID), Method: method, PathTemplate: request.PathTemplate, QueryTemplate: queryTemplate})
 	if err != nil {
 		return WorkflowIdentity{}, err
 	}
-	if !allowed {
+	if !allowed || !api.WorkflowOutboundRequestMatchesTemplate(request.PathTemplate, path, request.QueryTemplate, rawQuery) {
 		return WorkflowIdentity{}, ErrWorkflowNotAuthorized
 	}
 	return identity, nil

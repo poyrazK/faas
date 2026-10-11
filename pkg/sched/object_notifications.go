@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -70,9 +69,8 @@ func (l *Loop) routeObjectNotification(ctx context.Context, envelope events.Enve
 	if err != nil {
 		return false, eventWorkRouteError(row.ID, "decode captured target", err, false)
 	}
-	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
 	headers, _ := json.Marshal(map[string]string{"x-gregale-event-id": envelope.ID, "x-gregale-event-source": envelope.Source, "x-gregale-event-type": envelope.Type, "x-gregale-event-subscription-id": row.ID})
-	in := state.Invocation{ID: uuid.NewSHA1(uuid.NameSpaceURL, identity).String(), AppID: row.AppID, AccountID: row.AccountID, Source: state.InvocationAsyncInvoke, State: state.InvocationPending, Method: eventInvocationMethod, Path: eventInvocationPath, Payload: payload, Headers: headers, DueAt: now}
+	in := state.Invocation{ID: state.PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, row.ID), AppID: row.AppID, AccountID: row.AccountID, Source: state.InvocationAsyncInvoke, State: state.InvocationPending, Method: eventInvocationMethod, Path: eventInvocationPath, Payload: payload, Headers: headers, DueAt: now}
 	if t.Kind == "queue" {
 		in.Source, in.QueueName = state.InvocationQueue, t.QueueName
 	}

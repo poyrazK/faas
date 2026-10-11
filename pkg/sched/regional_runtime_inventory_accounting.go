@@ -46,7 +46,7 @@ func (l *NodeLedger) regionalAdmissionBarrierLocked() error {
 
 // Inventory holds have their own identities. A row/run tuple cannot prove its
 // host incarnation, so mutable instance rows never merge or replace these holds.
-func (l *NodeLedger) retainRegionalInventory(entry state.RegionalRuntimeInventoryEntry, ceiling int) error {
+func (l *NodeLedger) retainRegionalInventory(entry state.RegionalRuntimeInventoryEntry, ceiling int, owner *regionalInventoryEnvironment) error {
 	p := entry.Receipt.Permit
 	if p.Validate() != nil || entry.Receipt.IssuedAt == nil || entry.Receipt.ReleasedAt != nil || entry.ServingSeatsHeld < 0 ||
 		(entry.Source != nil && (entry.Source.Validate() != nil || entry.Source.Permit != p)) {
@@ -54,13 +54,22 @@ func (l *NodeLedger) retainRegionalInventory(entry state.RegionalRuntimeInventor
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.ensureEnvironmentConcurrencyLocked()
 	key := regionalRuntimeHoldKey{p.Grant.Binding.RegionalAppID, p.ID}
 	if old, exists := l.regionalHolds[key]; exists {
 		if old.Receipt.Permit != p || old.Resources != entry.Resources || old.ServingSeatsHeld != entry.ServingSeatsHeld ||
 			(old.Source == nil) != (entry.Source == nil) || (old.Source != nil && *old.Source != *entry.Source) {
 			return runtimequota.ErrBinding
 		}
-		return regionalInventoryProvenanceError(old) // A retry never double-charges an original permit.
+		captured, known := l.regionalEnvironments[key]
+		if owner != nil && (!known || captured != *owner) {
+			return runtimequota.ErrBinding
+		}
+		var originalOwner *regionalInventoryEnvironment
+		if known {
+			originalOwner = &captured
+		}
+		return errors.Join(regionalInventoryProvenanceError(old), regionalInventoryEnvironmentError(old, originalOwner)) // A retry never double-charges an original permit.
 	}
 	if entry.Resources != (state.RegionalRuntimeResources{}) && !entry.Resources.Valid() {
 		return runtimequota.ErrBinding
@@ -75,6 +84,10 @@ func (l *NodeLedger) retainRegionalInventory(entry state.RegionalRuntimeInventor
 		n = &nodeReservation{ceilingMB: api.RAMAdmissionCeilingMB}
 	}
 	maxInt := int(^uint(0) >> 1)
+	if owner != nil && (entry.ServingSeatsHeld > int64(maxInt-l.perAppEnvironment[key.app+"\x00"+owner.key]) ||
+		(owner.production && entry.ServingSeatsHeld > int64(maxInt-l.perAppProduction[key.app]))) {
+		return fmt.Errorf("sched: regional environment accounting overflow: %w", ErrRegionalRuntimeRecoveryUnresolved)
+	}
 	if entry.ServingSeatsHeld > int64(maxInt-l.perApp[key.app]) ||
 		entry.ServingSeatsHeld > int64(maxInt-l.perAppDeployment[key.app+"\x00"+p.DeploymentID]) ||
 		n.residentRAM > maxInt-ram || n.usedVCPU > maxInt-r.VCPU || n.usedCPUMillicores > maxInt-r.CPUMillicores {
@@ -89,12 +102,25 @@ func (l *NodeLedger) retainRegionalInventory(entry state.RegionalRuntimeInventor
 	n.usedCPUMillicores += r.CPUMillicores // Original peak has no invented expiry.
 	l.perApp[key.app] += int(entry.ServingSeatsHeld)
 	l.perAppDeployment[key.app+"\x00"+p.DeploymentID] += int(entry.ServingSeatsHeld)
+	if owner != nil && entry.ServingSeatsHeld > 0 {
+		if l.regionalEnvironments == nil {
+			l.regionalEnvironments = make(map[regionalRuntimeHoldKey]regionalInventoryEnvironment)
+		}
+		l.regionalEnvironments[key] = *owner
+		l.perAppEnvironment[key.app+"\x00"+owner.key] += int(entry.ServingSeatsHeld)
+		if owner.production {
+			l.perAppProduction[key.app] += int(entry.ServingSeatsHeld)
+		}
+	}
 	if entry.Source != nil {
 		source := *entry.Source
 		entry.Source = &source
 	}
+	if l.regionalHolds == nil {
+		l.regionalHolds = make(map[regionalRuntimeHoldKey]state.RegionalRuntimeInventoryEntry)
+	}
 	l.regionalHolds[key] = entry
-	return regionalInventoryProvenanceError(entry)
+	return errors.Join(regionalInventoryProvenanceError(entry), regionalInventoryEnvironmentError(entry, owner))
 }
 
 func regionalInventoryProvenanceError(entry state.RegionalRuntimeInventoryEntry) error {
@@ -114,6 +140,21 @@ func (l *NodeLedger) releaseRegionalInventoryLocked(source runtimequota.LaunchSo
 	hold, ok := l.regionalHolds[key]
 	if !ok || hold.Source == nil || *hold.Source != source {
 		return false
+	}
+	l.ensureEnvironmentConcurrencyLocked()
+	if owner, known := l.regionalEnvironments[key]; known {
+		envKey := key.app + "\x00" + owner.key
+		l.perAppEnvironment[envKey] -= int(hold.ServingSeatsHeld)
+		if l.perAppEnvironment[envKey] == 0 {
+			delete(l.perAppEnvironment, envKey)
+		}
+		if owner.production {
+			l.perAppProduction[key.app] -= int(hold.ServingSeatsHeld)
+			if l.perAppProduction[key.app] == 0 {
+				delete(l.perAppProduction, key.app)
+			}
+		}
+		delete(l.regionalEnvironments, key)
 	}
 	delete(l.regionalHolds, key)
 	if n := l.resident[p.NodeID]; n != nil {
@@ -221,7 +262,9 @@ func (e *Engine) seedRegionalRuntimeInventory(ctx context.Context) error {
 				}
 				ceilings[p.NodeID] = ceiling
 			}
-			if err := e.ledger.retainRegionalInventory(row, ceiling); err != nil {
+			owner, ownerErr := e.regionalInventoryEnvironment(ctx, row)
+			result = errors.Join(result, ownerErr)
+			if err := e.ledger.retainRegionalInventory(row, ceiling, owner); err != nil {
 				result = errors.Join(result, fmt.Errorf("sched: seed original regional permit %s/%s: %w", next.AppID, next.PermitID, err))
 			}
 			after = next

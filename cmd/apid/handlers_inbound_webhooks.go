@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +28,9 @@ import (
 const inboundWebhookSecretSealLabel = "inbound_webhook"
 
 var inboundWebhookNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+var genericWebhookTimestampPattern = regexp.MustCompile(`^[0-9]{1,12}$`)
+
+const inboundWebhookSignatureTolerance = 5 * time.Minute
 
 func inboundWebhookStore(store state.Store) (state.InboundWebhookStore, bool) {
 	webhooks, ok := store.(state.InboundWebhookStore)
@@ -50,11 +56,14 @@ func validateInboundWebhookCreate(req api.CreateInboundWebhookEndpointRequest) *
 	if !inboundWebhookNamePattern.MatchString(req.Name) {
 		return inboundWebhookProblem(http.StatusBadRequest, "name must match [a-z][a-z0-9-]{0,62}")
 	}
-	if req.Provider != string(state.InboundWebhookProviderStripe) {
-		return inboundWebhookProblem(http.StatusBadRequest, "provider must be stripe")
+	if req.Provider != string(state.InboundWebhookProviderStripe) && req.Provider != string(state.InboundWebhookProviderGeneric) {
+		return inboundWebhookProblem(http.StatusBadRequest, "provider must be stripe or generic")
 	}
 	if req.SigningSecret == "" || len(req.SigningSecret) > api.InboundWebhookSigningSecretMaxBytes {
 		return inboundWebhookProblem(http.StatusBadRequest, "signing_secret is required and must not exceed 256 bytes")
+	}
+	if req.Provider == string(state.InboundWebhookProviderGeneric) && len(req.SigningSecret) < api.InboundWebhookGenericSecretMinBytes {
+		return inboundWebhookProblem(http.StatusBadRequest, "generic signing_secret must contain at least 32 bytes")
 	}
 	return validateInboundWebhookDeliveryPath(req.DeliveryPath)
 }
@@ -209,7 +218,7 @@ func (s *server) updateInboundWebhookEndpoint(w http.ResponseWriter, r *http.Req
 		params.DeliveryPath = req.DeliveryPath
 	}
 	if req.SigningSecret != nil {
-		sealed, problem := sealInboundWebhookSecret(*req.SigningSecret)
+		sealed, problem := sealInboundWebhookSecret(*req.SigningSecret, endpoint.Provider)
 		if problem != nil {
 			api.WriteProblem(w, problem)
 			return
@@ -226,9 +235,12 @@ func (s *server) updateInboundWebhookEndpoint(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, inboundWebhookEndpointResponse(updated))
 }
 
-func sealInboundWebhookSecret(plaintext string) ([]byte, *api.Problem) {
+func sealInboundWebhookSecret(plaintext string, provider state.InboundWebhookProvider) ([]byte, *api.Problem) {
 	if plaintext == "" || len(plaintext) > api.InboundWebhookSigningSecretMaxBytes {
 		return nil, inboundWebhookProblem(http.StatusBadRequest, "signing_secret is required and must not exceed 256 bytes")
+	}
+	if provider == state.InboundWebhookProviderGeneric && len(plaintext) < api.InboundWebhookGenericSecretMinBytes {
+		return nil, inboundWebhookProblem(http.StatusBadRequest, "generic signing_secret must contain at least 32 bytes")
 	}
 	recipient := setSecretRecipient()
 	if recipient == nil {
@@ -307,16 +319,16 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
-	providerEventID, problem := verifyInboundWebhook(r.Context(), endpoint, r.Header, body)
+	providerEventID, eventType, problem := verifyInboundWebhook(r.Context(), endpoint, r.Header, body, time.Now().UTC())
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	s.receiveVerifiedInboundWebhook(w, r, endpoint, providerEventID, body)
+	s.receiveVerifiedInboundWebhook(w, r, endpoint, providerEventID, eventType, body)
 }
 
-func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID string, body []byte) {
-	if s.receiveWebhookAutomation(w, r, endpoint, body) {
+func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte) {
+	if s.receiveWebhookAutomation(w, r, endpoint, providerEventID, eventType, body) {
 		return
 	}
 	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
@@ -347,7 +359,7 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	s.acceptInboundWebhook(w, r, endpoint, providerEventID, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts))
+	s.acceptInboundWebhook(w, r, endpoint, providerEventID, eventType, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts))
 }
 
 func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *api.Problem) {
@@ -366,36 +378,79 @@ func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *ap
 	return body, nil
 }
 
-func verifyInboundWebhook(ctx context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte) (string, *api.Problem) {
+func verifyInboundWebhook(ctx context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte, now time.Time) (string, string, *api.Problem) {
 	identities := hostIdentitiesForUnseal(ctx)
 	if len(identities) == 0 {
-		return "", api.ErrCapacity("host identity not loaded — refusing to verify webhook")
+		return "", "", api.ErrCapacity("host identity not loaded — refusing to verify webhook")
 	}
 	namespace, secret, err := secretbox.OpenBytesMulti(identities, endpoint.SigningSecretSealed)
 	if err != nil || namespace != inboundWebhookSecretSealLabel {
-		return "", api.ErrCapacity("could not unseal inbound webhook secret")
+		return "", "", api.ErrCapacity("could not unseal inbound webhook secret")
 	}
-	if endpoint.Provider != state.InboundWebhookProviderStripe {
-		return "", api.ErrCapacity("inbound webhook provider is unavailable")
+	switch endpoint.Provider {
+	case state.InboundWebhookProviderStripe:
+		if err := stripex.VerifySignature(body, headers.Get("Stripe-Signature"), string(secret), inboundWebhookSignatureTolerance); err != nil {
+			return "", "", api.ErrInboundWebhookBadSignature()
+		}
+		var envelope struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil || strings.TrimSpace(envelope.ID) == "" || len(envelope.ID) > 256 {
+			return "", "", inboundWebhookProblem(http.StatusBadRequest, "Stripe event id is required and must not exceed 256 bytes")
+		}
+		return envelope.ID, envelope.Type, nil
+	case state.InboundWebhookProviderGeneric:
+		eventID := strings.TrimSpace(headers.Get(api.InboundWebhookEventIDHeader))
+		eventType := strings.TrimSpace(headers.Get(api.InboundWebhookEventTypeHeader))
+		if !api.ValidInboundWebhookEventID(eventID) || !api.ValidInboundWebhookEventType(eventType) {
+			return "", "", inboundWebhookProblem(http.StatusBadRequest, "generic webhooks require a valid event id and event type header")
+		}
+		if !verifyGenericInboundWebhookSignature(headers.Get(api.InboundWebhookTimestampHeader), headers.Get(api.InboundWebhookSignatureHeader), eventID, eventType, body, string(secret), now) {
+			return "", "", api.ErrInboundWebhookBadSignature()
+		}
+		return eventID, eventType, nil
+	default:
+		return "", "", api.ErrCapacity("inbound webhook provider is unavailable")
 	}
-	if err := stripex.VerifySignature(body, headers.Get("Stripe-Signature"), string(secret), 5*time.Minute); err != nil {
-		return "", api.ErrInboundWebhookBadSignature()
-	}
-	var envelope struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil || strings.TrimSpace(envelope.ID) == "" || len(envelope.ID) > 256 {
-		return "", inboundWebhookProblem(http.StatusBadRequest, "Stripe event id is required and must not exceed 256 bytes")
-	}
-	return envelope.ID, nil
 }
 
-func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID string, body, retryPolicy json.RawMessage) {
+func verifyGenericInboundWebhookSignature(timestampValue, signatureValue, eventID, eventType string, body []byte, secret string, now time.Time) bool {
+	timestampValue = strings.TrimSpace(timestampValue)
+	if !genericWebhookTimestampPattern.MatchString(timestampValue) {
+		return false
+	}
+	seconds, err := strconv.ParseInt(timestampValue, 10, 64)
+	if err != nil {
+		return false
+	}
+	signedAt := time.Unix(seconds, 0)
+	delta := now.Sub(signedAt)
+	if delta < -inboundWebhookSignatureTolerance || delta > inboundWebhookSignatureTolerance {
+		return false
+	}
+	signatureValue = strings.TrimSpace(signatureValue)
+	if !strings.HasPrefix(signatureValue, "sha256=") {
+		return false
+	}
+	provided, err := hex.DecodeString(strings.TrimPrefix(signatureValue, "sha256="))
+	if err != nil || len(provided) != sha256.Size {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestampValue + "\n" + eventID + "\n" + eventType + "\n"))
+	_, _ = mac.Write(body)
+	return hmac.Equal(provided, mac.Sum(nil))
+}
+
+func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body, retryPolicy json.RawMessage) {
 	now := time.Now().UTC()
 	receiptID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+providerEventID)).String()
+	bodyDigest := sha256.Sum256(body)
 	headers, _ := json.Marshal(map[string]string{
 		"content-type": r.Header.Get("Content-Type"), "x-gregale-webhook-endpoint-id": endpoint.ID,
-		"x-gregale-webhook-event-id": providerEventID, "x-gregale-webhook-provider": string(endpoint.Provider),
+		"x-gregale-webhook-event-id": providerEventID, "x-gregale-webhook-event-type": eventType,
+		"x-gregale-webhook-provider": string(endpoint.Provider), "x-gregale-webhook-body-sha256": hex.EncodeToString(bodyDigest[:]),
 	})
 	if bindings, ok := s.store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(r.Context(), endpoint.AccountID, "inbound_webhook", endpoint.ID)
@@ -452,8 +507,12 @@ func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, en
 	}
 	if duplicate {
 		existing, getErr := s.store.InvocationByID(r.Context(), receiptID)
-		if getErr != nil || !inboundWebhookReceiptMatches(existing, endpoint, providerEventID) {
+		if getErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("inbound webhook receipt identity conflict"))
+			return
+		}
+		if !inboundWebhookReceiptMatches(existing, endpoint, providerEventID, eventType, body) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Inbound webhook event conflict", "event id was already accepted with different content or metadata"))
 			return
 		}
 		invocation = existing
@@ -470,7 +529,7 @@ func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, en
 	})
 }
 
-func inboundWebhookReceiptMatches(invocation state.Invocation, endpoint state.InboundWebhookEndpoint, providerEventID string) bool {
+func inboundWebhookReceiptMatches(invocation state.Invocation, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte) bool {
 	if invocation.AppID != endpoint.AppID || invocation.AccountID != endpoint.AccountID || invocation.Source != state.InvocationInboundWebhook {
 		return false
 	}
@@ -478,7 +537,20 @@ func inboundWebhookReceiptMatches(invocation state.Invocation, endpoint state.In
 	if err := json.Unmarshal(invocation.Headers, &headers); err != nil {
 		return false
 	}
-	return headers["x-gregale-webhook-endpoint-id"] == endpoint.ID &&
-		headers["x-gregale-webhook-event-id"] == providerEventID &&
-		headers["x-gregale-webhook-provider"] == string(endpoint.Provider)
+	if headers["x-gregale-webhook-endpoint-id"] != endpoint.ID ||
+		headers["x-gregale-webhook-event-id"] != providerEventID ||
+		headers["x-gregale-webhook-provider"] != string(endpoint.Provider) {
+		return false
+	}
+	// Older Stripe receipts predate the event-type and body-digest attestation headers.
+	if stored := headers["x-gregale-webhook-event-type"]; stored != "" && stored != eventType {
+		return false
+	}
+	if stored := headers["x-gregale-webhook-body-sha256"]; stored != "" {
+		digest := sha256.Sum256(body)
+		if stored != hex.EncodeToString(digest[:]) {
+			return false
+		}
+	}
+	return true
 }

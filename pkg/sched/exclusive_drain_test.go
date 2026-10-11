@@ -17,6 +17,7 @@ type exclusiveDrainGateway struct {
 	invocation state.Invocation
 	wake       WakeResult
 	calls      int
+	result     json.RawMessage
 }
 
 func (g *exclusiveDrainGateway) SynthesizeRequest(context.Context, string, string, string) error {
@@ -35,6 +36,9 @@ func (g *exclusiveDrainGateway) InvokeWithWake(_ context.Context, appID string, 
 		return inv, state.ErrInvalidArgument
 	}
 	inv.Result = json.RawMessage(`{"synced":true}`)
+	if g.result != nil {
+		inv.Result = g.result
+	}
 	return inv, nil
 }
 

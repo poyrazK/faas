@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ObjectStorageProviderRequestMetric is a cumulative count of outbound
@@ -34,4 +36,15 @@ type ObjectStorageProviderUsageStore interface {
 // request-metric test doubles and older exporters.
 type ObjectStorageProviderEgressStore interface {
 	RecordObjectStorageProviderEgress(context.Context, string, int64, time.Time) error
+}
+
+// ObjectStorageGatewayEgressStore reserves the full response length before
+// forwarding its first byte. Partial reads retain their conservative budget
+// reservation. This is a safety meter, not billable delivered-byte evidence.
+type ObjectStorageGatewayEgressStore interface {
+	ReserveObjectStorageGatewayEgress(context.Context, string, int64, time.Time, api.ObjectStoragePolicy) error
+}
+
+type ObjectStorageGatewayRequestStore interface {
+	ReserveObjectStorageGatewayRequest(context.Context, string, time.Time, api.ObjectStoragePolicy) error
 }

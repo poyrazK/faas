@@ -72,6 +72,7 @@ type appErrorsReceiver struct {
 	store   appErrorsStore
 	ops     *wire.OpsMetrics
 	enabled bool
+	gate    ingestGate
 }
 
 // newAppErrorsReceiver wires a production receiver.
@@ -103,7 +104,12 @@ func (a *appErrorsReceiver) IncrementAppError(stream apidpb.AppErrors_IncrementA
 			//nolint:nilerr // io.EOF on stream.Recv is the canonical "client half-closed" signal — returning nil closes the stream cleanly without surfacing the EOF as an error.
 			return nil
 		}
+		release, err := a.gate.acquire(stream.Context())
+		if err != nil {
+			return err
+		}
 		out := a.handleOne(stream.Context(), req)
+		release()
 		if err := stream.Send(out); err != nil {
 			// Stream is broken; bail. The gateway will observe
 			// the drop on its side.
@@ -378,8 +384,12 @@ func isPgNotFound(err error) bool {
 // registerAppErrorsReceiver binds the AppErrorsServer onto a gRPC
 // server. Called from runAppErrorsServer in main.go alongside the
 // other gRPC services (Advisory etc).
-func registerAppErrorsReceiver(s *grpc.Server, store appErrorsStore, ops *wire.OpsMetrics, enabled bool) {
-	apidpb.RegisterAppErrorsServer(s, newAppErrorsReceiver(store, ops, enabled))
+func registerAppErrorsReceiver(s *grpc.Server, store appErrorsStore, ops *wire.OpsMetrics, enabled bool, gate ...ingestGate) {
+	receiver := newAppErrorsReceiver(store, ops, enabled)
+	if len(gate) > 0 {
+		receiver.gate = gate[0]
+	}
+	apidpb.RegisterAppErrorsServer(s, receiver)
 }
 
 // newRowID returns a fresh UUID for the row's id column.

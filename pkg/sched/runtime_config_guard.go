@@ -31,6 +31,21 @@ func (e *Engine) runtimeConfigStale(ctx context.Context, ins state.Instance) boo
 			"instance", ins.ID, "app", ins.AppID, "err", err)
 		return true
 	}
+	if ins.DeploymentID != "" {
+		app, err := e.store.AppByID(ctx, ins.AppID)
+		if err == nil {
+			var values state.RuntimeAppValuesSnapshot
+			values, err = e.store.RuntimeAppValuesForDeployment(ctx, app.AccountID, ins.AppID, ins.DeploymentID)
+			if err == nil && (values.AccountID != app.AccountID || values.AppID != ins.AppID || values.DeploymentID != ins.DeploymentID) {
+				err = state.ErrConflict
+			}
+		}
+		if err != nil {
+			e.log.Warn("sched: runtime environment owner unavailable; not snapshotting",
+				"instance", ins.ID, "deployment", ins.DeploymentID, "err", err)
+			return true
+		}
+	}
 	if !ok {
 		changedAt = time.Unix(0, 0).UTC()
 	}

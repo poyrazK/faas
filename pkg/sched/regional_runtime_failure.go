@@ -97,13 +97,14 @@ func (e *Engine) cleanupFailedWake(ctx context.Context, input bootInput, mode, r
 	if e.cleanupFailedRegionalLaunch(ctx, input.insID, input.spec, reason) {
 		return
 	}
-	cleanupCtx := ctx
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), DestroyTimeout)
+	defer cleanupCancel()
 	if mode == string(state.InstanceModeMirror) {
 		var cancel context.CancelFunc
 		cleanupCtx, cancel = e.cleanupFailedMirrorAdmission(ctx, input)
 		defer cancel()
 	} else if teardown {
-		e.bestEffortDestroy(ctx, input.nodeID, input.insID)
+		e.bestEffortDestroy(cleanupCtx, input.nodeID, input.insID)
 	}
 	e.ledger.Release(input.insID)
 	e.transitionWithKind(cleanupCtx, input.insID, input.appID, state.StateFailed, "wake_boot_error", reason)

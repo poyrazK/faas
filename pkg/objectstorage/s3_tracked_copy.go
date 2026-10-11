@@ -92,7 +92,7 @@ func trackedCopySourceMatch(s CopySourceSnapshot, c CopySourceConditions) *strin
 func copyCustomerMetadata(source map[string]string) map[string]string {
 	metadata := cloneMetadata(source)
 	for key := range metadata {
-		if strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
+		if strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedObjectProtectionMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
 			delete(metadata, key)
 		}
 	}
@@ -135,6 +135,7 @@ func (p *S3) copyEncryptedObject(ctx context.Context, sourceBucket, bucket, rece
 	}
 	in.Metadata[ReservedUploadReceiptMetadataKey] = receipt
 	applyCopyEncryption(in, encryption)
+	applyCopyProtection(ctx, in)
 	in.CopySource = aws.String(trackedCopySource(sourceBucket, r.SourceKey, source))
 	in.CopySourceIfMatch = trackedCopySourceMatch(source, conditions)
 	in.CopySourceIfNoneMatch = stringPtrOrNil(conditions.IfNoneMatch)
@@ -161,6 +162,9 @@ func (p *S3) copyEncryptedObject(ctx context.Context, sourceBucket, bucket, rece
 	result, err := copyObjectResult(out)
 	if err == nil {
 		result.Encryption = publicObjectEncryption(encryption)
+		if !capturedWriteProtection(ctx).Empty() {
+			result.VerifiedProtection, err = p.ConfirmObjectWriteProtection(ctx, bucket, r.DestinationKey, result.ProviderVersionID, receipt, source.SizeBytes, false, result.ETag)
+		}
 	}
 	return result, err
 }

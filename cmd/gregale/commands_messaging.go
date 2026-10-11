@@ -42,7 +42,7 @@ func cmdSend(args []string) int {
 	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
 		return printErr("Invalid --idempotency-key", err)
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
@@ -103,7 +103,7 @@ func cmdDeliver(args []string) int {
 	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {
 		return printErr("Invalid --idempotency-key", err)
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}

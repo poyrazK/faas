@@ -18,8 +18,7 @@ func TestRuntimeConfigReceiptRejectsInputsReadBeforeChangeDespiteLaterReadiness(
 	if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "default", "MODE", "old"); err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	notif := &fakeNotifier{}
+	vmm, notif := &fakeVMM{}, &fakeNotifier{}
 	engine := newEngine(t, store, vmm, notif, "1.10.0")
 	vmm.coldBootHook = func() {
 		if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "default", "MODE", "new"); err != nil {
@@ -29,34 +28,25 @@ func TestRuntimeConfigReceiptRejectsInputsReadBeforeChangeDespiteLaterReadiness(
 			t.Error(err)
 		}
 	}
+	if _, err := engine.Wake(t.Context(), app.ID, deployment.ID, "", ""); err == nil {
+		t.Fatal("boot published inputs changed during readiness")
+	}
+	instances, err := store.ListInstancesForApp(t.Context(), app.ID)
+	if err != nil || len(instances) != 1 || instances[0].State != string(state.StateFailed) || engine.ledger.Concurrency(app.ID) != 0 || vmm.destroys != 1 {
+		t.Fatalf("rejected boot retained capacity or runtime: %+v destroys=%d %v", instances, vmm.destroys, err)
+	}
+	if _, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), instances[0].ID); err != nil || exists {
+		t.Fatalf("rejected boot acknowledged changed inputs: %v %v", exists, err)
+	}
+	vmm.coldBootHook = nil
 	result, err := engine.Wake(t.Context(), app.ID, deployment.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := store.InstanceByID(t.Context(), result.InstanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	boundary, _, err := state.RuntimeConfigChangedAtForScope(t.Context(), store, app.ID, "default")
-	if err != nil || !instance.StartedAt.After(boundary) {
-		t.Fatalf("fixture did not ready after the config change: %v %v %v", instance.StartedAt, boundary, err)
-	}
-	inputs, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), instance.ID)
-	if err != nil || !exists || inputs.Variables["MODE"] != "old" || !engine.runtimeConfigStale(t.Context(), instance) {
-		t.Fatalf("readiness relabelled old inputs: %+v %v %v", inputs, exists, err)
-	}
-	vmm.coldBootHook = nil
-	refreshed, err := engine.RefreshRuntimeConfig(t.Context(), app.ID, uuid.NewString())
-	if err != nil || refreshed.Instance == nil || refreshed.Instance.InstanceID == instance.ID {
-		t.Fatalf("rolling refresh accepted the stale receipt: %+v %v", refreshed, err)
-	}
-	ready, err := store.InstanceByID(t.Context(), refreshed.Instance.InstanceID)
-	if err != nil || engine.runtimeConfigStale(t.Context(), ready) {
-		t.Fatalf("replacement did not acknowledge current inputs: %+v %v", ready, err)
-	}
-	old, err := store.InstanceByID(t.Context(), instance.ID)
-	if err != nil || old.State != string(state.StateStopped) || vmm.coldBoots != 2 || notif.count(db.NotifySnapshotWritten) != 0 {
-		t.Fatalf("old process was not retired without capturing: %+v boots=%d snapshots=%d err=%v", old, vmm.coldBoots, notif.count(db.NotifySnapshotWritten), err)
+	ready, err := store.InstanceByID(t.Context(), result.InstanceID)
+	inputs, exists, receiptErr := store.InstanceRuntimeConfigReceipt(t.Context(), ready.ID)
+	if err != nil || receiptErr != nil || !exists || inputs.Variables["MODE"] != "new" || engine.runtimeConfigStale(t.Context(), ready) || vmm.coldBoots != 2 || notif.count(db.NotifySnapshotWritten) != 0 {
+		t.Fatalf("replacement did not acknowledge current inputs: %+v %+v %v %v", ready, inputs, err, receiptErr)
 	}
 }
 
@@ -89,13 +79,7 @@ func TestRuntimeConfigReceiptRestoreInheritsCapturedInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.ledger.Release(source.ID)
-	// The selected snapshot was fresh. A new value commits during the
-	// restore RPC, after preparation; readiness must inherit the capture.
-	vmm.restoreHook = func() {
-		if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "default", "MODE", "later"); err != nil {
-			t.Error(err)
-		}
-	}
+	// A successful restore acknowledges the captured inputs, not readiness.
 	result, err = engine.Wake(t.Context(), app.ID, deployment.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -104,22 +88,43 @@ func TestRuntimeConfigReceiptRestoreInheritsCapturedInputs(t *testing.T) {
 	if err != nil || !exists || inputs.Variables["MODE"] != "captured" || !inputs.Boundary.Equal(captured.Boundary) {
 		t.Fatalf("restore relabelled captured inputs: %+v %v %v", inputs, exists, err)
 	}
-	restored, err := store.InstanceByID(t.Context(), result.InstanceID)
-	if err != nil || !engine.runtimeConfigStale(t.Context(), restored) {
-		t.Fatalf("restore raced with config and was declared fresh: %+v %v", restored, err)
-	}
-	if err := engine.Park(t.Context(), result.InstanceID); err != nil {
+	if err := store.UpdateInstanceState(t.Context(), result.InstanceID, string(state.StateStopped)); err != nil {
 		t.Fatal(err)
 	}
+	engine.ledger.Release(result.InstanceID)
+	// The publication fence rejects a config edit racing the restore RPC.
+	vmm.restoreHook = func() {
+		if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "default", "MODE", "later"); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := engine.Wake(t.Context(), app.ID, deployment.ID, "", ""); err == nil {
+		t.Fatal("restore published configuration changed during readiness")
+	}
+	instances, err := store.ListInstancesForApp(t.Context(), app.ID)
+	if err != nil || len(instances) != 3 || engine.ledger.Concurrency(app.ID) != 0 || vmm.destroys != 1 {
+		t.Fatalf("rejected restore retained capacity: %+v %v", instances, err)
+	}
+	for _, instance := range instances {
+		if instance.State == string(state.StateFailed) {
+			if _, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), instance.ID); err != nil || exists {
+				t.Fatalf("rejected restore wrote an input receipt: %v %v", exists, err)
+			}
+		}
+	}
+	unchanged, exists, err := store.SnapshotRuntimeConfigReceipt(t.Context(), snapshot.ID)
+	if err != nil || !exists || unchanged.Variables["MODE"] != "captured" || !unchanged.Boundary.Equal(captured.Boundary) {
+		t.Fatalf("raced restore changed the capture receipt: %+v %v %v", unchanged, exists, err)
+	}
 	if vmm.snapshots != 0 || notif.count(db.NotifySnapshotWritten) != 0 {
-		t.Fatal("stale restored process published a new snapshot")
+		t.Fatal("rejected restored process published a new snapshot")
 	}
 }
 
 type runtimeEnvReadFailingStore struct{ *state.MemStore }
 
-func (runtimeEnvReadFailingStore) ListAppEnvInScope(context.Context, string, string, string) ([]state.AppEnv, error) {
-	return nil, errors.New("database unavailable")
+func (runtimeEnvReadFailingStore) RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error) {
+	return state.RuntimeAppValuesSnapshot{}, errors.New("database unavailable")
 }
 
 func TestRuntimeConfigReceiptInputReadFailureRollsBackAdmission(t *testing.T) {
@@ -139,8 +144,19 @@ func TestRuntimeConfigReceiptInputReadFailureRollsBackAdmission(t *testing.T) {
 				t.Fatalf("failed input read retained admission or dispatched vmmd: %v boots=%d restores=%d concurrent=%d", err, vmm.coldBoots, vmm.restores, engine.ledger.Concurrency(app.ID))
 			}
 			instances, err := store.ListInstancesForApp(t.Context(), app.ID)
-			if err != nil || len(instances) != 1 || state.State(instances[0].State).CountsForRAM() {
+			// Wake reads inputs before creating a row; prime rolls back its
+			// provisional row when the same read fails.
+			expectedRows := 0
+			if prime {
+				expectedRows = 1
+			}
+			if err != nil || len(instances) != expectedRows {
 				t.Fatalf("failed preparation retained a resident row: %+v %v", instances, err)
+			}
+			for _, instance := range instances {
+				if state.State(instance.State).CountsForRAM() {
+					t.Fatalf("failed preparation retained a resident row: %+v", instance)
+				}
 			}
 		})
 	}

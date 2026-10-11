@@ -8,6 +8,10 @@
  *
  */
 export type AlertRuleResponse = {
+  /**
+   * Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage.
+   */
+  post_deploy_rollback_window_seconds?: number;
   id: string;
   /**
    * Pinned app id. Empty string = account-wide rule.

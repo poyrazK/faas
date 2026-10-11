@@ -80,7 +80,7 @@ func (s *server) beginHostedCheckout(ctx context.Context, acct state.Account, pl
 			s.log.Error("create_customer",
 				"account", acct.ID,
 				"target_plan", logsanitize.Field(string(plan)),
-				"err", cerr)
+				"err", logsanitize.FieldAny(cerr))
 			return "", "", fmt.Errorf("create provider customer: %w", cerr)
 		}
 		if qualified {
@@ -112,7 +112,7 @@ func (s *server) beginHostedCheckout(ctx context.Context, acct state.Account, pl
 		s.log.Error("create_upgrade_tx",
 			"account", acct.ID,
 			"target_plan", logsanitize.Field(string(plan)),
-			"err", err)
+			"err", logsanitize.FieldAny(err))
 		return "", "", fmt.Errorf("create upgrade transaction: %w", err)
 	}
 	if txID == "" || checkoutURL == "" {

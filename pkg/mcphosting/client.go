@@ -23,13 +23,15 @@ import (
 const maxResponseBytes = 8 << 20
 
 // Client is a sequential, diagnostic MCP client. It never retries tool calls
-// or opens a standalone event stream. Use the official SDK for MRTR and Tasks.
+// and opens a task status stream only while waiting for a Tasks handle. Use
+// the official SDK for general MRTR and Tasks support.
 type Client struct {
 	Endpoint     string
 	Version      string
 	Token        string
 	HTTP         *http.Client
 	ExpectedAuth *AuthConfig
+	Capabilities ServerCapabilities
 	nextID       int
 }
 
@@ -59,6 +61,28 @@ type Tool struct {
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	Annotations  json.RawMessage `json:"annotations,omitempty"`
 }
+
+// InputRequest is one form request returned with a modern input_required
+// result. The request ID is opaque and must be sent back unchanged.
+type InputRequest struct {
+	Tool    string
+	ID      string
+	Message string
+	Schema  map[string]any
+}
+
+// InputResponse contains the user's decision for one form request.
+type InputResponse struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
+}
+
+// InputResponder gathers one form response. Return decline or cancel without
+// Content to stop the tool's requested work.
+type InputResponder func(context.Context, InputRequest) (InputResponse, error)
+
+const maxInteractiveInputRounds = 3
+const maxInteractiveInputRequests = 16
 
 func NewClient(endpoint, token, version string) (*Client, error) {
 	u, err := url.Parse(endpoint)
@@ -126,6 +150,10 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 		req.Header.Set("Mcp-Method", method)
 		if name, ok := p["name"].(string); ok {
 			req.Header.Set("Mcp-Name", encodeHeader(name))
+		} else if strings.HasPrefix(method, "tasks/") {
+			if taskID, ok := p["taskId"].(string); ok {
+				req.Header.Set("Mcp-Name", encodeHeader(taskID))
+			}
 		}
 	}
 	if c.Token != "" {
@@ -139,6 +167,9 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		if rpcErr := jsonRPCErrorCode(res, id); rpcErr != nil {
+			return x, rpcErr
+		}
 		return x, httpResponseError(res)
 	}
 	if notification {
@@ -177,6 +208,38 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	return x, nil
 }
 
+// jsonRPCErrorCode recognises a JSON-RPC error answering this request in a
+// non-2xx response. Revision 2026-07-28 servers answer an unsupported method
+// with HTTP 404 plus {"error":{"code":-32601}}; reporting it as a bare HTTP
+// 404 sent operators looking for a wrong URL (production-us hunt #4). Only
+// the numeric code is kept; server-controlled text stays excluded.
+func jsonRPCErrorCode(res *http.Response, id int) *RPCError {
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		return nil
+	}
+	// A body that is not JSON, or cannot be read, is simply not a
+	// JSON-RPC answer; the caller then reports the HTTP status.
+	mediaType, _, mediaErr := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	if mediaErr != nil || mediaType != "application/json" {
+		return nil //nolint:nilerr // not a JSON-RPC body; the HTTP status is the error.
+	}
+	data, readErr := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if readErr != nil {
+		return nil //nolint:nilerr // an unreadable body carries no JSON-RPC code.
+	}
+	var m struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      *int   `json:"id"`
+		Error   *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &m) != nil || m.JSONRPC != "2.0" || m.Error == nil || m.ID == nil || *m.ID != id {
+		return nil //nolint:nilerr // not a JSON-RPC error for this request.
+	}
+	return &RPCError{Code: m.Error.Code}
+}
+
 func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, error) {
 	var m struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -206,7 +269,7 @@ func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, er
 		return false, fmt.Errorf("MCP response ID does not match request")
 	}
 	if m.Error != nil {
-		return true, fmt.Errorf("MCP JSON-RPC error %d", m.Error.Code)
+		return true, &RPCError{Code: m.Error.Code}
 	}
 	if m.Result == nil || bytes.Equal(m.Result, []byte("null")) {
 		return true, fmt.Errorf("MCP response has no result")
@@ -257,7 +320,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("stateful MCP session detected; use a stateless server for this hosting profile")
 	}
 	var result struct {
-		ProtocolVersion string `json:"protocolVersion"`
+		ProtocolVersion string             `json:"protocolVersion"`
+		Capabilities    ServerCapabilities `json:"capabilities"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil {
 		return fmt.Errorf("decode initialize: %w", err)
@@ -265,6 +329,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if result.ProtocolVersion != c.Version {
 		return fmt.Errorf("server negotiated unsupported protocol %q", result.ProtocolVersion)
 	}
+	c.Capabilities = result.Capabilities
 	_, err = c.request(ctx, "notifications/initialized", nil, nil, true)
 	return err
 }
@@ -327,43 +392,179 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, Exchange, error) {
 }
 
 func (c *Client) Call(ctx context.Context, tool Tool, args map[string]any, progress bool) (Exchange, error) {
+	return c.CallWithOptions(ctx, tool, args, CallOptions{Progress: progress})
+}
+
+// CallInteractive opts in to bounded modern elicitation form requests. Calls
+// without this explicit method retain Call's no-retry behavior.
+func (c *Client) CallInteractive(ctx context.Context, tool Tool, args map[string]any, progress bool, respond InputResponder) (Exchange, error) {
+	if c.Version != ProtocolVersion {
+		return Exchange{}, fmt.Errorf("interactive input requires protocol %s", ProtocolVersion)
+	}
+	if respond == nil {
+		return Exchange{}, fmt.Errorf("interactive input requires a response handler")
+	}
+	x, err := c.CallWithOptions(ctx, tool, args, CallOptions{Progress: progress, Responder: respond})
+	if err != nil {
+		// An input_required result can contain opaque continuation state and
+		// server-provided form data. Do not surface that partial result as CLI
+		// output when an interactive exchange fails.
+		x.Result = nil
+	}
+	return x, err
+}
+
+// CallWithOptions permits callers to opt into modern Tasks support. When
+// EnableTasks is true, a task handle may be returned directly; WaitForTask
+// additionally polls until completion. Neither option retries tools/call.
+func (c *Client) CallWithOptions(ctx context.Context, tool Tool, args map[string]any, options CallOptions) (Exchange, error) {
+	if (options.EnableTasks || options.WaitForTask || options.Responder != nil) && c.Version != ProtocolVersion {
+		return Exchange{}, fmt.Errorf("interactive input and MCP Tasks require protocol %s", ProtocolVersion)
+	}
+	if options.WaitForTask {
+		options.EnableTasks = true
+	}
+	if options.EnableTasks {
+		if err := c.requireTasksCapability(ctx); err != nil {
+			return Exchange{}, err
+		}
+	}
+	return c.call(ctx, tool, args, options)
+}
+
+func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, options CallOptions) (Exchange, error) {
 	headers, err := parameterHeaders(tool.InputSchema, args)
 	if err != nil {
 		return Exchange{}, err
 	}
 	params := map[string]any{"name": tool.Name, "arguments": args}
-	if progress {
+	if options.Progress {
 		params["_meta"] = map[string]any{"progressToken": "gregale-doctor"}
 	}
-	x, err := c.request(ctx, "tools/call", params, headers, false)
-	if err != nil {
-		return x, err
+	if options.Responder != nil || options.EnableTasks {
+		meta, _ := params["_meta"].(map[string]any)
+		if meta == nil {
+			meta = make(map[string]any)
+			params["_meta"] = meta
+		}
+		capabilities := make(map[string]any)
+		if options.Responder != nil {
+			capabilities["elicitation"] = map[string]any{"form": map[string]any{}}
+		}
+		if options.EnableTasks {
+			capabilities["extensions"] = map[string]any{TasksExtensionID: map[string]any{}}
+		}
+		meta["io.modelcontextprotocol/clientCapabilities"] = capabilities
 	}
-	if x.SessionID != "" {
-		return x, fmt.Errorf("stateful MCP session detected")
+	startedAt := time.Now()
+	inputRounds := 0
+	for {
+		x, err := c.request(ctx, "tools/call", params, headers, false)
+		if err != nil {
+			return x, err
+		}
+		if x.SessionID != "" {
+			return x, fmt.Errorf("stateful MCP session detected")
+		}
+		var result struct {
+			IsError       bool                        `json:"isError"`
+			ResultType    string                      `json:"resultType"`
+			Content       *[]json.RawMessage          `json:"content"`
+			RequestState  *string                     `json:"requestState"`
+			InputRequests map[string]TaskInputRequest `json:"inputRequests"`
+		}
+		if err := json.Unmarshal(x.Result, &result); err != nil {
+			return x, fmt.Errorf("decode tool result: %w", err)
+		}
+		if result.IsError {
+			return x, fmt.Errorf("MCP tool returned isError=true")
+		}
+		if result.ResultType == "input_required" && options.Responder != nil {
+			if inputRounds >= maxInteractiveInputRounds {
+				return x, fmt.Errorf("MCP tool exceeded the %d interactive input round limit", maxInteractiveInputRounds)
+			}
+			if (result.RequestState != nil && len(*result.RequestState) > 64<<10) || len(result.InputRequests) > maxInteractiveInputRequests {
+				return x, fmt.Errorf("MCP tool returned an invalid interactive input request")
+			}
+			var requests []InputRequest
+			if len(result.InputRequests) != 0 {
+				requests, err = parseTaskInputRequests(tool.Name, result.InputRequests)
+				if err != nil {
+					return x, err
+				}
+			}
+			responses := make(map[string]InputResponse, len(requests))
+			for _, form := range requests {
+				response, err := options.Responder(ctx, form)
+				if err != nil {
+					return x, err
+				}
+				if err := validateInputResponse(response); err != nil {
+					return x, err
+				}
+				responses[form.ID] = response
+			}
+			if len(responses) == 0 {
+				delete(params, "inputResponses")
+			} else {
+				params["inputResponses"] = responses
+			}
+			if result.RequestState == nil {
+				delete(params, "requestState")
+			} else {
+				params["requestState"] = *result.RequestState
+			}
+			inputRounds++
+			continue
+		}
+		if result.ResultType == "task" {
+			if !options.EnableTasks {
+				return x, errors.New("MCP server returned a task without Tasks capability; enable Tasks support")
+			}
+			task, err := decodeTask(x.Result, "task", "")
+			if err != nil {
+				return x, err
+			}
+			if !options.WaitForTask {
+				return x, nil
+			}
+			task, err = c.waitForTask(ctx, tool.Name, task, options)
+			x.DurationMS = time.Since(startedAt).Milliseconds()
+			if err != nil {
+				return x, err
+			}
+			x.Result = task.Result
+			if len(task.Result) == 0 {
+				return x, errors.New("completed MCP task has no result")
+			}
+			var completed struct {
+				IsError bool               `json:"isError"`
+				Content *[]json.RawMessage `json:"content"`
+			}
+			if err := json.Unmarshal(task.Result, &completed); err != nil || completed.Content == nil {
+				return x, errors.New("completed MCP task contains an invalid tool result")
+			}
+			if completed.IsError {
+				return x, errors.New("MCP task completed with a tool error")
+			}
+			return x, nil
+		}
+		if result.ResultType != "" && result.ResultType != "complete" {
+			return x, fmt.Errorf("tool requires %s handling; enable the supported interactive input or Tasks flow", result.ResultType)
+		}
+		if result.Content == nil {
+			return x, fmt.Errorf("MCP tool result must contain a content array")
+		}
+		return x, nil
 	}
-	var result struct {
-		IsError    bool               `json:"isError"`
-		ResultType string             `json:"resultType"`
-		Content    *[]json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal(x.Result, &result); err != nil {
-		return x, fmt.Errorf("decode tool result: %w", err)
-	}
-	if result.IsError {
-		return x, fmt.Errorf("MCP tool returned isError=true")
-	}
-	if result.ResultType != "" && result.ResultType != "complete" {
-		return x, fmt.Errorf("tool requires %s handling; use an MCP SDK client for Tasks and input requests", result.ResultType)
-	}
-	if result.Content == nil {
-		return x, fmt.Errorf("MCP tool result must contain a content array")
-	}
-	return x, nil
 }
 
 func (c *Client) RejectsUntrustedOrigin(ctx context.Context) error {
-	_, err := c.request(ctx, "tools/list", nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
+	method := "server/discover"
+	if c.Version == LegacyProtocolVersion {
+		method = "tools/list"
+	}
+	_, err := c.request(ctx, method, nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
 	var upstream *api.APIError
 	if !errors.As(err, &upstream) || upstream.Problem.Status != http.StatusForbidden {
 		return fmt.Errorf("untrusted Origin must return HTTP 403")

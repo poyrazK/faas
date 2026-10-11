@@ -88,7 +88,11 @@ func (h *Handler) prepareGatewayRead(r *http.Request, req requestContext, key, n
 }
 
 func (h *Handler) downloadVersionHeaders(w http.ResponseWriter, r *http.Request, req requestContext, key, expected string, response *http.Response) bool {
-	native := response.Header.Get("X-Amz-Version-Id")
+	native, err := objectstorage.ProviderReadVersionHeader(req.provider, response)
+	if err != nil {
+		h.providerError(w, r, req, err, key)
+		return false
+	}
 	markerValue := response.Header.Get("X-Amz-Delete-Marker")
 	marker := markerValue == "true"
 	if markerValue != "" && markerValue != "true" && markerValue != "false" || len(response.Header.Values("X-Amz-Version-Id")) > 1 || len(response.Header.Values("X-Amz-Delete-Marker")) > 1 || marker && (native == "" || expected == "" && response.StatusCode != http.StatusNotFound || expected != "" && response.StatusCode != http.StatusMethodNotAllowed) {

@@ -30,10 +30,10 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 		return nil, nil, 0, err
 	}
 	plan := api.Plan(target.Plan)
-	if !plan.WorkflowsAllowed() || (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid || target.AppStatus == string(AppDeleted) || target.MaintenanceMode || target.PlatformTenantRequired {
+	if !plan.WorkflowsAllowed() || (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid || target.AppStatus == string(AppDeleted) || target.MaintenanceMode {
 		return nil, nil, 0, ErrWorkflowResumeUnavailable
 	}
-	if _, err := q.LockWorkflowScheduleTarget(ctx, tx, mustPgUUID(opts.AppID)); err != nil {
+	if _, err := q.LockWorkflowResumeTarget(ctx, tx, mustPgUUID(opts.AppID)); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, 0, ErrWorkflowResumeUnavailable
 		}
@@ -46,7 +46,14 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	run := WorkflowRun{ID: opts.RunID, AppID: opts.AppID, WorkflowName: row.WorkflowName, Status: row.Status, CurrentStep: workflowResumeTextPtr(row.CurrentStep), Input: row.Input, Output: row.Output, DefinitionSnapshot: row.DefinitionSnapshot, ScheduledFor: row.ScheduledFor.Time, StartedAt: workflowResumeTimePtr(row.StartedAt), FinishedAt: workflowResumeTimePtr(row.FinishedAt), LastError: workflowResumeTextPtr(row.LastError), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, ResumeCount: int(row.ResumeCount), CancelledAt: workflowResumeTimePtr(row.CancelledAt)}
+	platformTenantID := pgUUIDString(row.PlatformTenantID)
+	if opts.PlatformTenantID != "" && platformTenantID != opts.PlatformTenantID {
+		return nil, nil, 0, ErrWorkflowRunNotFound
+	}
+	if target.PlatformTenantRequired && platformTenantID == "" {
+		return nil, nil, 0, ErrWorkflowResumeUnavailable
+	}
+	run := WorkflowRun{ID: opts.RunID, AppID: opts.AppID, PlatformTenantID: pgUUIDString(row.PlatformTenantID), WorkflowName: row.WorkflowName, Status: row.Status, CurrentStep: workflowResumeTextPtr(row.CurrentStep), Input: row.Input, Output: row.Output, DefinitionSnapshot: row.DefinitionSnapshot, ScheduledFor: row.ScheduledFor.Time, StartedAt: workflowResumeTimePtr(row.StartedAt), FinishedAt: workflowResumeTimePtr(row.FinishedAt), LastError: workflowResumeTextPtr(row.LastError), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, ResumeCount: int(row.ResumeCount), CancelledAt: workflowResumeTimePtr(row.CancelledAt)}
 	rows, err := q.WorkflowResumeSteps(ctx, tx, mustPgUUID(run.ID))
 	if err != nil {
 		return nil, nil, 0, err

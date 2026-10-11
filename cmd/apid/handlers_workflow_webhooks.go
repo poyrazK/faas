@@ -112,12 +112,12 @@ func (s *server) getWebhookAutomationReceipt(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, webhookAutomationReceiptResponse(receipt))
 }
-func (s *server) receiveWebhookAutomation(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, body []byte) bool {
+func (s *server) receiveWebhookAutomation(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, eventID, eventType string, body []byte) bool {
 	store, ok := s.store.(state.WebhookAutomationStore)
 	if !ok {
 		return false
 	}
-	receipt, handled, err := store.AcceptWebhookAutomation(r.Context(), endpoint, body, s.workflowRuntimeEnabled)
+	receipt, handled, err := store.AcceptVerifiedWebhookAutomation(r.Context(), endpoint, eventID, eventType, body, s.workflowRuntimeEnabled)
 	if !handled {
 		return false
 	}

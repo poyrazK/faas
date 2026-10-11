@@ -3,6 +3,8 @@ package state
 import (
 	"errors"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -22,20 +24,21 @@ const (
 // completed. Gateway identities are node names from the bounded compute-node
 // registry, never request-derived labels.
 type ServiceRolloutHandoff struct {
-	Action                  string     `json:"action,omitempty"`
-	Phase                   string     `json:"phase,omitempty"`
-	PredecessorDeploymentID string     `json:"predecessor_deployment_id,omitempty"`
-	Generation              int64      `json:"generation,omitempty"`
-	ExpectedGateways        []string   `json:"expected_gateways,omitempty"`
-	AcknowledgedGateways    []string   `json:"acknowledged_gateways,omitempty"`
-	MissingGateways         []string   `json:"missing_gateways,omitempty"`
-	RetryCount              int        `json:"retry_count,omitempty"`
-	LastError               string     `json:"last_error,omitempty"`
-	Reason                  string     `json:"reason,omitempty"`
-	StartedAt               *time.Time `json:"started_at,omitempty"`
-	UpdatedAt               *time.Time `json:"updated_at,omitempty"`
-	AcknowledgedAt          *time.Time `json:"acknowledged_at,omitempty"`
-	CompletedAt             *time.Time `json:"completed_at,omitempty"`
+	BindingsCheck           *api.ServiceRolloutBindingGate `json:"bindings_check,omitempty"`
+	Action                  string                         `json:"action,omitempty"`
+	Phase                   string                         `json:"phase,omitempty"`
+	PredecessorDeploymentID string                         `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64                          `json:"generation,omitempty"`
+	ExpectedGateways        []string                       `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string                       `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string                       `json:"missing_gateways,omitempty"`
+	RetryCount              int                            `json:"retry_count,omitempty"`
+	LastError               string                         `json:"last_error,omitempty"`
+	Reason                  string                         `json:"reason,omitempty"`
+	StartedAt               *time.Time                     `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time                     `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time                     `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time                     `json:"completed_at,omitempty"`
 }
 
 func (h ServiceRolloutHandoff) ActiveAbort() bool {

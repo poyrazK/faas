@@ -53,6 +53,13 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 			result.UploadResult = UploadResult{}
 			return result, err
 		}
+		if !capturedWriteProtection(ctx).Empty() {
+			result.VerifiedProtection, err = p.ConfirmObjectWriteProtection(ctx, bucket, r.Key, result.ProviderVersionID, r.SessionID, r.SizeBytes, true, result.ETag)
+			if err != nil {
+				result.UploadResult = UploadResult{}
+				return result, err
+			}
+		}
 		result.RecoveryCursor = ""
 		return result, nil
 	}
@@ -135,10 +142,10 @@ func (p *S3) recoverMultipartResult(ctx context.Context, bucket string, r Multip
 			if !validUploadETag(aws.ToString(head.ETag)) || !validTrackedProofHeaders(head.ResultMetadata, ReservedMultipartSessionMetadataKey) {
 				return result, ErrUnavailable
 			}
-			if !validEncryptionResponse(head.ResultMetadata, r.Encryption) || !validStoredEncryptionResponse(head.Metadata, head.ResultMetadata, r.Encryption) {
+			if !validEncryptionResponse(head.ResultMetadata, r.Encryption) || !validProtectedHead(ctx, head) || !validStoredEncryptionResponse(head.Metadata, head.ResultMetadata, r.Encryption) {
 				return result, ErrUnavailable
 			}
-			result.UploadResult = UploadResult{Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(head.ETag), ProviderVersionID: aws.ToString(head.VersionId)}
+			result.UploadResult = UploadResult{VerifiedProtection: capturedWriteProtection(ctx).Proof(), Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(head.ETag), ProviderVersionID: aws.ToString(head.VersionId)}
 			result.RecoveryCursor = ""
 			return result, nil
 		}

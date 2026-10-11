@@ -32,10 +32,7 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
-	var req struct {
-		Name            string `json:"name"`
-		OperationPolicy string `json:"operation_policy"`
-	}
+	var req api.CreateCommitSourceRequest
 	if !decodeJSONLimit(w, r, &req, 4096) {
 		return
 	}
@@ -44,7 +41,7 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if strings.TrimSpace(req.OperationPolicy) == "" {
-		api.WriteProblem(w, api.ErrValidation("operation_policy is required; use an account-scoped queue policy containing this application"))
+		api.WriteProblem(w, api.ErrValidation("operation_policy is required; use a compatible queue policy containing this application"))
 		return
 	}
 	store, ok := s.store.(state.CommitStore)
@@ -52,13 +49,13 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
 		return
 	}
-	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, OperationPolicy: req.OperationPolicy})
+	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, OperationPolicy: req.OperationPolicy, ContractVersion: req.ContractVersion, AllowTenantSelection: req.AllowTenantSelection})
 	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application or operation policy"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application, operation policy, contract version or routing authority"))
 		return
 	}
 	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.ErrValidation("operation_policy must be an active account-scoped queue policy containing this application"))
+		api.WriteProblem(w, api.ErrValidation("source contract and selection grant require a compatible active queue policy containing this application"))
 		return
 	}
 	if err != nil {
@@ -100,7 +97,7 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 	}
 	// Replay must survive release expiry, destination changes, and a full queue.
 	if _, lookupErr := store.CommitReceiptByEvent(r.Context(), acct.ID, source, event.ID); lookupErr == nil {
-		receipt, replayErr := store.AcceptCommitEvent(r.Context(), acct.ID, source, event.ID, event.Type, event.Data, state.Invocation{}, 0)
+		receipt, replayErr := store.AcceptCommitEvent(r.Context(), acct.ID, source, event.ID, event.Type, event.Data, state.Invocation{}, 0, event.Routing)
 		if errors.Is(replayErr, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(409, "commit_identity_conflict", "Event identity conflict", "event ID was already accepted with different content"))
 		} else if replayErr != nil {
@@ -141,17 +138,20 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrValidation("commit destination requires a request workload"))
 		return
 	}
-	if app.PlatformTenantRequired {
-		api.WriteProblem(w, api.ErrValidation("commit tenant targeting is not yet supported"))
+	if app.PlatformTenantRequired && !src.AllowTenantSelection {
+		api.WriteProblem(w, api.ErrValidation("this source is not authorized to select a customer"))
 		return
 	}
 	inv := state.Invocation{AccountID: acct.ID, AppID: src.AppID, Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/", Payload: payload, DueAt: time.Now().UTC(), RetryPolicyJSON: effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts)}
+	if event.Routing != nil {
+		inv.PlatformTenantID = event.Routing.PlatformTenantID
+	}
 	inv, _, err = state.ResolveInvocationVersion(r.Context(), s.store, inv)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("resolve commit destination version"))
 		return
 	}
-	receipt, err := store.AcceptCommitEvent(r.Context(), acct.ID, source, event.ID, event.Type, event.Data, inv, limits.MaxQueueDepth)
+	receipt, err := store.AcceptCommitEvent(r.Context(), acct.ID, source, event.ID, event.Type, event.Data, inv, limits.MaxQueueDepth, event.Routing)
 	switch {
 	case errors.Is(err, state.ErrConflict), errors.Is(err, exclusivework.ErrIdentityConflict):
 		api.WriteProblem(w, api.NewProblem(409, "commit_identity_conflict", "Event identity conflict", "event ID was already accepted with different content"))
@@ -159,8 +159,12 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("commit destination queue full"))
 	case errors.Is(err, state.ErrQuotaExceeded):
 		writeExclusiveError(w, err)
-	case errors.Is(err, state.ErrInvalidArgument):
+	case errors.Is(err, state.ErrPlatformTenantSuspended):
+		writeExclusiveError(w, err)
+	case errors.Is(err, state.ErrInvalidArgument) && !src.Enabled:
 		api.WriteProblem(w, api.NewProblem(409, "commit_source_paused", "Source unavailable", "commit source is not accepting new events"))
+	case errors.Is(err, state.ErrInvalidArgument), errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, api.ErrValidation("routing must match the source contract and select an active customer linked to this application"))
 	case err != nil:
 		api.WriteProblem(w, api.ErrCapacity("accept commit event"))
 	default:
@@ -222,7 +226,7 @@ func (s *server) setCommitSourceEnabled(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if errors.Is(err, state.ErrInvalidArgument) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_operation_policy_unavailable", "Operation policy unavailable", "the source requires an active account-scoped queue policy containing its application"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_operation_policy_unavailable", "Operation policy unavailable", "the source requires a compatible active queue policy and its original routing authority"))
 		return
 	}
 	if err != nil {

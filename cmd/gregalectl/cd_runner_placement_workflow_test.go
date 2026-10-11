@@ -138,12 +138,19 @@ func TestFleetRunnerJobsInstallPythonToolsInAVenv(t *testing.T) {
 	}
 	controlPlane := readWorkflow(t, "cd-controlplane.yml")
 	for _, want := range []string{
-		`python3 -m venv "$RUNNER_TEMP/ansible-venv"`,
-		`echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"`,
+		"scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==",
+		`echo "$venv_bin" >> "$GITHUB_PATH"`,
 	} {
 		if !strings.Contains(controlPlane, want) {
 			t.Errorf("cd-controlplane renderer install lost %q", want)
 		}
+	}
+	installer, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "ensure-ansible-toolchain.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(installer), `python3 -m venv "$dir/venv"`) {
+		t.Error("ensure-ansible-toolchain.sh no longer installs ansible-core into a venv")
 	}
 	role, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "github_actions_runner", "tasks", "main.yml"))
 	if err != nil {

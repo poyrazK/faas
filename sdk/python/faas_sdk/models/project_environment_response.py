@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
     from ..models.project_environment_clone_response import ProjectEnvironmentCloneResponse
 
 
@@ -31,6 +32,9 @@ class ProjectEnvironmentResponse:
     clone: ProjectEnvironmentCloneResponse | Unset = UNSET
     """Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only
     after explicit opt-in."""
+    clone_operation: ProjectEnvironmentCloneOperationResponse | Unset = UNSET
+    """Durable clone progress within one account and project, excluding private source configuration and worker
+    credentials."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +56,10 @@ class ProjectEnvironmentResponse:
         if not isinstance(self.clone, Unset):
             clone = self.clone.to_dict()
 
+        clone_operation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.clone_operation, Unset):
+            clone_operation = self.clone_operation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -68,11 +76,14 @@ class ProjectEnvironmentResponse:
             field_dict["cloned_from"] = cloned_from
         if clone is not UNSET:
             field_dict["clone"] = clone
+        if clone_operation is not UNSET:
+            field_dict["clone_operation"] = clone_operation
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
         from ..models.project_environment_clone_response import ProjectEnvironmentCloneResponse
 
         d = dict(src_dict)
@@ -97,6 +108,13 @@ class ProjectEnvironmentResponse:
         else:
             clone = ProjectEnvironmentCloneResponse.from_dict(_clone)
 
+        _clone_operation = d.pop("clone_operation", UNSET)
+        clone_operation: ProjectEnvironmentCloneOperationResponse | Unset
+        if isinstance(_clone_operation, Unset):
+            clone_operation = UNSET
+        else:
+            clone_operation = ProjectEnvironmentCloneOperationResponse.from_dict(_clone_operation)
+
         project_environment_response = cls(
             id=id,
             project_id=project_id,
@@ -106,6 +124,7 @@ class ProjectEnvironmentResponse:
             updated_at=updated_at,
             cloned_from=cloned_from,
             clone=clone,
+            clone_operation=clone_operation,
         )
 
         project_environment_response.additional_properties = d

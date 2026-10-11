@@ -16,11 +16,15 @@ class CreateAppTaskRequest:
     """One manual command to execute against the app's live deployment.
     verification_deployment_id optionally selects an exact app-owned,
     materialized live deployment for the reserved service, PostgreSQL,
-    object-storage or configured outbound verification probes only. Generic and smoke commands
-    cannot select a deployment. An explicit probe requires authorized,
-    managed binding metadata and remains live at atomic task admission.
-    The selector is supported only on direct POST /v1/apps/{slug}/tasks;
-    exclusive-operation task admission rejects it.
+    object-storage or configured outbound verification probes only.
+    smoke_deployment_id selects an exact app-owned, materialized live caller
+    deployment for the reserved service smoke GET command. The service must
+    be declared on the caller; target authorization remains enforced by the gateway.
+    Generic commands cannot select a deployment. The selectors are mutually
+    exclusive and require the selected deployment to remain live at atomic
+    task admission. An explicit verification probe also requires authorized,
+    managed binding metadata. Both selectors are supported only on direct
+    POST /v1/apps/{slug}/tasks; exclusive-operation task admission rejects them.
     `command_shell=false` executes argv directly. Shell mode requires one
     command string and is explicit so clients preserve quoting semantics.
     `__gregale_service_binding_probe_v1__ <service>` is reserved for the
@@ -34,6 +38,9 @@ class CreateAppTaskRequest:
     verification_deployment_id: UUID | Unset = UNSET
     """Exact source deployment for a reserved binding verification probe; omit for the current manual-task
     selection."""
+    smoke_deployment_id: UUID | Unset = UNSET
+    """Exact caller deployment for a reserved service smoke GET; mutually exclusive with
+    verification_deployment_id. Omit for automatic caller selection."""
     command_shell: bool | Unset = False
     timeout_seconds: int | Unset = UNSET
     """Zero uses the 600-second default."""
@@ -46,6 +53,10 @@ class CreateAppTaskRequest:
         verification_deployment_id: str | Unset = UNSET
         if not isinstance(self.verification_deployment_id, Unset):
             verification_deployment_id = str(self.verification_deployment_id)
+
+        smoke_deployment_id: str | Unset = UNSET
+        if not isinstance(self.smoke_deployment_id, Unset):
+            smoke_deployment_id = str(self.smoke_deployment_id)
 
         command_shell = self.command_shell
 
@@ -62,6 +73,8 @@ class CreateAppTaskRequest:
         )
         if verification_deployment_id is not UNSET:
             field_dict["verification_deployment_id"] = verification_deployment_id
+        if smoke_deployment_id is not UNSET:
+            field_dict["smoke_deployment_id"] = smoke_deployment_id
         if command_shell is not UNSET:
             field_dict["command_shell"] = command_shell
         if timeout_seconds is not UNSET:
@@ -83,6 +96,13 @@ class CreateAppTaskRequest:
         else:
             verification_deployment_id = UUID(_verification_deployment_id)
 
+        _smoke_deployment_id = d.pop("smoke_deployment_id", UNSET)
+        smoke_deployment_id: UUID | Unset
+        if isinstance(_smoke_deployment_id, Unset):
+            smoke_deployment_id = UNSET
+        else:
+            smoke_deployment_id = UUID(_smoke_deployment_id)
+
         command_shell = d.pop("command_shell", UNSET)
 
         timeout_seconds = d.pop("timeout_seconds", UNSET)
@@ -92,6 +112,7 @@ class CreateAppTaskRequest:
         create_app_task_request = cls(
             command=command,
             verification_deployment_id=verification_deployment_id,
+            smoke_deployment_id=smoke_deployment_id,
             command_shell=command_shell,
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,

@@ -31,6 +31,11 @@ func TestMCPContractCLIJourney(t *testing.T) {
 			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
+		if request.Method == "server/discover" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, request.ID, mcphosting.ProtocolVersion)
+			return
+		}
 		if request.Method != "tools/list" {
 			calls.Add(1)
 		}
@@ -96,14 +101,109 @@ func TestMCPContractCLIJourney(t *testing.T) {
 	}
 }
 
+func TestMCPResourcePromptOnlyServerJourneyAndPrivateSnapshot(t *testing.T) {
+	oldOut, oldJSON := osStdout, jsonOutput
+	var output bytes.Buffer
+	osStdout, jsonOutput = &output, true
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	var reads, renders, toolCalls atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		var request struct {
+			ID     int            `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		respond := func(body string) { _, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":%s}`, request.ID, body) }
+		switch request.Method {
+		case "server/discover":
+			respond(fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"resources":{},"prompts":{}}}`, mcphosting.ProtocolVersion))
+		case "resources/list":
+			respond(`{"resources":[{"uri":"file:///reports/latest","name":"latest","description":"Current report"}]}`)
+		case "resources/templates/list":
+			respond(`{"resourceTemplates":[]}`)
+		case "prompts/list":
+			respond(`{"prompts":[{"name":"summarize","description":"Summarize a report","arguments":[{"name":"period","required":true}]}]}`)
+		case "resources/read":
+			reads.Add(1)
+			respond(`{"contents":[{"uri":"file:///reports/latest","text":"PRIVATE_RESOURCE_BODY"}]}`)
+		case "prompts/get":
+			renders.Add(1)
+			respond(`{"messages":[{"role":"user","content":{"type":"text","text":"PRIVATE_RENDERED_PROMPT"}}]}`)
+		case "tools/list", "tools/call":
+			toolCalls.Add(1)
+			respond(`{"tools":[]}`)
+		default:
+			t.Errorf("unexpected method %q", request.Method)
+			respond(`{}`)
+		}
+	}))
+	defer s.Close()
+	commands := [][]string{
+		{"doctor", "--url", s.URL + "/mcp"},
+		{"resources", "--url", s.URL + "/mcp"},
+		{"prompts", "--url", s.URL + "/mcp"},
+	}
+	lock := filepath.Join(t.TempDir(), "catalog.json")
+	commands = append(commands, []string{"lock", "--url", s.URL + "/mcp", "--out", lock})
+	for _, command := range commands {
+		output.Reset()
+		if code := cmdMCP(command); code != 0 {
+			t.Fatalf("%v exit=%d: %s", command, code, output.String())
+		}
+		if strings.Contains(output.String(), "PRIVATE_RESOURCE_BODY") || strings.Contains(output.String(), "PRIVATE_RENDERED_PROMPT") {
+			t.Fatalf("non-explicit command exposed private content: %v: %s", command, output.String())
+		}
+	}
+	data, err := os.ReadFile(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract mcphosting.Contract
+	if err := json.Unmarshal(data, &contract); err != nil {
+		t.Fatal(err)
+	}
+	if contract.Version != 2 || len(contract.Capabilities) != 2 || contract.Capabilities[0] != "prompts" || contract.Capabilities[1] != "resources" || len(contract.Tools) != 0 || len(contract.Resources) != 1 || len(contract.Prompts) != 1 || strings.Contains(string(data), "PRIVATE_") {
+		t.Fatalf("unsafe or incomplete lock: %s", data)
+	}
+	output.Reset()
+	if code := cmdMCP([]string{"resource-read", "--url", s.URL + "/mcp", "--uri", "file:///reports/latest"}); code != 0 || !strings.Contains(output.String(), "PRIVATE_RESOURCE_BODY") {
+		t.Fatalf("explicit resource read exit=%d: %s", code, output.String())
+	}
+	output.Reset()
+	if code := cmdMCP([]string{"prompt-get", "--url", s.URL + "/mcp", "--prompt", "summarize", "--arguments", `{"period":"week"}`}); code != 0 || !strings.Contains(output.String(), "PRIVATE_RENDERED_PROMPT") {
+		t.Fatalf("explicit prompt render exit=%d: %s", code, output.String())
+	}
+	if reads.Load() != 1 || renders.Load() != 1 || toolCalls.Load() != 0 {
+		t.Fatalf("read=%d render=%d tools=%d", reads.Load(), renders.Load(), toolCalls.Load())
+	}
+}
+
 func TestMCPContractLockRejectsIncompleteDiscovery(t *testing.T) {
 	oldOut, oldJSON := osStdout, jsonOutput
 	var output bytes.Buffer
 	osStdout, jsonOutput = &output, true
 	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"bad","inputSchema":{"properties":{"n":{"type":"number","x-mcp-header":"N"}}}},{"name":"good","inputSchema":{}}]}}`)
+		if request.Method == "server/discover" {
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}`, request.ID)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"bad","inputSchema":{"properties":{"n":{"type":"number","x-mcp-header":"N"}}}},{"name":"good","inputSchema":{}}]}}`, request.ID)
 	}))
 	defer s.Close()
 	path := filepath.Join(t.TempDir(), "lock.json")

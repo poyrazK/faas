@@ -502,6 +502,12 @@ func computeNodeValue(daemon string, dc *manifest.DaemonConfig, k manifest.Table
 // managed host, so a table missing here is missing in production even
 // when an Ansible template sets it.
 func daemonTableValue(dc *manifest.DaemonConfig, k manifest.TableKey) string {
+	if k.Table == "runtime_quota_transport" && dc.RuntimeQuotaTransport != nil {
+		return runtimeQuotaTableValue(dc.RuntimeQuotaTransport, k.Key)
+	}
+	if k.Table == "global_ingress_publisher" && k.Key == "manifest_path" && dc.GlobalIngressPublisher != nil {
+		return dc.GlobalIngressPublisher.ManifestPath
+	}
 	switch k.Table + "." + k.Key {
 	case "ratelimit.mode":
 		if dc.RateLimitMode != "" {
@@ -612,7 +618,7 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 }
 
 func isTOMLBoolKey(key string) bool {
-	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "regional_compute_enabled" || key == "global_app_directory_enabled"
+	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "regional_compute_enabled" || key == "global_app_directory_enabled" || key == "delivery_worker"
 }
 
 // tomlQuote serialises a string value as a TOML basic string. The

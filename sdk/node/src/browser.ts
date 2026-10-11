@@ -12,10 +12,16 @@ export {
 
 export {
   consumeRealtimeChannel,
+  consumeRealtimeChannels,
+  REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeConfigurationError,
   RealtimeProtocolError,
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
+  type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelConsumerOptions,
+  type RealtimeConnectionOptions,
   type RealtimeCursorStore,
   type RealtimeMessage,
   type RealtimeSocket,
@@ -25,3 +31,5 @@ export {
   REALTIME_RESUME_BEARER_SUBPROTOCOL_PREFIX,
   type BrowserRealtimeSocketFactory,
 } from './browser-realtime.js';
+
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';

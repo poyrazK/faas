@@ -42,6 +42,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// cmdGithubWebhookSecret dispatches the documented `set` verb. production-us
+// hunt #4: the verb itself was handed to the flag parser, so the documented
+// `github-webhook-secret set --installation-id ...` always failed with
+// "unexpected positional argument(s): set". The verb-less flag form keeps
+// working for scripts written against that behaviour.
+func cmdGithubWebhookSecret(args []string) int {
+	switch {
+	case len(args) > 0 && args[0] == "set":
+		return githubWebhookSecretSet(args[1:])
+	case len(args) > 0 && strings.HasPrefix(args[0], "-"):
+		return githubWebhookSecretSet(args)
+	}
+	PrintUsage(os.Stderr, "usage: gregale github-webhook-secret set --installation-id <id> --secret <hex> [--from-stdin]", "github-webhook-secret")
+	return 1
+}
+
 // githubWebhookSecretSet is the single subcommand under
 // `github-webhook-secret`. The verb is "set" — read/write both
 // rotate (update if row exists). The CLI doesn't expose a

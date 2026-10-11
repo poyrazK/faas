@@ -715,6 +715,18 @@ func TestMan_RequiredFlagRenderedWithoutBrackets(t *testing.T) {
 	}
 }
 
+func TestMan_RequiredBooleanFlagDoesNotTakeAValue(t *testing.T) {
+	command := cliCommand{Name: "demo", Flags: []cliFlag{{
+		Name: "yes", Short: "explicit confirmation", Req: true, Bool: true,
+	}}}
+	var buf bytes.Buffer
+	renderManCommand(&buf, command)
+	out := buf.String()
+	if !strings.Contains(out, `.B \-\-yes`) || strings.Contains(out, `\-\-yes \~value`) {
+		t.Fatalf("required boolean flag has incorrect synopsis:\n%s", out)
+	}
+}
+
 // TestCompletion_BashScriptIsSyntacticallyValid pipes the rendered
 // bash completion through `bash -n` to catch parse errors. Skips
 // on hosts without /bin/bash (rare; CI runners have it).

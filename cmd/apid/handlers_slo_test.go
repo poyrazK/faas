@@ -134,3 +134,35 @@ func TestTelemetryDegradedReasonRedactsPrometheusURLAndQuery(t *testing.T) {
 		}
 	}
 }
+
+// TestFetchAppSLO_IdleAppIsNotDegraded reproduces production-us hunt #4:
+// `gregale slo e2e-probe` reported "degraded: telemetry unavailable" for an
+// app that simply had no requests in the window. The error-rate and
+// cold-boot ratios have no denominator then and return no sample; #4181
+// guarded the metrics path but not this one.
+func TestFetchAppSLO_IdleAppIsNotDegraded(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "slo-idle")
+	installPromFixture(t, &e, func(query string) string {
+		switch {
+		case strings.Contains(query, "* 100) and (("):
+			// PercentRatioQuery over an idle window: no sample.
+			return `{"data":{"resultType":"vector","result":[]}}`
+		case strings.Contains(query, "gateway_rate_limited_total"):
+			return `{"data":{"resultType":"vector","result":[]}}`
+		default:
+			return `{"data":{"resultType":"vector","result":[{"metric":{},"value":[0,"0"]}]}}`
+		}
+	})
+	app, err := e.s.store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, source := e.s.fetchAppSLO(context.Background(), app, e.acct, "24h")
+	if source != appmetrics.SourcePrometheus {
+		t.Fatalf("idle app source = %q, want %q", source, appmetrics.SourcePrometheus)
+	}
+	if got.RequestsTotal != 0 || got.ErrorRatePct != 0 || got.ColdBootRatePct != 0 {
+		t.Fatalf("idle app SLO = %+v, want zero requests and rates", got)
+	}
+}

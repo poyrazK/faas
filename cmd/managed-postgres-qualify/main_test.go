@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -113,7 +114,7 @@ func TestApprovalEnvironmentContainsOnlyGateValues(t *testing.T) {
 		CanaryAccounts:     []string{"account-a", "account-b"},
 	}
 	values := approvalEnvironment(approval)
-	if values[managedpostgres.QualificationEnv] != "true" || values[managedpostgres.QualificationVersionEnv] != "3" || values[managedpostgres.QualificationBackendEnv] != "backend-a" || values[managedpostgres.QualificationFingerprintEnv] != "fingerprint-a" || values[managedpostgres.QualificationUntilEnv] != "2026-09-09T12:00:00Z" || values[managedpostgres.CanaryAccountsEnv] != "account-a,account-b" {
+	if values[managedpostgres.QualificationEnv] != "true" || values[managedpostgres.QualificationVersionEnv] != strconv.Itoa(managedpostgres.QualificationArtifactVersion) || values[managedpostgres.QualificationBackendEnv] != "backend-a" || values[managedpostgres.QualificationFingerprintEnv] != "fingerprint-a" || values[managedpostgres.QualificationUntilEnv] != "2026-09-09T12:00:00Z" || values[managedpostgres.CanaryAccountsEnv] != "account-a,account-b" {
 		t.Fatalf("approval environment = %v", values)
 	}
 	if len(values) != 6 {
@@ -226,4 +227,19 @@ func containsString(values []string, wanted string) bool {
 		}
 	}
 	return false
+}
+
+func TestUsageDiagnosticOptionIsExplicitAndValidated(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    bool
+		invalid bool
+	}{
+		{"", false, false}, {"false", false, false}, {"true", true, false}, {" invalid ", false, true},
+	} {
+		got, err := parseContinueAfterUsageFailure(func(string) string { return test.value })
+		if got != test.want || (err != nil) != test.invalid {
+			t.Fatalf("value=%q: %v, %v", test.value, got, err)
+		}
+	}
 }

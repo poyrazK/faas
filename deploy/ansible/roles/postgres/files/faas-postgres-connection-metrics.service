@@ -7,6 +7,8 @@ Requires=postgresql.service
 Type=oneshot
 User=postgres
 Group=postgres
+# Writes into the shared node_exporter textfile directory (0775 node_exporter).
+SupplementaryGroups=node_exporter
 ExecStart=/usr/local/bin/faas-postgres-connection-metrics
 NoNewPrivileges=yes
 PrivateTmp=yes

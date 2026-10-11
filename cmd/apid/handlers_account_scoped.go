@@ -289,7 +289,7 @@ func writeMetricsDegraded(w http.ResponseWriter, s *server, resp api.AppsMetrics
 		s.log.Warn("apid: apps-metrics query failed", "label", label, "err", msg)
 	}
 	resp.Apps = nil
-	resp.Source = appmetrics.SourceDegradedPrefix + telemetryDegradedReason(err)
+	resp.Source = appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 	writeJSON(w, http.StatusOK, resp)
 }
 

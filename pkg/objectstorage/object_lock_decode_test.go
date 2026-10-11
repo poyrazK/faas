@@ -69,7 +69,7 @@ func TestBucketObjectLockRequestXML(t *testing.T) {
 func TestBucketObjectLockCapabilityEnrollment(t *testing.T) {
 	p := historyTestProvider(t, nil).(Provider)
 	c := ObjectLockConfig{Enabled: true}
-	if !SupportsNativeObjectLock(p) || !c.PublicCapabilities(p).BucketConfiguration || c.PublicCapabilities(p).DefaultEventHold {
+	if !SupportsNativeObjectLock(p) || !c.PublicCapabilities(p).BucketConfiguration || c.PublicCapabilities(p).DefaultEventHold || c.PublicCapabilities(p).VersionEventHold || c.PublicCapabilities(p).WriteEventHold {
 		t.Fatal("wrong bucket capability")
 	}
 	one := int32(1)
@@ -78,6 +78,9 @@ func TestBucketObjectLockCapabilityEnrollment(t *testing.T) {
 		t.Fatal("unenrolled event hold accepted")
 	}
 	c.EventHolds = true
+	if !c.PublicCapabilities(p).DefaultEventHold || !c.PublicCapabilities(p).VersionEventHold || !c.PublicCapabilities(p).WriteEventHold {
+		t.Fatal("event enrollment was not advertised")
+	}
 	if err := c.ValidateConfiguration(p, v); err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +89,17 @@ func TestBucketObjectLockCapabilityEnrollment(t *testing.T) {
 	}
 	if (ObjectLockConfig{Enabled: true}).PublicCapabilities(struct{ Provider }{p}).BucketConfiguration {
 		t.Fatal("partial provider advertised")
+	}
+	readsOnly := struct {
+		Provider
+		BucketObjectLockProvider
+		ObjectVersionLockProvider
+		BucketVersioningProvider
+		ObjectVersionInventoryProvider
+		ObjectVersionLister
+	}{p, p.(BucketObjectLockProvider), p.(ObjectVersionLockProvider), p.(BucketVersioningProvider), p.(ObjectVersionInventoryProvider), p.(ObjectVersionLister)}
+	if c.PublicCapabilities(readsOnly).BucketConfiguration {
+		t.Fatal("provider without protected writes and lifecycle deletion advertised enrollment")
 	}
 	for _, tc := range []struct {
 		c      ObjectLockConfig

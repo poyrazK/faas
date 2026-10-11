@@ -28,6 +28,15 @@ test('protected resource metadata and bearer challenge identify the canonical en
   assert.equal(result.status, 401);
   assert.match(result.headers['WWW-Authenticate'], /resource_metadata="https:\/\/mcp.example\/\.well-known\/oauth-protected-resource\/mcp"/);
 });
+test('protected resource metadata advertises endpoint and catalog scopes once', () => {
+  const scoped = createAuth({ ...config, auth: {
+    ...config.auth,
+    tool_scopes: { add: ['math:read'] },
+    resource_scopes: { 'customer://records/{recordId}': ['records:read'] },
+    prompt_scopes: { summarize: ['reports:read'] },
+  } }, publicKey);
+  assert.deepEqual(scoped.metadata.scopes_supported, ['math:read', 'mcp:tools', 'records:read', 'reports:read']);
+});
 test('valid scoped, signed token authorizes a request', async () => assert.equal((await invoke(await token())).accepted, true));
 test('only verified claims populate the SDK request context', async () => {
   const result = await invoke(await token({ scope: 'mcp:tools files:read' }));

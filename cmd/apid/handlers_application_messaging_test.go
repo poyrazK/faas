@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -90,5 +91,12 @@ func TestDeliverAppEventRejectsUnregisteredDestination(t *testing.T) {
 	}, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	// production-us hunt #4 (H4-16): the detail must say the URL is not a
+	// registered webhook and how to register it.
+	for _, want := range []string{"https://unregistered.example/hook", "gregale webhooks add --app checkout-api"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("problem body %s missing %q", rec.Body.String(), want)
+		}
 	}
 }

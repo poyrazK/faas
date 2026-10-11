@@ -2,6 +2,7 @@
 package circuit_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -305,5 +306,36 @@ func TestTransitionObserverSeesEveryChange(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("transitions = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestWithConfigForTunesOnlyItsKeys pins production-us hunt #4 (H4-68): a
+// customer's kind=circuit_breaker rule must tune that app's breakers and no
+// other app's. Before the override existed the rule's values were compiled and
+// then ignored, so every app ran the group default.
+func TestWithConfigForTunesOnlyItsKeys(t *testing.T) {
+	clock := newClock()
+	tuned := circuit.Config{FailureThreshold: 0.5, MinRequests: 2, Window: 10 * time.Second, OpenDuration: 30 * time.Second, MaxOpenDuration: 30 * time.Second}
+	g := circuit.NewGroup(circuit.DefaultConfig(), clock.now).WithConfigFor(func(key string) (circuit.Config, bool) {
+		return tuned, strings.HasPrefix(key, "tuned\x00")
+	})
+	for _, key := range []string{"tuned\x00i1", "default\x00i1"} {
+		g.Failure(key)
+		g.Failure(key)
+	}
+	if got := g.State("tuned\x00i1"); got != circuit.StateOpen {
+		t.Fatalf("tuned key state = %s, want open after 2 failures (MinRequests 2)", got)
+	}
+	if got := g.State("default\x00i1"); got != circuit.StateClosed {
+		t.Fatalf("default key state = %s, want closed (DefaultConfig MinRequests 5)", got)
+	}
+	// The tuned open interval (30 s) outlasts the default (5 s).
+	clock.add(6 * time.Second)
+	if g.Allow("tuned\x00i1") {
+		t.Fatal("tuned breaker admitted a request inside its 30 s open interval")
+	}
+	clock.add(25 * time.Second)
+	if !g.Allow("tuned\x00i1") {
+		t.Fatal("tuned breaker did not offer a half-open probe after 30 s")
 	}
 }

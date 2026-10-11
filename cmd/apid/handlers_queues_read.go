@@ -37,6 +37,9 @@ const queuePeekMaxLimit = 200
 // call this for diagnostics — the gate that locks Free out of queue
 // features lives in queueSend/queueReceive, not here.
 func (s *server) queueState(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -76,6 +79,9 @@ func (s *server) queueState(w http.ResponseWriter, r *http.Request, acct state.A
 // byte-identical across peeks. Cursor pagination matches the
 // existing `?before=<id>` convention.
 func (s *server) queuePeek(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -113,6 +119,9 @@ func (s *server) queuePeek(w http.ResponseWriter, r *http.Request, acct state.Ac
 // (state='dead_letter'). Ordered newest-first via the partial index
 // added by migration 00060. Read-only: no lease, no mutation.
 func (s *server) queueDeadLetter(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return

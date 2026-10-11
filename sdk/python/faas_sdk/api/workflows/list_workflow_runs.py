@@ -1,3 +1,4 @@
+import datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -16,6 +17,9 @@ def _get_kwargs(
     slug: str,
     *,
     status: ListWorkflowRunsStatus | Unset = UNSET,
+    workflow_name: str | Unset = UNSET,
+    created_after: datetime.datetime | Unset = UNSET,
+    created_before: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     offset: int | Unset = 0,
 ) -> dict[str, Any]:
@@ -27,6 +31,18 @@ def _get_kwargs(
         json_status = status
 
     params["status"] = json_status
+
+    params["workflow_name"] = workflow_name
+
+    json_created_after: str | Unset = UNSET
+    if not isinstance(created_after, Unset):
+        json_created_after = created_after.isoformat()
+    params["created_after"] = json_created_after
+
+    json_created_before: str | Unset = UNSET
+    if not isinstance(created_before, Unset):
+        json_created_before = created_before.isoformat()
+    params["created_before"] = json_created_before
 
     params["limit"] = limit
 
@@ -52,6 +68,11 @@ def _parse_response(
         response_200 = ListWorkflowRunsResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -95,6 +116,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     status: ListWorkflowRunsStatus | Unset = UNSET,
+    workflow_name: str | Unset = UNSET,
+    created_after: datetime.datetime | Unset = UNSET,
+    created_before: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     offset: int | Unset = 0,
 ) -> Response[ListWorkflowRunsResponse | Problem]:
@@ -103,6 +127,9 @@ def sync_detailed(
     Args:
         slug (str):
         status (ListWorkflowRunsStatus | Unset):
+        workflow_name (str | Unset):
+        created_after (datetime.datetime | Unset):
+        created_before (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
 
@@ -117,6 +144,9 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         status=status,
+        workflow_name=workflow_name,
+        created_after=created_after,
+        created_before=created_before,
         limit=limit,
         offset=offset,
     )
@@ -133,6 +163,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     status: ListWorkflowRunsStatus | Unset = UNSET,
+    workflow_name: str | Unset = UNSET,
+    created_after: datetime.datetime | Unset = UNSET,
+    created_before: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     offset: int | Unset = 0,
 ) -> ListWorkflowRunsResponse | Problem | None:
@@ -141,6 +174,9 @@ def sync(
     Args:
         slug (str):
         status (ListWorkflowRunsStatus | Unset):
+        workflow_name (str | Unset):
+        created_after (datetime.datetime | Unset):
+        created_before (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
 
@@ -156,6 +192,9 @@ def sync(
         slug=slug,
         client=client,
         status=status,
+        workflow_name=workflow_name,
+        created_after=created_after,
+        created_before=created_before,
         limit=limit,
         offset=offset,
     ).parsed
@@ -166,6 +205,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     status: ListWorkflowRunsStatus | Unset = UNSET,
+    workflow_name: str | Unset = UNSET,
+    created_after: datetime.datetime | Unset = UNSET,
+    created_before: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     offset: int | Unset = 0,
 ) -> Response[ListWorkflowRunsResponse | Problem]:
@@ -174,6 +216,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         status (ListWorkflowRunsStatus | Unset):
+        workflow_name (str | Unset):
+        created_after (datetime.datetime | Unset):
+        created_before (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
 
@@ -188,6 +233,9 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         status=status,
+        workflow_name=workflow_name,
+        created_after=created_after,
+        created_before=created_before,
         limit=limit,
         offset=offset,
     )
@@ -202,6 +250,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     status: ListWorkflowRunsStatus | Unset = UNSET,
+    workflow_name: str | Unset = UNSET,
+    created_after: datetime.datetime | Unset = UNSET,
+    created_before: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     offset: int | Unset = 0,
 ) -> ListWorkflowRunsResponse | Problem | None:
@@ -210,6 +261,9 @@ async def asyncio(
     Args:
         slug (str):
         status (ListWorkflowRunsStatus | Unset):
+        workflow_name (str | Unset):
+        created_after (datetime.datetime | Unset):
+        created_before (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
 
@@ -226,6 +280,9 @@ async def asyncio(
             slug=slug,
             client=client,
             status=status,
+            workflow_name=workflow_name,
+            created_after=created_after,
+            created_before=created_before,
             limit=limit,
             offset=offset,
         )

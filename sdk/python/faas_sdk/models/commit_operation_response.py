@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 
 from ..models.commit_operation_response_state import CommitOperationResponseState, check_commit_operation_response_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_effect_record import OperationEffectRecord
+
 
 T = TypeVar("T", bound="CommitOperationResponse")
 
@@ -24,6 +28,9 @@ class CommitOperationResponse:
     event_id: UUID
     state: CommitOperationResponseState
     accepted_at: datetime.datetime
+    result: Any | Unset = UNSET
+    """Business result of a completed managed Commit operation; any JSON value."""
+    effects: list[OperationEffectRecord] | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -39,6 +46,15 @@ class CommitOperationResponse:
         state: str = self.state
 
         accepted_at = self.accepted_at.isoformat()
+
+        result = self.result
+
+        effects: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.effects, Unset):
+            effects = []
+            for effects_item_data in self.effects:
+                effects_item = effects_item_data.to_dict()
+                effects.append(effects_item)
 
         completed_at: str | Unset = UNSET
         if not isinstance(self.completed_at, Unset):
@@ -56,6 +72,10 @@ class CommitOperationResponse:
                 "accepted_at": accepted_at,
             }
         )
+        if result is not UNSET:
+            field_dict["result"] = result
+        if effects is not UNSET:
+            field_dict["effects"] = effects
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
 
@@ -63,6 +83,8 @@ class CommitOperationResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_effect_record import OperationEffectRecord
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -75,6 +97,17 @@ class CommitOperationResponse:
         state = check_commit_operation_response_state(d.pop("state"))
 
         accepted_at = datetime.datetime.fromisoformat(d.pop("accepted_at"))
+
+        result = d.pop("result", UNSET)
+
+        _effects = d.pop("effects", UNSET)
+        effects: list[OperationEffectRecord] | Unset = UNSET
+        if _effects is not UNSET:
+            effects = []
+            for effects_item_data in _effects:
+                effects_item = OperationEffectRecord.from_dict(effects_item_data)
+
+                effects.append(effects_item)
 
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset
@@ -90,6 +123,8 @@ class CommitOperationResponse:
             event_id=event_id,
             state=state,
             accepted_at=accepted_at,
+            result=result,
+            effects=effects,
             completed_at=completed_at,
         )
 

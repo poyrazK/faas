@@ -33,7 +33,21 @@ func requestBudgetExpired(ctx context.Context) bool {
 // plus stable edge metadata. The metadata is intentionally outside the JSON
 // body: a Cloudflare Worker can preserve/reconstruct the body while
 // distinguishing this platform-owned timeout from a genuine CDN failure.
+//
+// The detail names where the time went: this variant is for a request that
+// reached the app (production-us hunt #4, H4-66: a warm app that was simply
+// slow used to be told "while capacity was becoming ready").
 func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request) {
+	writeRequestBudgetExceeded(w, r, requestBudgetDetailForward)
+}
+
+// Budget-exceeded details by phase.
+const (
+	requestBudgetDetailCapacity = "the request exceeded its wall-clock budget while capacity was becoming ready"
+	requestBudgetDetailForward  = "the request exceeded its wall-clock budget while the app was handling it; respond sooner, or raise the budget with a kind=budget edge rule"
+)
+
+func writeRequestBudgetExceeded(w http.ResponseWriter, r *http.Request, detail string) {
 	// Avoid Header.Add here. gatewayd-internal stamps the request id before
 	// this path and duplicate correlation headers make clients disagree about
 	// which value to log.
@@ -47,7 +61,7 @@ func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request
 	problem := api.NewProblem(http.StatusGatewayTimeout,
 		api.CodeRequestBudgetExceeded,
 		"Request budget exceeded",
-		"the request exceeded its wall-clock budget while capacity was becoming ready")
+		detail)
 	// Limit errors carry the limit, the observed value and a docs link
 	// (CLAUDE.md conventions) so a customer can tell a 30 s budget from an
 	// outage and knows which knob to change.
@@ -71,7 +85,7 @@ var requestBudgetDocsURL = docsTypeBase
 // has already gone away and no response should be written.
 func writeBurstCapacityError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if r != nil && requestBudgetExpired(r.Context()) {
-		writeRequestBudgetExceededForRequest(w, r)
+		writeRequestBudgetExceeded(w, r, requestBudgetDetailCapacity)
 		return true
 	}
 	if r != nil && errors.Is(err, context.Canceled) && r.Context().Err() != nil {

@@ -62,7 +62,7 @@ func cmdPlatformTenants(args []string) int {
 		valid = false
 	}
 	if fs.NArg() != 0 || !valid {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--wait] [--timeout 10m]", "platform-tenants")
+		PrintUsage(os.Stderr, platformTenantUsage(verb), "platform-tenants")
 		return 1
 	}
 	client, err := authedClient()
@@ -228,6 +228,32 @@ func cmdPlatformTenants(args []string) int {
 		return platformTenantOutput(row, "Platform tenant updated")
 	}
 	return 0
+}
+
+// platformTenantVerbUsage is each verb's own usage. production-us hunt #4:
+// every mistake printed the whole family's usage with generic flags, so
+// `platform-tenants apply` without --file never said --file was required.
+var platformTenantVerbUsage = map[string]string{
+	"list":              "usage: gregale platform-tenants list [--limit N] [--offset N]",
+	"add":               "usage: gregale platform-tenants add --external-ref REF --name TEXT",
+	"apply":             "usage: gregale platform-tenants apply --file bundle.json [--dry-run]",
+	"credentials-list":  "usage: gregale platform-tenants credentials-list --id UUID [--limit N] [--offset N]",
+	"credentials-apply": "usage: gregale platform-tenants credentials-apply --id UUID --file bundle.json [--dry-run]",
+	"info":              "usage: gregale platform-tenants info --id UUID",
+	"activation":        "usage: gregale platform-tenants activation --id UUID [--wait] [--timeout 10m]",
+	"link-consumer":     "usage: gregale platform-tenants link-consumer --id UUID --consumer-id UUID",
+	"link-surface":      "usage: gregale platform-tenants link-surface --id UUID --surface-id UUID",
+	"usage":             "usage: gregale platform-tenants usage --id UUID [--since RFC3339] [--until RFC3339]",
+	"activity":          "usage: gregale platform-tenants activity --id UUID [--since 24h] [--app-id UUID] [--status N] [--cursor C] [--limit N]",
+	"suspend":           "usage: gregale platform-tenants suspend --id UUID",
+	"resume":            "usage: gregale platform-tenants resume --id UUID",
+}
+
+func platformTenantUsage(verb string) string {
+	if usage, ok := platformTenantVerbUsage[verb]; ok {
+		return usage
+	}
+	return "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume> [flags]"
 }
 
 func platformTenantFlagsValid(verb, id, externalRef, name, consumerID, surfaceID string, limit, offset int) bool {

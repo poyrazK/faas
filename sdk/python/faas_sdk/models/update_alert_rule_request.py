@@ -31,6 +31,10 @@ T = TypeVar("T", bound="UpdateAlertRuleRequest")
 class UpdateAlertRuleRequest:
     """Partial update — every field is optional. Omitted means leave alone."""
 
+    post_deploy_rollback_window_seconds: int | Unset = UNSET
+    """Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
+    values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry
+    qualifies."""
     name: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     metric: UpdateAlertRuleRequestMetric | Unset = UNSET
@@ -48,6 +52,8 @@ class UpdateAlertRuleRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
+
         name = self.name
 
         enabled = self.enabled
@@ -79,6 +85,8 @@ class UpdateAlertRuleRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if post_deploy_rollback_window_seconds is not UNSET:
+            field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if name is not UNSET:
             field_dict["name"] = name
         if enabled is not UNSET:
@@ -105,6 +113,8 @@ class UpdateAlertRuleRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
+
         name = d.pop("name", UNSET)
 
         enabled = d.pop("enabled", UNSET)
@@ -146,6 +156,7 @@ class UpdateAlertRuleRequest:
             action = check_update_alert_rule_request_action(_action)
 
         update_alert_rule_request = cls(
+            post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             name=name,
             enabled=enabled,
             metric=metric,

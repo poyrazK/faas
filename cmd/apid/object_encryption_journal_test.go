@@ -218,7 +218,9 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	metrics, err := st.(state.ObjectStorageProviderUsageStore).ListObjectStorageProviderRequestMetrics(ctx, backend.ID, backend.Fingerprint, state.ObjectStoragePeriod(time.Now()))
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
-	if err != nil || len(metrics) != 1 || metrics[0].RequestCount != int64(fixture.requests) || fixture.requests != 7 || fixture.creates != 1 || fixture.completions != 2 || fixture.keyChecks != 1 {
+	// Bound initiation creates once without a discovery listing; every actual
+	// native request must still have its corresponding usage record.
+	if err != nil || len(metrics) != 1 || metrics[0].RequestCount != int64(fixture.requests) || fixture.requests != 6 || fixture.creates != 1 || fixture.completions != 2 || fixture.keyChecks != 1 {
 		t.Fatal("native dispatch/metering mismatch", metrics, err, fixture.requests, fixture.creates, fixture.completions, fixture.keyChecks)
 	}
 }

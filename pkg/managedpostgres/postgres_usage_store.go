@@ -31,32 +31,13 @@ func (s *PostgresStore) ListUsageDatabases(ctx context.Context, after UsageDatab
 	}
 	items := make([]Database, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, databaseFromRow(row))
+		items = append(items, usageDatabaseFromRow(row))
 	}
 	return items, nil
 }
 
-func databaseFromRow(row sqlc.ManagedPostgresDatabase) Database {
-	database := Database{
-		ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), Name: row.Name,
-		Spec: Spec{Region: row.Region, PostgresMajor: int(row.PostgresMajor), Class: ServiceClass(row.ServiceClass),
-			Availability: Availability(row.Availability), ScaleToZero: row.ScaleToZero,
-			StorageLimitBytes: row.StorageLimitBytes, RestoreWindowSeconds: row.RestoreWindowSeconds},
-		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint,
-		ProviderResourceID: row.ProviderResourceID.String, RestoreSourceResourceID: row.RestoreSourceResourceID.String,
-		AccountingRequired: row.AccountingRequired,
-		RestorePointInTime: row.RestorePointInTime.Time, State: State(row.State),
-		DesiredGeneration: row.DesiredGeneration, ObservedGeneration: row.ObservedGeneration,
-		LastErrorCode: row.LastErrorCode.String, LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time,
-		AttemptCount: row.AttemptCount, RetryAt: row.RetryAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
-	}
-	if row.RestoreSourceDatabaseID.Valid {
-		database.RestoreSourceDatabaseID = cutoverUUID(row.RestoreSourceDatabaseID)
-	}
-	if row.DeletedAt.Valid {
-		database.DeletedAt = &row.DeletedAt.Time
-	}
-	return database
+func usageDatabaseFromRow(row sqlc.ManagedPostgresDatabase) Database {
+	return databaseFromSQL(row)
 }
 
 func (s *PostgresStore) UsageProgress(ctx context.Context, accountID, databaseID string, window time.Duration) (UsageProgress, error) {
@@ -121,7 +102,7 @@ func (s *PostgresStore) RecordUsage(ctx context.Context, records []UsageRecord) 
 	if err != nil {
 		return mapPostgresError(err)
 	}
-	resource := databaseFromRow(row)
+	resource := usageDatabaseFromRow(row)
 	if resource.AccountID != first.AccountID || resource.BackendID != first.BackendID || resource.BackendFingerprint != first.BackendFingerprint {
 		return ErrConflict
 	}

@@ -15,6 +15,7 @@ UpdateAppWebhookRequestEventFilterItem = Literal[
     "issue.reopened",
     "issue.resolved",
     "job.finished",
+    "operation.effect",
     "operation.finished",
     "rollout.aborted",
     "rollout.completed",
@@ -27,6 +28,7 @@ UpdateAppWebhookRequestEventFilterItem = Literal[
     "routes.requirements.recovered",
     "routes.requirements.violated",
     "usage_statement.finalized",
+    "workflow.finished",
 ]
 
 UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequestEventFilterItem] = {
@@ -44,6 +46,7 @@ UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequest
     "issue.reopened",
     "issue.resolved",
     "job.finished",
+    "operation.effect",
     "operation.finished",
     "rollout.aborted",
     "rollout.completed",
@@ -56,6 +59,7 @@ UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequest
     "routes.requirements.recovered",
     "routes.requirements.violated",
     "usage_statement.finalized",
+    "workflow.finished",
 }
 
 

@@ -41,7 +41,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // generation plus operator headroom before node admission. Because the role
 // multiplies these numbers across the control plane and every compute node,
 // a single entry here sets the RAM requirement of the database host for the
-// whole fleet: a 12-node fleet already derives 610 connections.
+// whole fleet: a 12-node fleet already derives 620 connections.
 //
 // Sizing rule. With the hub on, a daemon parks exactly ONE connection for
 // notifications no matter how many channels it subscribes to, so an entry
@@ -54,6 +54,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 var DaemonMaxConnections = map[string]int32{
 	"bridged":           2,
 	"apid":              12,
+	"apid-clone-worker": 4,
 	"schedd":            16,
 	"gatewayd-internal": 8,
 	"gatewayd-public":   3,

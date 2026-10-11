@@ -50,7 +50,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 		t.Fatal(err)
 	}
 	secretRevisionHashes := map[string]string{"release-read-api": secretRevisionHash}
-	created, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks)
+	created, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, active.Members[0].AppID, "production", "TOKEN", "age1test", "fedcba9876543210", []byte("sealed-v2")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks, nil); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale secret qualification error = %v, want conflict", err)
 	}
 	secretRevisionHash, err = api.ProjectEnvironmentSecretRevisionHash([]api.ProjectEnvironmentSecretRevision{{Key: "TOKEN", Version: 2}})
@@ -81,7 +81,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 		[]state.ProjectEnvironmentQualificationCheck{
 			{Name: "health", Status: "failed", Results: []state.ProjectEnvironmentQualificationResult{failingResult}},
 			{Name: "smoke", Status: "passed", Results: []state.ProjectEnvironmentQualificationResult{passingResult}},
-		})
+		}, nil)
 	if err != nil || failed.Status != "failed" {
 		t.Fatalf("failed qualification = %+v, %v", failed, err)
 	}
@@ -89,7 +89,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 	if err != nil || latest.ID != failed.ID || latest.Status != "failed" {
 		t.Fatalf("latest failed qualification = %+v, %v", latest, err)
 	}
-	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", releases[0].ID, 0, configHash, secretRevisionHashes, checks); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", releases[0].ID, 0, configHash, secretRevisionHashes, checks, nil); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("retired release qualification error = %v, want conflict", err)
 	}
 	for _, invalid := range [][]state.ProjectEnvironmentQualificationCheck{
@@ -100,7 +100,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 		{{Name: "health", Status: "failed", Results: []state.ProjectEnvironmentQualificationResult{passingResult}}, {Name: "smoke", Status: "passed", Results: []state.ProjectEnvironmentQualificationResult{passingResult}}},
 		{{Name: "health", Status: "passed", Results: []state.ProjectEnvironmentQualificationResult{passingResult}}, {Name: "smoke", Status: "passed", Results: []state.ProjectEnvironmentQualificationResult{{WorkloadSlug: "release-read-api", DeploymentID: active.ID, Status: "passed", HTTPStatus: &httpOK}}}},
 	} {
-		if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, invalid); !errors.Is(err, state.ErrInvalidArgument) {
+		if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, invalid, nil); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Errorf("invalid checks %v error = %v, want invalid argument", invalid, err)
 		}
 	}
@@ -114,7 +114,7 @@ func testProjectEnvironmentQualificationContract(t *testing.T, store interface {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, secretRevisionHashes, checks, nil); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale config qualification error = %v, want conflict", err)
 	}
 	if _, err := store.LatestProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", "not-a-uuid"); !errors.Is(err, state.ErrInvalidArgument) {

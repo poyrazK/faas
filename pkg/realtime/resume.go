@@ -19,18 +19,26 @@ const (
 	// ResumeBearerSubprotocolPrefix carries an OIDC JWT on browser v2
 	// handshakes. The credential is removed before WebSocket negotiation and
 	// never echoed as the selected subprotocol.
-	ResumeBearerSubprotocolPrefix = "gregale.realtime.bearer."
-	maxResumeSubscriptions        = api.RealtimeResumeSubscriptionsPerNode
-	maxResumePerConnection        = api.RealtimeResumeSubscriptionsPerConnection
-	resumeHistoryPageSize         = state.ManagedRealtimeHistoryMaxRead
-	resumeHistoryReadTimeout      = 5 * time.Second
-	maxResumeServerFrameBytes     = api.RealtimeResumeServerFrameMaxBytes
+	ResumeBearerSubprotocolPrefix     = "gregale.realtime.bearer."
+	maxResumeSubscriptions            = api.RealtimeResumeSubscriptionsPerNode
+	maxResumePerConnection            = api.RealtimeResumeSubscriptionsPerConnection
+	resumeHistoryPageSize             = state.ManagedRealtimeHistoryMaxRead
+	resumeHistoryReadTimeout          = 5 * time.Second
+	realtimeChannelRouteReportTimeout = 2 * time.Second
+	maxResumeServerFrameBytes         = api.RealtimeResumeServerFrameMaxBytes
 )
 
 // ManagedRealtimeHistoryReader is the private apid RPC seam. A nil reader
 // prevents v2 admission; realtimed never connects directly to PostgreSQL.
 type ManagedRealtimeHistoryReader interface {
 	ReadChannelHistory(context.Context, string, string, int64, int) (state.ManagedRealtimeChannelHistory, error)
+}
+
+// ManagedRealtimeChannelRouteReporter lets resumable subscriptions update
+// apid's shared channel route directory as soon as a route enters or leaves
+// this node. Periodic route snapshots remain the recovery path for failures.
+type ManagedRealtimeChannelRouteReporter interface {
+	ReportChannelRoute(context.Context, string, string, bool) error
 }
 
 // v2 cursors are client-held. Ack confirms a sequence actually sent on this
@@ -57,6 +65,7 @@ type resumeServerFrame struct {
 
 type resumeSubscription struct {
 	cancel   context.CancelFunc
+	wake     chan struct{}
 	lastSent int64 // guarded by connection.mu
 	lastAck  int64 // guarded by connection.mu
 }
@@ -155,14 +164,40 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		return
 	}
 	subCtx, subCancel := context.WithCancel(ctx)
-	subscription := &resumeSubscription{cancel: subCancel, lastSent: frame.After, lastAck: frame.After}
+	subscription := &resumeSubscription{cancel: subCancel, wake: make(chan struct{}, 1), lastSent: frame.After, lastAck: frame.After}
+	m.mu.Lock()
+	if m.conns[c.info.ID] != c {
+		m.mu.Unlock()
+		subCancel()
+		return
+	}
 	c.mu.Lock()
+	if _, exists := c.resumeSubs[frame.Channel]; exists {
+		c.mu.Unlock()
+		m.mu.Unlock()
+		subCancel()
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "subscription_limit"})
+		return
+	}
 	c.resumeSubs[frame.Channel] = subscription
 	c.channels[frame.Channel] = struct{}{}
+	key := channelKey{endpointID: c.info.EndpointID, channel: frame.Channel}
+	hadSubscribers := m.hasChannelSubscribersLocked(key)
+	if m.resumeSubscribers[key] == nil {
+		m.resumeSubscribers[key] = make(map[string]struct{})
+	}
+	m.resumeSubscribers[key][c.info.ID] = struct{}{}
+	if !hadSubscribers {
+		m.channelRouteRevision++
+	}
 	c.mu.Unlock()
+	m.mu.Unlock()
+	if !hadSubscribers {
+		m.reportChannelRoute(ctx, key, true)
+	}
 	if err := m.queueResume(ctx, c, resumeServerFrame{Type: "subscribed", Channel: frame.Channel,
 		Sequence: frame.After, OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence}); err != nil {
-		m.removeResumeSubscription(c, frame.Channel, subscription)
+		m.removeResumeSubscription(ctx, c, frame.Channel, subscription)
 		m.closeResumeOnQueueFull(c, err)
 		return
 	}
@@ -172,7 +207,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 
 func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription, page state.ManagedRealtimeChannelHistory) {
 	defer m.resumeCount.Add(-1)
-	defer m.removeResumeSubscription(c, channel, subscription)
+	defer m.removeResumeSubscription(ctx, c, channel, subscription)
 	ticker := time.NewTicker(m.cfg.ResumePollInterval)
 	defer ticker.Stop()
 	for {
@@ -220,6 +255,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 		if lastSent >= page.LatestSequence {
 			select {
 			case <-ticker.C:
+			case <-subscription.wake:
 			case <-ctx.Done():
 				return
 			case <-c.done:
@@ -238,14 +274,104 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 	}
 }
 
-func (m *Manager) removeResumeSubscription(c *connection, channel string, subscription *resumeSubscription) {
+func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription) {
+	var routeRemoved bool
+	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+	m.mu.Lock()
 	c.mu.Lock()
 	if c.resumeSubs[channel] == subscription {
 		delete(c.resumeSubs, channel)
 		delete(c.channels, channel)
+		hadSubscribers := m.hasChannelSubscribersLocked(key)
+		members := m.resumeSubscribers[key]
+		if _, subscribed := members[c.info.ID]; subscribed {
+			delete(members, c.info.ID)
+			if len(members) == 0 {
+				delete(m.resumeSubscribers, key)
+			}
+			if hadSubscribers && !m.hasChannelSubscribersLocked(key) {
+				m.channelRouteRevision++
+				routeRemoved = true
+			}
+		}
 	}
 	c.mu.Unlock()
+	m.mu.Unlock()
 	subscription.cancel()
+	if routeRemoved {
+		m.reportChannelRoute(ctx, key, false)
+	}
+}
+
+// reportChannelRoute serializes transitions and checks the current local
+// membership before sending. If another subscribe or unsubscribe superseded
+// this transition while it waited, the newer state is reported by that
+// operation instead.
+func (m *Manager) reportChannelRoute(ctx context.Context, key channelKey, subscribed bool) {
+	reporter := m.cfg.ChannelRouteReporter
+	if reporter == nil {
+		return
+	}
+	m.routeReportMu.Lock()
+	defer m.routeReportMu.Unlock()
+	m.mu.RLock()
+	current := m.hasChannelSubscribersLocked(key)
+	m.mu.RUnlock()
+	if current != subscribed {
+		return
+	}
+	reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), realtimeChannelRouteReportTimeout)
+	err := reporter.ReportChannelRoute(reportCtx, key.endpointID, key.channel, subscribed)
+	cancel()
+	if err != nil && m.cfg.ChannelRouteReportFailure != nil {
+		m.cfg.ChannelRouteReportFailure(err)
+	}
+}
+
+// PublishRetainedWithStatus wakes resumable subscribers after the message has
+// been committed to the ordered history log. The durable reader remains the
+// source of message bytes and ordering; the wake channel only reduces delivery
+// latency, while the bounded poll remains the recovery path for missed wakes.
+func (m *Manager) PublishRetainedWithStatus(ctx context.Context, endpointID, channel string, message Message, sequence int64) (PublishStatus, error) {
+	if sequence <= 0 {
+		return PublishStatus{}, ErrInvalidChannel
+	}
+	status, err := m.PublishWithStatus(ctx, endpointID, channel, message)
+	if err != nil {
+		return status, err
+	}
+	key := channelKey{endpointID: endpointID, channel: channel}
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.resumeSubscribers[key]))
+	for id := range m.resumeSubscribers[key] {
+		ids = append(ids, id)
+	}
+	m.mu.RUnlock()
+	for _, id := range ids {
+		c, ok := m.connection(id)
+		if !ok {
+			continue
+		}
+		select {
+		case <-c.done:
+			continue
+		default:
+		}
+		c.mu.RLock()
+		subscription := c.resumeSubs[channel]
+		valid := subscription != nil && c.info.EndpointID == endpointID
+		c.mu.RUnlock()
+		if !valid {
+			continue
+		}
+		select {
+		case subscription.wake <- struct{}{}:
+		default:
+		}
+		status.Subscribers++
+		status.Queued++
+	}
+	return status, nil
 }
 
 func (m *Manager) resumeAck(ctx context.Context, c *connection, frame resumeClientFrame) {
@@ -269,7 +395,7 @@ func (m *Manager) resumeUnsubscribe(ctx context.Context, c *connection, channel 
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "not_subscribed"})
 		return
 	}
-	m.removeResumeSubscription(c, channel, subscription)
+	m.removeResumeSubscription(ctx, c, channel, subscription)
 	m.queueResumeControl(ctx, c, resumeServerFrame{Type: "unsubscribed", Channel: channel})
 }
 
@@ -294,17 +420,10 @@ func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeSe
 	if err != nil || len(data) > maxResumeServerFrameBytes {
 		return ErrOutboundQueueFull
 	}
-	select {
-	case c.outbound <- Message{Data: data}:
-		m.sentMessages.Add(1)
-		m.sentBytes.Add(uint64(len(data)))
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-c.done:
-		return ErrConnectionClosed
-	default:
-		m.droppedMessages.Add(1)
-		return ErrOutboundQueueFull
+	if err := m.queueOutbound(ctx, c, Message{Data: data}); err != nil {
+		return err
 	}
+	m.sentMessages.Add(1)
+	m.sentBytes.Add(uint64(len(data)))
+	return nil
 }

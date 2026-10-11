@@ -1,6 +1,7 @@
 package sched
 
 // adr: 755
+// adr: 791
 import (
 	"context"
 	"errors"
@@ -16,9 +17,10 @@ type regionalWarmPublicationStore struct {
 	current     state.Instance
 	publishErr  error
 	publishHook func()
+	fence       *state.RuntimeAppConfigFence
 }
 
-func (s regionalWarmPublicationStore) PublishInstanceRuntime(context.Context, string, string, string, string, int) (state.Instance, error) {
+func (s regionalWarmPublicationStore) PublishOwnedInstanceRuntime(context.Context, state.RuntimeInstancePublication) (state.Instance, error) {
 	if s.publishHook != nil {
 		s.publishHook()
 	}
@@ -29,9 +31,16 @@ func (s regionalWarmPublicationStore) InstanceByID(context.Context, string) (sta
 	return s.current, nil
 }
 
+func (s regionalWarmPublicationStore) InstanceRuntimeConfigFence(ctx context.Context, accountID, appID, instanceID string) (state.RuntimeAppConfigFence, error) {
+	if s.fence != nil {
+		return *s.fence, nil
+	}
+	return s.Store.InstanceRuntimeConfigFence(ctx, accountID, appID, instanceID)
+}
+
 // These are publication protocol simulations; no admission head is activated.
 func TestRegionalWarmPublicationRecoversOnlySameResident(t *testing.T) {
-	for _, outcome := range []string{"committed", "peer-committed", "store-error", "still-warm", "different-run", "different-node", "different-runtime", "fenced-during-publish"} {
+	for _, outcome := range []string{"committed", "peer-committed", "store-error", "still-warm", "different-run", "different-node", "different-runtime", "different-config", "fenced-during-publish"} {
 		t.Run(outcome, func(t *testing.T) {
 			f := newRegionalWarmFixture(t)
 			p := f.prepare(t)
@@ -51,6 +60,10 @@ func TestRegionalWarmPublicationRecoversOnlySameResident(t *testing.T) {
 				s.current.NodeID = uuid.NewString()
 			case "different-runtime":
 				s.current.GuestUID++
+			case "different-config":
+				fence := regionalWarmCapturedFence(t, f)
+				fence.Fingerprint = "different configuration"
+				s.fence = &fence
 			case "fenced-during-publish":
 				s.publishHook = func() {
 					if _, err := f.store.FenceRegionalRuntimeServingSeat(t.Context(), f.app.ID, p.Seat.ID, uuid.NewString()); err != nil {
@@ -59,7 +72,7 @@ func TestRegionalWarmPublicationRecoversOnlySameResident(t *testing.T) {
 				}
 			}
 			f.engine.store = s
-			_, committed, err := f.engine.publishRegionalWarmRuntime(t.Context(), f.warm, p)
+			_, committed, err := f.engine.publishRegionalWarmRuntime(t.Context(), f.acct.ID, f.warm, p, regionalWarmCapturedFence(t, f))
 			ok := outcome == "committed" || outcome == "peer-committed"
 			if (err == nil) != ok || committed != (outcome == "committed") {
 				t.Fatal("publication recovery crossed resident identity", committed, err)
@@ -72,7 +85,16 @@ func TestRegionalWarmPublicationRecoversOnlySameResident(t *testing.T) {
 	f := newRegionalWarmFixture(t)
 	p := f.prepare(t)
 	p.Permit.RunID = uuid.NewString()
-	if _, _, err := f.engine.publishRegionalWarmRuntime(t.Context(), f.warm, p); !errors.Is(err, runtimequota.ErrBinding) {
+	if _, _, err := f.engine.publishRegionalWarmRuntime(t.Context(), f.acct.ID, f.warm, p, regionalWarmCapturedFence(t, f)); !errors.Is(err, runtimequota.ErrBinding) {
 		t.Fatal("publication accepted unbound placement", err)
 	}
+}
+
+func regionalWarmCapturedFence(t *testing.T, f regionalWarmFixture) state.RuntimeAppConfigFence {
+	t.Helper()
+	fence, err := f.store.InstanceRuntimeConfigFence(t.Context(), f.acct.ID, f.app.ID, f.warm.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fence
 }

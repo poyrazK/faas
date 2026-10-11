@@ -102,6 +102,17 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 		t.Fatal("account policy did not invalidate bound apps")
 	}
 	before = revision(app)
+	dependency, err := os.ReadFile("20261004190339147_service_binding_dependency_revision.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencyUp, dependencyDown, ok := strings.Cut(string(dependency), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing service dependency rollback")
+	}
+	if _, err := pool.Exec(ctx, dependencyDown); err != nil {
+		t.Fatal(err)
+	}
 	source, err := os.ReadFile("20261002175413928_binding_promotion_revision.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +178,9 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 		t.Fatal("missing runtime secret process generations migration")
 	}
 	if _, err := pool.Exec(ctx, processGenerationsUp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, dependencyUp); err != nil {
 		t.Fatal(err)
 	}
 }

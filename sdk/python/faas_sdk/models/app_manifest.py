@@ -145,7 +145,8 @@ class AppManifest:
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     favicon: None | str | Unset = UNSET
     """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
     robots_txt: None | str | Unset = UNSET

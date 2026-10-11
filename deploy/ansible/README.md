@@ -111,6 +111,12 @@ secret, so a variable-only change converges too. The fingerprint is recorded in
 force the next rollout to converge. Keep `CP_ANSIBLE_VARS_B64` in step with any
 variables you pass to a manual `make bootstrap-control-plane`.
 
+Size `faas-cp.slice` to the control-plane host with `faas_cp_slice_memory_max`
+(default `6144M`, the spec budget for the reference host) and
+`faas_cp_slice_cpu_quota` (default `400%`). A host with less RAM than the
+default must set a smaller value there. A cap set by hand on the host is
+reverted by the next convergence.
+
 ## Configuration contract (ADR-143)
 
 - Systemd units are generated from `pkg/daemonunitspec` into every role's

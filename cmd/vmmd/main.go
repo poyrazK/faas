@@ -1130,57 +1130,32 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The legacy reapers do not supply pinned exit or resource receipts and
 	// therefore cannot remove jails or clones behind that ownership.
 	if store != nil && !cfg.NativeProcessRecovery {
-		if err := mgr.RunNativeHostMaintenance(ctx, func(ctx context.Context) error {
-			isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
-				ins, err := store.InstanceByID(ctx, instanceID)
-				if err != nil {
-					// A row that is genuinely gone is not live; anything else is
-					// unknown and must not authorise resource removal.
-					if errors.Is(err, state.ErrNotFound) {
-						return false, nil
-					}
-					return false, err
-				}
-				return state.IsLive(ins.State), nil
-			}
-			rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
-				JailRoot: jailer.JailRoot(),
-				Runner:   wire.ExecRunner{},
-				Log:      log,
-				IsLive:   isLiveInstance,
+		if err := mgr.RunNativeHostMaintenance(ctx, func(maintenanceCtx context.Context) error {
+			rep, err := fcvm.ReapOrphanedJails(maintenanceCtx, fcvm.ReapOptions{
+				JailRoot: jailer.JailRoot(), Runner: wire.ExecRunner{}, Log: log,
+				IsLive: durableInstanceLive(store),
 			})
 			if err != nil {
 				log.Warn("vmmd: orphan reap failed", "err", err)
 			} else if rep.Scanned > 0 {
-				log.Info("vmmd: orphan reap complete",
-					"scanned", rep.Scanned, "reaped", rep.Reaped,
-					"process_only", rep.ProcessOnly,
-					"skipped_live", rep.SkippedLive,
-					"skipped_young", rep.SkippedYoung,
-					"skipped_unknown", rep.SkippedUnknown)
-			}
-			if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
-				cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
-					Root:   cacheBackend.Root(),
-					IsLive: isLiveInstance,
-					Log:    log,
-				})
-				if cloneErr != nil {
-					log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
-				} else if cloneRep.Scanned > 0 {
-					log.Info("vmmd: orphan layer clone reap complete",
-						"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
-						"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
-						"skipped_live", cloneRep.SkippedLive,
-						"skipped_young", cloneRep.SkippedYoung,
-						"skipped_unknown", cloneRep.SkippedUnknown,
-						"failed", cloneRep.Failed)
-				}
+				log.Info("vmmd: orphan reap complete", "scanned", rep.Scanned, "reaped", rep.Reaped,
+					"process_only", rep.ProcessOnly, "skipped_live", rep.SkippedLive,
+					"skipped_young", rep.SkippedYoung, "skipped_unknown", rep.SkippedUnknown)
 			}
 			return nil
 		}); err != nil {
 			log.Warn("vmmd: legacy orphan reap ownership unavailable", "err", err)
 		}
+	}
+	// ADR-631/791: reclaim only unowned clones and cgroups, in both recovery
+	// modes, while holding the same producer barrier as native inventory.
+	if store != nil {
+		cloneRoot := ""
+		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
+			cloneRoot = cacheBackend.Root()
+		}
+		cloneGate := layerCloneOwnershipGate(durableInstanceLive(store), mgr, resourceJournal)
+		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath), cloneGate, mgr, mgr.RunNativeHostMaintenance)
 	}
 
 	// Orphan sweep — schedule via a context-bound goroutine that
@@ -1371,12 +1346,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// Workstream E: serve live, non-sensitive app configuration through the
 	// instance-bound guest metadata endpoint. The receiver only returns rows
-	// for the app/account attached to the accepted Firecracker stream.
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, store, jailer)
+	// for the deployment/app/account attached to the Firecracker stream.
+	runtimeEnvStore, _ := store.(runtimeConfigStore)
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer)
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
-		StartRuntimeConfigInvalidationWatcher(ctx, pool, runtimeConfigRecv, log)
 		defer runtimeConfigRecv.Close()
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,

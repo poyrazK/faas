@@ -255,7 +255,10 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, opts FetchOpti
 		opts.AppID, rng)
 	perRoute, err := fetcher.QueryGrouped(ctx, query, "app", "route")
 	if err != nil {
-		return degradedFromErr(resp, err, log, "per_route_rps")
+		// The query error carries the internal Prometheus URL and PromQL; log it,
+		// but give the response only the generic reason.
+		degraded, _ := degradedFromErr(resp, err, log, "per_route_rps")
+		return degraded, SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 	}
 
 	// 2. Walk the matched rows. The query is `{app=…}` so the outer

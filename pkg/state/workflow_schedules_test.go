@@ -368,7 +368,7 @@ func TestWorkflowScheduleCalendarAndClockRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, run, err := evaluateWorkflowSchedule("app", "deployment", spec,
+			_, run, err := evaluateWorkflowSchedule("app", "", "deployment", spec,
 				&WorkflowScheduleCursor{DeploymentID: "deployment", TriggerSnapshot: trigger, LastEvaluatedAt: previous}, now, 0, 0, 10)
 			if err != nil || (run != nil) != test.starts {
 				t.Fatalf("run=%+v err=%v", run, err)

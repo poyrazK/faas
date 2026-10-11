@@ -21,17 +21,20 @@ type ObjectBucket struct {
 	State              string
 	PublicRead         bool
 	ServeAt            string
-	// EnvironmentCloneSourceBucketID is non-empty only for a private bucket
+	// EnvironmentCloneSourceBucketID is non-empty only for a bucket
 	// provisioned by an isolated project-environment clone. It gives cleanup a
 	// durable ownership marker without conflating it with user-created buckets.
 	EnvironmentCloneSourceBucketID string
-	CreatedAt                      time.Time
-	UpdatedAt                      time.Time
-	LeaseToken                     string
-	LeaseUntil                     time.Time
-	AttemptCount                   int32
-	RetryAt                        time.Time
-	LastErrorCode                  string
+	// EnvironmentCloneOperationID identifies a durable full-copy reservation.
+	// It is assigned only by the leased reservation writer.
+	EnvironmentCloneOperationID string
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
+	LeaseToken                  string
+	LeaseUntil                  time.Time
+	AttemptCount                int32
+	RetryAt                     time.Time
+	LastErrorCode               string
 }
 
 // ObjectBucketStore is separate from Store so test doubles unrelated to

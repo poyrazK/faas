@@ -20,6 +20,9 @@ class CreateProjectEnvironmentRequest:
     protected: bool | Unset = False
     from_environment: str | Unset = UNSET
     """Source environment whose scoped configuration and values are copied."""
+    full: bool | Unset = False
+    """Require a complete isolated copy; use the dedicated environment-clones route. Admission remains closed while
+    complete coverage is unavailable."""
     share_resources: bool | Unset = False
     """Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-
     storage resources; data remains shared."""
@@ -31,6 +34,8 @@ class CreateProjectEnvironmentRequest:
         protected = self.protected
 
         from_environment = self.from_environment
+
+        full = self.full
 
         share_resources = self.share_resources
 
@@ -45,6 +50,8 @@ class CreateProjectEnvironmentRequest:
             field_dict["protected"] = protected
         if from_environment is not UNSET:
             field_dict["from_environment"] = from_environment
+        if full is not UNSET:
+            field_dict["full"] = full
         if share_resources is not UNSET:
             field_dict["share_resources"] = share_resources
 
@@ -59,12 +66,15 @@ class CreateProjectEnvironmentRequest:
 
         from_environment = d.pop("from_environment", UNSET)
 
+        full = d.pop("full", UNSET)
+
         share_resources = d.pop("share_resources", UNSET)
 
         create_project_environment_request = cls(
             slug=slug,
             protected=protected,
             from_environment=from_environment,
+            full=full,
             share_resources=share_resources,
         )
 

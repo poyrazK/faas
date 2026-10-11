@@ -1,5 +1,7 @@
 package fcvm
 
+// adr: 791
+
 // adr: 778
 import (
 	"bytes"
@@ -131,13 +133,13 @@ func TestSnapshotInputsTravelWithRegionalBackingAndRefuseDifferentOriginalShape(
 
 func TestSnapshotInputsRequireCompleteCanonicalSidecar(t *testing.T) {
 	_, _, spec, inputs, _ := snapshotInputsFixture(t)
-	identity := BackingIdentity{Version: 1, Kernel: "kernel", Base: "base", Inputs: inputs}
+	identity := BackingIdentity{Version: backingIdentityVersion, Kernel: "kernel", Base: "base", Inputs: inputs, Timer: strings.TrimSpace(guestTimerArgs)}
 	raw, _ := json.Marshal(identity)
 	if _, err := decodeSnapshotBacking(raw); err != nil {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string][]byte{
-		"duplicate":        bytes.Replace(raw, []byte(`"version":1`), []byte(`"version":1,"version":1`), 1),
+		"duplicate":        bytes.Replace(raw, []byte(`"version":`), []byte(`"version":0,"version":`), 1),
 		"unknown":          append([]byte(`{"extra":true,`), raw[1:]...),
 		"null":             bytes.Replace(raw, []byte(`"machine":{`), []byte(`"machine":null,"machine":{`), 1),
 		"trailing":         append(append([]byte(nil), raw...), []byte(`{}`)...),
@@ -252,7 +254,7 @@ func TestNativeSnapshotUnknownInputsRefuseBeforeStaging(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), 0).WithStorage(be)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{}
 	key := state.SnapshotCaptureMemKey("dep", "init", "capture")
-	raw, _ := json.Marshal(BackingIdentity{Version: 1, Kernel: "kernel", Base: "base"})
+	raw, _ := json.Marshal(BackingIdentity{Version: backingIdentityVersion, Kernel: "kernel", Base: "base", Timer: strings.TrimSpace(guestTimerArgs)})
 	if err := be.Put(t.Context(), state.SnapshotBackingKey(state.Snapshot{StorageKey: key}), bytes.NewReader(raw)); err != nil {
 		t.Fatal(err)
 	}

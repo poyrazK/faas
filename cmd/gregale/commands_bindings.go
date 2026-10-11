@@ -52,6 +52,8 @@ type objectStorageBindingCLIRevokeResult struct {
 func cmdBindings(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "release-policy":
+			return cmdBindingsReleasePolicy(args[1:])
 		case "check":
 			return cmdBindingsCheck(args[1:])
 		case "object-storage":
@@ -67,8 +69,11 @@ func cmdBindings(args []string) int {
 	fs := newFlagSet("bindings", flag.ContinueOnError)
 	requireComplete := fs.Bool("require-complete", false, "fail if binding metadata, verification, runtime freshness or refresh progress is incomplete")
 	scope := fs.String("scope", "", "filter resource bindings by environment scope; app-wide bindings remain included")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positionals := splitArgsForFlags(args, "require-complete")
-	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) {
+	parseErr := fs.Parse(flags)
+	positionals, mergeErr := mergeAppFlag(positionals, *app, 1)
+	if parseErr != nil || mergeErr != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) {
 		PrintUsage(osStderr, "usage: gregale bindings <app> [--scope SCOPE] [--require-complete] | gregale bindings check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale bindings object-storage <list|rotate|revoke> ... | gregale bindings verify <app> <service>|--all | gregale bindings smoke <app> <service> --deployment <id> --path </path>", "bindings")
 		return 1
 	}

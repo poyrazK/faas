@@ -75,7 +75,7 @@ func (s *server) scanObjectCapacity(ctx context.Context, st state.ObjectCapacity
 	if err != nil {
 		return j, err
 	}
-	bytes, keys, err := completeObjectInventory(scanCtx, backend.Provider, b.PhysicalName)
+	bytes, keys, err := completeObjectInventory(scanCtx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
 	if err != nil {
 		return j, err
 	}
@@ -90,10 +90,15 @@ func (s *server) scanObjectCapacity(ctx context.Context, st state.ObjectCapacity
 
 // Complete scans reject partial pages, invalid keys, out-of-order/duplicate
 // entries and cursor cycles before any capacity ledger is changed.
-func completeObjectInventory(ctx context.Context, p objectstorage.Provider, physical string) (bytes, keys int64, err error) {
+func completeObjectInventory(ctx context.Context, p objectstorage.Provider, physical string, record ...func(context.Context) error) (bytes, keys int64, err error) {
 	cursor, last := "", ""
 	seen := map[string]bool{}
 	for range api.ObjectStorageInventoryMaxPages {
+		if len(record) != 0 && record[0] != nil {
+			if err := record[0](ctx); err != nil {
+				return 0, 0, err
+			}
+		}
 		page, e := p.ListObjects(ctx, physical, "", cursor, api.MaxObjectS3ListItems)
 		if e != nil {
 			return 0, 0, e

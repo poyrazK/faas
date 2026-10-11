@@ -223,7 +223,7 @@ func TestNativeSnapshotOutputsRefuseChangedCaptureBeforeProduction(t *testing.T)
 				capture.StartedAt = capture.StartedAt.Add(time.Nanosecond)
 			case "capture_completed":
 				capture.CompletedAt, capture.Info = time.Now().UTC(), SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}
-				capture.Backing = BackingIdentity{Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}
+				capture.Backing = BackingIdentity{Version: backingIdentityVersion, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64), Timer: strings.TrimSpace(guestTimerArgs)}
 			case "permit_capture":
 				changed := capture
 				changed.CaptureID = uuid.NewString()

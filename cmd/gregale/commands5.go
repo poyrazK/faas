@@ -84,9 +84,15 @@ func cmdPS(args []string) int {
 	fs := newFlagSet("ps", flag.ContinueOnError)
 	setFlagOutput(fs, os.Stderr)
 	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
+	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positional := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil || len(positional) > 1 {
 		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]", "ps")
+		return 1
+	}
+	positional, err := mergeAppFlag(positional, *app, 1)
+	if err != nil {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]\nerror: "+err.Error(), "ps")
 		return 1
 	}
 	slug := ""
@@ -221,12 +227,14 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|pull|push|diff>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff>", "env")
 		return 1
 	}
 	switch args[0] {
 	case "create":
 		return envCreate(args[1:])
+	case "clone-status":
+		return envCloneStatus(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -692,7 +700,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
@@ -704,6 +712,8 @@ func cmdAppScale(slug string, args []string) int {
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
+	environment := fs.String("environment", "", "edit this project environment's workload settings")
+	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
@@ -734,7 +744,7 @@ func cmdAppScale(slug string, args []string) int {
 	// plan_require_authn_not_allowed, which surfaces as a "Scale failed"
 	// error with the API's problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
-	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
+	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; a bearer-protected public URL opens, an IP allowlist, basic auth or internal_only setting stays")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
@@ -792,7 +802,7 @@ func cmdAppScale(slug string, args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}
@@ -850,7 +860,18 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["no-require-authn"] {
 		v := false
 		req.RequireAuthn = &v
-		req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		current, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(context.Background(), slug)
+		if err != nil {
+			return printErr("Could not fetch app", err)
+		}
+		req.PublicAuth = openPublicAuthAfterTokenRemoval(current)
+		if req.PublicAuth == nil {
+			fmt.Fprintf(os.Stderr, "Public URL access stays %s; use `gregale app %s --public-auth open` to remove it.\n", current.PublicAuth.Mode, slug)
+		}
 	}
 	if explicit["head-wakes"] {
 		v := *headWakes
@@ -903,7 +924,7 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	updated, err := client.UpdateApp(context.Background(), slug, req)
+	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Scale failed", err)
 	}
@@ -1974,6 +1995,12 @@ func cmdQueueTail(args []string) int {
 			}
 			PrintWarn(os.Stderr, "queue receive failed: %v", err)
 			return 3
+		}
+		if row.ID == "" {
+			// An empty receive (204) is an idle poll like a long-poll
+			// timeout. production-us hunt #4: it printed a blank line
+			// every poll.
+			continue
 		}
 		payload := strings.TrimSpace(string(row.Payload))
 		if payload == "" || !json.Valid(row.Payload) {

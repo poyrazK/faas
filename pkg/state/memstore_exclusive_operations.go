@@ -3,10 +3,12 @@ package state
 import (
 	"bytes"
 	"context"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -15,7 +17,8 @@ type exclusiveMemoryTx struct {
 	policiesByName   map[string]ExclusiveWorkPolicy
 	keys             map[string]exclusiveKey
 	operations       map[string]ExclusiveOperation
-	committedEffects map[string][]exclusivework.Effect
+	committedEffects map[string][]exclusiveStoredEffect
+	deliveries       map[string]AppWebhookDelivery
 	submissions      map[string]string
 	quotas           map[string]accountAsyncQuotaRow
 }
@@ -51,7 +54,7 @@ func (s *MemStore) exclusiveAtomic(ctx context.Context, run func(exclusiveTransa
 // MemStore record while already holding s.mu.
 func (s *MemStore) exclusiveMemoryTxLocked() *exclusiveMemoryTx {
 	tx := &exclusiveMemoryTx{quotas: maps.Clone(s.accountAsyncQuota), submissions: maps.Clone(s.exclusiveSubmissions), store: s, policiesByName: maps.Clone(s.exclusivePolicies),
-		keys: maps.Clone(s.exclusiveKeys), operations: maps.Clone(s.exclusiveOperations), committedEffects: maps.Clone(s.exclusiveEffects)}
+		keys: maps.Clone(s.exclusiveKeys), operations: maps.Clone(s.exclusiveOperations), committedEffects: maps.Clone(s.exclusiveEffects), deliveries: maps.Clone(s.appWebhookDeliveries)}
 	if tx.submissions == nil {
 		tx.submissions = map[string]string{}
 	}
@@ -68,7 +71,10 @@ func (s *MemStore) exclusiveMemoryTxLocked() *exclusiveMemoryTx {
 		tx.operations = map[string]ExclusiveOperation{}
 	}
 	if tx.committedEffects == nil {
-		tx.committedEffects = map[string][]exclusivework.Effect{}
+		tx.committedEffects = map[string][]exclusiveStoredEffect{}
+	}
+	if tx.deliveries == nil {
+		tx.deliveries = map[string]AppWebhookDelivery{}
 	}
 	return tx
 }
@@ -77,6 +83,7 @@ func (s *MemStore) commitExclusiveMemoryTxLocked(tx *exclusiveMemoryTx) {
 	s.exclusiveSubmissions = tx.submissions
 	s.accountAsyncQuota = tx.quotas
 	s.exclusivePolicies, s.exclusiveKeys, s.exclusiveOperations, s.exclusiveEffects = tx.policiesByName, tx.keys, tx.operations, tx.committedEffects
+	s.appWebhookDeliveries = tx.deliveries
 }
 
 func (tx *exclusiveMemoryTx) lockAccount(id string) error {
@@ -160,6 +167,7 @@ func cloneExclusivePolicy(p ExclusiveWorkPolicy) ExclusiveWorkPolicy {
 	return p
 }
 func cloneExclusiveOperation(op ExclusiveOperation) ExclusiveOperation {
+	op.Effects = slices.Clone(op.Effects)
 	op.Policy.MemberAppIDs = slices.Clone(op.Policy.MemberAppIDs)
 	op.Policy.MemberJobIDs = slices.Clone(op.Policy.MemberJobIDs)
 	op.Request = slices.Clone(op.Request)
@@ -310,13 +318,64 @@ func (tx *exclusiveMemoryTx) reserve(account string) error {
 	return nil
 }
 func (tx *exclusiveMemoryTx) effects(o ExclusiveOperation, effects []exclusivework.Effect) error {
-	copyEffects := make([]exclusivework.Effect, len(effects))
+	copyEffects := make([]exclusiveStoredEffect, len(effects))
 	for i, e := range effects {
-		copyEffects[i] = e
-		copyEffects[i].Payload = slices.Clone(e.Payload)
+		id := uuid.NewString()
+		record := api.OperationEffectRecord{ID: id, Name: e.Name, Generation: o.Generation, Status: "recorded"}
+		if e.WebhookID != "" {
+			hook := tx.store.appWebhooks[e.WebhookID]
+			if hook.ID == "" {
+				for id, candidate := range tx.store.appWebhooks {
+					if canonicalMemUUID(id) == canonicalMemUUID(e.WebhookID) {
+						hook = candidate
+						break
+					}
+				}
+			}
+			if !operationEffectDestinationMatches(o, hook) {
+				return ErrOperationEffectDestination
+			}
+			if _, err := tx.appScope(o.AccountID, o.AppID); err != nil {
+				return ErrOperationEffectDestination
+			}
+			if o.PlatformTenantID != "" {
+				if !tx.store.operationEffectSurfaceLinkedLocked(o) {
+					return ErrOperationEffectDestination
+				}
+			}
+			body, err := operationEffectBody(o, e)
+			if err != nil {
+				return err
+			}
+			now, err := tx.now()
+			if err != nil {
+				return err
+			}
+			tx.deliveries[id] = AppWebhookDelivery{ID: id, WebhookID: hook.ID, AppID: o.AppID, AccountID: o.AccountID, Event: OperationEffectEvent, Payload: body, Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now}
+			record.WebhookID, record.DeliveryID, record.Type, record.Status = hook.ID, id, e.Type, "pending"
+		}
+		e.Payload = slices.Clone(e.Payload)
+		copyEffects[i] = exclusiveStoredEffect{Effect: e, Record: record}
 	}
 	tx.committedEffects[o.ID] = copyEffects
 	return nil
+}
+
+func (tx *exclusiveMemoryTx) effectRecords(o ExclusiveOperation) ([]api.OperationEffectRecord, error) {
+	var records []api.OperationEffectRecord
+	for _, effect := range tx.committedEffects[o.ID] {
+		record := effect.Record
+		if record.WebhookID != "" {
+			record.Status = "unavailable"
+			_, receiverExists := tx.store.appWebhooks[record.WebhookID]
+			if delivery, ok := tx.deliveries[record.DeliveryID]; ok && receiverExists {
+				record.Status, record.Attempt, record.LastError = string(delivery.Status), delivery.Attempt, delivery.LastError
+			}
+		}
+		records = append(records, record)
+	}
+	slices.SortFunc(records, func(a, b api.OperationEffectRecord) int { return strings.Compare(a.Name, b.Name) })
+	return records, nil
 }
 
 func (tx *exclusiveMemoryTx) runtimeScope(account, app, id, wake, node string) error {

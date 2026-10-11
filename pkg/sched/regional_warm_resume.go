@@ -88,7 +88,7 @@ func (e *Engine) prepareRegionalWarmResume(ctx context.Context, app state.App, a
 // dispatchRegionalWarmResume only handles the transport step. Its caller must
 // independently admit work. Receipt checks and an exact transport ack never
 // authorize a release or stand in for native lifecycle acceptance.
-func (e *Engine) dispatchRegionalWarmResume(ctx context.Context, warm state.Instance, p runtimequota.Placement) error {
+func (e *Engine) dispatchRegionalWarmResume(ctx context.Context, warm state.Instance, p runtimequota.Placement, imageRequired bool) error {
 	if !regionalWarmPlacementMatches(warm, p) {
 		return runtimequota.ErrBinding
 	}
@@ -99,7 +99,19 @@ func (e *Engine) dispatchRegionalWarmResume(ctx context.Context, warm state.Inst
 	if err := e.store.CheckRegionalRuntimeIssuedPlacement(ctx, p); err != nil {
 		return err
 	}
-	if err := resumer.ResumeRegionalWarmInstance(ctx, warm.NodeID, warm.ID, p.Clone()); err != nil {
+	var err error
+	if imageRequired {
+		checked, ok := e.vmm.(interface {
+			ResumeRegionalWarmInstanceWithImageHealthcheck(context.Context, string, string, runtimequota.Placement) error
+		})
+		if !ok {
+			return regionalWarmUnavailable(runtimequota.ErrTrust)
+		}
+		err = checked.ResumeRegionalWarmInstanceWithImageHealthcheck(ctx, warm.NodeID, warm.ID, p.Clone())
+	} else {
+		err = resumer.ResumeRegionalWarmInstance(ctx, warm.NodeID, warm.ID, p.Clone())
+	}
+	if err != nil {
 		return err
 	}
 	return e.store.CheckRegionalRuntimeIssuedPlacement(ctx, p)

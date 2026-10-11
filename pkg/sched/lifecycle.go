@@ -395,12 +395,15 @@ func activeServiceRollouts(deployments []state.Deployment) map[string]state.Depl
 func previousServiceDeployment(rollout state.Deployment, deployments []state.Deployment) state.Deployment {
 	var previous state.Deployment
 	for _, dep := range deployments {
-		if dep.ID == rollout.ID || dep.Status != state.DeployLive ||
+		if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && dep.ID != pinned {
+			continue
+		}
+		if dep.ID == rollout.ID || dep.AppID != rollout.AppID || dep.Status != state.DeployLive ||
 			serviceRolloutScope(dep) != serviceRolloutScope(rollout) ||
 			state.IsServiceRollout(dep) {
 			continue
 		}
-		if !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
+		if rollout.ServiceRolloutHandoff.PredecessorDeploymentID == "" && !rollout.CreatedAt.IsZero() && dep.CreatedAt.After(rollout.CreatedAt) {
 			continue
 		}
 		if previous.ID == "" || dep.CreatedAt.After(previous.CreatedAt) ||
@@ -859,6 +862,11 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 }
 
 func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollout, previous state.Deployment) bool {
+	if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && previous.ID != pinned {
+		e.failServiceRolloutHandoff(ctx, rollout.ID, state.ServiceRolloutPhasePending, "predecessor_missing", nil)
+		return false
+	}
+
 	if previous.ID != "" {
 		if _, err := e.store.BeginServiceRolloutCutover(ctx, rollout.ID); err != nil {
 			if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {

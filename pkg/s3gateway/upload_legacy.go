@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -31,7 +32,7 @@ func (h *Handler) performLegacyGatewayPut(w http.ResponseWriter, r *http.Request
 		return
 	}
 	dispatched = true
-	response, err := h.client.Do(upstream) // #nosec G704 -- The immutable registry backend signs the URL; customers supply only the object key and metadata.
+	response, receipt, err := h.doMutationRequest(upstream, req)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
@@ -44,8 +45,16 @@ func (h *Handler) performLegacyGatewayPut(w http.ResponseWriter, r *http.Request
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusNoContent {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
 	ack, err := objectstorage.VerifyObjectWriteAcknowledgment(response.Header)
 	if err != nil {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	if err := objectstorageactivity.Finish(transferCtx, h.store, receipt); err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}

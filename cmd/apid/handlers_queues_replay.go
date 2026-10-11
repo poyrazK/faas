@@ -31,7 +31,19 @@ import (
 // middleware keys on Idempotency-Key for double-POST safety
 // across network retries.
 func (s *server) queueDeadLetterReplay(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
+	row, readErr := s.store.ProductionQueueInvocationByID(r.Context(), id)
+	if readErr != nil || row.AccountID != acct.ID || row.AppID != app.ID {
+		api.WriteProblem(w, api.ErrInvocationNotFound(id))
+		return
+	}
 	inv, err := s.store.RetryQueueDeadLetter(r.Context(), acct.ID, id)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

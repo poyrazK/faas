@@ -239,11 +239,34 @@ func trafficResilienceEnabled(name string) bool {
 // circuit.LegacyQuarantineConfig for a nil breaker, which reproduces the
 // fixed-TTL quarantine exactly. Returning nil here is therefore the
 // flag-off path, and returning a DefaultConfig group is the flag-on one.
-func egressBreakerGroup() *circuit.Group {
+//
+// The same group is installed on the public handler (H4-68), and source tunes
+// each app's breakers from its kind=circuit_breaker rule. A nil source keeps
+// DefaultConfig for every app.
+func egressBreakerGroup(source gateway.CircuitRuleSource, log *slog.Logger) *circuit.Group {
 	if !trafficResilienceEnabled("FAAS_GATEWAY_CIRCUIT_BREAKER") {
 		return nil
 	}
-	return circuit.NewGroup(circuit.DefaultConfig(), nil)
+	g := circuit.NewGroup(circuit.DefaultConfig(), nil)
+	if source != nil {
+		g = g.WithConfigFor(gateway.NewCircuitConfigs(source, log).ForKey)
+	}
+	return g
+}
+
+// circuitRuleSource loads an app's kind=circuit_breaker rules for breaker
+// tuning.
+func circuitRuleSource(store interface {
+	ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+}) gateway.CircuitRuleSource {
+	return func(ctx context.Context, appID string) ([]gateway.EdgeRuleCircuitBreakerResolved, error) {
+		rules, err := store.ListEdgeRulesForApp(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		compiled, _ := compileCircuitBreakerRules(rules)
+		return compiled, nil
+	}
 }
 
 // rawStreamEnabledFromEnv (issue #676 / ADR-080 follow-up) resolves the
@@ -806,6 +829,13 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			req.Header.Set(key, value)
 		}
 	}
+	// Workflow step headers are authored by schedd's workflow orchestrator.
+	// Any other persisted envelope (queued, replayed, CLI) cannot assert them.
+	if inv.Source != state.InvocationSource("workflow") {
+		for _, name := range []string{api.WorkflowRunIDHeader, api.WorkflowStepHeader, api.WorkflowAttemptHeader} {
+			req.Header.Del(name)
+		}
+	}
 	// CLI invoke, queue, task, and cron payloads are JSON values, but their
 	// persisted envelopes need not carry HTTP headers. Common guest frameworks
 	// will otherwise ignore the body. Preserve an explicit customer media type
@@ -835,9 +865,28 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	if state.InvocationHasOperation(inv) {
+		var proof map[string]string
+		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
+			return inv, 0, nil, err
+		}
+		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader} {
+			req.Header.Set(name, proof[name])
+		}
+	}
 	if inv.ExclusiveClaim != nil {
 		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
 		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
+		if inv.OperationResultVersion == api.ManagedOperationResultVersion {
+			req.Header.Set(api.ManagedOperationResultVersionHeader, "1")
+		}
+	} else if inv.ManagedOperationID != "" {
+		req.Header.Set(api.TenantIDHeader, inv.ManagedOperationAccountID)
+		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ManagedOperationID)
+		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ManagedOperationGeneration, 10))
+		if inv.OperationResultVersion == api.ManagedOperationResultVersion {
+			req.Header.Set(api.ManagedOperationResultVersionHeader, "1")
+		}
 	}
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
@@ -1412,32 +1461,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 				return gateway.App{}, false, err
 			}
-			acct, err := pgStore.AccountByID(ctx, app.AccountID)
-			if err != nil {
-				return gateway.App{}, false, err
-			}
-			liveDeployments, err := pgStore.LiveDeployments(ctx, app.ID)
-			if err != nil && !errors.Is(err, state.ErrNotFound) {
-				return gateway.App{}, false, err
-			}
-			companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
-			if err != nil {
-				return gateway.App{}, false, err
-			}
-			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			concurrencyOverflow := ""
-			maxQueueWaitMS := 0
-			maxQueueDepth := 0
-			wakeMaxQueueDepth := 0
-			wakeMaxQueueWaitSeconds := 0
-			if app.ScalingPolicy != nil {
-				concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
-				maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
-				maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
-				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
-				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
-			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, ProjectID: app.ProjectID, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, RevisionPinTTLSeconds: app.Manifest.RevisionPinTTLSeconds, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), PlatformTenantRequired: app.PlatformTenantRequired, CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, PreAuthRateLimit: app.Manifest.PreAuthRateLimit, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return router.toApp(ctx, app)
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1728,19 +1752,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, version.Scope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, version.Scope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, version.Scope), synthWakeSleep)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			target := gateway.Target{
 				AppID:               appID,
 				InstanceID:          instanceID,
@@ -1778,20 +1795,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
 			wakeScope := version.Scope
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, wakeScope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, wakeScope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, wakeScope), synthWakeSleep)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
 				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
 			}
@@ -1851,13 +1861,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return app.PublicAuthMode
 		})
-	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, stepName string, attempt int) error {
+	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error {
 		run, err := pgStore.GetWorkflowRun(ctx, runID)
 		if err != nil {
 			return fmt.Errorf("load workflow run: %w", err)
 		}
-		if run.AppID != appID {
-			return fmt.Errorf("workflow run belongs to another app")
+		if run.AppID != appID || run.PlatformTenantID != platformTenantID {
+			return fmt.Errorf("workflow run app or tenant identity does not match")
 		}
 		if run.Status != state.WorkflowRunStatusRunning {
 			return fmt.Errorf("workflow run is %s", run.Status)
@@ -1876,6 +1886,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return nil
 		}
 		return fmt.Errorf("workflow step %q not found", stepName)
+	})
+	deps.synth.WithManagedWorkflowOperationIdentity(func(ctx context.Context, appID, runID, stepName string) (string, bool, error) {
+		run, err := pgStore.GetWorkflowRun(ctx, runID)
+		if err != nil || run.AppID != appID {
+			return "", false, errors.New("workflow run is unavailable")
+		}
+		var definition api.WorkflowSpec
+		if err := json.Unmarshal(run.DefinitionSnapshot, &definition); err != nil {
+			return "", false, fmt.Errorf("decode managed workflow definition: %w", err)
+		}
+		enabled := false
+		for _, step := range definition.Steps {
+			if step.Name == stepName {
+				enabled = step.ManagedOperation
+				break
+			}
+		}
+		if !enabled {
+			return "", false, nil
+		}
+		app, err := pgStore.AppByID(ctx, appID)
+		if err != nil || app.AccountID == "" {
+			return "", false, errors.New("workflow application owner is unavailable")
+		}
+		return app.AccountID, true, nil
 	})
 	// Process-local Prometheus registry (spec §12). Constructed here so
 	// every downstream consumer — handler, warm-hint consumer, top-N
@@ -2491,6 +2526,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if err := configureOperationRoutes(handler, deps); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
 		if bridgeTarget == "" {
@@ -2512,6 +2550,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithAPIDiscovery(true)
 	}
 	if deps.pgStore != nil {
+		handler.WithHealthOutcomeLookup(healthOutcomeLookup(deps.pgStore))
 		handler.WithMirrorResultStore(deps.pgStore).WithMirrorSlotLeaseStore(deps.pgStore)
 	}
 	if deps.pool != nil {
@@ -2883,7 +2922,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalDialErr != nil {
 		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
 	}
-	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
+	// so a slow journal never delays or fails a customer request.
+	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
 		if journalClient == nil {
 			return errors.New("request ID journal apid client unavailable")
 		}
@@ -2901,7 +2942,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("apid did not record the request ID journal entry")
 		}
 		return nil
-	})
+	}, deps.metrics, log)
+	go journalQueue.Run(ctx)
+	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
 		defer func() {
 			if err := journalClient.Close(); err != nil {
@@ -3562,6 +3605,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
+		// ADR-201 §2: one instance-health breaker for the service proxy and
+		// the public path (H4-68), tuned per app by kind=circuit_breaker.
+		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
+		handler.WithCircuitBreaker(breaker)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			Provider:   serviceEndpointProvider,
 			Resolve:    newServiceProxyResolver(pgStore),
@@ -3595,7 +3642,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
-			Breaker:     egressBreakerGroup(),
+			Breaker:     breaker,
 			Metrics:     deps.metrics,
 			RetryBudget: retryBudget,
 			// Prefer a replica on this node before crossing the network.
@@ -4229,11 +4276,11 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 // pkg/state import already exists. It translates state.Deployment to
 // gateway.DeploymentWeightsRow (only fields the picker reads).
 type weightsStoreAdapter struct {
-	store *state.PgStore
+	store liveDeploymentStore
 }
 
 func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
-	deps, err := a.store.LiveDeployments(ctx, appID)
+	deps, err := productionLiveDeployments(ctx, a.store, appID)
 	if err != nil {
 		return nil, err
 	}

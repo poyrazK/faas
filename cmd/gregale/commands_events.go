@@ -21,12 +21,30 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|replay-preview|backfill|backfill-status|backfill-items|backfill-retry|publish|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
+	case "backlog":
+		return cmdEventsBacklog(args[1:])
 	case "preview":
 		return cmdEventsPreview(args[1:])
+	case "replay-preview":
+		return cmdEventsReplayPreview(args[1:])
+	case "backfill":
+		return cmdEventsBackfill(args[1:])
+	case "backfill-status":
+		return cmdEventsBackfillStatus(args[1:])
+	case "backfill-items":
+		return cmdEventsBackfillItems(args[1:])
+	case "backfill-retry":
+		return cmdEventsBackfillRetry(args[1:])
+	case "inspect":
+		return cmdEventsInspect(args[1:])
+	case "recover":
+		return cmdEventsRecover(args[1:])
+	case "attempts":
+		return cmdEventsAttempts(args[1:])
 	case "publish":
 		return cmdEventsPublish(args[1:])
 	case "subscriptions", "list":
@@ -152,7 +170,7 @@ func cmdEventsPreview(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
@@ -338,10 +356,12 @@ func cmdEventsFanoutHistory(args []string) int {
 func cmdEventsSubscriptions(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events subscriptions", flag.ContinueOnError)
+	app := fs.String("app", "", appSlugFlagUsage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
+	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr != nil || len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale events subscriptions <app>", "events")
 		return 1
 	}
@@ -419,7 +439,7 @@ func cmdEventsPublish(args []string) int {
 	if eventID == "" {
 		eventID = uuid.NewString()
 	}
-	body, err := resolvePayload(*data)
+	body, err := resolveJSONFlag("--data", *data)
 	if err != nil {
 		return printErr("Invalid --data", err)
 	}
@@ -454,5 +474,8 @@ func cmdEventsPublish(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Event %s accepted for account %s.", resp.ID, resp.AccountID)
+	if resp.ReceiptURL != "" {
+		_, _ = fmt.Fprintf(osStdout, "Receipt: %s\n", resp.ReceiptURL)
+	}
 	return 0
 }

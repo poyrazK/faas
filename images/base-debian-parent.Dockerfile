@@ -4,4 +4,4 @@
 # python313. imaged composes those children by matching OCI diff IDs.
 #
 # Node22 is intentionally Alpine and does not use this parent.
-FROM debian:12-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867
+FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91

@@ -130,31 +130,30 @@ the endpoint's OIDC bearer token. For example, with the separate `ws` package
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannel, RealtimeResyncRequiredError } from '@gregale/sdk-node';
+import { consumeRealtimeChannel } from '@gregale/sdk-node';
 
-try {
-  await consumeRealtimeChannel({
-    url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
-    channel: 'notifications',
-    cursorStore: {
-      load: async () => Number(await cursorDB.get('notifications') ?? 0),
-      save: async (sequence) => { await cursorDB.set('notifications', sequence); },
-    },
-    onMessage: async ({ sequence, data }) => {
-      await processNotification(sequence, data); // make this idempotent by sequence
-    },
-    webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
-      headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
-    }),
-  });
-} catch (error) {
-  if (error instanceof RealtimeResyncRequiredError) {
-    // Rebuild application state, then save a new cursor before consuming again.
-    console.log(error.oldestSequence, error.latestSequence);
-  } else {
-    throw error;
-  }
-}
+await consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'notifications',
+  cursorStore: {
+    load: async () => Number(await cursorDB.get('notifications') ?? 0),
+    save: async (sequence) => { await cursorDB.set('notifications', sequence); },
+  },
+  onMessage: async ({ sequence, data }) => {
+    await processNotification(sequence, data); // make this idempotent by sequence
+  },
+  onResync: async (gap) => {
+    const snapshot = await rebuildNotificationState({
+      channel: gap.channel,
+      throughSequence: gap.latestSequence,
+    });
+    await replaceNotificationState(snapshot.state);
+    return snapshot.sequence; // fully represented by the rebuilt state
+  },
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
 ```
 
 The helper calls `onMessage`, saves its cursor, then sends the ack. If
@@ -162,10 +161,90 @@ processing or saving fails it stops without advancing. A crash between the
 application side effect and cursor save can cause redelivery, so deduplicate
 using the channel and sequence. When possible, store that deduplication key
 with the application side effect in one transaction.
-An expired cursor raises `RealtimeResyncRequiredError`; the helper never skips
-missing history. Cancel with an `AbortSignal` to stop reconnecting. This preview
-requires both server preview flags and the endpoint's channel authorization
-callback described in [managed realtime operations](../../docs/ops/realtime.md).
+An expired cursor calls `onResync` with the channel, stale cursor, and retained
+history bounds. Return a cursor between `oldestSequence - 1` and
+`latestSequence` that the rebuilt state fully represents; the helper saves it
+before reconnecting. Omit `onResync` to receive `RealtimeResyncRequiredError`
+and perform recovery outside the consumer. Cancel with an `AbortSignal` to
+stop reconnecting. This preview requires both server preview flags and the
+endpoint's channel authorization callback described in
+[managed realtime operations](../../docs/ops/realtime.md).
+
+Use `consumeRealtimeChannels` to multiplex up to eight channels on one
+WebSocket. Each channel has its own cursor store, message handler, and optional
+resync callback; the connection URL, token factory, retry policy, and abort
+signal are shared:
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeChannels } from '@gregale/sdk-node';
+
+await consumeRealtimeChannels({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channels: [
+    {
+      channel: 'jobs',
+      cursorStore: jobCursorStore,
+      onMessage: async (message) => updateJobProgress(message),
+    },
+    {
+      channel: 'notifications',
+      cursorStore: notificationCursorStore,
+      onMessage: async (message) => processNotification(message),
+    },
+  ],
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
+```
+
+Handlers run sequentially in received frame order, so slow processing applies
+backpressure to every channel on that socket. A resync on one channel saves
+that channel's rebuilt cursor and reconnects the shared socket; the other
+channels resume from their own saved cursors and can receive duplicates under
+the at-least-once delivery model. `consumeRealtimeChannel` remains available
+for a single channel and uses the same implementation.
+
+Backend publishers can pass a stable key to the generated API service. Derive
+it once from the logical event or outbox row, and reuse it only when retrying
+that exact payload:
+
+```ts
+import { RealtimeService } from '@gregale/sdk-node';
+
+const payload = Buffer.from(JSON.stringify(event));
+const outcome = await RealtimeService.publishManagedRealtimeChannel({
+  slug: 'my-app',
+  id: 'ENDPOINT_ID',
+  channel: 'jobs',
+  idempotencyKey: `job-event:${event.id}`,
+  requestBody: { data_base64: payload.toString('base64') },
+});
+```
+
+The server replays the original outcome for 24 hours. A replay of a partial
+publish does not retry subscribers that missed it; use a new key for a new
+attempt only when possible duplicates are acceptable. A key reused with a
+different payload or delivery mode returns `409`.
+
+To make a message resumable, opt into retained delivery. It requires the apid
+retained-history preview flag, the realtimed resume preview flag, a stable key,
+and a payload no larger than 4 KiB. The response includes the durable channel
+sequence; v2 subscribers read messages in that order, while raw-frame clients
+receive the normal live publish:
+
+```ts
+const retained = await RealtimeService.publishManagedRealtimeChannel({
+  slug: 'my-app',
+  id: 'ENDPOINT_ID',
+  channel: 'jobs',
+  delivery: 'retained',
+  idempotencyKey: `job-event:${event.id}:retained`,
+  requestBody: { data_base64: payload.toString('base64') },
+});
+console.log(retained.sequence, retained.durable);
+```
 
 Browser clients import from the browser subpath. The server accepts a bounded
 OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit
@@ -236,6 +315,20 @@ generated services. The canonical mapping:
 
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
+
+## Transactional operation handlers
+
+For managed HTTP operations, `operationRequestFromHeaders` verifies negotiated
+support and captures the trusted identity with original request bytes.
+`withOperationTransaction(pool, operation, callback)` commits the callback's
+PostgreSQL writes and managed result/webhook intent together. A later attempt
+returns the saved response without repeating committed writes.
+
+Install `operationReceiptSchema` explicitly as the database owner. Use an idle,
+exclusively leased pg-compatible pool connection. Send `response.body` unchanged
+as `application/json`; `response.replayed` identifies receipt recovery. See the
+[transactional handler guide](../../docs/operation-transactions.md) for Express,
+receipt retention, and uncertain commit handling.
 
 ## Idempotency contract
 
@@ -571,3 +664,54 @@ don't require the fixture.
 ## License
 
 Internal — see `LICENSE`.
+## Internal HTTP Operations preview
+
+Operations is staged and production submission remains disabled. For locally
+enabled acceptance, import `GregaleOperationClient` from the browser entry point
+and supply a callback that obtains a current tenant-bound token:
+
+```ts
+import { GregaleOperationClient } from '@gregale/sdk-node/browser';
+
+const operations = new GregaleOperationClient({
+  apiURL: 'https://api.example.com',
+  credential: () => session.currentTenantToken(),
+});
+const receipt = await operations.start(definitionID, { count: 100 }, submissionKey);
+for await (const update of operations.subscribe(receipt.id, { signal })) {
+  await saveAndRender(update);
+}
+```
+
+Keep `submissionKey` stable for duplicate submissions. Account API keys stay on
+the backend. The client refreshes credentials on reconnect; persist the applied
+event cursor and pass it as `after` when rebuilding the client.
+
+Server handlers import `GregaleOperations` from the main entry point and wrap
+trusted Gregale guest requests with `runRequest(req.headers, handler)`. Within
+that handler, use `progress({ report_id, stage, completed, total })` and
+`artifact({ report_id, name, uri, size_bytes, sha256 })`. Use stable report IDs
+when repeating a report. Workload metadata is fetched for every report, while
+the current invocation capability stays private to its request context.
+See [Operations](../../docs/operations.md) for ownership, retention and recovery.
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.
+
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

@@ -45,6 +45,10 @@ type StatsCollector struct {
 	sentMessages                    *prometheus.Desc
 	sentBytes                       *prometheus.Desc
 	droppedMessages                 *prometheus.Desc
+	outboundPendingBytes            *prometheus.Desc
+	outboundQueueBytesLimit         *prometheus.Desc
+	outboundQueueCountDrops         *prometheus.Desc
+	outboundQueueByteDrops          *prometheus.Desc
 	callbackErrors                  *prometheus.Desc
 	callbackOutboxFull              *prometheus.Desc
 	callbackOutboxAdmissionErrors   *prometheus.Desc
@@ -62,6 +66,7 @@ type StatsCollector struct {
 	callbackDeadLetterCapacityBytes *prometheus.Desc
 	callbackDeadLetterEvictions     *prometheus.Desc
 	callbackDeadLetterLastEviction  *prometheus.Desc
+	callbackDeadLetterDiscards      *prometheus.Desc
 	authOutcomes                    *prometheus.Desc
 }
 
@@ -110,6 +115,10 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		sentMessages:                    prometheus.NewDesc(subsystem+"_sent_messages_total", "Realtime messages sent to clients since process start.", nil, nil),
 		sentBytes:                       prometheus.NewDesc(subsystem+"_sent_bytes_total", "Bytes sent to realtime clients since process start.", nil, nil),
 		droppedMessages:                 prometheus.NewDesc(subsystem+"_dropped_messages_total", "Realtime messages dropped because an outbound queue was full.", nil, nil),
+		outboundPendingBytes:            prometheus.NewDesc(subsystem+"_outbound_pending_bytes", "Bytes queued or currently being written to realtime clients.", nil, nil),
+		outboundQueueBytesLimit:         prometheus.NewDesc(subsystem+"_outbound_queue_bytes_limit", "Configured maximum outbound payload bytes per realtime connection.", nil, nil),
+		outboundQueueCountDrops:         prometheus.NewDesc(subsystem+"_outbound_queue_count_limit_drops_total", "Realtime messages rejected because a connection's outbound message-count limit was reached.", nil, nil),
+		outboundQueueByteDrops:          prometheus.NewDesc(subsystem+"_outbound_queue_byte_limit_drops_total", "Realtime messages rejected because a connection's outbound byte limit was reached.", nil, nil),
 		callbackErrors:                  prometheus.NewDesc(subsystem+"_callback_errors_total", "Realtime lifecycle callback failures since process start.", nil, nil),
 		callbackOutboxFull:              prometheus.NewDesc(subsystem+"_callback_outbox_full_total", "Callback events rejected because the durable outbox remained full until their admission deadline.", nil, nil),
 		callbackOutboxAdmissionErrors:   prometheus.NewDesc(subsystem+"_callback_outbox_admission_errors_total", "Callback events rejected because durable outbox admission failed for a reason other than capacity exhaustion.", nil, nil),
@@ -127,6 +136,7 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		callbackDeadLetterCapacityBytes: prometheus.NewDesc(subsystem+"_callback_dead_letter_capacity_bytes", "Configured maximum bytes of retained callback dead letters.", nil, nil),
 		callbackDeadLetterEvictions:     prometheus.NewDesc(subsystem+"_callback_dead_letter_evictions_total", "Callback dead letters evicted by byte retention since process start.", nil, nil),
 		callbackDeadLetterLastEviction:  prometheus.NewDesc(subsystem+"_callback_dead_letter_last_eviction_timestamp_seconds", "Unix timestamp of the most recent callback dead-letter eviction, or zero if none.", nil, nil),
+		callbackDeadLetterDiscards:      prometheus.NewDesc(subsystem+"_callback_dead_letter_discards_total", "Callback dead letters discarded by an operator since process start.", nil, nil),
 		authOutcomes:                    prometheus.NewDesc(subsystem+"_auth_outcomes_total", "Realtime client authentication outcomes since process start.", []string{"mode", "outcome"}, nil),
 	}
 }
@@ -156,6 +166,10 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.sentMessages, prometheus.CounterValue, float64(stats.SentMessages))
 	ch <- prometheus.MustNewConstMetric(c.sentBytes, prometheus.CounterValue, float64(stats.SentBytes))
 	ch <- prometheus.MustNewConstMetric(c.droppedMessages, prometheus.CounterValue, float64(stats.DroppedMessages))
+	ch <- prometheus.MustNewConstMetric(c.outboundPendingBytes, prometheus.GaugeValue, float64(stats.OutboundPendingBytes))
+	ch <- prometheus.MustNewConstMetric(c.outboundQueueBytesLimit, prometheus.GaugeValue, float64(stats.OutboundQueueBytesLimit))
+	ch <- prometheus.MustNewConstMetric(c.outboundQueueCountDrops, prometheus.CounterValue, float64(stats.OutboundQueueCountDrops))
+	ch <- prometheus.MustNewConstMetric(c.outboundQueueByteDrops, prometheus.CounterValue, float64(stats.OutboundQueueByteDrops))
 	ch <- prometheus.MustNewConstMetric(c.callbackErrors, prometheus.CounterValue, float64(stats.CallbackErrors))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxFull, prometheus.CounterValue, float64(stats.CallbackOutboxFull))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxAdmissionErrors, prometheus.CounterValue, float64(stats.CallbackOutboxAdmissionErrors))
@@ -173,6 +187,7 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterCapacityBytes, prometheus.GaugeValue, float64(stats.CallbackDeadLetterCapacityBytes))
 	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterEvictions, prometheus.CounterValue, float64(stats.CallbackDeadLetterEvictions))
 	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterLastEviction, prometheus.GaugeValue, float64(stats.CallbackDeadLetterLastEvictionUnix))
+	ch <- prometheus.MustNewConstMetric(c.callbackDeadLetterDiscards, prometheus.CounterValue, float64(stats.CallbackDeadLetterDiscards))
 	for mode := authMetricMode(0); mode < authMetricModeCount; mode++ {
 		for outcome := authMetricOutcome(0); outcome < authMetricOutcomeCount; outcome++ {
 			ch <- prometheus.MustNewConstMetric(c.authOutcomes, prometheus.CounterValue,
@@ -192,6 +207,10 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.sentMessages,
 		c.sentBytes,
 		c.droppedMessages,
+		c.outboundPendingBytes,
+		c.outboundQueueBytesLimit,
+		c.outboundQueueCountDrops,
+		c.outboundQueueByteDrops,
 		c.callbackErrors,
 		c.callbackOutboxFull,
 		c.callbackOutboxAdmissionErrors,
@@ -209,6 +228,7 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.callbackDeadLetterCapacityBytes,
 		c.callbackDeadLetterEvictions,
 		c.callbackDeadLetterLastEviction,
+		c.callbackDeadLetterDiscards,
 		c.authOutcomes,
 	}
 }

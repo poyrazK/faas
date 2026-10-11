@@ -14,5 +14,17 @@ export type EventFanoutAttemptResponse = {
   retryable: boolean;
   last_error?: string;
   occurred_at: string;
+  /**
+   * Capacity wait scope for this immutable observation.
+   */
+  capacity_scope?: 'consumer' | 'app' | 'account';
+  /**
+   * Cumulative deferrals at this observation; summaries provide the current total.
+   */
+  capacity_deferrals?: number;
+  /**
+   * Error or failure code detail was truncated to its UTF-8 byte ceiling.
+   */
+  details_truncated?: boolean;
 };
 

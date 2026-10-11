@@ -30,6 +30,9 @@ func (s *server) ensureProjectEnvironmentObjectStorageCloneBucket(
 	plan projectEnvironmentBindingClone,
 	cleanup *[]func(context.Context) error,
 ) (state.ObjectBucket, error) {
+	if s.objectStorage != nil && s.objectStorage.Accounting.GatewaySafety() {
+		return state.ObjectBucket{}, errIsolatedObjectStorageCloneUnsupported
+	}
 	store, ok := s.store.(state.ObjectBucketStore)
 	if !ok {
 		return state.ObjectBucket{}, errors.New("object storage bucket store is unavailable")

@@ -17,11 +17,15 @@ import (
 type recordingAsyncRouteEnqueuer struct {
 	request AsyncRouteRequest
 	calls   int
+	err     error
 }
 
 func (e *recordingAsyncRouteEnqueuer) EnqueueAsyncRoute(_ context.Context, request AsyncRouteRequest) (AsyncRouteAccepted, error) {
 	e.request = request
 	e.calls++
+	if e.err != nil {
+		return AsyncRouteAccepted{}, e.err
+	}
 	return AsyncRouteAccepted{ID: "inv_async_123"}, nil
 }
 

@@ -20,6 +20,7 @@ func cmdRoutesImpact(args []string) int {
 	base := fs.String("base", "", "baseline Git revision (required)")
 	head := fs.String("head", "", "candidate Git revision (defaults to working tree)")
 	path := fs.String("path", ".", "application source directory inside a Git repository")
+	framework := fs.String("framework", "auto", "source framework: auto, fastapi, go-nethttp, or node-http")
 	entrypoint := fs.String("entrypoint", "", "FastAPI module:variable (inferred when exactly one exists)")
 	format := fs.String("format", "text", "text or markdown")
 	output := fs.String("out", "", "save the JSON report to a new file")
@@ -28,8 +29,8 @@ func cmdRoutesImpact(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) > 1 || (len(positional) == 1 && !validCLISlug(positional[0])) || *base == "" || (*format != "text" && *format != "markdown") {
-		PrintUsage(osStderr, "usage: gregale routes impact [<slug>] --base REF [--head REF] [--path DIR] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-impact] [--fail-on-incomplete]", "cli")
+	if len(positional) > 1 || (len(positional) == 1 && !validCLISlug(positional[0])) || *base == "" || (*format != "text" && *format != "markdown") || (*framework != "auto" && *framework != "fastapi" && *framework != "go-nethttp" && *framework != "node-http") {
+		PrintUsage(osStderr, "usage: gregale routes impact [<slug>] --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-impact] [--fail-on-incomplete]", "cli")
 		return 1
 	}
 	app := ""
@@ -42,7 +43,7 @@ func cmdRoutesImpact(args []string) int {
 		}
 	}
 	report, err := routeimpact.Analyze(context.Background(), routeimpact.Options{
-		Path: *path, Base: *base, Head: *head, Entrypoint: *entrypoint, App: app,
+		Path: *path, Base: *base, Head: *head, Framework: *framework, Entrypoint: *entrypoint, App: app,
 	})
 	if err != nil {
 		return routeImpactError("Could not analyze route impact", err)

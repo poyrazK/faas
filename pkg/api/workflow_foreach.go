@@ -16,11 +16,13 @@ var ErrWorkflowForEachInvalid = errors.New("workflow: invalid for_each")
 
 var ErrWorkflowForEachItemLimit = errors.New("workflow: for_each item limit exceeded")
 
-// WorkflowForEachSpec applies one action sequentially to a snapshotted JSON
-// array. Action templates read input.item, input.index and input.input.
+// WorkflowForEachSpec applies one action to a snapshotted JSON array.
+// Action templates read input.item, input.index and input.input.
 type WorkflowForEachSpec struct {
-	Items  string                    `json:"items" yaml:"items" toml:"items"`
-	Action WorkflowForEachActionSpec `json:"action" yaml:"action" toml:"action"`
+	Items         string                    `json:"items" yaml:"items" toml:"items"`
+	Action        WorkflowForEachActionSpec `json:"action" yaml:"action" toml:"action"`
+	MaxParallel   int                       `json:"max_parallel,omitempty" yaml:"max_parallel,omitempty" toml:"max_parallel,omitempty"`
+	OnItemFailure string                    `json:"on_item_failure,omitempty" yaml:"on_item_failure,omitempty" toml:"on_item_failure,omitempty"`
 }
 
 type WorkflowForEachActionSpec struct {
@@ -31,10 +33,11 @@ type WorkflowForEachActionSpec struct {
 	Input    json.RawMessage       `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
 	Timeout  time.Duration         `json:"timeout,omitempty" yaml:"timeout,omitempty" toml:"timeout,omitempty"`
 	Retry    *WorkflowRetrySpec    `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
+	When     *WorkflowGuardSpec    `json:"when,omitempty" yaml:"when,omitempty" toml:"when,omitempty"`
 }
 
 func (a WorkflowForEachActionSpec) Step(name string) WorkflowStepSpec {
-	return WorkflowStepSpec{Name: name, Run: a.Run, Path: a.Path, Outbound: a.Outbound, Method: a.Method, Input: a.Input, Timeout: a.Timeout, Retry: a.Retry}
+	return WorkflowStepSpec{Name: name, Run: a.Run, Path: a.Path, Outbound: a.Outbound, Method: a.Method, Input: a.Input, Timeout: a.Timeout, Retry: a.Retry, When: a.When}
 }
 
 func (a *WorkflowForEachActionSpec) UnmarshalJSON(raw []byte) error {
@@ -44,7 +47,7 @@ func (a *WorkflowForEachActionSpec) UnmarshalJSON(raw []byte) error {
 	}
 	for field := range fields {
 		switch field {
-		case "run", "path", "outbound", "method", "input", "timeout", "retry":
+		case "run", "path", "outbound", "method", "input", "timeout", "retry", "when":
 		default:
 			return fmt.Errorf("%w: unsupported action field %q", ErrWorkflowForEachInvalid, field)
 		}
@@ -53,7 +56,7 @@ func (a *WorkflowForEachActionSpec) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &step); err != nil {
 		return err
 	}
-	*a = WorkflowForEachActionSpec{Run: step.Run, Path: step.Path, Outbound: step.Outbound, Method: step.Method, Input: step.Input, Timeout: step.Timeout, Retry: step.Retry}
+	*a = WorkflowForEachActionSpec{Run: step.Run, Path: step.Path, Outbound: step.Outbound, Method: step.Method, Input: step.Input, Timeout: step.Timeout, Retry: step.Retry, When: step.When}
 	return nil
 }
 
@@ -75,7 +78,7 @@ func (f *WorkflowForEachSpec) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	for field := range fields {
-		if field != "items" && field != "action" {
+		if field != "items" && field != "action" && field != "max_parallel" && field != "on_item_failure" {
 			return fmt.Errorf("%w: unknown field %q", ErrWorkflowForEachInvalid, field)
 		}
 	}
@@ -96,6 +99,12 @@ func ValidateWorkflowForEach(step WorkflowStepSpec, names []string, plan Plan) e
 	if len(step.Name) > WorkflowForEachNameMaxBytes || len(step.Input) != 0 || step.Method != "" || step.Timeout != 0 || step.Retry != nil || step.OnFailure != "" || step.OnTimeout != "" {
 		return ErrWorkflowForEachInvalid
 	}
+	if f.OnItemFailure != "" && f.OnItemFailure != "continue" {
+		return fmt.Errorf("%w: on_item_failure must be continue when set", ErrWorkflowForEachInvalid)
+	}
+	if f.MaxParallel < 0 || f.MaxParallel > WorkflowForEachMaxParallelLimit {
+		return fmt.Errorf("%w: max_parallel must be 0 through %d", ErrWorkflowForEachInvalid, WorkflowForEachMaxParallelLimit)
+	}
 	// References use the ordinary path grammar, without expression delimiters.
 	if strings.ContainsAny(f.Items, "{}") || strings.TrimSpace(f.Items) != f.Items || f.Items == "" {
 		return ErrWorkflowForEachInvalid
@@ -112,6 +121,8 @@ func ValidateWorkflowForEach(step WorkflowStepSpec, names []string, plan Plan) e
 	// Validate the target/options via the ordinary DAG. Check action template
 	// references separately against the parent's declared dependencies.
 	action.Input = nil
+	guard := action.When
+	action.When = nil
 	if boolCount(action.Run != "", action.Path != "", action.Outbound != nil) != 1 {
 		return ErrWorkflowForEachInvalid
 	}
@@ -123,10 +134,18 @@ func ValidateWorkflowForEach(step WorkflowStepSpec, names []string, plan Plan) e
 			return fmt.Errorf("%w: %w", ErrWorkflowForEachInvalid, err)
 		}
 	}
+	if err := ValidateWorkflowGuard(guard, step.DependsOn); err != nil {
+		return fmt.Errorf("%w: %w", ErrWorkflowForEachInvalid, err)
+	}
 	refs, err = workflowInputReferences(f.Action.Input, names)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrWorkflowForEachInvalid, err)
 	}
+	outboundRefs, err := workflowOutboundInputReferences(f.Action.Outbound, names)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrWorkflowForEachInvalid, err)
+	}
+	refs = append(refs, outboundRefs...)
 	for _, ref := range refs {
 		if ref.Source == workflowInputFailure || (ref.Source == workflowInputStepOutput && !workflowForEachDependency(step.DependsOn, ref.StepName)) {
 			return ErrWorkflowForEachInvalid
@@ -190,15 +209,29 @@ func WorkflowRuntimeStep(snapshot json.RawMessage, name string) *WorkflowStepSpe
 // ResolveWorkflowForEachInputs materializes the entire batch before any action
 // starts. Referenced values inserted into templates are never interpreted again.
 func ResolveWorkflowForEachInputs(step WorkflowStepSpec, input json.RawMessage, outputs map[string]json.RawMessage) (json.RawMessage, []json.RawMessage, error) {
-	return resolveWorkflowForEachInputs(step, input, outputs, false)
+	items, inputs, _, err := resolveWorkflowForEachInputsWithGuards(step, input, outputs, false)
+	return items, inputs, err
+}
+
+// ResolveWorkflowForEachInputsWithGuards snapshots each action input and its
+// per-item guard decision before any item is dispatched.
+func ResolveWorkflowForEachInputsWithGuards(step WorkflowStepSpec, input json.RawMessage, outputs map[string]json.RawMessage) (json.RawMessage, []json.RawMessage, []*bool, error) {
+	return resolveWorkflowForEachInputsWithGuards(step, input, outputs, false)
+}
+
+// ResolveWorkflowForEachInputsWithGuardsBounded checks each expansion before
+// serialization while returning the snapshotted per-item guard decisions.
+func ResolveWorkflowForEachInputsWithGuardsBounded(step WorkflowStepSpec, input json.RawMessage, outputs map[string]json.RawMessage) (json.RawMessage, []json.RawMessage, []*bool, error) {
+	return resolveWorkflowForEachInputsWithGuards(step, input, outputs, true)
 }
 
 // ResolveWorkflowForEachInputsBounded checks each expansion before serialization.
 func ResolveWorkflowForEachInputsBounded(step WorkflowStepSpec, input json.RawMessage, outputs map[string]json.RawMessage) (json.RawMessage, []json.RawMessage, error) {
-	return resolveWorkflowForEachInputs(step, input, outputs, true)
+	items, inputs, _, err := resolveWorkflowForEachInputsWithGuards(step, input, outputs, true)
+	return items, inputs, err
 }
 
-func resolveWorkflowForEachInputs(step WorkflowStepSpec, input json.RawMessage, outputs map[string]json.RawMessage, bounded bool) (json.RawMessage, []json.RawMessage, error) {
+func resolveWorkflowForEachInputsWithGuards(step WorkflowStepSpec, input json.RawMessage, outputs map[string]json.RawMessage, bounded bool) (json.RawMessage, []json.RawMessage, []*bool, error) {
 	resolve := func(template, input json.RawMessage, maxBytes int64) (json.RawMessage, error) {
 		if bounded {
 			return ResolveWorkflowStepInputBounded(template, input, outputs, nil, maxBytes)
@@ -208,47 +241,62 @@ func resolveWorkflowForEachInputs(step WorkflowStepSpec, input json.RawMessage, 
 	template, _ := json.Marshal("{{" + step.ForEach.Items + "}}")
 	itemsRaw, err := resolve(template, input, WorkflowForEachMaxInputBytes)
 	if bounded && errors.Is(err, ErrWorkflowInputLimit) {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err != nil || int64(len(itemsRaw)) > WorkflowForEachMaxInputBytes || len(itemsRaw) == 0 || itemsRaw[0] != '[' {
-		return nil, nil, ErrWorkflowForEachInvalid
+		return nil, nil, nil, ErrWorkflowForEachInvalid
 	}
 	var items []json.RawMessage
 	if json.Unmarshal(itemsRaw, &items) != nil {
-		return nil, nil, ErrWorkflowForEachInvalid
+		return nil, nil, nil, ErrWorkflowForEachInvalid
 	}
 	if len(items) > WorkflowForEachMaxItems {
 		if bounded {
-			return nil, nil, ErrWorkflowForEachItemLimit
+			return nil, nil, nil, ErrWorkflowForEachItemLimit
 		}
-		return nil, nil, ErrWorkflowForEachInvalid
+		return nil, nil, nil, ErrWorkflowForEachInvalid
 	}
 	inputs := make([]json.RawMessage, len(items))
+	var matches []*bool
+	if step.ForEach.Action.When != nil {
+		matches = make([]*bool, len(items))
+	}
 	var total int64
 	for index, item := range items {
 		resolved := cloneRawJSON(item)
-		if len(step.ForEach.Action.Input) != 0 {
-			context, marshalErr := json.Marshal(struct {
+		var context json.RawMessage
+		if len(step.ForEach.Action.Input) != 0 || step.ForEach.Action.When != nil {
+			encoded, marshalErr := json.Marshal(struct {
 				Item  json.RawMessage `json:"item"`
 				Index int             `json:"index"`
 				Input json.RawMessage `json:"input"`
 			}{item, index, input})
 			if marshalErr != nil {
-				return nil, nil, ErrWorkflowForEachInvalid
+				return nil, nil, nil, ErrWorkflowForEachInvalid
 			}
+			context = encoded
+		}
+		if len(step.ForEach.Action.Input) != 0 {
 			resolved, err = resolve(step.ForEach.Action.Input, context, WorkflowForEachMaxInputBytes-total)
 			if bounded && errors.Is(err, ErrWorkflowInputLimit) {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if err != nil {
-				return nil, nil, ErrWorkflowForEachInvalid
+				return nil, nil, nil, ErrWorkflowForEachInvalid
 			}
+		}
+		if step.ForEach.Action.When != nil {
+			matched, guardErr := EvaluateWorkflowGuard(step.ForEach.Action.When, context, outputs)
+			if guardErr != nil {
+				return nil, nil, nil, ErrWorkflowForEachInvalid
+			}
+			matches[index] = &matched
 		}
 		total += int64(len(resolved))
 		if total > WorkflowForEachMaxInputBytes {
-			return nil, nil, ErrWorkflowForEachInvalid
+			return nil, nil, nil, ErrWorkflowForEachInvalid
 		}
 		inputs[index] = resolved
 	}
-	return itemsRaw, inputs, nil
+	return itemsRaw, inputs, matches, nil
 }

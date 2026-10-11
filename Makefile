@@ -51,6 +51,10 @@ test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale C
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
 	@GO="$(GO)" sh scripts/test-commit-native.sh
 
+.PHONY: test-managed-operation-native
+test-managed-operation-native: ## Run native Firecracker managed workflow recovery and effect delivery acceptance
+	@GO="$(GO)" sh scripts/test-managed-operation-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
@@ -365,6 +369,22 @@ coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per pa
 .PHONY: migrations-check
 migrations-check: ## Static legacy-contiguity + timestamp-ID checks (no Postgres needed)
 	$(GO) test -tags no_pg -race -count=1 -run 'TestMigrations' ./migrations/...
+
+RNG_ADDON_ZIG_VERSION := 0.16.0
+RNG_ADDON_FLAGS := -target x86_64-linux-gnu -shared -fPIC -nostdlib -fno-stack-protector -O2 -Wl,--build-id=none -s
+
+.PHONY: rng-addon rng-addon-check
+rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-680; needs zig $(RNG_ADDON_ZIG_VERSION))
+	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
+	zig cc $(RNG_ADDON_FLAGS) -o guest/init/rngpreload/reseed.node guest/init/rngpreload/reseed.c
+
+rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-680)
+	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon-check: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	  zig cc $(RNG_ADDON_FLAGS) -o "$$tmp/reseed.node" guest/init/rngpreload/reseed.c && \
+	  cmp -s "$$tmp/reseed.node" guest/init/rngpreload/reseed.node || \
+	  { echo "rng-addon-check: committed reseed.node is not the build of reseed.c; run make rng-addon"; exit 1; }
+	@echo "rng-addon-check: OK"
 
 .PHONY: migration-new
 migration-new: ## Create timestamped migration: make migration-new NAME=add_job_priority
@@ -997,11 +1017,11 @@ SQLC_URL     ?= https://github.com/sqlc-dev/sqlc/releases/download/$(SQLC_VER)/s
 
 .PHONY: sqlc
 sqlc: ## Install sqlc at the pinned version (idempotent)
-	@if command -v $(SQLC) >/dev/null 2>&1; then \
+	@set -e; if command -v $(SQLC) >/dev/null 2>&1; then \
 	  $(SQLC) version 2>&1 | grep -q $(SQLC_VER) && { echo "sqlc $(SQLC_VER) installed"; exit 0; }; \
-	fi
-	@mkdir -p "$(HOME)/.local/sqlc/bin"
-	@tar_path="$$(mktemp)"; \
+	fi; \
+	mkdir -p "$(HOME)/.local/sqlc/bin"; \
+	tar_path="$$(mktemp)"; \
 	if command -v curl >/dev/null 2>&1; then \
 	  curl --fail --silent --show-error --location --output "$$tar_path" "$(SQLC_URL)" || { \
 	    echo "make sqlc: curl download failed; falling back to go install" >&2; \
@@ -1013,23 +1033,32 @@ sqlc: ## Install sqlc at the pinned version (idempotent)
 	  exit 0; \
 	fi; \
 	tar --extract --gzip --file "$$tar_path" --directory "$$(dirname $$tar_path)"; \
-	cp "$$(dirname $$tar_path)/sqlc" "$(HOME)/.local/sqlc/bin/sqlc" && chmod +x "$(HOME)/.local/sqlc/bin/sqlc"; \
+	cp "$$(dirname $$tar_path)/sqlc" "$(HOME)/.local/sqlc/bin/sqlc"; \
+	chmod +x "$(HOME)/.local/sqlc/bin/sqlc"; \
 	echo "sqlc $(SQLC_VER) installed at $(HOME)/.local/sqlc/bin/sqlc"
 
 .PHONY: sqlc-generate
-sqlc-generate: sqlc ## (re)generate pkg/state/sqlc/*.go from queries.sql + schema.sql
+sqlc-generate: sqlc ## (re)generate every SQLC package from its queries and schema
 	$(SQLC) generate
 
 .PHONY: sqlc-check
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state"; \
+	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/event_replay_preview_queries.sql pkg/state/event_replay_jobs_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
+	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
+	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
+	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
+	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  diff -r pkg/state/sqlc "$$tmp/pkg/state/sqlc" || \
-	    { echo "sqlc-check: generated pkg/state/sqlc/*.go is out of sync with queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }
+	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc; do \
+	    diff -r "$$package" "$$tmp/$$package" || \
+	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
+	  done
 	@echo "sqlc-check: OK"
 
 .PHONY: migrate-up
@@ -1278,6 +1307,13 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
 
+.PHONY: data-api-check data-api-acceptance
+data-api-check: ## Runtime and typed application client unit checks
+	@bash scripts/test-data-api.sh
+
+data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
+	@bash scripts/test-data-api.sh --integration
+
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml
 	@cd sdk/python && .venv/bin/python scripts/gen.py
@@ -1460,3 +1496,10 @@ issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confir
 .PHONY: test-commit-sdk
 test-commit-sdk:
 	sh scripts/test-commit-sdk.sh
+
+.PHONY: test-operation-sdk check-operation-sdk-schema
+test-operation-sdk:
+	sh scripts/test-operation-sdk.sh
+
+check-operation-sdk-schema:
+	python3 scripts/gen-operation-inbox-schema.py --check

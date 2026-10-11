@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const ProjectEnvironmentQualificationTTL = 24 * time.Hour
@@ -27,6 +28,7 @@ type ProjectEnvironmentQualification struct {
 	ReleaseSetID         string                                 `json:"release_set_id"`
 	ConfigurationVersion int64                                  `json:"configuration_version"`
 	ConfigurationHash    string                                 `json:"configuration_hash"`
+	WorkloadConfigHashes map[string]string                      `json:"workload_config_hashes"`
 	SecretRevisionHashes map[string]string                      `json:"secret_revision_hashes"`
 	Status               string                                 `json:"status"`
 	Checks               []ProjectEnvironmentQualificationCheck `json:"checks"`
@@ -54,7 +56,7 @@ type ProjectEnvironmentQualificationResult struct {
 // ProjectEnvironmentQualificationStore records qualification receipts and
 // returns the latest receipt for an exact source release and config identity.
 type ProjectEnvironmentQualificationStore interface {
-	CreateProjectEnvironmentQualification(context.Context, string, string, string, string, int64, string, map[string]string, []ProjectEnvironmentQualificationCheck) (ProjectEnvironmentQualification, error)
+	CreateProjectEnvironmentQualification(context.Context, string, string, string, string, int64, string, map[string]string, []ProjectEnvironmentQualificationCheck, map[string]string) (ProjectEnvironmentQualification, error)
 	LatestProjectEnvironmentQualification(context.Context, string, string, string, string) (ProjectEnvironmentQualification, error)
 }
 
@@ -196,15 +198,18 @@ func normalizeProjectEnvironmentQualificationSecretRevisionHashes(hashes map[str
 
 func scanProjectEnvironmentQualification(row pgx.Row) (ProjectEnvironmentQualification, error) {
 	var qualification ProjectEnvironmentQualification
-	var checks, secretRevisionHashes []byte
+	var checks, secretRevisionHashes, workloadConfigHashes []byte
 	if err := row.Scan(&qualification.ID, &qualification.AccountID, &qualification.ProjectID,
 		&qualification.EnvironmentSlug, &qualification.ReleaseSetID,
-		&qualification.ConfigurationVersion, &qualification.ConfigurationHash, &secretRevisionHashes, &qualification.Status,
+		&qualification.ConfigurationVersion, &qualification.ConfigurationHash, &secretRevisionHashes, &workloadConfigHashes, &qualification.Status,
 		&checks, &qualification.CreatedAt, &qualification.ExpiresAt); err != nil {
 		return ProjectEnvironmentQualification{}, mapErr(err)
 	}
 	if err := json.Unmarshal(secretRevisionHashes, &qualification.SecretRevisionHashes); err != nil {
 		return ProjectEnvironmentQualification{}, fmt.Errorf("state: decode environment qualification secret revisions: %w", err)
+	}
+	if err := json.Unmarshal(workloadConfigHashes, &qualification.WorkloadConfigHashes); err != nil {
+		return ProjectEnvironmentQualification{}, fmt.Errorf("state: decode qualification workload configs: %w", err)
 	}
 	if err := json.Unmarshal(checks, &qualification.Checks); err != nil {
 		return ProjectEnvironmentQualification{}, fmt.Errorf("state: decode environment qualification: %w", err)
@@ -212,7 +217,7 @@ func scanProjectEnvironmentQualification(row pgx.Row) (ProjectEnvironmentQualifi
 	return qualification, nil
 }
 
-func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, accountID, projectID, environment, releaseSetID string, configurationVersion int64, configurationHash string, secretRevisionHashes map[string]string, checks []ProjectEnvironmentQualificationCheck) (ProjectEnvironmentQualification, error) {
+func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, accountID, projectID, environment, releaseSetID string, configurationVersion int64, configurationHash string, secretRevisionHashes map[string]string, checks []ProjectEnvironmentQualificationCheck, workloadConfigHashes map[string]string) (ProjectEnvironmentQualification, error) {
 	if err := validateProjectEnvironmentQualificationScope(accountID, projectID, environment, releaseSetID); err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
@@ -236,6 +241,11 @@ func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, acc
 		return ProjectEnvironmentQualification{}, fmt.Errorf("state: begin environment qualification: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Receipt insertion takes this parent FK lock. Acquire it before the
+	// environment lock, matching clone/promotion capture and flag writers.
+	if _, err := sqlc.New().LockFeatureFlagProject(ctx, tx, sqlc.LockFeatureFlagProjectParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID)}); err != nil {
+		return ProjectEnvironmentQualification{}, mapErr(err)
+	}
 	var environmentID string
 	err = tx.QueryRow(ctx, `select id::text
 		from project_environments
@@ -277,17 +287,31 @@ func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, acc
 	if err := validateQualificationResultsForReleaseSet(ctx, tx, accountID, releaseSetID, normalized); err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
+	currentWorkloadHashes, scoped, err := projectEnvironmentWorkloadConfigHashesTx(ctx, tx, accountID, projectID, environment, releaseSetID)
+	if err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
+	if err := validateQualificationWorkloadHashes(workloadConfigHashes, currentWorkloadHashes, scoped); err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
+	if workloadConfigHashes == nil {
+		workloadConfigHashes = map[string]string{}
+	}
+	workloadConfigHashesJSON, err := json.Marshal(workloadConfigHashes)
+	if err != nil {
+		return ProjectEnvironmentQualification{}, ErrInvalidArgument
+	}
 	secretRevisionHashesJSON, err := json.Marshal(normalizedSecretRevisionHashes)
 	if err != nil {
 		return ProjectEnvironmentQualification{}, fmt.Errorf("state: encode environment qualification secret revisions: %w", err)
 	}
 	qualification, err := scanProjectEnvironmentQualification(tx.QueryRow(ctx, `
 		insert into project_environment_qualifications
-			(account_id, project_id, environment_slug, release_set_id, configuration_version, configuration_hash, secret_revision_hashes, status, checks, expires_at)
-		values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, now() + interval '24 hours')
+			(account_id, project_id, environment_slug, release_set_id, configuration_version, configuration_hash, secret_revision_hashes, workload_config_hashes, status, checks, expires_at)
+		values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10::jsonb, now() + interval '24 hours')
 		returning id, account_id, project_id, environment_slug, release_set_id,
-		          configuration_version, configuration_hash, secret_revision_hashes, status, checks, created_at, expires_at`,
-		accountID, projectID, environment, releaseSetID, configurationVersion, configurationHash, secretRevisionHashesJSON, status, checksJSON))
+		          configuration_version, configuration_hash, secret_revision_hashes, workload_config_hashes, status, checks, created_at, expires_at`,
+		accountID, projectID, environment, releaseSetID, configurationVersion, configurationHash, secretRevisionHashesJSON, workloadConfigHashesJSON, status, checksJSON))
 	if err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
@@ -400,7 +424,7 @@ func (s *PgStore) LatestProjectEnvironmentQualification(ctx context.Context, acc
 	}
 	return scanProjectEnvironmentQualification(s.pool.QueryRow(ctx, `
 		select q.id, q.account_id, q.project_id, q.environment_slug, q.release_set_id,
-		       q.configuration_version, q.configuration_hash, q.secret_revision_hashes, q.status, q.checks, q.created_at, q.expires_at
+		       q.configuration_version, q.configuration_hash, q.secret_revision_hashes, q.workload_config_hashes, q.status, q.checks, q.created_at, q.expires_at
 		from project_environment_qualifications q
 		join projects p on p.id = q.project_id
 		where q.account_id = $1 and q.project_id = $2 and q.environment_slug = $3

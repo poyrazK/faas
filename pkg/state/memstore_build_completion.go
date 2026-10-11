@@ -41,7 +41,7 @@ func (m *MemStore) CompleteBuildWithArtifact(_ context.Context, claim Build, pat
 	if prov.SBOMStorageKey == "" {
 		prov.SBOMStorageKey = m.buildProvenance[claim.ID].SBOMStorageKey
 	}
-	m.deployments[dep.ID] = dep
+	m.putDeploymentLocked(dep.ID, dep)
 	m.builds[b.ID] = b
 	m.buildProvenance[b.ID] = prov
 	return nil
@@ -117,6 +117,9 @@ func (m *MemStore) FailBuild(_ context.Context, claim Build, fc FailureClass, me
 	d, ok := m.deployments[claim.DeploymentID]
 	if !ok || (d.Status != DeployPending && d.Status != DeployBuilding) {
 		return ErrNotFound
+	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return err
 	}
 	b.Status, b.FailureClass, b.FinishedAt = BuildFailed, fc, time.Now()
 	m.builds[b.ID] = b

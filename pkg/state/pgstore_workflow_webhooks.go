@@ -69,7 +69,7 @@ func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts Webhook
 	if err != nil {
 		return WebhookAutomationBinding{}, err
 	}
-	if !webhookAutomationTargetEligible(target) || endpoint.Provider != InboundWebhookProviderStripe {
+	if !webhookAutomationTargetEligible(target) || (endpoint.Provider != InboundWebhookProviderStripe && endpoint.Provider != InboundWebhookProviderGeneric) {
 		return WebhookAutomationBinding{}, ErrWebhookAutomationUnavailable
 	}
 	q := sqlc.New()
@@ -128,9 +128,9 @@ func (s *PgStore) DeleteWebhookAutomationBinding(ctx context.Context, opts Webho
 	}
 	return tx.Commit(ctx)
 }
-func webhookAutomationReceiptFromSQL(row sqlc.GetWebhookAutomationReceiptRow) (WebhookAutomationReceipt, error) {
+func webhookAutomationReceiptFromSQL(row sqlc.GetWebhookAutomationReceiptRow, provider InboundWebhookProvider) (WebhookAutomationReceipt, error) {
 	receipt := WebhookAutomationReceipt{EndpointID: pgUUIDString(row.EndpointID), ProviderEventID: row.ProviderEventID, ReceiptID: pgUUIDString(row.ReceiptID), WorkflowName: row.WorkflowName, Status: row.Status, IgnoredReason: row.IgnoredReason.String, AcceptedAt: row.AcceptedAt.Time, outboxID: row.OutboxID, bodyHash: row.BodyHash, RoutingStatus: "ignored"}
-	receipt.EventSource = webhookAutomationSource(receipt.EndpointID)
+	receipt.EventSource = webhookAutomationSource(provider, receipt.EndpointID)
 	if row.RecipientID.Valid {
 		receipt.recipientID = pgUUIDString(row.RecipientID)
 		receipt.RoutingStatus = "pending"
@@ -152,9 +152,25 @@ func (s *PgStore) GetWebhookAutomationReceipt(ctx context.Context, endpointID, e
 	if err != nil {
 		return WebhookAutomationReceipt{}, mapErr(err)
 	}
-	return webhookAutomationReceiptFromSQL(row)
+	endpoint, err := s.InboundWebhookEndpointByID(ctx, endpointID)
+	if err != nil {
+		return WebhookAutomationReceipt{}, err
+	}
+	return webhookAutomationReceiptFromSQL(row, endpoint.Provider)
 }
 func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+	eventID, eventType, err := webhookEventFromStripeBody(body)
+	if err != nil {
+		return WebhookAutomationReceipt{}, true, err
+	}
+	return s.AcceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled)
+}
+func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+	if len(eventID) == 0 || len(eventID) > api.WorkflowWebhookEventMaxBytes ||
+		(eventType != "" && !api.ValidInboundWebhookEventType(eventType)) ||
+		(verified.Provider == InboundWebhookProviderGeneric && (!api.ValidInboundWebhookEventType(eventType) || !api.ValidInboundWebhookEventID(eventID))) {
+		return WebhookAutomationReceipt{}, true, ErrAutomationInvalid
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return WebhookAutomationReceipt{}, true, err
@@ -167,14 +183,8 @@ func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundW
 	if !endpoint.Enabled || !bytes.Equal(endpoint.SigningSecretSealed, verified.SigningSecretSealed) {
 		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
 	}
-	var event struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(body, &event); err != nil {
-		return WebhookAutomationReceipt{}, true, ErrAutomationInvalid
-	}
 	q := sqlc.New()
-	row, receiptErr := q.GetWebhookAutomationReceipt(ctx, tx, sqlc.GetWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: event.ID})
+	row, receiptErr := q.GetWebhookAutomationReceipt(ctx, tx, sqlc.GetWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: eventID})
 	if receiptErr != nil && !errors.Is(receiptErr, pgx.ErrNoRows) {
 		return WebhookAutomationReceipt{}, true, receiptErr
 	}
@@ -189,14 +199,14 @@ func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundW
 		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
 	}
 	if receiptErr == nil {
-		hash, err := webhookAutomationBodyHash(body)
+		hash, err := webhookAutomationBodyHashForEvent(endpoint.Provider, eventType, body)
 		if err != nil {
 			return WebhookAutomationReceipt{}, true, err
 		}
 		if !bytes.Equal(hash, row.BodyHash) {
 			return WebhookAutomationReceipt{}, true, ErrWebhookAutomationConflict
 		}
-		receipt, err := webhookAutomationReceiptFromSQL(row)
+		receipt, err := webhookAutomationReceiptFromSQL(row, endpoint.Provider)
 		receipt.Duplicate = true
 		return receipt, true, err
 	}
@@ -210,7 +220,7 @@ func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundW
 		}
 		return WebhookAutomationReceipt{}, true, err
 	}
-	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, webhookAutomationBindingFromSQL(bindingRow), spec, reason, body, time.Now().UTC())
+	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, webhookAutomationBindingFromSQL(bindingRow), spec, reason, eventID, eventType, body, time.Now().UTC())
 	if err != nil {
 		return receipt, true, err
 	}
@@ -252,7 +262,7 @@ func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundW
 	if err != nil {
 		return receipt, true, err
 	}
-	receipt, err = webhookAutomationReceiptFromSQL(stored)
+	receipt, err = webhookAutomationReceiptFromSQL(stored, endpoint.Provider)
 	if err != nil {
 		return receipt, true, err
 	}

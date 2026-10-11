@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/executionprofiles"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -173,7 +174,7 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 		if s.log != nil {
-			s.log.Error("execution payload sealing failed", "account_id", acct.ID, "err", err)
+			s.log.Error("execution payload sealing failed", "account_id", acct.ID, "err", logsanitize.FieldAny(err))
 		}
 		api.WriteProblem(w, api.ErrCapacity("execution payload could not be sealed on this host"))
 		return

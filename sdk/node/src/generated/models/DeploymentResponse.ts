@@ -7,6 +7,7 @@ import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 import type { LogExcerpt } from './LogExcerpt.js';
+import type { RollbackOperation } from './RollbackOperation.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
@@ -243,6 +244,7 @@ export type DeploymentResponse = {
    * Operator or orchestrator reason recorded when the rollout is aborted.
    */
   rollout_aborted_reason?: string;
+  rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
 };
 

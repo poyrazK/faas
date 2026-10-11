@@ -2,6 +2,7 @@ package sched
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -43,14 +44,19 @@ type initialWakeResult struct {
 // not authorization: every sibling remains subject to the scheduler ledger.
 func (e *Engine) wakeInitialCapacity(ctx context.Context, appID, trigger string, count int) ([]WakeResult, error) {
 	count = initialWakeCount(count)
+	selected, ok := wakeEnvironmentFrom(ctx)
+	if !ok || selected.app.ID != appID {
+		return nil, fmt.Errorf("sched: initial wake: deployed environment unavailable")
+	}
+	scope := ScopeFrom(ctx)
 	if count == 1 {
-		result, err := e.Wake(ctx, appID, "", "", trigger)
+		result, err := e.Wake(ctx, appID, "", scope, trigger)
 		return []WakeResult{result}, err
 	}
 	signal := &admissionReadySignal{ready: make(chan struct{})}
 	first := make(chan initialWakeResult, 1)
 	go func() {
-		result, err := e.Wake(context.WithValue(ctx, admissionReadyKey{}, signal), appID, "", "", trigger)
+		result, err := e.Wake(context.WithValue(ctx, admissionReadyKey{}, signal), appID, "", scope, trigger)
 		first <- initialWakeResult{result, err}
 	}()
 	var primary *initialWakeResult
@@ -66,7 +72,7 @@ func (e *Engine) wakeInitialCapacity(ctx context.Context, appID, trigger string,
 		}
 	case <-signal.ready:
 	}
-	missing := min(count-1, count-e.ledger.Concurrency(appID))
+	missing := min(count-1, count-selected.concurrency(e.ledger))
 	if missing < 0 {
 		missing = 0
 	}
@@ -74,7 +80,7 @@ func (e *Engine) wakeInitialCapacity(ctx context.Context, appID, trigger string,
 	burstCtx := WithBurstPlacementSpread(withScaleOutBurstContinuation(ctx))
 	for range missing {
 		go func() {
-			result, err := e.AdmitInstance(burstCtx, appID, "", "", trigger)
+			result, err := e.AdmitInstance(burstCtx, appID, "", scope, trigger)
 			siblings <- initialWakeResult{result, err}
 		}()
 	}

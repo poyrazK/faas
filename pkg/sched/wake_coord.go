@@ -3,6 +3,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,10 +133,10 @@ type CoordInstance struct {
 // The requests that got through were fast (p50 928 ms), so the ceiling
 // was fan-out, never latency.
 //
-// MaxInFlight is the app's instance ceiling (apps.max_concurrency);
+// MaxInFlight is the selected deployment's configured instance ceiling;
 // PerVM is how many concurrent requests one instance is expected to
 // absorb (the plan's ConcurrencyPerVMBound). Existing is the scheduler
-// ledger's count for the app across RUNNING, WAKING, and COLD_BOOTING
+// ledger's count for its environment across RUNNING, WAKING, and COLD_BOOTING
 // when a coordinator generation begins. A zero or negative value in
 // either limit field disables fan-out and restores strict single-flight,
 // which is the conservative default for any caller that cannot resolve
@@ -177,7 +178,8 @@ func (f WakeFanout) wants(inFlight, waiting int) bool {
 // single-flight.
 type wakeCoord struct {
 	mu sync.Mutex
-	// inflight holds the wakes currently running for an app. It is a
+	// inflight is keyed by app and selected deployment; legacy direct
+	// coordinator callers may use an app key. Its value is a
 	// slice, not a single call, so a burst that outgrows one instance
 	// can start additional wakes up to the app's ceiling. The common
 	// case is length 1 and behaves exactly as the pre-fan-out
@@ -399,6 +401,14 @@ func (c *wakeCoord) Release(appID string, call *wakeCoordCall) {
 func (c *wakeCoord) Forget(appID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for key := range c.inflight {
+		if key == appID || strings.HasPrefix(key, appID+"\x00") {
+			c.forgetLocked(key)
+		}
+	}
+}
+
+func (c *wakeCoord) forgetLocked(appID string) {
 	calls, ok := c.inflight[appID]
 	if !ok {
 		return
@@ -431,81 +441,20 @@ func (c *wakeCoord) Forget(appID string) {
 // ensure call.
 func (c *wakeCoord) TTL() time.Duration { return c.ttl }
 
-// wakeFanoutCacheTTL bounds how stale a cached fan-out policy may be. A
-// burst is exactly the moment this is read hardest — resolving the app +
-// account per request would put two DB reads on the wake hot path for
-// every queued caller — so the policy is cached briefly. The values are
-// plan/app limits that change on a human timescale, and the downstream
-// admission ledger enforces the real ceiling regardless, so a few
-// seconds of staleness cannot violate invariant §6.2-1.
-const wakeFanoutCacheTTL = 15 * time.Second
-
-type wakeFanoutEntry struct {
-	fanout WakeFanout
-	at     time.Time
-}
-
-// wakeFanoutFor resolves how far appID may fan out on a burst.
-//
-// The app and plan limits are cached briefly; Existing is always read from
-// the ledger so live capacity is never stale. Any resolution error returns
-// the zero WakeFanout, disabling fan-out rather than guessing a ceiling.
+// wakeFanoutFor resolves the selected deployed environment's policy and live
+// capacity. Any resolution error disables fan-out instead of guessing a limit.
 func (e *Engine) wakeFanoutFor(ctx context.Context, appID string) WakeFanout {
 	return e.wakeFanoutForApp(ctx, appID, nil)
 }
 
-// wakeFanoutForApp is wakeFanoutFor with an optional app row already loaded by
-// the owner gate. Reusing it removes a duplicate AppByID round trip from the
-// first cold wake after the short policy cache expires.
+// wakeFanoutForApp can reuse an app row already loaded by the owner gate.
 func (e *Engine) wakeFanoutForApp(ctx context.Context, appID string, loadedApp *state.App) WakeFanout {
 	if e == nil || e.store == nil {
 		return WakeFanout{}
 	}
-	now := time.Now()
-	e.wakeFanoutMu.Lock()
-	if ent, ok := e.wakeFanoutCache[appID]; ok && now.Sub(ent.at) < wakeFanoutCacheTTL {
-		e.wakeFanoutMu.Unlock()
-		fanout := ent.fanout
-		if e.ledger != nil {
-			fanout.Existing = e.ledger.Concurrency(appID)
-		}
-		return fanout
+	selected, err := e.resolveWakeEnvironment(ctx, appID, loadedApp)
+	if err != nil {
+		return WakeFanout{}
 	}
-	e.wakeFanoutMu.Unlock()
-
-	var app state.App
-	var limits api.Limits
-	if loadedApp != nil {
-		app = *loadedApp
-		acct, err := e.store.AccountByID(ctx, app.AccountID)
-		if err != nil {
-			return WakeFanout{}
-		}
-		var ok bool
-		limits, ok = api.LimitsFor(acct.Plan)
-		if !ok {
-			return WakeFanout{}
-		}
-	} else {
-		var err error
-		app, _, limits, err = e.resolveAppForDeploy(ctx, appID)
-		if err != nil {
-			return WakeFanout{}
-		}
-	}
-	fanout := WakeFanout{
-		MaxInFlight: app.MaxConcurrency,
-		PerVM:       limits.ConcurrencyPerVMBound,
-	}
-
-	e.wakeFanoutMu.Lock()
-	if e.wakeFanoutCache == nil {
-		e.wakeFanoutCache = map[string]wakeFanoutEntry{}
-	}
-	e.wakeFanoutCache[appID] = wakeFanoutEntry{fanout: fanout, at: now}
-	e.wakeFanoutMu.Unlock()
-	if e.ledger != nil {
-		fanout.Existing = e.ledger.Concurrency(appID)
-	}
-	return fanout
+	return e.wakeFanoutForEnvironment(selected)
 }

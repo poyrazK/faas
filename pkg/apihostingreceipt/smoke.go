@@ -271,8 +271,11 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	// An identical gateway status without proof remains unavailable evidence.
 	acceptable := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
 	if verification == VerificationRouteConnectivity {
+		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
+		// HTTP/2 spec); like 401/403/404 it proves the candidate answered.
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
-			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound
+			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
+			resp.StatusCode == http.StatusUnsupportedMediaType
 	}
 	if !acceptable {
 		result.Status = SmokeFailed

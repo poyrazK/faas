@@ -216,6 +216,14 @@ var HostKeys = map[string]HostBlock{
 			"apps_domain",
 		},
 		ComputeNodeBlock: nil,
+		Tables: []TableKey{
+			{Table: "runtime_quota_transport", Key: "directory_issuer_id", Owner: "apid", Scope: "private"},
+			{Table: "runtime_quota_transport", Key: "private_key_path", Owner: "apid", Scope: "private"},
+			{Table: "runtime_quota_transport", Key: "trust_bundle_path", Owner: "apid", Scope: "private"},
+			{Table: "runtime_quota_transport", Key: "regional_api_base", Owner: "apid", Scope: "private"},
+			{Table: "runtime_quota_transport", Key: "delivery_worker", Owner: "apid", Scope: "private"},
+			{Table: "global_ingress_publisher", Key: "manifest_path", Owner: "apid", Scope: "private"},
+		},
 	},
 	"meterd": {
 		Daemon: "meterd",

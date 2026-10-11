@@ -63,6 +63,7 @@ func (s *server) confirmObjectUpload(ctx context.Context, st state.ObjectTracked
 		c.Status = "completed"
 		c.ETag = result.ETag
 		c.ProviderVersionID = result.ProviderVersionID
+		c.VerifiedProtection = result.VerifiedProtection
 		c.VerifiedEncryption = result.Encryption
 		c.ErrorCode = ""
 		_, err = st.FinishTrackedObjectUploadRecovery(finishCtx, c)
@@ -94,6 +95,16 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 	if err != nil {
 		return page, err
 	}
+	// New journals carry one pinned provider receipt. Old unbound journals may
+	// still be probed, but their unrelated unknown receipts cannot be retired.
+	if bound, ok := s.store.(state.ObjectTrackedUploadMutationStore); ok {
+		receipt, readErr := bound.ReadTrackedObjectUploadMutation(ctx, c)
+		if readErr == nil {
+			b = receipt.Bucket
+		} else if !errors.Is(readErr, state.ErrNotFound) {
+			return page, readErr
+		}
+	}
 	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)
 	if err != nil {
 		return page, objectstorage.ErrConfiguration
@@ -113,6 +124,10 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 			return objectstorage.ErrConfiguration
 		}
 		return metrics.RecordObjectStorageProviderRequest(ctx, c.BucketID, time.Now().UTC())
+	}
+	ctx, err = objectstorage.WithObjectWriteProtection(ctx, backend.Provider, c.Protection, before)
+	if err != nil {
+		return page, err
 	}
 	if err = before(ctx); err != nil {
 		return page, err

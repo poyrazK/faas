@@ -3,6 +3,8 @@
 // adr: 568 — portable original-attempt capture tests; not native KVM acceptance.
 package fcvm
 
+// adr: 791
+
 import (
 	"bytes"
 	"context"
@@ -57,7 +59,7 @@ func qualificationCaptureFixture(t *testing.T) (*Manager, *nativeQualificationJo
 		t.Fatal(err)
 	}
 	m.WithStorage(backend)
-	m.instanceBacking = map[string]BackingIdentity{frame.InstanceID: {Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}}
+	m.instanceBacking = map[string]BackingIdentity{frame.InstanceID: {Version: backingIdentityVersion, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64), Timer: strings.TrimSpace(guestTimerArgs)}}
 	m.live[frame.InstanceID] = &Instance{Lease: lease, Method: WakeColdBoot, nativeGeneration: physical.Generation, AppID: frame.AppID, DeploymentID: frame.DeploymentID}
 	// This fixture models an already-live original process, never a recovered
 	// or newly booted VM. Fake PID/journal evidence is not native acceptance.
@@ -347,7 +349,7 @@ func TestNativeQualificationSnapshotRacingDeliveryCannotDuplicateEffects(t *test
 }
 
 func TestNativeQualificationSnapshotDamagedJournalBlocksReplayAndRecovery(t *testing.T) {
-	for _, damage := range []string{"identity", "missing", "duplicate", "unknown", "trailing", "symlink", "directory_symlink"} {
+	for _, damage := range []string{"identity", "missing", "duplicate", "unknown", "trailing", "symlink", "directory_symlink", "missing-timer", "empty-timer", "duplicate-timer"} {
 		t.Run(damage, func(t *testing.T) {
 			m, j, frame, ctx, _, calls := qualificationCaptureFixture(t)
 			if _, err := m.CaptureEnvironmentQualification(ctx, frame); err != nil {
@@ -371,6 +373,28 @@ func TestNativeQualificationSnapshotDamagedJournalBlocksReplayAndRecovery(t *tes
 				fields["qualified"] = json.RawMessage("true")
 			}
 			if damage == "identity" || damage == "missing" || damage == "unknown" {
+				body, err = json.Marshal(fields)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if damage == "missing-timer" || damage == "empty-timer" || damage == "duplicate-timer" {
+				var backing map[string]json.RawMessage
+				if err := json.Unmarshal(fields["backing"], &backing); err != nil {
+					t.Fatal(err)
+				}
+				if damage == "missing-timer" {
+					delete(backing, "timer")
+				} else if damage == "empty-timer" {
+					backing["timer"] = json.RawMessage(`""`)
+				}
+				fields["backing"], err = json.Marshal(backing)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if damage == "duplicate-timer" {
+					fields["backing"] = bytes.Replace(fields["backing"], []byte(`"timer":`), []byte(`"timer":"duplicate","timer":`), 1)
+				}
 				body, err = json.Marshal(fields)
 				if err != nil {
 					t.Fatal(err)

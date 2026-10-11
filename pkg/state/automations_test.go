@@ -130,6 +130,57 @@ func TestAutomationAuthoring(t *testing.T) {
 		}
 	})
 }
+
+func TestAutomationRevisionHistoryAndRestore(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		app, _ := seedWorkflowSchedule(t, store, "allow")
+		author := store.(AutomationStore)
+		ctx := context.Background()
+		firstDraft := mutateForTest(t, author, app.ID, "receipt", "save", 0, automationDraft("receipt", "/v1", ""), false)
+		first := mutateForTest(t, author, app.ID, "receipt", "publish", firstDraft.Version, nil, false)
+		secondDraft := mutateForTest(t, author, app.ID, "receipt", "save", first.Version, automationDraft("receipt", "/v2", ""), false)
+		second := mutateForTest(t, author, app.ID, "receipt", "publish", secondDraft.Version, nil, false)
+
+		revisions, total, err := author.ListAutomationRevisions(ctx, app.ID, "receipt", AutomationRevisionListOptions{Limit: 1})
+		if err != nil || total != 2 || len(revisions) != 1 || revisions[0].Version != second.PublishedVersion {
+			t.Fatalf("newest revision page=%+v total=%d err=%v", revisions, total, err)
+		}
+		older, err := author.GetAutomationRevision(ctx, app.ID, "receipt", first.PublishedVersion)
+		var olderDefinition api.WorkflowSpec
+		if err != nil || json.Unmarshal(older.Definition, &olderDefinition) != nil || olderDefinition.Steps[0].Path != "/v1" {
+			t.Fatalf("first revision=%+v err=%v", older, err)
+		}
+		if older.PublishedByAccountID != app.AccountID || older.Version != first.PublishedVersion {
+			t.Fatalf("revision actor/version=%+v", older)
+		}
+
+		// Restoring is a draft write. The current publication and its revision
+		// stay unchanged until the restored draft is explicitly published.
+		restored := mutateForTest(t, author, app.ID, "receipt", "save", second.Version, older.Definition, false)
+		var restoredPublished, restoredDraft api.WorkflowSpec
+		if json.Unmarshal(restored.Published, &restoredPublished) != nil || json.Unmarshal(restored.Draft, &restoredDraft) != nil || restoredPublished.Steps[0].Path != "/v2" || restoredDraft.Steps[0].Path != "/v1" {
+			t.Fatalf("restore changed publication or missed draft: %+v", restored)
+		}
+		publishedAgain := mutateForTest(t, author, app.ID, "receipt", "publish", restored.Version, nil, false)
+		if publishedAgain.PublishedVersion == first.PublishedVersion || publishedAgain.PublishedVersion == second.PublishedVersion {
+			t.Fatalf("restore overwrote history instead of creating a revision: %+v", publishedAgain)
+		}
+		revisions, total, err = author.ListAutomationRevisions(ctx, app.ID, "receipt", AutomationRevisionListOptions{Limit: 10})
+		if err != nil || total != 3 || len(revisions) != 3 || revisions[0].Version != publishedAgain.PublishedVersion {
+			t.Fatalf("restored history=%+v total=%d err=%v", revisions, total, err)
+		}
+		if _, _, err := author.ListAutomationRevisions(ctx, app.ID, "receipt", AutomationRevisionListOptions{Limit: 0}); !errors.Is(err, ErrWorkflowInvalidPagination) {
+			t.Fatalf("invalid history pagination: %v", err)
+		}
+		if _, _, err := author.ListAutomationRevisions(ctx, app.ID, "receipt", AutomationRevisionListOptions{Limit: 10, Offset: maxAutomationRevisionOffset + 1}); !errors.Is(err, ErrWorkflowInvalidPagination) {
+			t.Fatalf("out-of-range history offset: %v", err)
+		}
+		if _, err := author.GetAutomationRevision(ctx, app.ID, "receipt", 999999); !errors.Is(err, ErrAutomationRevisionNotFound) {
+			t.Fatalf("missing revision: %v", err)
+		}
+	})
+}
+
 func TestAutomationValidationQuotaAndEvents(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		app, dep := seedWorkflowSchedule(t, store, "allow")
@@ -221,6 +272,9 @@ func TestAutomationPublicationRollback(t *testing.T) {
 		rows, err := author.ListAutomations(ctx, app.ID)
 		if err != nil || len(rows) != 1 || rows[0].Version != draft.Version || len(rows[0].Published) != 0 {
 			t.Fatalf("publication leaked: %+v/%v", rows, err)
+		}
+		if revisions, total, err := author.ListAutomationRevisions(ctx, app.ID, "nightly", AutomationRevisionListOptions{Limit: 10}); err != nil || total != 0 || len(revisions) != 0 {
+			t.Fatalf("failed publication leaked revision: %+v/%d/%v", revisions, total, err)
 		}
 	})
 }

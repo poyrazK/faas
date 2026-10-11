@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) CreateProjectEnvironmentQualification(_ context.Context, accountID, projectID, environment, releaseSetID string, configurationVersion int64, configurationHash string, secretRevisionHashes map[string]string, checks []ProjectEnvironmentQualificationCheck) (ProjectEnvironmentQualification, error) {
+func (m *MemStore) CreateProjectEnvironmentQualification(_ context.Context, accountID, projectID, environment, releaseSetID string, configurationVersion int64, configurationHash string, secretRevisionHashes map[string]string, checks []ProjectEnvironmentQualificationCheck, workloadConfigHashes map[string]string) (ProjectEnvironmentQualification, error) {
 	if err := validateProjectEnvironmentQualificationScope(accountID, projectID, environment, releaseSetID); err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
@@ -64,12 +64,19 @@ func (m *MemStore) CreateProjectEnvironmentQualification(_ context.Context, acco
 			}
 		}
 	}
+	currentWorkloadHashes, scoped, err := m.projectEnvironmentWorkloadConfigHashesLocked(accountID, projectID, environment, release.Members)
+	if err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
+	if err := validateQualificationWorkloadHashes(workloadConfigHashes, currentWorkloadHashes, scoped); err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
 	now := time.Now().UTC()
 	qualification := ProjectEnvironmentQualification{
 		ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID,
 		EnvironmentSlug: environment, ReleaseSetID: releaseSetID,
 		ConfigurationVersion: configurationVersion, ConfigurationHash: configurationHash,
-		SecretRevisionHashes: normalizedSecretRevisionHashes, Status: status,
+		SecretRevisionHashes: normalizedSecretRevisionHashes, WorkloadConfigHashes: workloadConfigHashes, Status: status,
 		Checks:    append([]ProjectEnvironmentQualificationCheck(nil), normalized...),
 		CreatedAt: now, ExpiresAt: now.Add(ProjectEnvironmentQualificationTTL),
 	}
@@ -104,6 +111,11 @@ func cloneProjectEnvironmentQualification(qualification ProjectEnvironmentQualif
 		secretRevisionHashes[workload] = hash
 	}
 	qualification.SecretRevisionHashes = secretRevisionHashes
+	hashes := make(map[string]string, len(qualification.WorkloadConfigHashes))
+	for workload, hash := range qualification.WorkloadConfigHashes {
+		hashes[workload] = hash
+	}
+	qualification.WorkloadConfigHashes = hashes
 	checks := make([]ProjectEnvironmentQualificationCheck, len(qualification.Checks))
 	for i, check := range qualification.Checks {
 		checks[i] = check

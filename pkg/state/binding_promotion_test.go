@@ -21,7 +21,11 @@ func TestBindingPromotionPG(t *testing.T) {
 
 func bindingPromotionFixture(t *testing.T, store state.Store) (state.Account, state.App, state.Deployment, state.Deployment) {
 	t.Helper()
-	ctx := context.Background()
+	return bindingPromotionFixtureCtx(context.Background(), t, store)
+}
+
+func bindingPromotionFixtureCtx(ctx context.Context, t *testing.T, store state.Store) (state.Account, state.App, state.Deployment, state.Deployment) {
+	t.Helper()
 	acct, err := store.CreateAccount(ctx, uuid.NewString()+"@promotion.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -184,5 +188,42 @@ func TestBindingPromotionPGRechecksExpiryAfterLockWait(t *testing.T) {
 	dep, _ := store.DeploymentByID(ctx, candidate.ID)
 	if dep.TrafficPercent != 0 {
 		t.Fatalf("candidate mutated: %+v", dep)
+	}
+}
+
+func TestBindingPromotionRejectsServiceTargetChangeMem(t *testing.T) {
+	bindingPromotionServiceTargetChange(t, state.NewMemStore())
+}
+func TestBindingPromotionRejectsServiceTargetChangePG(t *testing.T) {
+	store, _ := pgStore(t)
+	bindingPromotionServiceTargetChange(t, store)
+}
+
+func bindingPromotionServiceTargetChange(t *testing.T, store state.Store) {
+	ctx := context.Background()
+	acct, app, serving, candidate := bindingPromotionFixture(t, store)
+	target, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "target-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := state.AppManifest{ServiceBindings: api.ServiceBindingsForTargets([]string{target.Slug})}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	guarded := store.(state.BindingPromotionStore)
+	fence := bindingPromotionFence(t, guarded, acct, app, candidate)
+	denied := []string{}
+	targetManifest := state.AppManifest{AllowedServiceCallers: &denied}
+	if _, err := store.UpdateApp(ctx, target.ID, state.UpdateAppParams{Manifest: &targetManifest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guarded.PromoteDeploymentWithBindings(ctx, candidate.ID, fence, serving.ID); !errors.Is(err, state.ErrBindingPromotionChanged) {
+		t.Fatalf("accepted changed service target: %v", err)
+	}
+	for id, percent := range map[string]int{serving.ID: 100, candidate.ID: 0} {
+		dep, err := store.DeploymentByID(ctx, id)
+		if err != nil || dep.TrafficPercent != percent {
+			t.Fatalf("traffic mutated: %+v %v", dep, err)
+		}
 	}
 }

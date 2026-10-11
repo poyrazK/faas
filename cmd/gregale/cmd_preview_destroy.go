@@ -33,12 +33,14 @@ func cmdPreview(args []string) int {
 		return cmdPreviewShow(args[1:])
 	case "report":
 		return cmdPreviewReport(args[1:])
+	case "review":
+		return cmdPreviewReview(args[1:])
 	case "wait":
 		return cmdPreviewWait(args[1:])
 	case "destroy":
 		return cmdPreviewDestroy(args[1:])
 	default:
-		printCommandValidation(os.Stderr, "unknown preview subcommand %q (try: create, list, show, report, wait, destroy)\n", args[0])
+		printCommandValidation(os.Stderr, "unknown preview subcommand %q (try: create, list, show, report, review, wait, destroy)\n", args[0])
 		return 1
 	}
 }

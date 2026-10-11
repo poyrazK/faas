@@ -10,15 +10,32 @@ T = TypeVar("T", bound="ObjectLockCapabilities")
 
 @_attrs_define
 class ObjectLockCapabilities:
-    """Enrolled bucket configuration and default event hold capabilities, without a native health check."""
+    """Enrolled bucket configuration, default and per-version event holds, fixed version retention and legal-hold
+    capabilities without a native health check.
+
+    """
 
     bucket_configuration: bool
     default_event_hold: bool
+    version_event_hold: bool
+    """Separately enrolled durable per-version event hold mutations."""
+    write_event_hold: bool
+    """Separately enrolled event holds on new writes and captured bucket defaults."""
+    version_retention: bool
+    version_legal_hold: bool
 
     def to_dict(self) -> dict[str, Any]:
         bucket_configuration = self.bucket_configuration
 
         default_event_hold = self.default_event_hold
+
+        version_event_hold = self.version_event_hold
+
+        write_event_hold = self.write_event_hold
+
+        version_retention = self.version_retention
+
+        version_legal_hold = self.version_legal_hold
 
         field_dict: dict[str, Any] = {}
 
@@ -26,6 +43,10 @@ class ObjectLockCapabilities:
             {
                 "bucket_configuration": bucket_configuration,
                 "default_event_hold": default_event_hold,
+                "version_event_hold": version_event_hold,
+                "write_event_hold": write_event_hold,
+                "version_retention": version_retention,
+                "version_legal_hold": version_legal_hold,
             }
         )
 
@@ -38,9 +59,21 @@ class ObjectLockCapabilities:
 
         default_event_hold = d.pop("default_event_hold")
 
+        version_event_hold = d.pop("version_event_hold")
+
+        write_event_hold = d.pop("write_event_hold")
+
+        version_retention = d.pop("version_retention")
+
+        version_legal_hold = d.pop("version_legal_hold")
+
         object_lock_capabilities = cls(
             bucket_configuration=bucket_configuration,
             default_event_hold=default_event_hold,
+            version_event_hold=version_event_hold,
+            write_event_hold=write_event_hold,
+            version_retention=version_retention,
+            version_legal_hold=version_legal_hold,
         )
 
         return object_lock_capabilities

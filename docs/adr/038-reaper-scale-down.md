@@ -243,3 +243,28 @@ Verification: `TestLoopReaperAggressiveHoldsForGatewayInflight`,
 (`pkg/sched/loop_reaper_inflight_test.go`); the
 `TestRecentLoad_Inflight*` mirror tests; `TestHTTPPromScraper_ScrapeLoad`;
 and `TestHandlerReportsAppInflightWhileUpstreamIsSlow` in `pkg/gateway`.
+
+## Amendment 2026-10-07 — fleet-wide request rate (production-us hunt #4, H4-70)
+
+An app's home schedd decides scale-in from its local gateway's completions,
+that gateway's in-flight gauge, and its local vmmd's in-flight count. A
+gatewayd-internal forwards to instances on every node, so the home node can
+see almost no traffic for an app that is busy through another node's gateway.
+
+On production-us a 50–106 rps closed-loop load on a 4-instance app
+(`h4-edge`, target 50 rps per instance) read `desired=0` (or 1) and parked
+three instances at a time, five times in seven minutes. Every park was
+followed by a cold start, and the run also logged
+`scale.decision ... capacity_exhausted`.
+
+`instances.request_count` is bumped by whichever gateway served the request
+(ReportActivity batches every 250 ms). The reaper now remembers each running
+instance's count between ticks. The sum of the rates over an app's instances
+is the app's fleet-wide demand. Scale-in takes the largest of three counts:
+- the rate-derived count;
+- the in-flight count;
+- `ceil(fleet_rps / autoscale_target_rps)`.
+
+An instance contributes only from its second sample, so a reaper restart is
+"no signal", never zero demand. A counter that goes backwards (a replaced
+row) contributes nothing.

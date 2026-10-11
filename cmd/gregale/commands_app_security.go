@@ -111,6 +111,11 @@ func cmdAppSecurity(slug string, args []string) int {
 	if *securityPolicy != "" && *securityPolicy != securityPolicyOff && *securityPolicy != securityPolicyWarn && *securityPolicy != securityPolicyEnforce {
 		return printErr("Invalid --security-policy", fmt.Errorf("must be \"off\", \"warn\", or \"enforce\"; got %q", *securityPolicy))
 	}
+	// Without a mutation flag this is a read. production-us hunt #4: a bare
+	// `app <slug> security` sent an empty PATCH and printed "security updated".
+	if *requireSigned == "" && *securityPolicy == "" {
+		*posture = true
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

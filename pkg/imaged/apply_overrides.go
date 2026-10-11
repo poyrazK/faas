@@ -160,7 +160,7 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	// on the app manifest. Merge them after image/deployment env so the
 	// platform-owned service endpoints cannot be shadowed by an image layer.
 	if len(app.Manifest.Env) > 0 {
-		merged := make(map[string]string, len(manifest.Env)+len(app.Manifest.Env))
+		merged := make(map[string]string, len(manifest.Env))
 		for k, v := range manifest.Env {
 			merged[k] = v
 		}

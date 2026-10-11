@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Schema is the supported customer outbox schema. Installation is an explicit
@@ -24,10 +25,16 @@ var Schema string
 //go:embed schema_operations_upgrade.sql
 var UpgradeSchema string
 
+// RoutingUpgradeSchema is an explicit owner upgrade for version 2 routing.
+//
+//go:embed schema_routing_upgrade.sql
+var RoutingUpgradeSchema string
+
 type Event struct {
-	ID   string          `json:"id"`
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
+	ID      string             `json:"id"`
+	Type    string             `json:"type"`
+	Data    json.RawMessage    `json:"data"`
+	Routing *api.CommitRouting `json:"routing,omitempty"`
 }
 
 func (e Event) Validate() error {
@@ -39,6 +46,9 @@ func (e Event) Validate() error {
 	}
 	if !json.Valid(e.Data) {
 		return errors.New("commit: event data must be valid JSON")
+	}
+	if _, err := NormalizeRouting(e.Routing); err != nil {
+		return err
 	}
 	return nil
 }
@@ -53,6 +63,14 @@ func Insert(ctx context.Context, tx pgx.Tx, e Event) error {
 	if tx == nil {
 		return errors.New("commit: an existing transaction is required")
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO public.gregale_outbox(event_id,event_type,payload) VALUES ($1::uuid,$2,$3::jsonb)`, e.ID, e.Type, []byte(e.Data))
+	if e.Routing == nil {
+		_, err := tx.Exec(ctx, `INSERT INTO public.gregale_outbox(event_id,event_type,payload) VALUES ($1::uuid,$2,$3::jsonb)`, e.ID, e.Type, []byte(e.Data))
+		return err
+	}
+	routing, err := NormalizeRouting(e.Routing)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO public.gregale_outbox(event_id,event_type,payload,routing) VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb)`, e.ID, e.Type, []byte(e.Data), routing)
 	return err
 }

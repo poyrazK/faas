@@ -98,6 +98,17 @@ func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
 	}
 }
 
+// adr: 627
+func TestGatewaySafetyAccountingRejectsBilling(t *testing.T) {
+	registry := &objectstorage.Registry{Accounting: api.ObjectStoragePolicy{AccountingMode: api.ObjectStorageGatewaySafetyV1}}
+	if err := validateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "billing to be off") {
+		t.Fatal("gateway safety admitted live billing", err)
+	}
+	if err := validateObjectStorageBillingSetup(nil, registry); err != nil {
+		t.Fatal("billing-off qualification rejected", err)
+	}
+}
+
 func TestObjectStorageUsageReportOperatorBoundary(t *testing.T) {
 	e := newObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
 	createApp(t, e, "reports")

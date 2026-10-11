@@ -14,6 +14,8 @@ export type CommitSourceResponse = {
    * Immutable managed Operations policy. Absent only for legacy internal sources.
    */
   operation_policy?: string;
+  contract_version: 1 | 2;
+  allow_tenant_selection: boolean;
   relay_status?: string;
   last_checked_at?: string;
   pending_events?: number;

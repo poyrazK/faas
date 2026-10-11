@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -67,6 +68,7 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
+	c.VerifiedProtection = result.VerifiedProtection
 	c.VerifiedEncryption = result.Encryption
 	c.Status, c.ETag = "completed", result.ETag
 	c.ProviderVersionID = result.ProviderVersionID
@@ -103,7 +105,7 @@ func (h *Handler) admitGatewayCopy(w http.ResponseWriter, r *http.Request, req r
 	if !h.checkCopySource(w, r, sourceReq, copy.SourceKey, source, conditions) {
 		return state.ObjectUploadCompletion{}, objectstorage.CopySourceSnapshot{}, "", false
 	}
-	intent := state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: copy.DestinationKey, Bytes: source.SizeBytes, SourceKey: copy.SourceKey, SourceETag: source.ETag, ContentType: gatewayCopyContentType(copy, source), RequestID: req.requestID, Status: "pending", Encryption: req.encryption.Clone()}
+	intent := state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: copy.DestinationKey, Bytes: source.SizeBytes, SourceKey: copy.SourceKey, SourceETag: source.ETag, ContentType: gatewayCopyContentType(copy, source), RequestID: req.requestID, Status: "pending", Protection: req.protection.Clone(), Encryption: req.encryption.Clone()}
 	if req.copySource != nil {
 		intent.SourceBucketID, intent.SourceCopyGrantID = req.copySource.ID, req.copyGrantID
 	}
@@ -115,8 +117,22 @@ func (h *Handler) admitGatewayCopy(w http.ResponseWriter, r *http.Request, req r
 }
 
 func (h *Handler) executeAdmittedGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, ctx context.Context, st state.ObjectTrackedGatewayCopyStore, copier objectstorage.TrackedObjectCopier, copy objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot, conditions objectstorage.CopySourceConditions, c *state.ObjectUploadCompletion, dispatched *bool) (objectstorage.CopyObjectResult, error, bool) {
+	admitted := true
+	result, err := objectstorageactivity.ExecuteUpload(ctx, h.store, req.bucket, *c, func(mutationCtx context.Context) (objectstorage.CopyObjectResult, error) {
+		result, err, ok := h.executeUnfencedAdmittedGatewayCopy(w, r, req, mutationCtx, st, copier, copy, source, conditions, c, dispatched)
+		admitted = ok
+		return result, err
+	})
+	return result, err, admitted
+}
+
+func (h *Handler) executeUnfencedAdmittedGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, ctx context.Context, st state.ObjectTrackedGatewayCopyStore, copier objectstorage.TrackedObjectCopier, copy objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot, conditions objectstorage.CopySourceConditions, c *state.ObjectUploadCompletion, dispatched *bool) (objectstorage.CopyObjectResult, error, bool) {
 	var err error
 	var result objectstorage.CopyObjectResult
+	ctx, err = h.protectionContext(ctx, req, c.Protection)
+	if err != nil {
+		return result, err, true
+	}
 	if !c.Encryption.Empty() {
 		ctx = h.encryptionContext(ctx, req)
 		ctx = objectstorage.WithEncryptionWriteRecorder(ctx, func(ctx context.Context) error {

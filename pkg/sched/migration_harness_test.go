@@ -661,7 +661,7 @@ func TestBuildAppSpecForMigration_NonEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstanceByID: %v", err)
 	}
-	depID := "dep-" + uuid.NewString()
+	depID := uuid.NewString()
 	if _, err := store.CreateDeployment(context.Background(),
 		state.Deployment{ID: depID, AppID: ins.AppID, Kind: state.DeploymentKindImage,
 			ImageDigest: "sha256:seed", Status: state.DeployLive, CreatedAt: time.Now()}); err != nil {

@@ -277,7 +277,7 @@ func manSynopsisFlag(w io.Writer, f cliFlag) {
 	if f.Repeatable {
 		repeat = " ..."
 	}
-	if value == "" && f.Req {
+	if value == "" && f.Req && !f.Bool {
 		value = "value"
 	}
 	if value != "" {

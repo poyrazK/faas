@@ -189,6 +189,29 @@ func TestCredentialSQLVerificationNativeTLS(t *testing.T) {
 	if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialReadWrite, version); err == nil {
 		t.Fatal("read-only ACLs accepted for writer")
 	}
+	for _, drift := range []struct{ name, grant, revoke string }{
+		{"column write", "GRANT UPDATE(id) ON public.probe_acl_drift TO " + quoted, "REVOKE UPDATE(id) ON public.probe_acl_drift FROM " + quoted},
+		{"public write", "GRANT INSERT ON public.probe_acl_drift TO PUBLIC", "REVOKE INSERT ON public.probe_acl_drift FROM PUBLIC"},
+		{"sequence write", "GRANT UPDATE ON ALL SEQUENCES IN SCHEMA public TO " + quoted, "REVOKE UPDATE ON ALL SEQUENCES IN SCHEMA public FROM " + quoted},
+		{"future write", "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT ON TABLES TO " + quoted, "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE INSERT ON TABLES FROM " + quoted},
+		{"pg prefix schema", "CREATE SCHEMA pgcustomer; GRANT CREATE ON SCHEMA pgcustomer TO " + quoted, "DROP SCHEMA pgcustomer"},
+		{"definer execution", "CREATE FUNCTION public.probe_definer() RETURNS integer LANGUAGE SQL SECURITY DEFINER AS 'SELECT 1'; REVOKE EXECUTE ON FUNCTION public.probe_definer() FROM PUBLIC; GRANT EXECUTE ON FUNCTION public.probe_definer() TO " + quoted, "DROP FUNCTION public.probe_definer()"},
+	} {
+		t.Run(drift.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, drift.grant); err != nil {
+				t.Fatal(err)
+			}
+			if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialReadOnly, version); err == nil {
+				t.Fatal("read-only privilege drift accepted")
+			}
+			if _, err := pool.Exec(ctx, drift.revoke); err != nil {
+				t.Fatal(err)
+			}
+			if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialReadOnly, version); err != nil {
+				t.Fatal("restored read-only permissions rejected", err)
+			}
+		})
+	}
 	if _, err := pool.Exec(ctx, "ALTER ROLE "+quoted+" CREATEDB"); err != nil {
 		t.Fatal(err)
 	}

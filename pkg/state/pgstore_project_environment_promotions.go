@@ -68,6 +68,11 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 		return ProjectEnvironmentPromotion{}, nil, fmt.Errorf("state: begin environment promotion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if promotion.SyncConfig {
+		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
+	}
 
 	row := tx.QueryRow(ctx, `
 		insert into project_environment_promotions
@@ -90,6 +95,15 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 	created, err := scanProjectEnvironmentPromotion(row)
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err
+	}
+	if promotion.SyncConfig {
+		if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, created.ID); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
+		promotion.ID = created.ID
+		if err := capturePromotionFeatureFlagsTx(ctx, tx, promotion); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
 	}
 
 	createdWorkloads := make([]ProjectEnvironmentPromotionWorkload, 0, len(workloads))

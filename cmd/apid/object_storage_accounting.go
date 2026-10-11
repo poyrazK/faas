@@ -24,6 +24,9 @@ func validateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !enabled {
 		return nil
 	}
+	if registry != nil && registry.Accounting.GatewaySafety() {
+		return errors.New("apid: gateway safety accounting requires object storage billing to be off")
+	}
 	if registry == nil || registry.Pricing == nil {
 		return errors.New("apid: object storage billing requires object-storage pricing")
 	}
@@ -175,11 +178,37 @@ func (s *server) scanObjectInventory(ctx context.Context, st state.ObjectStorage
 	if err != nil {
 		return err
 	}
-	bytes, objects, err := completeObjectInventory(ctx, backend.Provider, b.PhysicalName)
+	bytes, objects, err := completeObjectInventory(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
 	if err != nil {
 		return err
 	}
 	return st.FinishObjectInventory(ctx, b.ID, token, bytes, objects)
+}
+
+func (s *server) inventoryRequestRecorder(b state.ObjectBucket) func(context.Context) error {
+	return func(ctx context.Context) error {
+		metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
+		if !ok {
+			if s.objectStorage.Accounting.GatewaySafety() {
+				return state.ErrObjectUsageStale
+			}
+			return nil
+		}
+		return metrics.RecordObjectStorageProviderRequest(ctx, b.ID, time.Now().UTC())
+	}
+}
+
+func (s *server) customerObjectRequestRecorder(b state.ObjectBucket) func(context.Context) error {
+	if !s.objectStorage.Accounting.GatewaySafety() {
+		return s.inventoryRequestRecorder(b)
+	}
+	return func(ctx context.Context) error {
+		metrics, ok := s.store.(state.ObjectStorageGatewayRequestStore)
+		if !ok {
+			return state.ErrObjectUsageStale
+		}
+		return metrics.ReserveObjectStorageGatewayRequest(ctx, b.ID, time.Now().UTC(), s.objectStorage.Accounting)
+	}
 }
 
 func (s *server) runObjectStorageAccounting(ctx context.Context) {

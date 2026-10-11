@@ -33,6 +33,7 @@ import (
 const (
 	serverSrcPath                 = "server.go"
 	dtoFile                       = "dto.go"
+	eventReplayBackfillFile       = "event_replay_backfill.go"
 	workflowFile                  = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
 	secretsFile                   = "secrets.go"
 	envFile                       = "env.go"             // issue #395 / ADR-045
@@ -328,6 +329,8 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"EventReplayPreviewOptions":     true, // client-only query options; the wire parameters are declared on the route
+	"EventReplayBackfillItemsQuery": true, // client-only pagination/filter options; the wire parameters are declared on the route
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -379,6 +382,9 @@ var dtoExclude = map[string]bool{
 	"ListPlatformTenantReconciliationReceiptsOptions": true, // client-only pagination query parameters, not a wire DTO
 	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
+	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,
@@ -1021,17 +1027,24 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
+		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
+		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "durable_entities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
+		filepath.Join(root, "pkg", "api", "object_write_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
@@ -1087,6 +1100,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_resize.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_compute_policy.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
@@ -1094,11 +1112,18 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
+		filepath.Join(root, "pkg", "api", "binding_release_policy.go"),
+		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
+		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),
+		filepath.Join(root, "pkg", "api", "checked_rollback.go"),
+		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
@@ -1119,6 +1144,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
+		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
+		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),
@@ -1168,6 +1196,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		dtos[schemaName] = fields
 	}
+
+	// The Go API calls the nested outcome EventReplayBackfillItem, while the
+	// standalone OpenAPI schema uses the response-oriented name so SDKs can
+	// reference it directly.
+	backfillItemFields, ok := dtos["EventReplayBackfillItem"]
+	if !ok {
+		t.Fatalf("event replay backfill item DTO is missing")
+	}
+	delete(dtos, "EventReplayBackfillItem")
+	dtos["EventReplayBackfillItemResponse"] = backfillItemFields
 
 	var missingInSpec []string
 	for name := range dtos {

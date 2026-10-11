@@ -654,6 +654,7 @@ func TestRateLimitReturns429(t *testing.T) {
 			if rec.Header().Get("x-faas-rate-limit-scope") != "app" {
 				t.Error("app-scope 429 should carry x-faas-rate-limit-scope: app")
 			}
+			assertRateLimitedProblem(t, rec, 20)
 			break
 		}
 	}
@@ -734,6 +735,7 @@ func TestEdgeRuleThrottleReturns429(t *testing.T) {
 	if got := rec2.Header().Get("X-RouteRateLimit-Policy"); got != "route" {
 		t.Errorf("route-scope 429 should carry X-RouteRateLimit-Policy=route (back-compat default); got %q", got)
 	}
+	assertRateLimitedProblem(t, rec2, 1)
 }
 
 type stubCountryReader struct {
@@ -959,6 +961,7 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 				t.Errorf("account-scope 429 should carry x-faas-rate-limit-scope: account; got %q",
 					rec.Header().Get("x-faas-rate-limit-scope"))
 			}
+			assertRateLimitedProblem(t, rec, 300)
 			break
 		}
 	}

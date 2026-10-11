@@ -1,8 +1,8 @@
 ---
 # Fleet-wide direct-pool inputs. The role derives max_connections from the
 # complete [compute_nodes] inventory; it never assumes a two-node ceiling.
-# Includes both optional data planes so enabling a bridge needs no DB resize.
-faas_postgres_control_plane_pool_budget: 42
+# Includes optional data planes and the private APID clone worker.
+faas_postgres_control_plane_pool_budget: 46
 faas_postgres_per_compute_pool_budget: 34
 
 # Pooled fleet (faas_pgbouncer_enabled). A compute node's ORDINARY pools no
@@ -30,8 +30,8 @@ faas_postgres_min_operator_headroom: 10
 # PostgreSQL backends are processes. Keep the small-fleet floor compatible
 # with the 4 GB public-beta control plane, then require 24 MB of additional
 # host RAM for every configured connection above the two-node 160 baseline.
-# A 12-node fleet derives 610 connections and therefore requires about
-# 14.3 GB; an n2-standard-4 (16 GB) control plane satisfies the guard.
+# A 12-node fleet derives 620 connections and therefore requires about
+# 14.5 GB; an n2-standard-4 (16 GB) control plane satisfies the guard.
 faas_postgres_small_fleet_connections: 160
 faas_postgres_small_fleet_min_memory_mb: 3500
 faas_postgres_incremental_connection_memory_mb: 24

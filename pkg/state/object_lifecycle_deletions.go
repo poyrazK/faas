@@ -19,6 +19,7 @@ type ObjectLifecycleDeletionBinding struct {
 	Kind                      string    `json:"kind"`
 	ExpectedProviderVersionID string    `json:"expected_provider_version_id"`
 	ExpectedLastModified      time.Time `json:"expected_last_modified"`
+	ExpectedDeleteMarker      *bool     `json:"expected_delete_marker,omitempty"`
 }
 
 func cloneLifecycleDeletionBinding(b *ObjectLifecycleDeletionBinding) *ObjectLifecycleDeletionBinding {
@@ -27,6 +28,10 @@ func cloneLifecycleDeletionBinding(b *ObjectLifecycleDeletionBinding) *ObjectLif
 	}
 	v := *b
 	v.ExpectedLastModified = v.ExpectedLastModified.UTC()
+	if b.ExpectedDeleteMarker != nil {
+		marker := *b.ExpectedDeleteMarker
+		v.ExpectedDeleteMarker = &marker
+	}
 	return &v
 }
 
@@ -36,7 +41,8 @@ func sameLifecycleDeletionBinding(a, b *ObjectLifecycleDeletionBinding) bool {
 	}
 	// A restarted scanner may replay a receipt with a new scan lease. The
 	// original token remains immutable and cannot authorize a new dispatch.
-	return a.ScanID == b.ScanID && a.RuleID == b.RuleID && a.Kind == b.Kind && a.ExpectedProviderVersionID == b.ExpectedProviderVersionID && a.ExpectedLastModified.Equal(b.ExpectedLastModified)
+	marker := a.ExpectedDeleteMarker == nil && b.ExpectedDeleteMarker == nil || a.ExpectedDeleteMarker != nil && b.ExpectedDeleteMarker != nil && *a.ExpectedDeleteMarker == *b.ExpectedDeleteMarker
+	return marker && a.ScanID == b.ScanID && a.RuleID == b.RuleID && a.Kind == b.Kind && a.ExpectedProviderVersionID == b.ExpectedProviderVersionID && a.ExpectedLastModified.Equal(b.ExpectedLastModified)
 }
 
 func validLifecycleDeletionBinding(b *ObjectLifecycleDeletionBinding, selector string) bool {

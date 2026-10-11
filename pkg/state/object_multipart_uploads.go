@@ -41,9 +41,10 @@ type ObjectMultipartUpload struct {
 	PartRevision                    int64
 	ContentType                     string
 	Metadata                        ObjectMultipartMetadata
-	Encryption                      ObjectEncryptionSnapshot `json:"-"`
-	FixedAdmission                  bool                     `json:"-"`
-	EncryptionDefaultRevision       int64                    `json:"-"`
+	Protection                      ObjectWriteProtectionSnapshot `json:"-"`
+	Encryption                      ObjectEncryptionSnapshot      `json:"-"`
+	FixedAdmission                  bool                          `json:"-"`
+	EncryptionDefaultRevision       int64                         `json:"-"`
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
 	CompletionConditions            api.ObjectWriteConditions
@@ -96,6 +97,7 @@ type ObjectMultipartCompletionResult struct {
 	ProviderVersionID  string               `json:"-"`
 	RecoveryCursor     string               `json:"-"`
 	VersionsObserved   bool                 `json:"-"`
+	VerifiedProtection string               `json:"-"`
 	VerifiedEncryption api.ObjectEncryption `json:"-"`
 }
 
@@ -210,6 +212,7 @@ func validMultipartCompletionFailure(code string) bool {
 func cloneObjectMultipartUpload(u ObjectMultipartUpload) ObjectMultipartUpload {
 	u.Parts = cloneMultipartParts(u.Parts)
 	u.Metadata = cloneObjectMultipartMetadata(u.Metadata)
+	u.Protection = u.Protection.Clone()
 	u.Encryption = u.Encryption.Clone()
 	return u
 }

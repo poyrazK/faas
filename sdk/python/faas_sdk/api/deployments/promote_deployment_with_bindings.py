@@ -130,7 +130,9 @@ def sync_detailed(
     Args:
         id (str):
         body (BindingPromotionRequest): Policy for a server-enforced bindings promotion; the gate
-            is always required on this route.
+            is always required on this route. Stored scope policy may require a shorter age or
+            application ACKs and disallow unsupported waivers. The response reports the effective
+            policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,7 +180,9 @@ def sync(
     Args:
         id (str):
         body (BindingPromotionRequest): Policy for a server-enforced bindings promotion; the gate
-            is always required on this route.
+            is always required on this route. Stored scope policy may require a shorter age or
+            application ACKs and disallow unsupported waivers. The response reports the effective
+            policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,7 +225,9 @@ async def asyncio_detailed(
     Args:
         id (str):
         body (BindingPromotionRequest): Policy for a server-enforced bindings promotion; the gate
-            is always required on this route.
+            is always required on this route. Stored scope policy may require a shorter age or
+            application ACKs and disallow unsupported waivers. The response reports the effective
+            policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -267,7 +273,9 @@ async def asyncio(
     Args:
         id (str):
         body (BindingPromotionRequest): Policy for a server-enforced bindings promotion; the gate
-            is always required on this route.
+            is always required on this route. Stored scope policy may require a shorter age or
+            application ACKs and disallow unsupported waivers. The response reports the effective
+            policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

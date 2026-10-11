@@ -265,17 +265,19 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	}
 
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		Activity:        s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
-		AppID:           app.ID,
-		Kind:            state.DeploymentKindTarball,
-		SourcePath:      spoolPath,
-		SourceBytes:     spoolBytes,
-		SourceURL:       sourceURL,
-		CommitSHA:       commitSHA,
-		Scope:           rollout.Scope,
-		FunctionRuntime: functionRuntimeForApp(app),
-		LogSpool:        spoolRoot(),
-		Log:             s.log,
+		OperationDefinitions:      sourceOperationSpecs(manifest),
+		OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, rollout.Scope),
+		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
+		AppID:                     app.ID,
+		Kind:                      state.DeploymentKindTarball,
+		SourcePath:                spoolPath,
+		SourceBytes:               spoolBytes,
+		SourceURL:                 sourceURL,
+		CommitSHA:                 commitSHA,
+		Scope:                     rollout.Scope,
+		FunctionRuntime:           functionRuntimeForApp(app),
+		LogSpool:                  spoolRoot(),
+		Log:                       s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution (cmd/apid/deploy_actor.go). The local
 		// tarball path is HTTP-routed, so the via classifier is

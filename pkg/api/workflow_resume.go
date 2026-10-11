@@ -22,8 +22,14 @@ type ListWorkflowResumesResponse struct {
 }
 
 func (c *Client) ResumeWorkflowRun(ctx context.Context, id string, body ResumeWorkflowRunRequest) (WorkflowRunResponse, error) {
+	return c.ResumeWorkflowRunWithIdempotencyKey(ctx, id, body, "")
+}
+
+// ResumeWorkflowRunWithIdempotencyKey resumes eligible failed actions and
+// lets callers reuse a key when retrying the same continuation request.
+func (c *Client) ResumeWorkflowRunWithIdempotencyKey(ctx context.Context, id string, body ResumeWorkflowRunRequest, idempotencyKey string) (WorkflowRunResponse, error) {
 	var out WorkflowRunResponse
-	err := c.do(ctx, "POST", "/v1/workflows/runs/"+url.PathEscape(id)+"/resume", body, &out)
+	err := c.doWithIdempotencyKey(ctx, "POST", "/v1/workflows/runs/"+url.PathEscape(id)+"/resume", body, &out, idempotencyKey)
 	return out, err
 }
 func (c *Client) ListWorkflowResumes(ctx context.Context, id string) (ListWorkflowResumesResponse, error) {

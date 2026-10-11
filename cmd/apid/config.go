@@ -40,6 +40,11 @@ import (
 type Config struct {
 	RuntimeQuotaTransport  RuntimeQuotaTransportConfig  `toml:"runtime_quota_transport"`
 	GlobalIngressPublisher GlobalIngressPublisherConfig `toml:"global_ingress_publisher"`
+	// Empty preview policy path keeps admission closed. No boolean/env override.
+	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
+	// Runtime trust remains available independently of new admission.
+	OperationsWorkloadJWKSPath string `toml:"operations_workload_jwks_path"`
+	OperationsWorkloadIssuer   string `toml:"operations_workload_issuer"`
 	// OutboundProbeGatewayURL is the operator-trusted HTTPS origin reachable by task guests.
 	OutboundProbeGatewayURL string `toml:"outbound_probe_gateway_url"`
 	// GlobalAppDirectoryEnabled exposes the internal cross-cell identity API.

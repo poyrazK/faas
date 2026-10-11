@@ -198,6 +198,20 @@ func TestTierC_AlertsAdd_WebhookSecretStdinDoesNotEcho(t *testing.T) {
 // the pointer-shape fix: a rename-only update must NOT re-enable a
 // disabled rule nor reset cooldown to the default. Without this the
 // CLI was silently breaking the operator's intent on every update.
+// production-us hunt #4: `alerts update <id> --app X --threshold 50` (the
+// id-first order `alerts info|deliveries` accept) was a usage error.
+func TestTierC_AlertsUpdate_IDFirst(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"r","enabled":true,"metric":"error_rate_pct","window_spec":"5m","threshold":50,"comparison":"gt"}`, http.StatusOK)
+	if code := cmdAlertUpdate([]string{"0123456789abcdef0123456789abcdef", "--app", "demo", "--threshold", "50"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil || got["threshold"] != float64(50) {
+		t.Fatalf("body = %s (%v), want threshold 50", f.sawBody, err)
+	}
+}
+
 func TestTierC_AlertsUpdate_NameOnlyDoesNotResendEnabledOrCooldown(t *testing.T) {
 	resetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","name":"renamed","enabled":false,"metric":"error_rate_pct","window_spec":"5m","threshold":1.5,"comparison":"gt"}`

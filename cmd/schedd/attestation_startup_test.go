@@ -85,6 +85,7 @@ func TestStartLayerAttestationWarmDoesNotBlockReadiness(t *testing.T) {
 			return []state.Deployment{{Status: state.DeployLive, RootfsKey: "slow-remote-layer"}}, nil
 		}),
 		verify,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -103,5 +104,35 @@ func TestStartLayerAttestationWarmDoesNotBlockReadiness(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("background attestation warm did not finish")
+	}
+}
+
+// production-us hunt #5 (H5-52): the owner-less control-plane schedd hashed
+// every live layer after each restart and starved the host. The warm now
+// verifies only layers of apps this schedd owns.
+func TestStartLayerAttestationWarmSkipsAppsOwnedElsewhere(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	verify := startupVerifierFunc(func(_ context.Context, key, _ string) error {
+		mu.Lock()
+		seen = append(seen, key)
+		mu.Unlock()
+		return nil
+	})
+	done := startLayerAttestationWarm(
+		context.Background(),
+		startupDeploymentListerFunc(func(context.Context) ([]state.Deployment, error) {
+			return []state.Deployment{
+				{AppID: "mine", Status: state.DeployLive, RootfsKey: "mine-layer"},
+				{AppID: "peer", Status: state.DeployLive, RootfsKey: "peer-layer"},
+			}, nil
+		}),
+		verify,
+		func(appID string) bool { return appID == "mine" },
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	<-done
+	if len(seen) != 1 || seen[0] != "mine-layer" {
+		t.Fatalf("verified %v, want only the owned app's layer", seen)
 	}
 }

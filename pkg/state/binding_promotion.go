@@ -14,8 +14,16 @@ var (
 
 // These tokens are internal and cannot be supplied by a public API caller.
 type BindingPromotionFence struct {
-	AccountID, AppID, DeploymentID, Scope, Revision string
-	ValidUntil                                      time.Time
+	AccountID             string        `json:"account_id"`
+	AppID                 string        `json:"app_id"`
+	DeploymentID          string        `json:"deployment_id"`
+	Scope                 string        `json:"scope"`
+	Revision              string        `json:"revision"`
+	ValidUntil            time.Time     `json:"valid_until"`
+	PolicyRevision        int64         `json:"policy_revision"`
+	MaxVerificationAge    time.Duration `json:"max_verification_age_ns"`
+	AllowUnsupported      bool          `json:"allow_unsupported"`
+	RequireApplicationAck bool          `json:"require_application_ack"`
 }
 
 type BindingPromotionResult struct {

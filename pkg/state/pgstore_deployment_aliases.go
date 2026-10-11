@@ -48,7 +48,21 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	} else if !errors.Is(err, ErrNotFound) {
 		return DeploymentAlias{}, err
 	}
-	row, err := sqlc.New().UpsertDeploymentAlias(ctx, s.pool, sqlc.UpsertDeploymentAliasParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return DeploymentAlias{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := sqlc.New().LockLayerArtifactApp(ctx, tx, mustPgUUID(appID)); err != nil {
+		return DeploymentAlias{}, mapErr(err)
+	}
+	if _, err := sqlc.New().LockLayerArtifactDeployment(ctx, tx, mustPgUUID(deploymentID)); err != nil {
+		return DeploymentAlias{}, mapErr(err)
+	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, deploymentID); err != nil {
+		return DeploymentAlias{}, err
+	}
+	row, err := sqlc.New().UpsertDeploymentAlias(ctx, tx, sqlc.UpsertDeploymentAliasParams{
 		AppID: mustPgUUID(appID), Name: name, DeploymentID: mustPgUUID(deploymentID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -56,6 +70,9 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	}
 	if err != nil {
 		return DeploymentAlias{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentAlias{}, err
 	}
 	return DeploymentAlias{
 		AppID:        pgUUIDString(row.AppID),

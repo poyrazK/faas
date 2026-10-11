@@ -3,9 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Operator safety limits; zero values mean unconfigured and block signing.
+ * Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
  */
 export type ObjectStoragePolicy = {
+  accounting_mode?: 'gateway_safety_v1';
+  gateway_metering_since?: string;
   max_account_bytes: number;
   max_bucket_bytes: number;
   max_account_keys: number;

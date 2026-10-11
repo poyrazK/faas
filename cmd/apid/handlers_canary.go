@@ -32,6 +32,7 @@ func (s *server) advanceCanary(w http.ResponseWriter, r *http.Request, acct stat
 // state transaction rechecks the durable lease and configured stage dwell
 // before any persisted traffic advance.
 func (s *server) advanceCanaryByWorker(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	r = r.WithContext(context.WithValue(r.Context(), bindingReleaseWorkerReadsKey{}, true))
 	s.advanceCanaryWithLeasePolicy(w, r, acct, true)
 }
 
@@ -75,16 +76,26 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	}
 	var gateDecision api.RouteGateDecision
 	var healthDecision api.RouteHealthDecision
-	updated, auditID, err := advancer.AdvanceCanary(r.Context(), d.ID, state.CanaryAdvanceParams{
-		ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
-		RequireSafeReleaseLease:   requireWorkerLease,
-		RequireCanaryStageElapsed: requireWorkerLease,
-		CanaryStageDuration:       current.Duration,
-		Audit:                     audit,
-		RouteCheckFingerprint:     s.routeGateFingerprint,
-		RouteGateDecision:         &gateDecision,
-		RouteHealthDecision:       &healthDecision,
+	var updated state.Deployment
+	var auditID int64
+	gateProblem, err := s.withBindingReleaseTraffic(r, acct, app, d, next.Percent, func(ctx context.Context) error {
+		var writeErr error
+		updated, auditID, writeErr = advancer.AdvanceCanary(ctx, d.ID, state.CanaryAdvanceParams{
+			ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
+			RequireSafeReleaseLease:   requireWorkerLease,
+			RequireCanaryStageElapsed: requireWorkerLease,
+			CanaryStageDuration:       current.Duration,
+			Audit:                     audit,
+			RouteCheckFingerprint:     s.routeGateFingerprint,
+			RouteGateDecision:         &gateDecision,
+			RouteHealthDecision:       &healthDecision,
+		})
+		return writeErr
 	})
+	if gateProblem != nil {
+		api.WriteProblem(w, gateProblem)
+		return
+	}
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
 	}

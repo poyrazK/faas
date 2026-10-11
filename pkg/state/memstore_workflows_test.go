@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -487,6 +488,52 @@ func TestMemStore_WorkflowListPagination(t *testing.T) {
 	}
 	if len(runs) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(runs))
+	}
+}
+
+func TestMemStore_WorkflowRunListFilters(t *testing.T) {
+	ctx := context.Background()
+	ms := state.NewMemStore()
+
+	tenantA, tenantB := uuid.NewString(), uuid.NewString()
+	first := &state.WorkflowRun{AppID: "app-run-filters", PlatformTenantID: tenantA, WorkflowName: "charge", DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	if err := ms.CreateWorkflowRun(ctx, first); err != nil {
+		t.Fatalf("CreateWorkflowRun(first): %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	other := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: tenantB, WorkflowName: "refund", DefinitionSnapshot: json.RawMessage(`{"name":"refund"}`)}
+	if err := ms.CreateWorkflowRun(ctx, other); err != nil {
+		t.Fatalf("CreateWorkflowRun(other): %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	last := &state.WorkflowRun{AppID: first.AppID, PlatformTenantID: tenantA, WorkflowName: first.WorkflowName, DefinitionSnapshot: json.RawMessage(`{"name":"charge"}`)}
+	if err := ms.CreateWorkflowRun(ctx, last); err != nil {
+		t.Fatalf("CreateWorkflowRun(last): %v", err)
+	}
+
+	after, before := first.CreatedAt, last.CreatedAt
+	runs, total, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
+		WorkflowName:  first.WorkflowName,
+		CreatedAfter:  &after,
+		CreatedBefore: &before,
+		Limit:         1,
+		Offset:        1,
+	})
+	if err != nil || total != 2 || len(runs) != 1 || runs[0].WorkflowName != first.WorkflowName {
+		t.Fatalf("filtered list = %#v, total=%d, err=%v; want one paged charge run from two matches", runs, total, err)
+	}
+	tenantRuns, tenantTotal, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
+		PlatformTenantID: tenantA, Limit: 1, Offset: 1,
+	})
+	if err != nil || tenantTotal != 2 || len(tenantRuns) != 1 || tenantRuns[0].ID != first.ID || tenantRuns[0].PlatformTenantID != tenantA {
+		t.Fatalf("tenant-filtered list = %#v, total=%d, err=%v; want only tenant-a's second page", tenantRuns, tenantTotal, err)
+	}
+
+	if _, _, err := ms.ListWorkflowRuns(ctx, first.AppID, state.ListWorkflowRunsOpts{
+		CreatedAfter:  &before,
+		CreatedBefore: &after,
+	}); !errors.Is(err, state.ErrWorkflowInvalidCreatedRange) {
+		t.Fatalf("reversed created range error = %v, want ErrWorkflowInvalidCreatedRange", err)
 	}
 }
 

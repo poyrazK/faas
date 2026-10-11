@@ -50,3 +50,17 @@ Acceptance is pinned by TestRouteVerificationContract,
 TestDeploymentRouteSmokeAcceptsGuestRoot404,
 TestBridgeSmokeProofRequiresUpstreamHeadersAndAuthorization, and
 TestHostingVerificationContractControlsCutover.
+
+## Amendment (2026-10-05): gRPC apps
+
+`app_protocol=grpc` apps, and any deployment whose startup readiness is the
+standard gRPC health check (`deploy --healthcheck-grpc` or a manifest
+`healthcheck.grpc`), also use candidate route connectivity. Their HTTP health
+smoke sent `GET /healthz` to a gRPC server. The server answers that with 415,
+as the gRPC-over-HTTP/2 spec requires, so on production-us every gRPC deploy
+passed in-VM gRPC readiness and then failed "health probe returned HTTP 415".
+Readiness is already proven by the gRPC health check inside the VM.
+Connectivity verification adds 415 to the accepted set, under the same
+matching-deployment and upstream-proof requirement. An unproven 415 remains
+unavailable evidence. Pinned by TestRouteVerificationContract and
+TestRouteConnectivitySmokeForGRPCApps.

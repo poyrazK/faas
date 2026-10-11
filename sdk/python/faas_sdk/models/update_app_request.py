@@ -241,7 +241,8 @@ class UpdateAppRequest:
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     ports: list[WorkloadPort] | None | Unset = UNSET
     """Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP
     listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only."""

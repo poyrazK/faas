@@ -107,7 +107,22 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.client.UploadPart(ctx, input); err != nil || writes.Load() != 1 {
 		t.Fatal("S3 part", err, writes.Load())
 	}
-	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '4 days' WHERE id=$1`, *u.UploadId); err != nil {
+	// Age only the isolated fixture; retain production journal immutability.
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads DISABLE TRIGGER object_multipart_bound_journal`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '4 days' WHERE id=$1`, *u.UploadId); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads ENABLE TRIGGER object_multipart_bound_journal`); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	days := int32(1)

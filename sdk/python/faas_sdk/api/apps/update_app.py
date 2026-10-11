@@ -9,21 +9,32 @@ from ...client import AuthenticatedClient, Client
 from ...models.app_response import AppResponse
 from ...models.problem import Problem
 from ...models.update_app_request import UpdateAppRequest
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     *,
     body: UpdateAppRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(if_workload_revision, Unset):
+        headers["If-Workload-Revision"] = str(if_workload_revision)
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "patch",
         "url": "/v1/apps/{slug}".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -60,6 +71,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 422:
         response_422 = Problem.from_dict(response.json())
 
@@ -92,11 +108,15 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateAppRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Response[AppResponse | Problem]:
     """Partial-update an app.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
             unchanged.
 
@@ -111,6 +131,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     )
 
     response = client.get_httpx_client().request(
@@ -125,11 +147,15 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateAppRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> AppResponse | Problem | None:
     """Partial-update an app.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
             unchanged.
 
@@ -145,6 +171,8 @@ def sync(
         slug=slug,
         client=client,
         body=body,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     ).parsed
 
 
@@ -153,11 +181,15 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateAppRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> Response[AppResponse | Problem]:
     """Partial-update an app.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
             unchanged.
 
@@ -172,6 +204,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        environment=environment,
+        if_workload_revision=if_workload_revision,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -184,11 +218,15 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateAppRequest,
+    environment: str | Unset = UNSET,
+    if_workload_revision: int | Unset = UNSET,
 ) -> AppResponse | Problem | None:
     """Partial-update an app.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        if_workload_revision (int | Unset):
         body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
             unchanged.
 
@@ -205,5 +243,7 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
+            environment=environment,
+            if_workload_revision=if_workload_revision,
         )
     ).parsed

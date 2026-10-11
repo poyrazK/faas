@@ -151,3 +151,18 @@ func TestRenderDeployPreflightShowsRemoteResolutionBoundary(t *testing.T) {
 		t.Fatalf("remote preflight invented unresolved build details:\n%s", out.String())
 	}
 }
+
+// TestDeployPreflightListenerShowsGRPCHealth — with --healthcheck-grpc the
+// plan promised "health GET /healthz", which a gRPC server cannot answer.
+func TestDeployPreflightListenerShowsGRPCHealth(t *testing.T) {
+	build := &api.BuildPlan{Port: 3000, HealthPath: "/healthz"}
+	if got, want := deployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}}), ":3000 · gRPC health"; got != want {
+		t.Fatalf("listener = %q, want %q", got, want)
+	}
+	if got, want := deployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "h3.Echo"}}), ":3000 · gRPC health h3.Echo"; got != want {
+		t.Fatalf("listener = %q, want %q", got, want)
+	}
+	if got, want := deployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{Path: "/ready"}), ":3000 · health GET /ready"; got != want {
+		t.Fatalf("listener = %q, want %q", got, want)
+	}
+}

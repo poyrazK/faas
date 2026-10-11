@@ -33,7 +33,7 @@ func cmdPreviewCreate(args []string) int {
 	ttlHours := fs.Int("ttl-hours", previewCLIDefaultTTLHours, "preview lease in hours (1-720)")
 	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
 	noWait := fs.Bool("no-wait", false, "return after the deployment is queued")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for deployment readiness")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for deployment readiness")
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this preview operation")
 	openURL := fs.Bool("open", false, "open the preview URL after queueing or successful deployment")
 	if err := fs.Parse(args); err != nil {

@@ -12,11 +12,12 @@ import (
 // ServingResumeSpec is derived from the retained host resident. Only a restore
 // loaded with KeepPaused still owes the post-restore entropy/clock hook.
 type ServingResumeSpec struct {
-	AfterPausedRestore     bool
-	HealthcheckPath        string
-	HealthcheckGRPC        bool
-	HealthcheckGRPCService string
-	StartupDeadlineS       int
+	AfterPausedRestore       bool
+	HealthcheckPath          string
+	HealthcheckGRPC          bool
+	HealthcheckGRPCService   string
+	StartupDeadlineS         int
+	ImageHealthcheckRequired bool
 }
 
 // ServingResumeVMM acknowledges serving only after native resume, the deferred
@@ -49,7 +50,7 @@ func (m *Manager) completePausedRestore(ctx context.Context, inst *Instance) err
 	}
 	spec := ServingResumeSpec{AfterPausedRestore: true, HealthcheckPath: inst.HealthcheckPath,
 		HealthcheckGRPC: inst.HealthcheckGRPC, HealthcheckGRPCService: inst.HealthcheckGRPCService,
-		StartupDeadlineS: inst.StartupDeadlineS}
+		StartupDeadlineS: inst.StartupDeadlineS, ImageHealthcheckRequired: inst.ImageHealthcheckRequired}
 	if err := resumer.ResumeServingVM(ctx, inst.Lease, spec); err != nil {
 		return err
 	}
@@ -68,12 +69,12 @@ func (v *JailerVMM) ResumeServingVM(ctx context.Context, l Lease, spec ServingRe
 	if err := v.ResumeVM(ctx, l); err != nil {
 		return err
 	}
-	if spec.AfterPausedRestore {
+	if spec.AfterPausedRestore || spec.ImageHealthcheckRequired {
 		if err := v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("vmm: deferred restore resume hook: %w", err)
 		}
 	}
-	if err := v.waitReadyWithProbe(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS); err != nil {
+	if err := v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", spec.ImageHealthcheckRequired, nil); err != nil {
 		return fmt.Errorf("vmm: readiness after serving resume: %w", err)
 	}
 	return ctx.Err()

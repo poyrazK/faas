@@ -216,10 +216,10 @@ func (p *S3) confirmTrackedVersion(ctx context.Context, bucket string, r ObjectH
 	if *out.ContentLength != r.SizeBytes || out.Metadata[metadataKey] != r.Receipt {
 		return UploadResult{}, ErrConflict
 	}
-	if !validEncryptionResponse(out.ResultMetadata, r.Encryption) || !validStoredEncryptionResponse(out.Metadata, out.ResultMetadata, r.Encryption) {
+	if !validEncryptionResponse(out.ResultMetadata, r.Encryption) || !validProtectedHead(ctx, out) || !validStoredEncryptionResponse(out.Metadata, out.ResultMetadata, r.Encryption) {
 		return UploadResult{}, ErrUnavailable
 	}
-	return UploadResult{Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: version}, nil
+	return UploadResult{VerifiedProtection: capturedWriteProtection(ctx).Proof(), Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: version}, nil
 }
 
 func normalizeVersionHistoryError(err error) error {

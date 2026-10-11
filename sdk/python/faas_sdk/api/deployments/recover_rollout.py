@@ -141,6 +141,23 @@ def sync_detailed(
     gated to Pro+ (Hobby / Free get 403
     `plan_traffic_split_not_allowed`).
 
+    For an exact canary abort, supply both `deployment_id` and
+    `expected_predecessor_deployment_id`. The older predecessor must
+    remain live and serving in the same app/scope. If its stored binding
+    release policy enforces verification, recovery checks that exact
+    recipient's fresh evidence and rechecks policy revisions and expiry
+    inside the recovery transaction. Missing or changed evidence leaves
+    traffic unchanged. Success restores the predecessor to 100 percent,
+    aborts the selected canary, and includes an exact recovery receipt.
+    For an exact service abort, the pinned predecessor may remain live
+    at zero weight after cutover. The response is 202 with a
+    `service_recovery` receipt confirming the durable request only.
+    APID checks that recipient and ready service capacity before publishing
+    routes; schedd then completes gateway acknowledgement and request drain.
+    GET the exact deployment to observe `service_rollout_handoff` progress
+    and bounded `bindings_check` blockers. Restarted workers resume the same
+    request and never substitute a different predecessor.
+
     Args:
         slug (str):
         idempotency_key (str | Unset):
@@ -209,6 +226,23 @@ def sync(
     gated to Pro+ (Hobby / Free get 403
     `plan_traffic_split_not_allowed`).
 
+    For an exact canary abort, supply both `deployment_id` and
+    `expected_predecessor_deployment_id`. The older predecessor must
+    remain live and serving in the same app/scope. If its stored binding
+    release policy enforces verification, recovery checks that exact
+    recipient's fresh evidence and rechecks policy revisions and expiry
+    inside the recovery transaction. Missing or changed evidence leaves
+    traffic unchanged. Success restores the predecessor to 100 percent,
+    aborts the selected canary, and includes an exact recovery receipt.
+    For an exact service abort, the pinned predecessor may remain live
+    at zero weight after cutover. The response is 202 with a
+    `service_recovery` receipt confirming the durable request only.
+    APID checks that recipient and ready service capacity before publishing
+    routes; schedd then completes gateway acknowledgement and request drain.
+    GET the exact deployment to observe `service_rollout_handoff` progress
+    and bounded `bindings_check` blockers. Restarted workers resume the same
+    request and never substitute a different predecessor.
+
     Args:
         slug (str):
         idempotency_key (str | Unset):
@@ -271,6 +305,23 @@ async def asyncio_detailed(
     so the operator's terminal can echo `audit_id=…`. Plan-tier
     gated to Pro+ (Hobby / Free get 403
     `plan_traffic_split_not_allowed`).
+
+    For an exact canary abort, supply both `deployment_id` and
+    `expected_predecessor_deployment_id`. The older predecessor must
+    remain live and serving in the same app/scope. If its stored binding
+    release policy enforces verification, recovery checks that exact
+    recipient's fresh evidence and rechecks policy revisions and expiry
+    inside the recovery transaction. Missing or changed evidence leaves
+    traffic unchanged. Success restores the predecessor to 100 percent,
+    aborts the selected canary, and includes an exact recovery receipt.
+    For an exact service abort, the pinned predecessor may remain live
+    at zero weight after cutover. The response is 202 with a
+    `service_recovery` receipt confirming the durable request only.
+    APID checks that recipient and ready service capacity before publishing
+    routes; schedd then completes gateway acknowledgement and request drain.
+    GET the exact deployment to observe `service_rollout_handoff` progress
+    and bounded `bindings_check` blockers. Restarted workers resume the same
+    request and never substitute a different predecessor.
 
     Args:
         slug (str):
@@ -337,6 +388,23 @@ async def asyncio(
     so the operator's terminal can echo `audit_id=…`. Plan-tier
     gated to Pro+ (Hobby / Free get 403
     `plan_traffic_split_not_allowed`).
+
+    For an exact canary abort, supply both `deployment_id` and
+    `expected_predecessor_deployment_id`. The older predecessor must
+    remain live and serving in the same app/scope. If its stored binding
+    release policy enforces verification, recovery checks that exact
+    recipient's fresh evidence and rechecks policy revisions and expiry
+    inside the recovery transaction. Missing or changed evidence leaves
+    traffic unchanged. Success restores the predecessor to 100 percent,
+    aborts the selected canary, and includes an exact recovery receipt.
+    For an exact service abort, the pinned predecessor may remain live
+    at zero weight after cutover. The response is 202 with a
+    `service_recovery` receipt confirming the durable request only.
+    APID checks that recipient and ready service capacity before publishing
+    routes; schedd then completes gateway acknowledgement and request drain.
+    GET the exact deployment to observe `service_rollout_handoff` progress
+    and bounded `bindings_check` blockers. Restarted workers resume the same
+    request and never substitute a different predecessor.
 
     Args:
         slug (str):

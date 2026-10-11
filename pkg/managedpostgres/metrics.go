@@ -30,6 +30,7 @@ const (
 	metricsResourceBinding  = "binding"
 	metricsOperationCreate  = "provisioning"
 	metricsOperationDelete  = "deleting"
+	metricsOperationResize  = "updating"
 
 	metricsOutcomeCompleted = "completed"
 	metricsOutcomeDeferred  = "deferred"
@@ -122,7 +123,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		}
 	}
 	for _, resource := range []string{metricsResourceDatabase, metricsResourceBinding} {
-		for _, operation := range []string{metricsOperationCreate, metricsOperationDelete} {
+		for _, operation := range []string{metricsOperationCreate, metricsOperationDelete, metricsOperationResize} {
 			for _, outcome := range []string{metricsOutcomeCompleted, metricsOutcomeDeferred, metricsOutcomeContended, metricsOutcomeFailed} {
 				m.reconcileTotal.WithLabelValues(resource, operation, outcome).Add(0)
 			}
@@ -205,8 +206,11 @@ func (m *Metrics) ObserveReconcile(observation ReconcileObservation) {
 		return
 	}
 	operation := metricsOperationCreate
-	if observation.Operation == StateDeleting {
+	switch observation.Operation {
+	case StateDeleting:
 		operation = metricsOperationDelete
+	case StateUpdating:
+		operation = metricsOperationResize
 	}
 	outcome := string(observation.Outcome)
 	switch outcome {

@@ -1,9 +1,12 @@
+// spec: §6.2
+// adr: 590
 package sched
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,18 +19,15 @@ type admissionSpecFailureStore struct {
 	sidecarErr error
 }
 
-func (s *admissionSpecFailureStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, scope string) ([]state.AppSecret, error) {
+func (s *admissionSpecFailureStore) RuntimeAppValuesForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeAppValuesSnapshot, error) {
 	if s.secretErr != nil {
-		return nil, s.secretErr
+		return state.RuntimeAppValuesSnapshot{}, s.secretErr
 	}
-	return s.Store.ListAppSecretsInScope(ctx, accountID, appID, scope)
-}
-
-func (s *admissionSpecFailureStore) ListDeploymentSidecarLayers(ctx context.Context, deploymentID string) ([]state.DeploymentSidecarLayer, error) {
-	if s.sidecarErr != nil {
-		return nil, s.sidecarErr
+	snapshot, err := s.Store.RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
+	if err == nil && s.sidecarErr != nil {
+		snapshot.SidecarLayers = nil
 	}
-	return s.Store.ListDeploymentSidecarLayers(ctx, deploymentID)
+	return snapshot, err
 }
 
 func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
@@ -70,7 +70,8 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 						return e.AdmitInstance(ctx, app.ID, "", "", TriggerGateway)
 					}
 				}
-				if _, err := admit(); !errors.Is(err, injected) {
+				if _, err := admit(); (failure == "secrets" && !errors.Is(err, injected)) ||
+					(failure == "sidecars" && (err == nil || !strings.Contains(err.Error(), "has no built layer"))) {
 					t.Fatalf("first admission error = %v", err)
 				}
 				if got := e.Ledger().Concurrency(app.ID); got != 0 {
@@ -80,7 +81,10 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(rows) != 1 || rows[0].State != string(state.StateFailed) {
+				if failure == "secrets" && len(rows) != 0 {
+					t.Fatalf("failed runtime value read created an instance: %+v", rows)
+				}
+				if failure == "sidecars" && (len(rows) != 1 || rows[0].State != string(state.StateFailed)) {
 					t.Fatalf("failed admission rows = %+v", rows)
 				}
 				if vmm.coldBoots != 0 || vmm.restores != 0 {

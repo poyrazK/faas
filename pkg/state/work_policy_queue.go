@@ -11,10 +11,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// ClaimQueueTriggerInvocation is the named queue poller's claim path. It
-// shares the work-lane and fairness locks with the generic dispatcher, then
-// takes the queue binding lock used to enforce its consumer concurrency cap.
-// The trigger receipt remains responsible for delivery retries and batching.
+// ClaimQueueTriggerInvocation is the production named queue poller's claim
+// path. Environment ownership is checked before any lane, row or binding lock;
+// stage work can never be adopted by this production consumer.
 func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID, appID, queueName string, leaseSeconds int) (Invocation, error) {
 	if queueName == "" || leaseSeconds <= 0 || int64(leaseSeconds) > 2147483647 {
 		return Invocation{}, ErrInvalidArgument
@@ -25,7 +24,7 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 		out   *pgtype.UUID
 	}{{id, nil}, {appID, &appUUID}, {triggerID, &triggerUUID}} {
 		parsed, err := uuid.Parse(item.value)
-		if err != nil {
+		if err != nil || parsed == uuid.Nil {
 			return Invocation{}, ErrInvalidArgument
 		}
 		if item.out != nil {
@@ -36,39 +35,33 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger claim begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var policyName *string
-	var keyDigest, fairnessDigest []byte
-	var fairnessLimit *int
-	err = tx.QueryRow(ctx, `select work_policy_name, work_key_digest,
-		work_fairness_digest, work_fairness_limit from invocations
-		where id = $1 and app_id = $2 and source = 'queue'`, id, appID).Scan(
-		&policyName, &keyDigest, &fairnessDigest, &fairnessLimit)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Invocation{}, ErrNotFound
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
+		return Invocation{}, err
 	}
+	queries := sqlc.New()
+	lookup, err := queries.ReadBoundOrProductionQueueTriggerInvocation(ctx, tx, sqlc.ReadBoundOrProductionQueueTriggerInvocationParams{
+		InvocationID: mustPgUUID(id), AppID: mustPgUUID(appID),
+	})
 	if err != nil {
-		return Invocation{}, fmt.Errorf("state: queue trigger claim lookup: %w", err)
+		return Invocation{}, mapErr(err)
 	}
-	if policyName != nil {
-		if err := lockKeyedClaimTx(ctx, tx, id, appID, *policyName, keyDigest); err != nil {
+	if lookup.WorkPolicyName.Valid {
+		if err := lockKeyedClaimTx(ctx, tx, id, appID, lookup.WorkPolicyName.String, lookup.WorkKeyDigest); err != nil {
 			return Invocation{}, err
 		}
-		if fairnessLimit != nil {
-			if err := lockFairnessClaimTx(ctx, tx, appID, *policyName, fairnessDigest, *fairnessLimit); err != nil {
+		if lookup.WorkFairnessLimit.Valid {
+			if err := lockFairnessClaimTx(ctx, tx, appID, lookup.WorkPolicyName.String, lookup.WorkFairnessDigest, int(lookup.WorkFairnessLimit.Int32)); err != nil {
 				return Invocation{}, err
 			}
 		}
 	}
-	// Candidate enumeration is intentionally lock-free. Skip a row already
-	// being claimed by another poller instead of holding the binding lock
-	// while waiting for that claim to finish.
-	var lockedID string
-	err = tx.QueryRow(ctx, `select id::text from invocations
-		where id = $1 and app_id = $2 and state = 'pending'
-		for update skip locked`, id, appID).Scan(&lockedID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Invocation{}, ErrNotFound
+	// Candidates are lock-free; skip a row claimed by another poller before
+	// taking the binding lock that serializes the concurrency cap.
+	if _, err := queries.LockBoundOrProductionQueueTriggerInvocation(ctx, tx, sqlc.LockBoundOrProductionQueueTriggerInvocationParams{
+		InvocationID: mustPgUUID(id), AppID: mustPgUUID(appID),
+	}); err != nil {
+		return Invocation{}, mapErr(err)
 	}
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger row lock: %w", err)

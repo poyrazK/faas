@@ -368,6 +368,50 @@ func TestReapOrphanedLayerClones_UsesDurableLivenessGate(t *testing.T) {
 	}
 }
 
+// production-us hunt #4 (H4-59): clones are created beside their source, so a
+// host-path drive in /srv/fc/base leaves its clone there, outside the cache
+// buckets this sweep used to scan. FlatDirs are scanned with the same gates.
+func TestReapOrphanedLayerClones_ScansFlatDirs(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(t.TempDir(), "base")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	write := func(id string, mod time.Time) string {
+		t.Helper()
+		path := filepath.Join(base, ".faas-layer-"+id+"-SB5TNE5IAVNHGE5NLINPSVCQ7M")
+		if err := os.WriteFile(path, []byte("clone"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	dead, live, young := write(idDead, old), write(idLive, old), write("eeeeeeee-5555-4555-8555-eeeeeeeeeeee", time.Now())
+	kernel := filepath.Join(base, "vmlinux-6.1.134")
+	if err := os.WriteFile(kernel, []byte("kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{
+		Root:     root,
+		FlatDirs: []string{base, filepath.Join(base, "missing")},
+		IsLive:   func(_ context.Context, id string) (bool, error) { return id == idLive, nil },
+	})
+	if err != nil || rep.Reaped != 1 || rep.SkippedLive != 1 || rep.SkippedYoung != 1 {
+		t.Fatalf("report = %+v err = %v, want one reaped, one live, one young", rep, err)
+	}
+	if _, err := os.Stat(dead); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("dead flat-dir clone still exists: %v", err)
+	}
+	for _, path := range []string{live, young, kernel} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed: %v", path, err)
+		}
+	}
+}
+
 func TestReapOrphanedLayerClones_RefusesUngatedSweep(t *testing.T) {
 	root := t.TempDir()
 	if _, err := ReapOrphanedLayerClones(context.Background(), LayerCloneReapOptions{Root: root}); err == nil {

@@ -10,23 +10,40 @@ import (
 // ObjectStoragePolicy is an operator safety budget, not a plan price or a
 // promise that already-issued capabilities can be revoked.
 type ObjectStoragePolicy struct {
-	MaxAccountBytes          int64 `json:"max_account_bytes"`
-	MaxBucketBytes           int64 `json:"max_bucket_bytes"`
-	MaxAccountKeys           int64 `json:"max_account_keys"`
-	MaxMonthlyCostMillicents int64 `json:"max_monthly_cost_millicents"`
-	MaxMonthlyRequests       int64 `json:"max_monthly_requests"`
-	MaxMonthlyEgressBytes    int64 `json:"max_monthly_egress_bytes"`
-	MaxMonthlyAuthorizations int64 `json:"max_monthly_authorizations"`
-	MaxReportAgeSeconds      int64 `json:"max_report_age_seconds"`
+	// Gateway safety mode is prospective, has no provider-cost ceiling, and
+	// cannot supply billable usage. Empty mode preserves provider reports.
+	AccountingMode           string     `json:"accounting_mode,omitempty"`
+	GatewayMeteringSince     *time.Time `json:"gateway_metering_since,omitempty"`
+	MaxAccountBytes          int64      `json:"max_account_bytes"`
+	MaxBucketBytes           int64      `json:"max_bucket_bytes"`
+	MaxAccountKeys           int64      `json:"max_account_keys"`
+	MaxMonthlyCostMillicents int64      `json:"max_monthly_cost_millicents"`
+	MaxMonthlyRequests       int64      `json:"max_monthly_requests"`
+	MaxMonthlyEgressBytes    int64      `json:"max_monthly_egress_bytes"`
+	MaxMonthlyAuthorizations int64      `json:"max_monthly_authorizations"`
+	MaxReportAgeSeconds      int64      `json:"max_report_age_seconds"`
 }
 
 func (p ObjectStoragePolicy) Valid() bool {
-	for _, v := range []int64{p.MaxAccountBytes, p.MaxBucketBytes, p.MaxAccountKeys, p.MaxMonthlyCostMillicents, p.MaxMonthlyRequests, p.MaxMonthlyEgressBytes, p.MaxMonthlyAuthorizations} {
+	if p.GatewaySafety() {
+		if p.GatewayMeteringSince == nil || p.GatewayMeteringSince.IsZero() || p.MaxMonthlyCostMillicents != 0 {
+			return false
+		}
+	} else if p.AccountingMode != "" || p.GatewayMeteringSince != nil || p.MaxMonthlyCostMillicents < 1 || p.MaxMonthlyCostMillicents > MaxObjectStoragePolicyValue {
+		return false
+	}
+	for _, v := range []int64{p.MaxAccountBytes, p.MaxBucketBytes, p.MaxAccountKeys, p.MaxMonthlyRequests, p.MaxMonthlyEgressBytes, p.MaxMonthlyAuthorizations} {
 		if v < 1 || v > MaxObjectStoragePolicyValue {
 			return false
 		}
 	}
 	return p.MaxAccountKeys <= ObjectStorageInventoryMaxPages*1000 && p.MaxBucketBytes <= p.MaxAccountBytes && p.MaxReportAgeSeconds >= 60 && p.MaxReportAgeSeconds <= MaxObjectStorageReportAgeSeconds
+}
+
+const ObjectStorageGatewaySafetyV1 = "gateway_safety_v1"
+
+func (p ObjectStoragePolicy) GatewaySafety() bool {
+	return p.AccountingMode == ObjectStorageGatewaySafetyV1
 }
 
 // ObjectStorageUsageReport is an authoritative cumulative UTC-month report
@@ -66,16 +83,19 @@ func (r *ObjectStorageUsageReport) UnmarshalJSON(data []byte) error {
 }
 
 type ObjectStorageUsage struct {
-	ObservedBytes   int64     `json:"observed_bytes"`
-	CapacityBytes   int64     `json:"capacity_bytes"`
-	CapacityKeys    int64     `json:"capacity_keys"`
-	StoredByteHours int64     `json:"stored_byte_hours"`
-	RequestCount    int64     `json:"request_count"`
-	EgressBytes     int64     `json:"egress_bytes"`
-	CostMillicents  int64     `json:"cost_millicents"`
-	Authorizations  int64     `json:"authorizations"`
-	Fresh           bool      `json:"fresh"`
-	PeriodStart     time.Time `json:"period_start"`
+	// Legacy numeric fields remain wire-compatible. Entries here are unknown
+	// rather than measured zeros and must never be used to calculate charges.
+	UnavailableMeters []string  `json:"unavailable_meters,omitempty"`
+	ObservedBytes     int64     `json:"observed_bytes"`
+	CapacityBytes     int64     `json:"capacity_bytes"`
+	CapacityKeys      int64     `json:"capacity_keys"`
+	StoredByteHours   int64     `json:"stored_byte_hours"`
+	RequestCount      int64     `json:"request_count"`
+	EgressBytes       int64     `json:"egress_bytes"`
+	CostMillicents    int64     `json:"cost_millicents"`
+	Authorizations    int64     `json:"authorizations"`
+	Fresh             bool      `json:"fresh"`
+	PeriodStart       time.Time `json:"period_start"`
 }
 
 // ObjectStoragePricing is an operator-supplied customer rate card. Rates are

@@ -147,3 +147,20 @@ func TestInternalProxyHTTP1HopWaitsForTheCustomerEnvelope(t *testing.T) {
 		t.Fatalf("envelope %s must exceed the request budget %s", api.CustomerRequestEnvelopeTimeout, api.RequestBudgetMax)
 	}
 }
+
+// TestRequestBudgetDetailNamesThePhase pins production-us hunt #4 (H4-66): a
+// warm app that took too long was told the budget ran out "while capacity was
+// becoming ready".
+func TestRequestBudgetDetailNamesThePhase(t *testing.T) {
+	r := httptest.NewRequest("GET", "http://example.test", nil)
+	forward := httptest.NewRecorder()
+	writeRequestBudgetExceededForRequest(forward, r)
+	if !strings.Contains(forward.Body.String(), "while the app was handling it") {
+		t.Fatalf("forward detail = %s", forward.Body.String())
+	}
+	capacity := httptest.NewRecorder()
+	writeRequestBudgetExceeded(capacity, r, requestBudgetDetailCapacity)
+	if !strings.Contains(capacity.Body.String(), "while capacity was becoming ready") {
+		t.Fatalf("capacity detail = %s", capacity.Body.String())
+	}
+}

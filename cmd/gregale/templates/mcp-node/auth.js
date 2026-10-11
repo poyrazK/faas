@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { createToolPolicy, validateScopes } from './tool-policy.js';
+import { createPromptPolicy, createResourcePolicy, createToolPolicy, validateScopes } from './tool-policy.js';
 
 // The provider owns login, consent, PKCE, discovery and access-token issuance.
 // This application is an OAuth resource server and never accepts CLI credentials.
@@ -7,18 +7,26 @@ export function createAuth(config, keyResolver) {
   const auth = config.auth;
   if (!auth || !['open', 'external-oauth'].includes(auth.mode)) throw new Error('Set auth.mode to open or external-oauth');
   const toolPolicy = createToolPolicy(auth);
+  const resourcePolicy = createResourcePolicy(auth);
+  const promptPolicy = createPromptPolicy(auth);
   function authorizeCall(req, res, next) {
     // Read the actual JSON-RPC call, never a caller-supplied Mcp-Name header.
-    const name = req.body?.method === 'tools/call' ? req.body.params?.name : undefined;
-    if (typeof name !== 'string' || toolPolicy.canAccess(name, req.auth)) return next();
-    const scopes = toolPolicy.requiredScopes(name);
+    const request = req.body;
+    const method = request?.method;
+    const policy = method === 'tools/call' ? toolPolicy
+      : method === 'resources/read' ? resourcePolicy
+        : method === 'prompts/get' ? promptPolicy : undefined;
+    const identifier = method === 'resources/read' ? request?.params?.uri : request?.params?.name;
+    if (!policy || typeof identifier !== 'string' || policy.canAccess(identifier, req.auth)) return next();
+    const scopes = policy.requiredScopes(identifier);
     if (auth.mode === 'external-oauth' && scopes) return reject(res, 403, 'insufficient_scope', [...new Set([...auth.scopes, ...scopes])]);
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(403).json({ error: 'tool_access_denied' });
+    const kind = method === 'tools/call' ? 'tool' : method === 'resources/read' ? 'resource' : 'prompt';
+    return res.status(403).json({ error: `${kind}_access_denied` });
   }
   if (auth.mode === 'open') {
     if (auth.issuer || auth.jwks_url || auth.resource || auth.scopes?.length) throw new Error('Open auth must not contain OAuth settings');
-    return { middleware: (req, _res, next) => { delete req.auth; next(); }, metadata: null, toolPolicy, authorizeCall };
+    return { middleware: (req, _res, next) => { delete req.auth; next(); }, metadata: null, toolPolicy, resourcePolicy, promptPolicy, authorizeCall };
   }
   for (const key of ['issuer', 'jwks_url', 'resource']) {
     const url = new URL(auth[key]);
@@ -35,9 +43,13 @@ export function createAuth(config, keyResolver) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(status).json({ error: error || 'authentication_required' });
   }
+  const scopesSupported = [...new Set([
+    ...auth.scopes,
+    ...[toolPolicy, resourcePolicy, promptPolicy].flatMap(policy => [...policyScopes(policy)]),
+  ])].sort();
   return {
-    toolPolicy, authorizeCall,
-    metadata: { resource: auth.resource, authorization_servers: [auth.issuer], scopes_supported: auth.scopes, bearer_methods_supported: ['header'] },
+    toolPolicy, resourcePolicy, promptPolicy, authorizeCall,
+    metadata: { resource: auth.resource, authorization_servers: [auth.issuer], scopes_supported: scopesSupported, bearer_methods_supported: ['header'] },
     async middleware(req, res, next) {
       delete req.auth;
       const authorization = req.headers.authorization;
@@ -62,4 +74,8 @@ export function createAuth(config, keyResolver) {
       }
     },
   };
+}
+
+function policyScopes(policy) {
+  return policy.scopes();
 }

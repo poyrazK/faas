@@ -26,6 +26,7 @@ class ProjectEnvironmentReleaseWorkloadResponse:
     workload_slug: str
     workload_name: str
     status: ProjectEnvironmentReleaseWorkloadResponseStatus
+    workload_config_hash: str | Unset = UNSET
     url: str | Unset = UNSET
     deployment_id: str | Unset = UNSET
     build_id: str | Unset = UNSET
@@ -43,6 +44,8 @@ class ProjectEnvironmentReleaseWorkloadResponse:
         workload_name = self.workload_name
 
         status: str = self.status
+
+        workload_config_hash = self.workload_config_hash
 
         url = self.url
 
@@ -73,6 +76,8 @@ class ProjectEnvironmentReleaseWorkloadResponse:
                 "status": status,
             }
         )
+        if workload_config_hash is not UNSET:
+            field_dict["workload_config_hash"] = workload_config_hash
         if url is not UNSET:
             field_dict["url"] = url
         if deployment_id is not UNSET:
@@ -103,6 +108,8 @@ class ProjectEnvironmentReleaseWorkloadResponse:
 
         status = check_project_environment_release_workload_response_status(d.pop("status"))
 
+        workload_config_hash = d.pop("workload_config_hash", UNSET)
+
         url = d.pop("url", UNSET)
 
         deployment_id = d.pop("deployment_id", UNSET)
@@ -130,6 +137,7 @@ class ProjectEnvironmentReleaseWorkloadResponse:
             workload_slug=workload_slug,
             workload_name=workload_name,
             status=status,
+            workload_config_hash=workload_config_hash,
             url=url,
             deployment_id=deployment_id,
             build_id=build_id,

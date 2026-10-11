@@ -52,7 +52,10 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 		if !s.objectStorageEnabled() {
 			err = objectstorage.ErrUnavailable
 		} else {
-			err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
+			err = s.inventoryRequestRecorder(b)(callCtx)
+			if err == nil {
+				err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
+			}
 		}
 	} else {
 		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
@@ -63,7 +66,10 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 			}
 		}
 		if err == nil {
-			err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+			err = s.inventoryRequestRecorder(b)(callCtx)
+			if err == nil {
+				err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+			}
 		}
 	}
 	notEmpty := b.State == "deleting" && errors.Is(err, objectstorage.ErrNotEmpty)
@@ -227,6 +233,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		if err := s.reconcileObjectMultipartUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object storage multipart recovery sweep failed")
 		}
+		if err := s.pruneObjectUploadGrants(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("object upload grant pruning failed")
+		}
 		if err := s.reconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object upload recovery sweep failed")
 		}
@@ -238,6 +247,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		}
 		if err := s.reconcileObjectBucketObjectLock(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object bucket Object Lock recovery sweep failed")
+		}
+		if err := s.reconcileObjectVersionProtection(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object version protection recovery sweep failed")
 		}
 		if err := s.reconcileObjectBucketEncryption(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object bucket encryption recovery sweep failed")

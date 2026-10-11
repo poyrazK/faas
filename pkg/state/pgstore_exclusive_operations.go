@@ -262,11 +262,57 @@ func (tx *exclusivePostgresTx) reserve(account string) error {
 }
 func (tx *exclusivePostgresTx) effects(o ExclusiveOperation, effects []exclusivework.Effect) error {
 	for _, e := range effects {
-		if err := tx.q.InsertExclusiveWorkEffect(tx.ctx, tx.db, sqlc.InsertExclusiveWorkEffectParams{ID: uuid.NewString(), OperationID: o.ID, Generation: o.Generation, Name: e.Name, Payload: e.Payload}); err != nil {
+		id := uuid.NewString()
+		if e.WebhookID != "" {
+			body, err := operationEffectBody(o, e)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.appScope(o.AccountID, o.AppID); err != nil {
+				return err
+			}
+			if o.PlatformTenantID != "" {
+				_, err := tx.q.CommitTenantAppScope(tx.ctx, tx.db, sqlc.CommitTenantAppScopeParams{AccountID: o.AccountID, AppID: o.AppID, TenantID: o.PlatformTenantID})
+				if errors.Is(err, pgx.ErrNoRows) {
+					return ErrOperationEffectDestination
+				}
+				if err != nil {
+					return err
+				}
+			}
+			webhookID, err := tx.q.ResolveExclusiveWebhookEffectTarget(tx.ctx, tx.db, sqlc.ResolveExclusiveWebhookEffectTargetParams{WebhookID: e.WebhookID, AccountID: o.AccountID, TenantID: o.PlatformTenantID, AppID: o.AppID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrOperationEffectDestination
+			}
+			if err != nil {
+				return err
+			}
+			e.WebhookID = webhookID
+			if err := tx.q.EnqueueExclusiveWebhookEffect(tx.ctx, tx.db, sqlc.EnqueueExclusiveWebhookEffectParams{ID: id, WebhookID: webhookID, AppID: o.AppID, AccountID: o.AccountID, Payload: body}); err != nil {
+				return err
+			}
+		}
+		if err := tx.q.InsertExclusiveWorkEffect(tx.ctx, tx.db, sqlc.InsertExclusiveWorkEffectParams{ID: id, OperationID: o.ID, Generation: o.Generation, Name: e.Name, Payload: e.Payload, WebhookID: e.WebhookID, EventType: e.Type}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (tx *exclusivePostgresTx) effectRecords(o ExclusiveOperation) ([]api.OperationEffectRecord, error) {
+	rows, err := tx.q.ListExclusiveWorkEffects(tx.ctx, tx.db, sqlc.ListExclusiveWorkEffectsParams{AccountID: o.AccountID, OperationID: o.ID})
+	if err != nil {
+		return nil, err
+	}
+	records := make([]api.OperationEffectRecord, 0, len(rows))
+	for _, row := range rows {
+		record := api.OperationEffectRecord{ID: row.EID, Name: row.Name, Generation: row.Generation, WebhookID: row.WebhookID, Type: row.EventType, Status: row.Status, Attempt: int(row.Attempt), LastError: row.LastError}
+		if row.WebhookID != "" {
+			record.DeliveryID = row.EID
+		}
+		records = append(records, record)
+	}
+	return records, nil
 }
 
 func (tx *exclusivePostgresTx) bindSubmission(key string, digest []byte, id string) error {

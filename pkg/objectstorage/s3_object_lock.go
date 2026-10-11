@@ -3,6 +3,8 @@ package objectstorage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -98,7 +100,7 @@ func (p *S3) PutObjectVersionRetention(ctx context.Context, bucket, key, version
 		in.BypassGovernanceRetention = aws.Bool(true)
 	}
 	_, err := p.client.PutObjectRetention(ctx, in, objectLockWriteOptions(version))
-	return normalizeObjectLockError(err)
+	return normalizeProtectionWriteError(err)
 }
 
 func (p *S3) GetObjectVersionLegalHold(ctx context.Context, bucket, key, version string) (api.ObjectVersionLegalHold, error) {
@@ -128,6 +130,18 @@ func (p *S3) PutObjectVersionLegalHold(ctx context.Context, bucket, key, version
 		return ErrInvalid
 	}
 	_, err := p.client.PutObjectLegalHold(ctx, &s3.PutObjectLegalHoldInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: aws.String(version), LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatus(h.Status)}, ChecksumAlgorithm: types.ChecksumAlgorithmSha256}, objectLockWriteOptions(version))
+	return normalizeProtectionWriteError(err)
+}
+
+func normalizeProtectionWriteError(err error) error {
+	var response *smithyhttp.ResponseError
+	var service smithy.APIError
+	if errors.As(err, &response) && errors.As(err, &service) {
+		status, code := response.HTTPStatusCode(), service.ErrorCode()
+		if status == http.StatusForbidden && code == "AccessDenied" || status == http.StatusNotFound && (code == "NoSuchKey" || code == "NoSuchVersion") || status == http.StatusBadRequest && (code == "MalformedXML" || code == "InvalidArgument" || code == "InvalidRequest") {
+			return fmt.Errorf("%w: %w", ErrProtectionRejected, normalizeObjectLockError(err))
+		}
+	}
 	return normalizeObjectLockError(err)
 }
 

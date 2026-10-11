@@ -2,6 +2,7 @@ package s3gateway
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"strings"
@@ -172,6 +173,14 @@ func TestMultipartHistoricalResultRecoveryRestartPG(t *testing.T) {
 			f, p, in := newMultipartResultIntegration(t, st, "private-old", failure)
 			_, err := f.client.CompleteMultipartUpload(t.Context(), in)
 			assertSDKErrorCode(t, err, "ServiceUnavailable")
+			fences := st
+			if _, err := fences.BeginObjectBucketMutation(t.Context(), f.bucket, state.ObjectBucketMutationRequest); err != nil {
+				t.Fatal(err)
+			}
+			hold, err := fences.AcquireObjectBucketWriteFence(t.Context(), f.bucket, uuid.NewString())
+			if err != nil || hold.Requests != 2 || hold.Multipart != 1 {
+				t.Fatal("uncertain completion lost writer custody", hold, err)
+			}
 			id := aws.ToString(in.UploadId)
 			p.mu.Lock()
 			p.deleted = true
@@ -199,6 +208,10 @@ func TestMultipartHistoricalResultRecoveryRestartPG(t *testing.T) {
 					t.Fatal(out, e)
 				}
 				u, e = restarted.GetObjectMultipartUpload(t.Context(), f.bucket.AccountID, f.bucket.AppID, f.bucket.ID, id)
+				drained, fenceErr := fences.ReadObjectBucketWriteFence(t.Context(), f.bucket, hold.Token)
+				if fenceErr != nil || drained.Requests != 1 || drained.Multipart != 0 {
+					t.Fatal("completion erased unrelated writer or failed to drain original", drained, fenceErr)
+				}
 				if e != nil || u.State != state.ObjectMultipartCompleted || u.CompletionRecoveryCursor != "" || !u.CompletionVersionsObserved || u.CompletionVersionID != aws.ToString(out.VersionId) {
 					t.Fatal(u, e)
 				}

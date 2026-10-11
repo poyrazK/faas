@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -72,6 +72,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "policies":
 		return cmdProjectsEnvironmentPolicies(args[1:])
+	case "queues":
+		return cmdProjectsEnvironmentQueues(args[1:])
 	case "gitops":
 		return cmdProjectsEnvironmentGitOps(args[1:])
 	case "diff":
@@ -552,7 +554,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
 	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
-	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for promotion completion")
+	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for promotion completion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
 		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
 		return 1

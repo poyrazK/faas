@@ -15,7 +15,7 @@ func (s *MemoryStore) ReserveBinding(_ context.Context, binding Binding) (Bindin
 		return Binding{}, false, err
 	}
 	database, exists := s.databases[binding.DatabaseID]
-	if !exists || database.AccountID != binding.AccountID {
+	if !exists || database.AccountID != binding.AccountID || database.EnvironmentCloneOperationID != "" {
 		return Binding{}, false, ErrNotFound
 	}
 	if database.State != StateReady && database.State != StateProvisioning {
@@ -303,7 +303,7 @@ func (s *MemoryStore) FinishBindingDelete(_ context.Context, bindingID, leaseTok
 func validateBindingReservation(binding Binding) error {
 	if binding.ID == "" || binding.AccountID == "" || binding.DatabaseID == "" || binding.AppID == "" ||
 		!validBindingScope(binding.Scope) || !validEnvironmentKey(binding.EnvironmentKey) ||
-		(binding.Access != CredentialReadWrite && binding.Access != CredentialReadOnly && binding.Access != CredentialMigration) ||
+		(binding.Access != CredentialReadWrite && binding.Access != CredentialReadOnly && binding.Access != CredentialMigration && binding.Access != CredentialDataAPI) ||
 		binding.CredentialGeneration != 1 || binding.State != BindingStateProvisioning ||
 		binding.ProviderIdentityID != "" || binding.CredentialRef != "" || binding.LastErrorCode != "" ||
 		binding.LeaseToken != "" || !binding.LeaseUntil.IsZero() || binding.AttemptCount != 0 ||

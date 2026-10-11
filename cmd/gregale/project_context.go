@@ -237,6 +237,31 @@ func resolveEnvironmentFlagOrContext(explicit string) (string, error) {
 	return context.Environment, nil
 }
 
+// appSlugFlagUsage is the help text every slug-first leaf gives --app.
+const appSlugFlagUsage = "app slug (same as the <slug> positional; defaults to linked context)"
+
+var errAppFlagConflict = errors.New("pass the app once: the <slug> positional and --app name different apps")
+
+// mergeAppFlag lets a slug-first leaf take --app as well as its leading
+// positional. production-us hunt #4: `gregale link` tells users to pass
+// --app for app-scoped commands, yet ps, logs, metrics, slo, inspect and
+// other slug-first leaves rejected it with "flag provided but not defined:
+// -app". maxPositionals is the leaf's full positional count including the
+// slug: when the caller already supplied all of them, the first must be the
+// same app; otherwise the flag value is the omitted leading slug.
+func mergeAppFlag(positional []string, app string, maxPositionals int) ([]string, error) {
+	if app == "" {
+		return positional, nil
+	}
+	if len(positional) >= maxPositionals {
+		if positional[0] != app {
+			return nil, errAppFlagConflict
+		}
+		return positional, nil
+	}
+	return append([]string{app}, positional...), nil
+}
+
 // resolveRequiredAppSlug gives app-scoped read commands a consistent
 // context fallback. Callers own their usage text so each PrintUsage call
 // keeps a statically discoverable docs topic. Explicit slugs still win

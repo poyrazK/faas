@@ -67,6 +67,14 @@ func (h HTTPHooks) ReplayCallbackDeadLetter(id string) error {
 	return h.DurableQueue.ReplayDeadLetter(id)
 }
 
+// DiscardCallbackDeadLetter deletes one retained event after operator review.
+func (h HTTPHooks) DiscardCallbackDeadLetter(id string) error {
+	if h.DurableQueue == nil {
+		return ErrCallbackOutboxUnavailable
+	}
+	return h.DurableQueue.DiscardDeadLetter(id)
+}
+
 func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, error) {
 	for {
 		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
@@ -541,8 +549,9 @@ func timeOrZero(value *time.Time) time.Time {
 }
 
 type messageRequest struct {
-	DataBase64 string `json:"data_base64"`
-	Binary     bool   `json:"binary"`
+	DataBase64       string `json:"data_base64"`
+	Binary           bool   `json:"binary"`
+	RetainedSequence int64  `json:"retained_sequence,omitempty"`
 }
 
 type closeRequest struct {
@@ -594,6 +603,7 @@ func (m *Manager) internalHandler() http.Handler {
 type callbackDeadLetterManagement interface {
 	ListCallbackDeadLetters(after string, limit int) (CallbackDeadLetterPage, error)
 	ReplayCallbackDeadLetter(id string) error
+	DiscardCallbackDeadLetter(id string) error
 }
 
 func (m *Manager) handleCallbackDeadLetters(w http.ResponseWriter, r *http.Request) {
@@ -629,11 +639,11 @@ func (m *Manager) handleCallbackDeadLetterRoute(w http.ResponseWriter, r *http.R
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !strings.HasSuffix(path, ":replay") {
+	id, action, found := strings.Cut(path, ":")
+	if !found || (action != "replay" && action != "discard") {
 		http.NotFound(w, r)
 		return
 	}
-	id := strings.TrimSuffix(path, ":replay")
 	if !validCallbackOutboxID(id) {
 		http.Error(w, "invalid callback dead-letter id", http.StatusBadRequest)
 		return
@@ -641,6 +651,14 @@ func (m *Manager) handleCallbackDeadLetterRoute(w http.ResponseWriter, r *http.R
 	hooks, ok := m.hooks.(callbackDeadLetterManagement)
 	if !ok {
 		writeCallbackDeadLetterError(w, ErrCallbackOutboxUnavailable)
+		return
+	}
+	if action == "discard" {
+		if err := hooks.DiscardCallbackDeadLetter(id); err != nil {
+			writeCallbackDeadLetterError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "discarded"})
 		return
 	}
 	if err := hooks.ReplayCallbackDeadLetter(id); err != nil {
@@ -699,12 +717,21 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		queued, err := m.Publish(r.Context(), parts[0], channel, message)
+		if request.RetainedSequence < 0 {
+			http.Error(w, "invalid retained sequence", http.StatusBadRequest)
+			return
+		}
+		var status PublishStatus
+		if request.RetainedSequence > 0 {
+			status, err = m.PublishRetainedWithStatus(r.Context(), parts[0], channel, message, request.RetainedSequence)
+		} else {
+			status, err = m.PublishWithStatus(r.Context(), parts[0], channel, message)
+		}
 		if err != nil {
 			writeOperationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]int{"queued": queued})
+		writeJSON(w, http.StatusOK, status)
 		return
 	}
 	http.NotFound(w, r)

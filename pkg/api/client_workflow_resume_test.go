@@ -42,3 +42,23 @@ func TestClientWorkflowResumeRoutes(t *testing.T) {
 		t.Fatal(history, err)
 	}
 }
+
+func TestClientResumeWorkflowRunWithIdempotencyKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/workflows/runs/run/resume" {
+			t.Errorf("request route = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Idempotency-Key"); got != "resume-after-outage-1" {
+			t.Errorf("Idempotency-Key = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"id":"run","status":"pending","resume_count":1}`))
+	}))
+	defer server.Close()
+	zero := 0
+	run, err := NewClient(server.URL, "token").ResumeWorkflowRunWithIdempotencyKey(
+		context.Background(), "run", ResumeWorkflowRunRequest{ExpectedResumeCount: &zero}, "resume-after-outage-1",
+	)
+	if err != nil || run.ResumeCount != 1 {
+		t.Fatalf("ResumeWorkflowRunWithIdempotencyKey() = (%+v, %v)", run, err)
+	}
+}

@@ -111,3 +111,33 @@ func TestCmdRealtimeDrainStatusWaitsForTerminalOperation(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
+
+// production-us hunt #4: `realtime drain --dry-run` printed "drain accepted;
+// operation … is running" and never showed its preview. A dry run waits for
+// its result even without --wait.
+func TestCmdRealtimeDrainDryRunWaitsForPreview(t *testing.T) {
+	resetJSONOut(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operation_id":"drain-dry","status":"running","dry_run":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"operation_id":"drain-dry","status":"complete","dry_run":true,"matched":3}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	oldOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := cmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "preview", "--dry-run"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "Would close 3 realtime connection(s).") {
+		t.Fatalf("dry run output = %q, want the preview count", out.String())
+	}
+}

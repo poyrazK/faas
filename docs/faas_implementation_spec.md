@@ -644,6 +644,13 @@ surface.
 
 The unified Trigger primitive replaces six unrelated invocation surfaces with one resource + one batch envelope + one FSM.
 
+Internal application-event fanout additionally follows
+[ADR-606](adr/606-independent-event-recipient-routing.md): snapshot-backed
+receipts can adopt independent recipient routing leases, retry schedules, and
+replay generations through an opt-in schedd flag. Acceptance and deterministic
+invocation deduplication stay unchanged. Recipient routing settlement is
+separate from handler completion and imposes no publication-order guarantee.
+
 #### Resource model
 
 One row per customer surface in the `triggers` table (migrations/00267_triggers.sql). The discriminator is `kind`:
@@ -1082,7 +1089,7 @@ App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s the
 2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
-5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
+5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-680:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
 
 ### 6.3 Wake latency budget (p50 targets)
 
@@ -1509,7 +1516,7 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 
 **Host:** cgroups v2 unified only; kernel ≥ 6.8 HWE; `kernel.unprivileged_userns_clone=0` (nothing on the host needs it — builds are in VMs); auditd on execve in control-plane slices; unattended-upgrades security-only with reboot window Sun 04:00 UTC; nftables default-drop inbound.
 **Jailer/VM:** unique uid/gid per instance; chroot; seccomp default filter (Firecracker's); `--daemonize` off, supervised by vmmd; no shared directories with guests — block devices only; virtio-rng always attached.
-**Snapshot uniqueness:** resume hook re-seeds guest entropy + steps clock (§4.8); TLS session keys, UUID generators inside customer apps are their concern *after* our entropy re-seed is proven (test: two instances from one snapshot must produce different `/proc/sys/kernel/random/uuid` immediately post-resume).
+**Snapshot uniqueness:** resume hook re-seeds guest entropy + steps clock (§4.8), then, before the resume ACK, reseeds the userspace generators of every registered Node and Python process (ADR-680, superseding the earlier position that in-app generators were the customer's concern). A process that cannot confirm fails the resume closed and the instance cold-boots. Tests: two instances from one snapshot must produce different `/proc/sys/kernel/random/uuid` immediately post-resume (V6), and different Node `crypto`/`Math.random` and Python `random` output (ADR-680 evidence gate).
 **Control plane:** apid input validation is the trust boundary — fuzz it; API keys hashed; rate limit auth failures (10/min/IP); Postgres on unix socket only; secrets in `/etc/faas/secrets/` root:root 0400, never in env of tenant-reachable processes. `/etc/faas/sealed.env` is the apid-only env file — every other control-plane daemon (schedd, meterd, githubd, gatewayd-internal, vmmd, imaged, builderd) loads private material via `systemd LoadCredential=` + `Environment=KEY=%d/<id>`, and env-var overrides (billing-provider keys, GitHub App credentials, FAAS_NODE_NAME) via per-daemon `EnvironmentFile=-/etc/faas/secrets/<daemon>/*.env`. The shared cross-daemon `DATABASE_URL` lives at `/etc/faas/compute-db.env` (0440 root:faas). The static CI gate `scripts/ci/check_sealed_env_scope.sh` (wired into `make lint`) refuses any `EnvironmentFile={-,}/etc/faas/sealed.env` line in a non-apid unit. See ADR-127.
 **Per-deployment authentication (issue #560):** `apps.require_authn bool NOT NULL DEFAULT false` — opt-in per-app token gate. Default is `false` so every existing customer is unaffected; Pro/Scale customers can PATCH the flag on (Free/Hobby receive 403 `plan_require_authn_not_allowed` at apid). When on, `gatewayd-internal` demands `Authorization: Bearer <token>` for every request, validates the key via `pkg/auth.Middleware.RequireSession` (SHA-256 hash, account-scoped), and rejects cross-account tokens with 403 `insufficient_scope`. The check sits after Host→app resolution and before the wake gate so anonymous traffic cannot trigger cold-boot on a token-gated app.
 **Patch policy:** Firecracker/kernel CVE affecting guest isolation = same-day; everything else = weekly window. Subscribe to firecracker-microvm security advisories; drill the FC-upgrade-invalidates-snapshots path (it's routine, not an incident — ADR-005).
@@ -2136,3 +2143,81 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 
 *End of spec. Deviations require an ADR. Keep the three fragile numbers on the dashboard.*
+
+
+## Versioned Commit operation routing (ADR-589)
+
+Commit version 2 admits a trusted producer's typed business key and optional
+owner-authorized platform-tenant selector into the existing Operations engine.
+The source fixes its app, queue policy, version and selection authority. Tenant
+selection requires an active same-account tenant and active app surface link.
+Version 1 retains source-wide account queues. Operation admission and the receipt,
+including normalized routing identity, commit atomically. Replay precedes lifecycle
+and version checks; external effects remain at least once. Customer-owned routing
+schema upgrades are explicit. See `docs/gregale-commit.md` for the wire contract
+and the existing operator/native qualification gates.
+
+## Managed operation webhook effects (ADR-585)
+
+Managed HTTP operation handlers may return a negotiated version 1 result envelope
+with up to 32 named webhook effects. The full handler response is bounded to
+1 MiB, each effect payload to 64 KiB, and each business event type to 256 bytes.
+The authenticated operation scope owns the destination; customer deliveries
+require a same-account tenant receiver explicitly subscribed to operation.effect
+and an active app surface link. Completion, effects, and existing webhook ledger
+insertions commit atomically under current ownership, rechecked after receiver
+locks. The signed dispatcher owns at-least-once delivery and rechecks current
+scope before each attempt. Inspection exposes immutable effect/delivery identity
+and current status. Negotiation requires upgraded schedd and internal gateway;
+Commit's existing internal gate and native promotion evidence remain required.
+See `docs/managed-operation-effects.md` for the handler and receiver contracts.
+
+## Transactional operation handler SDK (ADR-586)
+
+Node, Go, and Python SDKs own a customer PostgreSQL READ COMMITTED transaction
+that commits business writes and the complete managed-operation response together.
+The database owner explicitly installs `public.gregale_operation_inbox`; the SDK
+does not install or prune it. A shared operation lock serializes duplicate
+attempts. Receipts verify account/app/customer scope and a SHA-256 fingerprint of
+the original method, request target, and body. Generation changes replay exact
+stored response bytes and effect intent without repeating committed business
+writes. Callback errors roll back both; uncertain commit acknowledgements require
+retrying the same identity. Customer and platform transactions remain separate,
+and callbacks retain responsibility for business constraints and authorization.
+The portable acceptance gate covers PostgreSQL recovery, HTTP process death, and
+all nine cross-language writer/reader pairs. ADR-585 native runtime promotion
+remains required. See `docs/operation-transactions.md` for usage and retention.
+
+## Transactional managed HTTP workflow steps (ADR-587)
+
+Executable workflow steps may opt into the managed operation result protocol
+with `managed_operation: true`. The scheduler derives a stable operation ID
+from the workflow run and step and advances generation per attempt. The
+authenticated gateway checks the active run/attempt and immutable workflow
+definition before stamping the app owner's account identity. Existing Node,
+Go, and Python transaction SDK receipts then replay committed business writes
+and results; workflow dependencies receive the result value. This first slice
+supports account-scoped workflows. A successful result, app-owned explicitly
+subscribed webhook effects, delivery rows, and step/attempt completion commit
+atomically in Gregale. The dispatcher handles signed at-least-once delivery and
+rechecks the active app/account and receiver subscription. Workflow effects do
+not target tenant receivers. The customer's transaction remains separate, so a
+receiver rejected at result acceptance can leave business writes committed
+while the workflow step fails. See
+`docs/adr/587-transactional-workflow-http-steps.md`,
+`docs/managed-operation-effects.md`, and `docs/event-driven.md` for the
+contracts and delivery inspection surface.
+
+## In-place retry of failed workflow steps (ADR-588)
+
+`POST /v1/workflows/runs/{id}/steps/{step}/retry` and
+`gregale workflows retry` resume one terminal failed or dead HTTP step in the same
+run. The store preserves the run ID, definition snapshot, original input, the
+failed step's stored request input, and prior attempt records. It appends the
+next attempt number and reopens skipped `depends_on` descendants. The
+transaction rejects cancellation, active or additional failed steps, completed
+downstream work, wait/handler targets, and exhausted per-app active-run quota.
+Managed-operation retries therefore retain the run/step receipt identity from
+ADR-587; ordinary HTTP delivery remains at least once. See
+`docs/adr/588-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
+the API and CLI contract.

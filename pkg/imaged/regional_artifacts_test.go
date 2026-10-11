@@ -1,5 +1,6 @@
 package imaged
 
+// adr: 791
 import (
 	"errors"
 	"strings"
@@ -66,12 +67,27 @@ func TestRegionalArtifactPublicationAndCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.CreateSnapshot(ctx, snapshot); err != nil {
+	snapshot, err = store.CreateSnapshot(ctx, snapshot)
+	if err != nil {
 		t.Fatal(err)
 	}
 	rows, err := store.ListSnapshotsForGC(ctx)
 	if err != nil || len(rows) != 1 || rows[0].RootfsKey != dep.RootfsKey {
 		t.Fatalf("GC projection=%+v err=%v", rows, err)
+	}
+	if err := h.cleanupDeploymentFiles(ctx, dep.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := router.Get(ctx, dep.RootfsKey)
+	if err != nil {
+		t.Fatalf("cleanup deleted referenced regional layer: %v", err)
+	}
+	_ = reader.Close()
+	if err := store.ClearDeployment(ctx, dep.ID, "regional artifact teardown"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkOldSnapshotsStale(ctx, []string{snapshot.ID}); err != nil {
+		t.Fatal(err)
 	}
 	if err := h.cleanupDeploymentFiles(ctx, dep.ID, false); err != nil {
 		t.Fatal(err)

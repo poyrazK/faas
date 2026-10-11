@@ -73,7 +73,8 @@ func (s *server) authLimited(next accountHandler) http.HandlerFunc {
 // their own app, park it, or mint keys. API keys and other bearer
 // credentials are never attached by a browser, and a request with
 // neither Origin nor Sec-Fetch-Site did not come from one, so both
-// pass; so does the dashboard, which is served from the API host.
+// pass; so do the dashboards: the server-rendered one on the API host and
+// the web dashboard on the apex domain (see isWebDashboardOrigin).
 func (s *server) sameOriginSessionWrites(next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		switch r.Method {
@@ -107,9 +108,10 @@ func (s *server) fromTrustedOrigin(h http.Handler) http.Handler {
 
 // browserRequestFromTrustedOrigin reports whether a browser sent this from
 // a control-plane origin: the API host itself or operations.<domain>, as
-// requireSameOrigin allows. Sec-Fetch-Site alone cannot tell a trusted
-// sibling from a customer's app — both are same-site — so a same-site
-// request must name a trusted Origin.
+// requireSameOrigin allows, or the apex <domain> that serves the web
+// dashboard. Sec-Fetch-Site alone cannot tell a trusted sibling from a
+// customer's app — both are same-site — so a same-site request must name a
+// trusted Origin.
 func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 	site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
 	if site == "cross-site" {
@@ -120,7 +122,21 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 		return site == "" || site == "same-origin" || site == "none"
 	}
 	origin, err := url.Parse(raw)
-	return err == nil && origin.Host != "" && s.isTrustedAdminOrigin(origin, r)
+	return err == nil && origin.Host != "" && (s.isTrustedAdminOrigin(origin, r) || s.isWebDashboardOrigin(origin))
+}
+
+// isWebDashboardOrigin reports whether origin is the apex domain. The web
+// dashboard is served there and proxies /v1, /login and /signup to the API
+// host, so its requests reach apid with Host api.<domain> and Origin
+// https://<domain>. production-us 2026-10-06: every dashboard change
+// (creating an app, ...) was refused as cross-origin. The apex is a
+// reserved platform host (pkg/apid.IsPlatformHost) and never serves a
+// customer app, unlike the <slug>.<domain> hosts this guard exists to stop.
+// Provider-admin mutations keep the narrower isTrustedAdminOrigin.
+func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.domain), "."))
+	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
+		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
 }
 
 // requireMFA delegates to pkg/auth.Middleware.RequireMFA. Behaviour

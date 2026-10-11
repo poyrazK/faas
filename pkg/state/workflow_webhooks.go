@@ -42,6 +42,7 @@ type WebhookAutomationStore interface {
 	GetWebhookAutomationBinding(context.Context, string) (WebhookAutomationBinding, error)
 	DeleteWebhookAutomationBinding(context.Context, WebhookAutomationBindingOptions) error
 	AcceptWebhookAutomation(context.Context, InboundWebhookEndpoint, json.RawMessage, bool) (WebhookAutomationReceipt, bool, error)
+	AcceptVerifiedWebhookAutomation(context.Context, InboundWebhookEndpoint, string, string, json.RawMessage, bool) (WebhookAutomationReceipt, bool, error)
 	GetWebhookAutomationReceipt(context.Context, string, string) (WebhookAutomationReceipt, error)
 }
 
@@ -53,7 +54,7 @@ func validateWebhookAutomationBinding(opts WebhookAutomationBindingOptions) erro
 		return fmt.Errorf("%w: %w", ErrAutomationInvalid, err)
 	}
 	base := strings.Trim(opts.EventType, "*")
-	if opts.EventType != "*" && !api.ValidStripeWorkflowCallbackMatch(base, "object") {
+	if opts.EventType != "*" && !api.ValidInboundWebhookEventType(base) {
 		return ErrAutomationInvalid
 	}
 	if len(opts.Filter) > api.WorkflowWebhookFilterMaxBytes {
@@ -70,8 +71,21 @@ func normalizedWebhookFilter(raw json.RawMessage) json.RawMessage {
 	}
 	return cloneWorkflowJSON(raw)
 }
-func webhookAutomationSource(endpointID string) string {
-	return "gregale.inbound.stripe." + canonicalMemUUID(endpointID)
+func webhookAutomationSource(provider InboundWebhookProvider, endpointID string) string {
+	if provider == "" {
+		provider = InboundWebhookProviderStripe
+	}
+	return "gregale.inbound." + string(provider) + "." + canonicalMemUUID(endpointID)
+}
+func webhookEventFromStripeBody(body json.RawMessage) (string, string, error) {
+	var event struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil || strings.TrimSpace(event.ID) == "" || len(event.ID) > api.WorkflowWebhookEventMaxBytes || !api.ValidInboundWebhookEventType(event.Type) {
+		return "", "", ErrAutomationInvalid
+	}
+	return event.ID, event.Type, nil
 }
 func webhookAutomationRecipientID(endpointID, name string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.workflow.webhook:"+canonicalMemUUID(endpointID)+":"+name)).String()
@@ -112,15 +126,12 @@ type webhookAutomationEnvelope struct {
 	AccountID       string          `json:"accountid"`
 }
 
-func prepareWebhookAutomation(endpoint InboundWebhookEndpoint, binding WebhookAutomationBinding, spec *api.WorkflowSpec, reason string, body json.RawMessage, now time.Time) (WebhookAutomationReceipt, webhookAutomationEnvelope, []PublishedEventRecipient, error) {
-	var stripeEvent struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(body, &stripeEvent); err != nil || strings.TrimSpace(stripeEvent.ID) == "" || len(stripeEvent.ID) > api.WorkflowWebhookEventMaxBytes || !api.ValidStripeWorkflowCallbackMatch(stripeEvent.Type, "object") {
+func prepareWebhookAutomation(endpoint InboundWebhookEndpoint, binding WebhookAutomationBinding, spec *api.WorkflowSpec, reason, eventID, eventType string, body json.RawMessage, now time.Time) (WebhookAutomationReceipt, webhookAutomationEnvelope, []PublishedEventRecipient, error) {
+	if strings.TrimSpace(eventID) == "" || len(eventID) > api.WorkflowWebhookEventMaxBytes || !api.ValidInboundWebhookEventType(eventType) ||
+		(endpoint.Provider == InboundWebhookProviderGeneric && !api.ValidInboundWebhookEventID(eventID)) {
 		return WebhookAutomationReceipt{}, webhookAutomationEnvelope{}, nil, ErrAutomationInvalid
 	}
-	envelope := webhookAutomationEnvelope{SpecVersion: "1.0", ID: stripeEvent.ID, Source: webhookAutomationSource(endpoint.ID), Type: stripeEvent.Type, Data: body, AccountID: canonicalMemUUID(endpoint.AccountID), Time: now.UTC(), DataContentType: "application/json"}
+	envelope := webhookAutomationEnvelope{SpecVersion: "1.0", ID: eventID, Source: webhookAutomationSource(endpoint.Provider, endpoint.ID), Type: eventType, Data: body, AccountID: canonicalMemUUID(endpoint.AccountID), Time: now.UTC(), DataContentType: "application/json"}
 	encoded, err := json.Marshal(envelope)
 	if err != nil {
 		return WebhookAutomationReceipt{}, envelope, nil, err
@@ -131,8 +142,8 @@ func prepareWebhookAutomation(endpoint InboundWebhookEndpoint, binding WebhookAu
 	if reason == "" && !eventSubscriptionPatternMatches(binding.EventType, envelope.Type) {
 		reason = "event_filtered"
 	}
-	receipt := WebhookAutomationReceipt{ReceiptID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+stripeEvent.ID)).String(), EndpointID: endpoint.ID, ProviderEventID: stripeEvent.ID, WorkflowName: binding.WorkflowName, Status: "ignored", IgnoredReason: reason, AcceptedAt: now, EventSource: envelope.Source, RoutingStatus: "ignored"}
-	receipt.bodyHash, err = webhookAutomationBodyHash(body)
+	receipt := WebhookAutomationReceipt{ReceiptID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+eventID)).String(), EndpointID: endpoint.ID, ProviderEventID: eventID, WorkflowName: binding.WorkflowName, Status: "ignored", IgnoredReason: reason, AcceptedAt: now, EventSource: envelope.Source, RoutingStatus: "ignored"}
+	receipt.bodyHash, err = webhookAutomationBodyHashForEvent(endpoint.Provider, eventType, body)
 	if err != nil {
 		return receipt, envelope, nil, err
 	}
@@ -146,7 +157,7 @@ func prepareWebhookAutomation(endpoint InboundWebhookEndpoint, binding WebhookAu
 			return receipt, envelope, nil, err
 		}
 		receipt.Status, receipt.RoutingStatus, receipt.recipientID = "accepted", "pending", webhookAutomationRecipientID(endpoint.ID, spec.Name)
-		recipients = append(recipients, PublishedEventRecipient{ID: receipt.recipientID, AccountID: endpoint.AccountID, AppID: endpoint.AppID, WebhookEndpointID: endpoint.ID, Source: envelope.Source, Type: binding.EventType, Filter: binding.Filter, Workflow: snapshot})
+		recipients = append(recipients, PublishedEventRecipient{ID: receipt.recipientID, AccountID: endpoint.AccountID, AppID: endpoint.AppID, WebhookEndpointID: endpoint.ID, WebhookProvider: endpoint.Provider, Source: envelope.Source, Type: binding.EventType, Filter: binding.Filter, Workflow: snapshot})
 	}
 	return receipt, envelope, recipients, nil
 }
@@ -163,6 +174,17 @@ func webhookAutomationBodyHash(body json.RawMessage) ([]byte, error) {
 	}
 	sum := sha256.Sum256(canonical)
 	return sum[:], nil
+}
+func webhookAutomationBodyHashForEvent(provider InboundWebhookProvider, eventType string, body json.RawMessage) ([]byte, error) {
+	bodyHash, err := webhookAutomationBodyHash(body)
+	if err != nil || provider != InboundWebhookProviderGeneric {
+		return bodyHash, err
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(eventType))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(bodyHash)
+	return hash.Sum(nil), nil
 }
 func copyWebhookAutomationBinding(value WebhookAutomationBinding) WebhookAutomationBinding {
 	value.Filter = cloneWorkflowJSON(value.Filter)

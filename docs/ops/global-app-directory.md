@@ -490,7 +490,7 @@ Configure a separate unbound frontend's `gatewayd-internal` with all four fields
 ```toml
 global_ingress_directory_id = "DIRECTORY_UUID"
 global_ingress_apps_domain = "global.example.com"
-global_ingress_manifest_path = "/run/faas/global-ingress/routes.json"
+global_ingress_manifest_path = "/var/lib/faas/global-ingress/routes.json"
 global_ingress_trust_bundle_path = "/etc/faas/global-ingress/trust.json"
 ```
 
@@ -533,7 +533,7 @@ create system users, groups or permissions. Configure APID explicitly:
 
 ```toml
 [global_ingress_publisher]
-manifest_path = "/run/faas/global-ingress/routes.json"
+manifest_path = "/var/lib/faas/global-ingress/routes.json"
 ```
 
 Use the same path for the ADR-784 global gateway's
@@ -545,6 +545,48 @@ database and authority key are mandatory. Regional APID accepts only its existin
 pinned directory trust bundle and regional API origin; it cannot run this
 publisher. These TOML settings are operator configuration and are not a live
 configuration change in this implementation.
+
+The persistent `/var/lib/faas/global-ingress` directory fits APID's existing
+systemd write allowlist. A different location requires a matching service
+write allowance as well as publisher ownership and gateway read access.
+
+For managed deployments, carry the same settings in the release manifest
+(ADR-793), so subsequent renders preserve them:
+
+```yaml
+daemons:
+  apid:
+    bind: unix:///run/faas/apid.sock
+    global_app_directory_enabled: true
+    runtime_quota_transport:
+      directory_issuer_id: "11111111-1111-4111-8111-111111111111"
+      private_key_path: /etc/faas/directory/signing.key
+      trust_bundle_path: /etc/faas/directory/trust.json
+      delivery_worker: true
+    global_ingress_publisher:
+      manifest_path: /var/lib/faas/global-ingress/routes.json
+```
+
+Replace the example UUID with the directory's existing immutable issuer.
+Install the key, trust bundle and projection directory through the existing
+operator workflow before starting APID. The renderer writes their paths; it
+does not create keys or designate native acceptance hosts. Omit
+`control_plane_cell` on the directory fleet. On each separate bound regional
+fleet, use receiver configuration instead:
+
+```yaml
+daemons:
+  apid:
+    bind: unix:///run/faas/apid.sock
+    runtime_quota_transport:
+      regional_api_base: https://api.fsn.example.com
+      trust_bundle_path: /etc/faas/directory/trust.json
+```
+
+The regional manifest must declare its own `control_plane_cell` and must omit
+directory issuer, private key, delivery worker and ingress publisher settings.
+These settings preserve quota transport and route publication through a release;
+the native admission and serving eligibility gates still apply.
 
 The publisher runs every five seconds with bounded parallel, three-second HTTPS
 regional status probes and a twenty-second publication deadline. It uses

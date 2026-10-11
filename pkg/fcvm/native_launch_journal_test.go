@@ -227,10 +227,7 @@ func TestNativeJournalProducerDeathClosesUnrecordedChildGateAndReleasesLock(t *t
 	if err != nil || record.Authorized || !record.Revoked || !record.ExitConfirmed {
 		t.Fatalf("crash recovery record=%+v err=%v", record, err)
 	}
-	waitForNativeFixtureFile(t, outcome)
-	if raw, err := os.ReadFile(outcome); err != nil || string(raw) != "rejected" {
-		t.Fatalf("orphan child gate outcome=%q err=%v", raw, err)
-	}
+	waitForNativeFixtureFileContents(t, outcome, "rejected")
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("unrecorded child executed after producer death")
 	}
@@ -247,6 +244,26 @@ func waitForNativeFixtureFile(t *testing.T, path string) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("fixture did not create %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func waitForNativeFixtureFileContents(t *testing.T, path, want string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last []byte
+	for {
+		if data, err := os.ReadFile(path); err == nil {
+			last = data
+			if string(data) == want {
+				return data
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fixture %s contents = %q, want %q", path, last, want)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

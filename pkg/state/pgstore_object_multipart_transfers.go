@@ -13,6 +13,7 @@ import (
 var _ ObjectMultipartTransferStore = (*PgStore)(nil)
 
 type multipartCompletionPreparation struct {
+	protection      ObjectWriteProtectionSnapshot
 	defaultRevision int64
 	encryption      ObjectEncryptionSnapshot
 	token           string
@@ -44,7 +45,7 @@ func (s *PgStore) PrepareObjectMultipartCompletion(ctx context.Context, u Object
 	if !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || len(parts) > api.MaxMultipartParts || size < 1 || size > api.MaxObjectUploadBytes || len(parts) == 0 {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	prep := multipartCompletionPreparation{defaultRevision: u.EncryptionDefaultRevision, encryption: u.Encryption, token: token, revision: u.PartRevision, parts: parts, conditions: u.CompletionConditions}
+	prep := multipartCompletionPreparation{protection: u.Protection.Clone(), defaultRevision: u.EncryptionDefaultRevision, encryption: u.Encryption, token: token, revision: u.PartRevision, parts: parts, conditions: u.CompletionConditions}
 	err := s.admitMultipartCapacity(ctx, u.AccountID, u.BucketID, u.ID, u.Key, 0, size, 0, p, "", &prep, nil)
 	return prep.upload, err
 }

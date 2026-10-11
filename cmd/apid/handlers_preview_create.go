@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -48,7 +50,7 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if isNew {
-		s.log.Info("preview created", "app", created.ID, "slug", created.Slug, "parent", parent.Slug, "pr", req.PRNumber, "account", acct.ID)
+		s.log.Info("preview created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "parent", logsanitize.Field(parent.Slug), slog.Int("pr", req.PRNumber), "account", acct.ID)
 		s.audit.Emit(r.Context(), "preview.created", &acct.ID, map[string]any{
 			"app_id": created.ID, "slug": created.Slug, "parent_slug": parent.Slug, "pr_number": req.PRNumber,
 			"ttl_hours": int(ttl / time.Hour),

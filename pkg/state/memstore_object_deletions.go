@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 var _ ObjectDeletionStore = (*MemStore)(nil)
 var _ ObjectDeletionActivityStore = (*MemStore)(nil)
+var _ ObjectProtectedLifecycleDeletionStore = (*MemStore)(nil)
 
 func (m *MemStore) HasActiveObjectDeletion(_ context.Context, account, app, bucket string) (bool, error) {
 	m.mu.Lock()
@@ -22,6 +24,11 @@ func (m *MemStore) HasActiveObjectDeletion(_ context.Context, account, app, buck
 }
 
 func (m *MemStore) activeDeletionLocked(bucket string) bool {
+	for _, j := range m.objectVersionProtection {
+		if j.BucketID == bucket && protectionActive(j) {
+			return true
+		}
+	}
 	for _, j := range m.objectDeletions {
 		if j.BucketID == bucket && deletionActive(j) {
 			return true
@@ -49,6 +56,12 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 		}
 		return cloneDeletion(old), false, nil
 	}
+	if _, fenced := m.objectWriteFences[j.BucketID]; fenced {
+		return ObjectDeletion{}, false, ErrObjectBucketWriteFenced
+	}
+	if m.activeVersionProtectionLocked(b.ID) {
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectVersionProtectionPending)
+	}
 	if immutableDeletion(j) {
 		identity, exists := m.objectVersionReferenceIDs[j.Selector]
 		v := m.objectVersionReferences[identity]
@@ -60,6 +73,10 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 	if err := m.validateLifecycleDeletionLocked(j); err != nil {
 		return ObjectDeletion{}, false, err
 	}
+	j.ProtectionRequired = lifecycleProtectionRequired(j, m.objectBucketObjectLock[b.ID])
+	if j.ProtectionRequired && j.Lifecycle.ExpectedDeleteMarker == nil {
+		return ObjectDeletion{}, false, ErrConflict
+	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(b.ID)
 	v := m.objectBucketVersioning[b.ID]
 	if b.State != "ready" || m.objectCapacityFencedLocked(b.ID) || pending > 0 || multipart || !immutableDeletion(j) && unsafe && (versions || v.ObservedStatus != "") {
@@ -70,8 +87,14 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 	}
 	if !immutableDeletion(j) {
 		j.ProviderStatus = v.ObservedStatus
+		if j.NativeGCS && j.Selector == "" {
+			if v.ObservedStatus == "" {
+				return ObjectDeletion{}, false, ErrConflict
+			}
+			j.ProviderStatus = "GCS_" + v.ObservedStatus
+		}
 	}
-	if j.Selector == "" && j.ProviderStatus != "" {
+	if j.Selector == "" && j.ProviderStatus != "" && !nativeGCSDeletionStatus(j.ProviderStatus) {
 		j.ReservedBytes = int64(len(j.Key))
 		if _, _, err := checkObjectAdmission(m.objectUsageLocked(j.AccountID, m.clock()), b.ID, j.ReservedBytes, 0, false, true, policy, m.clock()); err != nil {
 			return ObjectDeletion{}, false, err
@@ -102,7 +125,13 @@ func (m *MemStore) GetObjectDeletion(_ context.Context, account, bucket, id stri
 	}
 	return cloneDeletion(j), nil
 }
-func (m *MemStore) DispatchObjectDeletion(_ context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+func (m *MemStore) DispatchObjectDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+	return m.dispatchObjectDeletion(ctx, id, token, status, baseline, false)
+}
+func (m *MemStore) DispatchObjectProtectedLifecycleDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
+	return m.dispatchObjectDeletion(ctx, id, token, status, baseline, true)
+}
+func (m *MemStore) dispatchObjectDeletion(_ context.Context, id, token, status string, baseline []string, verified bool) (ObjectDeletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j := m.objectDeletions[id]
@@ -112,7 +141,7 @@ func (m *MemStore) DispatchObjectDeletion(_ context.Context, id, token, status s
 	if j.ProviderStatus != status {
 		return cloneDeletion(j), ErrConflict
 	}
-	j, err := dispatchDeletion(j, token, status, baseline, m.clock())
+	j, err := dispatchVerifiedDeletion(j, token, status, baseline, verified, m.clock())
 	if err == nil {
 		m.objectDeletions[id] = cloneDeletion(j)
 	}

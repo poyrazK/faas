@@ -1,5 +1,9 @@
 ---
 faas_optional_credentials:
+  - service: faas-apid-clone-worker
+    name: faas_host_age_identity_previous
+    source: /etc/faas/secrets/host.age.previous
+    roles: [control-plane, single-box]
   - service: faas-apid
     name: faas_host_age_identity_previous
     source: /etc/faas/secrets/host.age.previous

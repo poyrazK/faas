@@ -6,6 +6,8 @@ from faas_sdk.models.workflow_step_response import WorkflowStepResponse
 def test_iteration_definition_preserves_nested_mapping_and_retry():
     loop = {
         "items": "input.items",
+        "max_parallel": 4,
+        "on_item_failure": "continue",
         "action": {
             "outbound": {
                 "integration_id": "00000000-0000-0000-0000-000000000001",
@@ -16,10 +18,15 @@ def test_iteration_definition_preserves_nested_mapping_and_retry():
             "input": {"item": "{{input.item}}", "index": "{{input.index}}", "n": 9007199254740993},
             "timeout": "30s",
             "retry": {"max_attempts": 3, "backoff": "exponential"},
+            "when": {"ref": "input.item.active", "op": "eq", "value": True},
         },
     }
     assert WorkflowForEachSpec.from_dict(loop).to_dict() == loop
-    definition = {"name": "batch", "steps": [{"name": "send", "for_each": loop}]}
+    definition = {
+        "name": "batch",
+        "max_concurrent_actions": 8,
+        "steps": [{"name": "send", "for_each": loop}],
+    }
     assert WorkflowSpec.from_dict(definition).to_dict() == definition
 
 

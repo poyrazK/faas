@@ -59,7 +59,8 @@ func TestObserveDistinguishesMissingResourcesFromAmbiguousMetadata(t *testing.T)
 		err       error
 		status    managedpostgres.ProviderStatus
 	}{
-		{"missing branch", nil, nil, managedpostgres.ErrNotFound, ""},
+		{"missing branch", []branch{}, nil, managedpostgres.ErrNotFound, ""},
+		{"unknown branch inventory", nil, nil, managedpostgres.ErrUnavailable, ""},
 		{"ambiguous branch", []branch{ready, ready}, []endpoint{active}, managedpostgres.ErrUnavailable, ""},
 		{"missing compute", []branch{ready}, nil, nil, managedpostgres.ProviderStatusFailed},
 		{"ambiguous compute", []branch{ready}, []endpoint{active, active}, managedpostgres.ErrUnavailable, ""},

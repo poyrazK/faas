@@ -15,11 +15,18 @@
     - restart faas-meterd
     - restart faas-outboundd
     - restart faas-bridged
+    - restart faas-apid-clone-worker
 
 - name: control_plane_service — try-restart faas-apid
   ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module (systemd module has no try-restart)
   changed_when: true
   listen: restart faas-apid
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart private clone worker
+  ansible.builtin.command: systemctl try-restart faas-apid-clone-worker.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-apid-clone-worker
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: control_plane_service — try-restart faas-schedd

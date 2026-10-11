@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,42 @@ type foreachExecutor struct {
 	failSecond bool
 	retryFirst bool
 	oversized  bool
+}
+
+type boundedParallelForeachExecutor struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	names     []string
+	entered   chan string
+	release   chan struct{}
+}
+
+func (e *boundedParallelForeachExecutor) ExecuteStep(ctx context.Context, _, _ string, _ string, headers map[string]string, input []byte, _ time.Duration) (int, []byte, error) {
+	name := headers["X-Faas-Workflow-Step"]
+	if name == "summary" {
+		return 200, slices.Clone(input), nil
+	}
+	e.mu.Lock()
+	e.active++
+	if e.active > e.maxActive {
+		e.maxActive = e.active
+	}
+	e.names = append(e.names, name)
+	e.mu.Unlock()
+	e.entered <- name
+	select {
+	case <-e.release:
+	case <-ctx.Done():
+		e.mu.Lock()
+		e.active--
+		e.mu.Unlock()
+		return 0, nil, ctx.Err()
+	}
+	e.mu.Lock()
+	e.active--
+	e.mu.Unlock()
+	return 200, slices.Clone(input), nil
 }
 
 func (e *foreachExecutor) ExecuteStep(_ context.Context, _, path, _ string, headers map[string]string, input []byte, _ time.Duration) (int, []byte, error) {
@@ -91,6 +128,47 @@ func TestWorkflowForEachExecutesInOrderAndCollectsResults(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestWorkflowForEachExecutesUpToConfiguredParallelLimit(t *testing.T) {
+	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+		ctx := context.Background()
+		spec := foreachOrchestrationSpec()
+		spec.Steps[1].ForEach.MaxParallel = 3
+		run := createGuardedRun(t, store, spec, `{"items":[0,1,2,3,4]}`)
+		executor := &boundedParallelForeachExecutor{
+			entered: make(chan string, 8),
+			release: make(chan struct{}),
+		}
+		dispatchDone := make(chan error, 1)
+		go func() {
+			dispatchDone <- NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx)
+		}()
+		started := make([]string, 0, 3)
+		for range 3 {
+			select {
+			case name := <-executor.entered:
+				started = append(started, name)
+			case <-time.After(5 * time.Second):
+				close(executor.release)
+				t.Fatalf("only %d items became active at once: %v", len(started), started)
+			}
+		}
+		close(executor.release)
+		if err := <-dispatchDone; err != nil {
+			t.Fatal(err)
+		}
+		final, err := store.GetWorkflowRun(ctx, run.ID)
+		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !workflowJSONEqual(final.Output, []byte(`[ {"index":0,"item":0},{"index":1,"item":1},{"index":2,"item":2},{"index":3,"item":3},{"index":4,"item":4} ]`)) {
+			t.Fatalf("parallel batch result: %+v %v", final, err)
+		}
+		executor.mu.Lock()
+		maxActive, names := executor.maxActive, slices.Clone(executor.names)
+		executor.mu.Unlock()
+		if maxActive != 3 || len(names) != 5 {
+			t.Fatalf("parallel limit or item count: max_active=%d names=%v", maxActive, names)
+		}
+	})
 }
 
 func TestWorkflowForEachRetryResumesItemWithSameInputAndKey(t *testing.T) {

@@ -79,5 +79,5 @@ func degradedBurnRateFromErr(value float64, err error, log *slog.Logger, window 
 	msg := strings.ReplaceAll(err.Error(), "\r", "")
 	msg = strings.ReplaceAll(msg, "\n", "")
 	log.Warn("appmetrics: SLO burn-rate query failed", "window", window, "err", msg)
-	return value, SourceDegradedPrefix + msg
+	return value, SourceDegradedPrefix + TelemetryDegradedReason(err)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -194,6 +195,12 @@ func cmdIssues(args []string) int {
 	case "assign", "resolve", "reopen", "ignore":
 		if len(positionals) != 1 {
 			return issueCLIUsage()
+		}
+		// production-us hunt #4: `issues resolve <id>` reached the server and
+		// came back "resolution requires fixed_deployment_id", a field name
+		// the CLI never mentions.
+		if action == "resolve" && strings.TrimSpace(*deployment) == "" {
+			return printErr("Invalid issue resolution", errors.New("--deployment <uuid> is required: name the deployment that fixed the issue"))
 		}
 		in := api.IssueActionRequest{Action: action, AssigneeAccountID: *assignee, FixedDeploymentID: *deployment}
 		if *until != "" {

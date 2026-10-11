@@ -31,6 +31,28 @@ historical.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
+Image readiness update (2026-10-07): newly assembled primary image deployments
+require a fresh successful effective OCI/Compose command healthcheck before
+serving readiness, in addition to existing readiness and route verification.
+Cold boot, restore, warm-pool resume and migration preserve that requirement;
+older daemon/guest responses cannot acknowledge it. Existing releases need
+reassembly or redeployment to gain the gate. Native boot/restore and leak
+qualification remain pending ([ADR-683](adr/683-image-healthcheck-readiness.md)).
+
+Image runtime recovery update (2026-10-07): required primary image command
+checks now continue throughout serving VM lifetimes. Repeated fresh failures
+use scheduler-owned cold recovery and existing restart limits; missing proof
+uses infrastructure recovery without charging app exhaustion. Old daemons and
+guests cannot silently omit monitoring. Native lifecycle and leak qualification
+remain pending ([ADR-684](adr/684-image-healthcheck-runtime-recovery.md)).
+
+Compose dependency rollout update (2026-10-07): `service_healthy` now holds an
+initial project release until its captured dependency deployment is live with
+traffic in the same project/environment. Durable waits survive restart; a failed
+dependency or expired deadline fails the candidate while retaining the previous
+serving release. CLI and dashboard stage summaries show the blocker
+([ADR-685](adr/685-compose-dependency-release-gates.md)).
+
 Managed PostgreSQL cutover safety update (2026-10-02): vmmd retains live and
 failed-boot ownership through confirmed teardown and serializes concurrent stops
 ([ADR-469](adr/469-managed-postgres-confirmed-teardown.md)). Scheduler fault,

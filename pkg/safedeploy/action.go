@@ -8,11 +8,11 @@
 //
 // Two seams the wider system touches:
 //
-//  1. pkg/alerts.ActionExecutor (commit 4) — implemented here by
-//     ActionDispatcher. The evaluator's fan-out calls
-//     ActionDispatcher.Execute(ctx, rule, observed, at) when the
-//     rule's action is 'rollback' / 'demote' / 'promote'. The
-//     dispatcher routes to the appropriate pkg/api.Client call.
+//  1. pkg/alerts.ActionExecutor and ClaimedActionExecutor — implemented
+//     here by ActionDispatcher. The evaluator passes the committed
+//     alert fire to ExecuteClaimed. Rollback addresses APID's durable
+//     outbox; demote and promote use Execute to resolve a canary and
+//     call the corresponding APID action.
 //     'webhook' and the empty-string default are intentionally
 //     no-ops here — the legacy Dispatcher owns that path.
 //
@@ -41,6 +41,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -72,8 +73,9 @@ type RolloutTargetResolver interface {
 // ActionDispatcher is the production impl of pkg/alerts.ActionExecutor
 // (the interface lives in pkg/alerts so the evaluator has zero
 // dependency on pkg/safedeploy). It maps rule.Action ∈
-// {rollback, demote, promote} to a single apid HTTP call. Demote maps to
-// atomic rollout abort so the canary is removed from traffic and progression.
+// {rollback, demote, promote} to APID actions. Rollback forwards the durable
+// fire receipt; APID also processes it when the callback is lost. Demote maps
+// to atomic rollout abort so the canary leaves traffic and progression.
 //
 // "webhook" and the empty-string default are intentionally not
 // routed here — the legacy Dispatcher in pkg/alerts owns the
@@ -134,9 +136,9 @@ var ErrActionTargetAmbiguous = errors.New("safedeploy: automated action target i
 // transport-level apid 5xx is treated as a transient failure
 // (return the error so Stats.ActionFailed bumps).
 //
-// Pre-flight: every non-webhook action must resolve exactly one active
-// canary. Account-wide rules and stale/ambiguous rollout targets fail closed
-// so the evaluator records an action failure instead of reporting success.
+// Demote and promote must resolve exactly one active canary. Account-wide
+// rules and stale/ambiguous targets fail closed. Rollback requires
+// ExecuteClaimed so it uses the pair selected by the committed alert fire.
 func (a *ActionDispatcher) Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error {
 	if a == nil || a.APID == nil {
 		return ErrActionDispatcherNoAPID
@@ -149,7 +151,7 @@ func (a *ActionDispatcher) Execute(ctx context.Context, rule state.AlertRule, ob
 		// caller forgets.
 		return nil
 	case state.AlertActionRollback:
-		return a.doRollback(ctx, rule, observed, at)
+		return fmt.Errorf("%w: rollback requires a durable alert fire", ErrActionTargetUnavailable)
 	case state.AlertActionDemote:
 		return a.doDemote(ctx, rule, observed, at)
 	case state.AlertActionPromote:
@@ -166,37 +168,42 @@ func (a *ActionDispatcher) Execute(ctx context.Context, rule state.AlertRule, ob
 	}
 }
 
-// doRollback flips the rule's app back to the previous live
-// deployment via the legacy rollback endpoint (apid-authoritative;
-// pkg/state stays out of the write path per CLAUDE.md ownership). The
-// resolver first proves that the rule's app has exactly one active canary;
-// apid then selects the most-recent superseded rollback target. Empty
-// targetDeploymentID matches Client.RollbackTo's "any" path.
-func (a *ActionDispatcher) doRollback(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error {
-	target, err := a.resolveTarget(ctx, rule)
+type durableAlertRollbackClient interface {
+	ProcessAlertRollback(context.Context, string) (api.AlertRollback, error)
+}
+
+// ExecuteClaimed uses the fire outbox already committed by ClaimAlertFire.
+// Retries always address that fire, never a newly selected canary.
+func (a *ActionDispatcher) ExecuteClaimed(ctx context.Context, rule state.AlertRule, fireID string, observed float64, at time.Time) error {
+	if rule.Action != state.AlertActionRollback {
+		return a.Execute(ctx, rule, observed, at)
+	}
+	if a == nil || a.APID == nil {
+		return ErrActionDispatcherNoAPID
+	}
+	client, ok := a.APID.(durableAlertRollbackClient)
+	if !ok || fireID == "" {
+		return fmt.Errorf("%w: durable alert rollback is unavailable", ErrActionTargetUnavailable)
+	}
+	receipt, err := client.ProcessAlertRollback(ctx, fireID)
 	if err != nil {
-		return err
+		return fmt.Errorf("safedeploy: process alert rollback: %w", err)
 	}
-	a.Log.Info("safedeploy: rollback triggered",
-		"rule", rule.ID, "name", rule.Name, "slug", target.App.Slug,
-		"deployment_id", target.Deployment.ID,
-		"observed", observed, "fired_at", at.UTC().Format(time.RFC3339Nano))
-	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): use
-	// RollbackToWithRule so the resulting deployment_audit row
-	// carries alert_rule_id=rule.ID. Operator's audit timeline
-	// renders the rule as a clickable chip → /dashboard/alerts/{id}.
-	// Passing rule.ID.String() (never empty) so the apid handler
-	// stamps the column; empty would fall back to the legacy path.
-	key := safeDeployActionKey(target.Deployment, string(rule.Action))
-	if keyed, ok := a.APID.(keyedSafeDeployClient); ok {
-		_, err = keyed.RollbackToWithRuleAndIdempotencyKey(ctx, target.App.Slug, "", rule.ID, key)
-	} else {
-		_, err = a.APID.RollbackToWithRule(ctx, target.App.Slug, "", rule.ID)
+	receiptID, receiptErr := uuid.Parse(receipt.ID)
+	requestedID, requestedErr := uuid.Parse(fireID)
+	sameFire := receipt.ID == fireID || receiptErr == nil && requestedErr == nil && receiptID == requestedID
+	if !sameFire || receipt.RuleID != rule.ID || receipt.AppID != rule.AppID || receipt.AccountID != rule.AccountID {
+		return fmt.Errorf("%w: mismatched alert rollback receipt", ErrActionTargetUnavailable)
 	}
-	if err != nil {
-		return fmt.Errorf("safedeploy: rollback %s: %w", target.App.Slug, err)
+	if receipt.Status == "failed" {
+		return fmt.Errorf("safedeploy: alert rollback failed: %s", receipt.Code)
 	}
-	return nil
+	switch receipt.Status {
+	case "pending", "blocked", "complete":
+		return nil
+	default:
+		return fmt.Errorf("%w: unknown alert rollback status", ErrActionTargetUnavailable)
+	}
 }
 
 // doDemote aborts the active canary through the same atomic recovery
@@ -213,6 +220,12 @@ func (a *ActionDispatcher) doDemote(ctx context.Context, rule state.AlertRule, o
 		return fmt.Errorf("%w: APID client has no atomic rollout recovery", ErrActionTargetUnavailable)
 	}
 	reason := safeDeployActionReason(rule, observed)
+	if handled, err := recoverExactCanaryAbort(ctx, a.APID, a.Targets, target.Deployment, reason, safeDeployActionKey(target.Deployment, string(rule.Action))); handled {
+		if err != nil {
+			return fmt.Errorf("safedeploy: demote %s: %w", target.App.Slug, err)
+		}
+		return nil
+	}
 	if keyed, ok := a.APID.(keyedSafeDeployClient); ok {
 		_, err = keyed.RecoverRolloutAndIdempotencyKey(ctx, target.App.Slug, "abort", reason, safeDeployActionKey(target.Deployment, string(rule.Action)))
 	} else {
@@ -262,7 +275,7 @@ func (a *ActionDispatcher) resolveTarget(ctx context.Context, rule state.AlertRu
 	if err != nil {
 		return rolloutActionTarget{}, fmt.Errorf("%w: resolve app %q: %w", ErrActionTargetUnavailable, rule.AppID, err)
 	}
-	if app.ID != rule.AppID || app.Slug == "" {
+	if app.ID != rule.AppID || app.Slug == "" || rule.AccountID != "" && app.AccountID != rule.AccountID {
 		return rolloutActionTarget{}, fmt.Errorf("%w: app %q has no usable slug", ErrActionTargetUnavailable, rule.AppID)
 	}
 	deployments, err := a.Targets.ListCanaryInFlight(ctx)

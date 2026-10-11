@@ -175,8 +175,10 @@ func TestEventWorkflowAdmission(t *testing.T) {
 			if err := store.MarkWorkflowRunStatus(context.Background(), runID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.SweepExpiredWorkflowRuns(context.Background(), 0); err != nil {
-				t.Fatal(err)
+			// Zero retention includes the completion boundary, even if both
+			// clock reads observe the same instant. The receipt still deduplicates.
+			if deleted, err := store.SweepExpiredWorkflowRuns(context.Background(), 0); err != nil || deleted < 1 {
+				t.Fatalf("finished workflow was retained at zero retention: deleted=%d err=%v", deleted, err)
 			}
 			if id, err := starts.AdmitEventWorkflow(context.Background(), work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID); err != nil || id != "" {
 				t.Fatalf("retained receipt id=%s err=%v", id, err)

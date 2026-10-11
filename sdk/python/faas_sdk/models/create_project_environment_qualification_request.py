@@ -6,9 +6,14 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.create_project_environment_qualification_request_secret_revision_hashes import (
         CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
+    )
+    from ..models.create_project_environment_qualification_request_workload_config_hashes import (
+        CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
     )
     from ..models.project_environment_qualification_check import ProjectEnvironmentQualificationCheck
 
@@ -28,6 +33,9 @@ class CreateProjectEnvironmentQualificationRequest:
     configuration_hash: str
     secret_revision_hashes: CreateProjectEnvironmentQualificationRequestSecretRevisionHashes
     checks: list[ProjectEnvironmentQualificationCheck]
+    workload_config_hashes: CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes | Unset = UNSET
+    """Configuration fingerprints observed before probes; environment-owned settings require an exact match to
+    deployed revisions."""
 
     def to_dict(self) -> dict[str, Any]:
         release_set_id = str(self.release_set_id)
@@ -43,6 +51,10 @@ class CreateProjectEnvironmentQualificationRequest:
             checks_item = checks_item_data.to_dict()
             checks.append(checks_item)
 
+        workload_config_hashes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workload_config_hashes, Unset):
+            workload_config_hashes = self.workload_config_hashes.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -54,6 +66,8 @@ class CreateProjectEnvironmentQualificationRequest:
                 "checks": checks,
             }
         )
+        if workload_config_hashes is not UNSET:
+            field_dict["workload_config_hashes"] = workload_config_hashes
 
         return field_dict
 
@@ -61,6 +75,9 @@ class CreateProjectEnvironmentQualificationRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.create_project_environment_qualification_request_secret_revision_hashes import (
             CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
+        )
+        from ..models.create_project_environment_qualification_request_workload_config_hashes import (
+            CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
         )
         from ..models.project_environment_qualification_check import ProjectEnvironmentQualificationCheck
 
@@ -82,12 +99,22 @@ class CreateProjectEnvironmentQualificationRequest:
 
             checks.append(checks_item)
 
+        _workload_config_hashes = d.pop("workload_config_hashes", UNSET)
+        workload_config_hashes: CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes | Unset
+        if isinstance(_workload_config_hashes, Unset):
+            workload_config_hashes = UNSET
+        else:
+            workload_config_hashes = CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes.from_dict(
+                _workload_config_hashes
+            )
+
         create_project_environment_qualification_request = cls(
             release_set_id=release_set_id,
             configuration_version=configuration_version,
             configuration_hash=configuration_hash,
             secret_revision_hashes=secret_revision_hashes,
             checks=checks,
+            workload_config_hashes=workload_config_hashes,
         )
 
         return create_project_environment_qualification_request

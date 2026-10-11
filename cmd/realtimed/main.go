@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
@@ -82,6 +83,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
 	var historyReader realtime.ManagedRealtimeHistoryReader
+	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
 	if resumePreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
@@ -90,26 +92,36 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if tlsErr != nil {
 			return fmt.Errorf("realtimed: history TLS: %w", tlsErr)
 		}
+		nodeName := strings.TrimSpace(os.Getenv("FAAS_NODE_NAME"))
+		if nodeName == "" {
+			nodeName = state.DefaultLocalNodeName
+		}
 		reader, dialErr := apidgrpc.DialRealtimeHistory(ctx,
-			getenv("FAAS_REALTIME_HISTORY_TARGET", "/run/faas/request_telemetry.sock"), historyTLS)
+			getenv("FAAS_REALTIME_HISTORY_TARGET", "/run/faas/request_telemetry.sock"), historyTLS, nodeName)
 		if dialErr != nil {
 			return fmt.Errorf("realtimed: history reader: %w", dialErr)
 		}
 		defer func() { _ = reader.Close() }()
 		historyReader = reader
+		routeReporter = reader
 	}
 	manager := realtime.NewManager(realtime.Config{
-		MaxConnections:   envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
-		MaxMessageBytes:  int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
-		OutboundQueue:    envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
-		Heartbeat:        envDuration("FAAS_REALTIME_HEARTBEAT", 30*time.Second),
-		PongWait:         envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
-		WriteWait:        envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
-		MaxConnectionAge: envDuration("FAAS_REALTIME_MAX_AGE", 24*time.Hour),
-		CallbackTimeout:  callbackTimeout,
-		JWTAuthorizer:    newRealtimeJWTAuthorizer(log),
-		ResumePreview:    resumePreview,
-		HistoryReader:    historyReader,
+		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
+		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
+		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
+		OutboundQueueBytes:   int64(envInt("FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", 4<<20)),
+		Heartbeat:            envDuration("FAAS_REALTIME_HEARTBEAT", 30*time.Second),
+		PongWait:             envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
+		WriteWait:            envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
+		MaxConnectionAge:     envDuration("FAAS_REALTIME_MAX_AGE", 24*time.Hour),
+		CallbackTimeout:      callbackTimeout,
+		JWTAuthorizer:        newRealtimeJWTAuthorizer(log),
+		ResumePreview:        resumePreview,
+		HistoryReader:        historyReader,
+		ChannelRouteReporter: routeReporter,
+		ChannelRouteReportFailure: func(err error) {
+			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
+		},
 	}, hooks)
 	defer func() { _ = manager.Close() }()
 	callbackReplayRestarts := prometheus.NewCounter(prometheus.CounterOpts{

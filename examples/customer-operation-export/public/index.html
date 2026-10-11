@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Customer exports</title><link rel="stylesheet" href="/style.css">
+<main><header><h1>Customer exports</h1><p>Generate an export and return to it whenever you need.</p></header>
+<form id="signin"><label>Customer access token<input id="token" type="password" required autocomplete="off"></label><button>Sign in</button></form>
+<section id="workspace" hidden>
+  <nav><button id="refresh">Refresh</button><button id="signout">Sign out</button></nav>
+  <form id="export"><label>Rows<input id="count" type="number" min="1" max="1000" value="100" required></label><button id="submit">Generate export</button></form>
+  <p id="notice" role="status" aria-live="polite"></p>
+  <div class="columns"><section><h2>Your exports</h2><ul id="history"></ul><button id="more" hidden>More exports</button></section>
+  <section id="detail" hidden><h2>Selected export</h2><p id="business"></p><progress id="progress"></progress><p id="delivery"></p><p id="reconciliation" hidden>This export needs an operator to confirm what happened. Contact support with its ID.</p><code id="identity"></code><div><button id="download" disabled>Download CSV</button><button id="cancel" disabled>Request cancellation</button></div></section></div>
+</section><p id="error" role="alert"></p></main><script type="module" src="/app.mjs"></script></html>

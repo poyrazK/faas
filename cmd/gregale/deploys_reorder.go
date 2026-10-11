@@ -18,7 +18,10 @@ func cmdDeploysReorder(args []string) int {
 	fs := newFlagSet("deploys reorder", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	priority := fs.Int("priority", -1, "new priority (0=deploy-immediately, 100=FIFO default, 1000=background)")
-	if err := fs.Parse(args); err != nil {
+	// `deploys reorder <id> --priority N` put the id first and the parser
+	// stopped there, reporting a valid priority as out of range
+	// (production-us hunt #4).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *priority < 0 || *priority > 1000 {

@@ -62,6 +62,7 @@ def test_clone_reference_count_and_older_server(include_reference_count: bool) -
             "slug": "preview",
             "from_environment": "production",
             "protected": False,
+            "full": False,
             "share_resources": False,
         }
         assert calls[0].headers["Authorization"] == "Bearer token"

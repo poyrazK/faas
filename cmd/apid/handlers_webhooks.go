@@ -350,7 +350,10 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	if destination == nil {
-		s.notFound(w, "outbox destination not found")
+		// production-us hunt #4: a URL that was never registered answered
+		// only "outbox destination not found". Name what was looked up and
+		// how to register it, since deliver only targets registered webhooks.
+		s.notFound(w, fmt.Sprintf("no webhook registered on app %q matches %q; deliver targets a registered webhook by id or target URL — register it first with `gregale webhooks add --app %s --target-url <URL>`", app.Slug, req.Destination, app.Slug))
 		return
 	}
 	if !destination.Enabled {

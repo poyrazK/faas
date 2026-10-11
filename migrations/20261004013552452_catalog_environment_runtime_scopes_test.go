@@ -42,9 +42,13 @@ func TestMigrationCatalogRuntimeScopesUpgradeAndPopulatedReplay(t *testing.T) {
 	if err := store.UpsertAppSecretInScope(ctx, account.ID, app.ID, legacyScope, "DATABASE", []byte("original-sealed")); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: legacyScope, Kind: state.DeploymentKindImage,
-		ImageDigest: "sha256:" + strings.Repeat("a", 64), Status: state.DeployLive})
-	if err != nil {
+	// Seed through the historical schema: the current deployment writer also
+	// reads workload specification tables introduced after this upgrade point.
+	legacy := state.Deployment{AppID: app.ID, Scope: legacyScope, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:" + strings.Repeat("a", 64), Status: state.DeployLive}
+	if err := pool.QueryRow(ctx, `INSERT INTO deployments(id,app_id,scope,kind,image_digest,status)
+		VALUES(gen_random_uuid(),$1,$2,$3,$4,$5) RETURNING id`,
+		app.ID, legacy.Scope, legacy.Kind, legacy.ImageDigest, legacy.Status).Scan(&legacy.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {

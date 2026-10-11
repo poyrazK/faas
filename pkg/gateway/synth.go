@@ -180,7 +180,8 @@ type SynthServer struct {
 	// workflowAdmission authenticates and replay-checks workflow invocations
 	// before they reach the customer instance. Production wires this to the
 	// gatewayd-internal Postgres store; nil is fail-closed for workflow traffic.
-	workflowAdmission WorkflowAdmissionFunc
+	workflowAdmission                WorkflowAdmissionFunc
+	managedWorkflowOperationIdentity ManagedWorkflowOperationIdentityFunc
 }
 
 // NewSynthServer wires the unix-socket listener on socketPath with the
@@ -458,12 +459,15 @@ type invocationDispatchRequest struct {
 	// Target is populated by the schedd drain after it has already
 	// admitted/woken the instance. Empty values preserve the legacy
 	// wake-inside-gateway path for older callers.
-	InstanceID     string               `json:"instance_id,omitempty"`
-	NodeID         string               `json:"node_id,omitempty"`
-	DeploymentID   string               `json:"deployment_id,omitempty"`
-	WakeID         string               `json:"wake_id,omitempty"`
-	Port           int                  `json:"port,omitempty"`
-	ExclusiveClaim *exclusivework.Claim `json:"exclusive_claim,omitempty"`
+	InstanceID                         string               `json:"instance_id,omitempty"`
+	NodeID                             string               `json:"node_id,omitempty"`
+	DeploymentID                       string               `json:"deployment_id,omitempty"`
+	WakeID                             string               `json:"wake_id,omitempty"`
+	Port                               int                  `json:"port,omitempty"`
+	ExclusiveClaim                     *exclusivework.Claim `json:"exclusive_claim,omitempty"`
+	OperationResultVersion             int                  `json:"operation_result_version,omitempty"`
+	ManagedWorkflowOperationID         string               `json:"managed_workflow_operation_id,omitempty"`
+	ManagedWorkflowOperationGeneration int64                `json:"managed_workflow_operation_generation,omitempty"`
 }
 
 func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Request) {
@@ -480,15 +484,38 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
 		return
 	}
+	workflowOperationAccount := ""
 	if req.Source == "workflow" {
-		if s.applyWorkflowAdmission(w, r, req.AppID, req.Headers) {
+		if s.applyWorkflowAdmission(w, r, req.AppID, req.PlatformTenantID, req.Headers) {
+			return
+		}
+		if req.OperationResultVersion == api.ManagedOperationResultVersion {
+			var err error
+			workflowOperationAccount, err = s.managedWorkflowOperationAccount(r.Context(), req.AppID, req.Headers, req.ManagedWorkflowOperationID, req.ManagedWorkflowOperationGeneration)
+			if err != nil {
+				http.Error(w, "managed workflow operation is not authorized", http.StatusConflict)
+				return
+			}
+		} else if req.OperationResultVersion != 0 || req.ManagedWorkflowOperationID != "" || req.ManagedWorkflowOperationGeneration != 0 {
+			http.Error(w, "managed workflow operation protocol is unsupported", http.StatusBadRequest)
 			return
 		}
 	}
 	if req.Source == "exclusive_operation" {
+		if req.ManagedWorkflowOperationID != "" || req.ManagedWorkflowOperationGeneration != 0 {
+			http.Error(w, "workflow operation metadata is not valid for exclusive operations", http.StatusBadRequest)
+			return
+		}
+		if req.OperationResultVersion != 0 && req.OperationResultVersion != api.ManagedOperationResultVersion {
+			http.Error(w, "managed operation result protocol is unsupported", http.StatusBadRequest)
+			return
+		}
 		if req.ExclusiveClaim == nil || s.applyExclusiveServiceAuth(w, r, *req.ExclusiveClaim) {
 			return
 		}
+	} else if req.Source != "workflow" && (req.OperationResultVersion != 0 || req.ManagedWorkflowOperationID != "" || req.ManagedWorkflowOperationGeneration != 0) {
+		http.Error(w, "managed operation result protocol is not available for this invocation", http.StatusBadRequest)
+		return
 	}
 	// ADR-119 — per-app 'internal_only' gate runs BEFORE
 	// dispatcher.Invoke so a forged schedd (or anything else in
@@ -529,16 +556,20 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		payload = dec
 	}
 	inv := state.Invocation{
-		PlatformTenantID: req.PlatformTenantID,
-		ID:               req.InvocationID,
-		AppID:            req.AppID,
-		InstanceID:       req.InstanceID,
-		Source:           state.InvocationSource(req.Source),
-		Method:           method,
-		Path:             path,
-		Payload:          payload,
-		Headers:          jsonOrEmpty(req.Headers),
-		ExclusiveClaim:   req.ExclusiveClaim,
+		PlatformTenantID:           req.PlatformTenantID,
+		ID:                         req.InvocationID,
+		AppID:                      req.AppID,
+		InstanceID:                 req.InstanceID,
+		Source:                     state.InvocationSource(req.Source),
+		Method:                     method,
+		Path:                       path,
+		Payload:                    payload,
+		Headers:                    jsonOrEmpty(req.Headers),
+		ExclusiveClaim:             req.ExclusiveClaim,
+		OperationResultVersion:     req.OperationResultVersion,
+		ManagedOperationID:         req.ManagedWorkflowOperationID,
+		ManagedOperationGeneration: req.ManagedWorkflowOperationGeneration,
+		ManagedOperationAccountID:  workflowOperationAccount,
 	}
 	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
 	// caller cannot forge lines.
@@ -587,7 +618,14 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	w.Header().Set("Content-Type", "application/json")
 	// Echo the post-dispatch state + result back so the drain can
 	// call CompleteInvocation(result) on the same transaction.
-	_ = json.NewEncoder(w).Encode(struct {
+	encoder := json.NewEncoder(w)
+	if (req.ExclusiveClaim != nil || inv.ManagedOperationID != "") && req.OperationResultVersion == api.ManagedOperationResultVersion {
+		// This authenticated JSON transport is not an HTML context. Preserve
+		// the handler's byte budget: HTML escaping could expand a valid 1 MiB
+		// result beyond the scheduler's bounded response envelope.
+		encoder.SetEscapeHTML(false)
+	}
+	_ = encoder.Encode(struct {
 		State       string          `json:"state"`
 		Result      json.RawMessage `json:"result,omitempty"`
 		StatusCode  int             `json:"status_code,omitempty"`

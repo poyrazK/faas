@@ -197,7 +197,37 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 }
 
 func (r *Runner) syncJob(ctx context.Context, job state.SnapshotReplicaJob) error {
-	return syncJobWithLease(ctx, r.store, r.backend, job, r.leaseRenewInterval)
+	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: job.StorageKey})
+	fetchDrive := false
+	if driveKey != "" && len(job.LayerStorageKeys) > 0 && !job.Revalidation {
+		cached, known, err := storage.CachedLocally(r.backend, driveKey)
+		fetchDrive = err == nil && known && !cached
+	}
+	if err := syncJobWithLease(ctx, r.store, r.backend, job, r.leaseRenewInterval); err != nil {
+		return err
+	}
+	if fetchDrive {
+		r.shareDriveWithLayer(ctx, job, driveKey)
+	}
+	return nil
+}
+
+// shareUnchangedBlocks is storage.ShareUnchangedBlocks; tests observe it.
+var shareUnchangedBlocks = storage.ShareUnchangedBlocks
+
+// shareDriveWithLayer hands the unchanged blocks of a fetched snapshot drive
+// back to its app layer (ADR-633). The parent stores the drive whole, so a
+// replica would otherwise hold a second full copy of the layer. It is
+// best-effort: a drive that keeps its own copy is still a correct replica.
+func (r *Runner) shareDriveWithLayer(ctx context.Context, job state.SnapshotReplicaJob, driveKey string) {
+	shared, err := shareUnchangedBlocks(ctx, r.backend, driveKey, job.LayerStorageKeys[0])
+	if err != nil {
+		r.log.Warn("snapshothipd: share snapshot drive blocks with its layer", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "err", err)
+		return
+	}
+	if shared > 0 {
+		r.log.Info("snapshothipd: snapshot drive shares its layer's unchanged blocks", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "shared_bytes", shared)
+	}
 }
 
 func syncJobWithLease(ctx context.Context, store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, job state.SnapshotReplicaJob, renewInterval time.Duration) error {

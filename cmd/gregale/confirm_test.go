@@ -104,6 +104,18 @@ func TestRequireTyped_PromptShape(t *testing.T) {
 	}
 }
 
+// production-us hunt #4: piped (non-terminal) stdin names the --quiet bypass
+// so a script waiting on the prompt says why in its log.
+func TestRequireTyped_NonTerminalNamesTheBypass(t *testing.T) {
+	pipeStdin(t, "delete edge rule\n")
+	rd, restore := captureStderr(t)
+	got := requireTyped("delete edge rule")
+	restore()
+	if !got || !strings.Contains(rd.String(), "pass --quiet to skip this confirmation") {
+		t.Fatalf("requireTyped = %v, stderr %q; want piped input accepted and the --quiet hint shown", got, rd.String())
+	}
+}
+
 // TestRequireTyped_MismatchPrintsCancel pins that an aborted prompt
 // writes a recognisable line on stderr — important for CI logs
 // (`Operation cancelled` matches the convention used by

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS public.gregale_outbox (
     event_id uuid PRIMARY KEY,
     event_type text NOT NULL CHECK (length(event_type) BETWEEN 1 AND 256),
     payload jsonb NOT NULL,
+    routing jsonb,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     accepted_at timestamptz,
     receipt_id uuid,
@@ -14,6 +15,11 @@ CREATE TABLE IF NOT EXISTS public.gregale_outbox (
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     blocked_code text,
+    CONSTRAINT gregale_outbox_routing_check CHECK (
+        routing IS NULL OR COALESCE(jsonb_typeof(routing)='object'
+        AND routing->'version'='2'::jsonb
+        AND jsonb_typeof(routing->'key') IN ('string','number','boolean')
+        AND (NOT routing ? 'platform_tenant_id' OR jsonb_typeof(routing->'platform_tenant_id')='string'),false)),
     CONSTRAINT gregale_outbox_delivery_identity CHECK (
         (accepted_at IS NULL AND receipt_id IS NULL AND invocation_id IS NULL AND operation_id IS NULL)
         OR (accepted_at IS NOT NULL AND receipt_id IS NOT NULL

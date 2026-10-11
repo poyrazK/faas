@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -12,6 +12,10 @@ from ..models.workflow_step_attempt_response_status import (
     check_workflow_step_attempt_response_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_effect_record import OperationEffectRecord
+
 
 T = TypeVar("T", bound="WorkflowStepAttemptResponse")
 
@@ -27,6 +31,8 @@ class WorkflowStepAttemptResponse:
     finished_at: datetime.datetime | None | Unset = UNSET
     next_attempt_at: datetime.datetime | None | Unset = UNSET
     error: None | str | Unset = UNSET
+    effects: list[OperationEffectRecord] | Unset = UNSET
+    """Accepted operation webhook effects and their delivery status."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +70,13 @@ class WorkflowStepAttemptResponse:
         else:
             error = self.error
 
+        effects: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.effects, Unset):
+            effects = []
+            for effects_item_data in self.effects:
+                effects_item = effects_item_data.to_dict()
+                effects.append(effects_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -81,11 +94,15 @@ class WorkflowStepAttemptResponse:
             field_dict["next_attempt_at"] = next_attempt_at
         if error is not UNSET:
             field_dict["error"] = error
+        if effects is not UNSET:
+            field_dict["effects"] = effects
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_effect_record import OperationEffectRecord
+
         d = dict(src_dict)
         attempt = d.pop("attempt")
 
@@ -145,6 +162,15 @@ class WorkflowStepAttemptResponse:
 
         error = _parse_error(d.pop("error", UNSET))
 
+        _effects = d.pop("effects", UNSET)
+        effects: list[OperationEffectRecord] | Unset = UNSET
+        if _effects is not UNSET:
+            effects = []
+            for effects_item_data in _effects:
+                effects_item = OperationEffectRecord.from_dict(effects_item_data)
+
+                effects.append(effects_item)
+
         workflow_step_attempt_response = cls(
             attempt=attempt,
             status=status,
@@ -153,6 +179,7 @@ class WorkflowStepAttemptResponse:
             finished_at=finished_at,
             next_attempt_at=next_attempt_at,
             error=error,
+            effects=effects,
         )
 
         workflow_step_attempt_response.additional_properties = d

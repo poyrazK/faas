@@ -14,8 +14,15 @@ func (m *MemStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limi
 }
 
 func (m *MemStore) ReserveObjectBucketWithResult(_ context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
+	if b.EnvironmentCloneOperationID != "" {
+		return ObjectBucket{}, false, ErrConflict
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.reserveObjectBucketLocked(b, limit)
+}
+
+func (m *MemStore) reserveObjectBucketLocked(b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	if a, ok := m.accounts[b.AccountID]; !ok || a.Status != AccountActive {
 		return ObjectBucket{}, false, ErrConflict
 	}
@@ -29,7 +36,7 @@ func (m *MemStore) ReserveObjectBucketWithResult(_ context.Context, b ObjectBuck
 			continue
 		}
 		if row.Name == b.Name && row.Scope == b.Scope {
-			if row.PublicRead != b.PublicRead || row.ServeAt != b.ServeAt || row.EnvironmentCloneSourceBucketID != b.EnvironmentCloneSourceBucketID {
+			if row.PublicRead != b.PublicRead || row.ServeAt != b.ServeAt || row.EnvironmentCloneSourceBucketID != b.EnvironmentCloneSourceBucketID || row.EnvironmentCloneOperationID != b.EnvironmentCloneOperationID {
 				return ObjectBucket{}, false, ErrConflict
 			}
 			return row, false, nil
@@ -55,7 +62,7 @@ func (m *MemStore) ListObjectBuckets(_ context.Context, accountID, appID string)
 	defer m.mu.Unlock()
 	rows := make([]ObjectBucket, 0)
 	for _, b := range m.objectBuckets {
-		if b.AccountID == accountID && b.AppID == appID && b.State != "deleted" {
+		if b.AccountID == accountID && b.AppID == appID && b.State != "deleted" && m.cloneBucketAccessibleLocked(b) {
 			rows = append(rows, b)
 		}
 	}
@@ -69,7 +76,7 @@ func (m *MemStore) GetObjectBucket(_ context.Context, accountID, appID, id strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.objectBuckets[id]
-	if !ok || b.AccountID != accountID || b.AppID != appID || b.State == "deleted" {
+	if !ok || b.AccountID != accountID || b.AppID != appID || b.State == "deleted" || !m.cloneBucketAccessibleLocked(b) {
 		return ObjectBucket{}, ErrNotFound
 	}
 	return b, nil
@@ -102,7 +109,8 @@ func (m *MemStore) claimObjectBucket(accountID, appID, id, token, next string, r
 				return ObjectBucket{}, ErrConflict
 			}
 		}
-		if m.objectCapacityFencedLocked(id) || m.objectBucketEncryption[id].State != "" && m.objectBucketEncryption[id].State != "ready" {
+		_, fenced := m.objectWriteFences[id]
+		if fenced || m.objectCapacityFencedLocked(id) || m.objectBucketEncryption[id].State != "" && m.objectBucketEncryption[id].State != "ready" {
 			return ObjectBucket{}, ErrConflict
 		}
 		for _, upload := range m.objectMultipartUploads {

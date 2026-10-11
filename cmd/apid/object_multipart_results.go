@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -25,18 +26,31 @@ func (s *server) executeObjectMultipartResult(ctx context.Context, uploads state
 		snapshot := u.Encryption.Clone()
 		encryption = &snapshot
 	}
-	result, err := objectstorage.CompleteMultipartWithResult(ctx, provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
-		Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: parts,
-		Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
-		BeforeRequest: func(ctx context.Context) error {
-			metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
-			if !ok {
-				return objectstorage.ErrConfiguration
-			}
-			return metrics.RecordObjectStorageProviderRequest(ctx, bucket.ID, time.Now().UTC())
-		},
-	}, u.CompletionConditions)
-	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedEncryption: result.Encryption}
+	var bindErr error
+	ctx, bindErr = objectstorage.WithObjectWriteProtection(ctx, provider, u.Protection, func(ctx context.Context) error {
+		metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
+		if !ok {
+			return objectstorage.ErrConfiguration
+		}
+		return metrics.RecordObjectStorageProviderRequest(ctx, bucket.ID, time.Now().UTC())
+	})
+	if bindErr != nil {
+		return bindErr
+	}
+	result, err := objectstorageactivity.ExecuteMultipart(ctx, s.store, store, bucket, u, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
+		return objectstorage.CompleteMultipartWithResult(mutationCtx, provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+			Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: parts,
+			Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
+			BeforeRequest: func(ctx context.Context) error {
+				metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
+				if !ok {
+					return objectstorage.ErrConfiguration
+				}
+				return metrics.RecordObjectStorageProviderRequest(ctx, bucket.ID, time.Now().UTC())
+			},
+		}, u.CompletionConditions)
+	})
+	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
 	if err != nil {
 		return s.deferObjectMultipartResult(ctx, store, u, proof, err)
 	}

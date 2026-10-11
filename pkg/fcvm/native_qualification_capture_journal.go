@@ -36,7 +36,7 @@ func (r *nativeQualificationCaptureRecord) UnmarshalJSON(data []byte) error {
 	if _, err := nativeCaptureFieldsWithInputs(fields["info"], []string{"MemBytes", "VMStateBytes", "StoredBytes"}, "Inputs"); err != nil {
 		return err
 	}
-	if _, err := nativeCaptureFieldsWithInputs(fields["backing"], []string{"version", "kernel", "base"}, "inputs"); err != nil {
+	if _, err := nativeCaptureFieldsWithInputs(fields["backing"], []string{"version", "kernel", "base", "timer"}, "inputs"); err != nil {
 		return err
 	}
 	type plain nativeQualificationCaptureRecord

@@ -7,12 +7,23 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.object_storage_usage_unavailable_meters_item import (
+    ObjectStorageUsageUnavailableMetersItem,
+    check_object_storage_usage_unavailable_meters_item,
+)
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ObjectStorageUsage")
 
 
 @_attrs_define
 class ObjectStorageUsage:
-    """Account-wide usage and reserved capacity. Costs are EUR millicents, not a customer invoice."""
+    """Account-wide usage and reserved capacity. In gateway_safety_v1 requests count durable provider attempts and egress
+    counts full response lengths reserved before forwarding; disconnects retain reservations. Fields named in
+    unavailable_meters are unknown, their numeric placeholders are not measured zeros and must not be billed. Legacy
+    costs are EUR millicents, not a customer invoice.
+
+    """
 
     observed_bytes: int
     capacity_bytes: int
@@ -24,6 +35,7 @@ class ObjectStorageUsage:
     authorizations: int
     fresh: bool
     period_start: datetime.datetime
+    unavailable_meters: list[ObjectStorageUsageUnavailableMetersItem] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +59,13 @@ class ObjectStorageUsage:
 
         period_start = self.period_start.isoformat()
 
+        unavailable_meters: list[str] | Unset = UNSET
+        if not isinstance(self.unavailable_meters, Unset):
+            unavailable_meters = []
+            for unavailable_meters_item_data in self.unavailable_meters:
+                unavailable_meters_item: str = unavailable_meters_item_data
+                unavailable_meters.append(unavailable_meters_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -63,6 +82,8 @@ class ObjectStorageUsage:
                 "period_start": period_start,
             }
         )
+        if unavailable_meters is not UNSET:
+            field_dict["unavailable_meters"] = unavailable_meters
 
         return field_dict
 
@@ -89,6 +110,17 @@ class ObjectStorageUsage:
 
         period_start = datetime.datetime.fromisoformat(d.pop("period_start"))
 
+        _unavailable_meters = d.pop("unavailable_meters", UNSET)
+        unavailable_meters: list[ObjectStorageUsageUnavailableMetersItem] | Unset = UNSET
+        if _unavailable_meters is not UNSET:
+            unavailable_meters = []
+            for unavailable_meters_item_data in _unavailable_meters:
+                unavailable_meters_item = check_object_storage_usage_unavailable_meters_item(
+                    unavailable_meters_item_data
+                )
+
+                unavailable_meters.append(unavailable_meters_item)
+
         object_storage_usage = cls(
             observed_bytes=observed_bytes,
             capacity_bytes=capacity_bytes,
@@ -100,6 +132,7 @@ class ObjectStorageUsage:
             authorizations=authorizations,
             fresh=fresh,
             period_start=period_start,
+            unavailable_meters=unavailable_meters,
         )
 
         object_storage_usage.additional_properties = d

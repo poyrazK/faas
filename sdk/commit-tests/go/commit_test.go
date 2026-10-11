@@ -36,7 +36,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 	}
 	database := "commit_sdk_go_" + hex.EncodeToString(random[:])
 	quoted := pgx.Identifier{database}.Sanitize()
-	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+quoted+" TEMPLATE template0"); err != nil {
+	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+quoted+" TEMPLATE template0 ENCODING 'UTF8'"); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -141,4 +141,38 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCounts(1, 1)
+	tx, err = writer.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.ID = ""
+	event.Routing = &faas.CommitRouting{Version: 2, PlatformTenantID: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", Key: json.RawMessage(`"order-5"`)}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO orders VALUES(5)"); err != nil {
+		t.Fatal(err)
+	}
+	routed, err := faas.InsertCommitEvent(ctx, tx, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCounts(1, 1)
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	assertCounts(2, 2)
+	var tenant, key string
+	if err := observer.QueryRowContext(ctx, "SELECT routing->>'platform_tenant_id',routing->>'key' FROM public.gregale_outbox WHERE event_id=$1::uuid", routed).Scan(&tenant, &key); err != nil || tenant != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || key != "order-5" {
+		t.Fatalf("routing lost: %s %s %v", tenant, key, err)
+	}
+	tx, err = writer.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := faas.InsertCommitEvent(ctx, tx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	assertCounts(2, 2)
+
 }

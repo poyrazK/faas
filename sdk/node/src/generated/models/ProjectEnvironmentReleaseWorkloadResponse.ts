@@ -6,6 +6,7 @@
  * Current live deployment metadata for one project workload. The stable environment URL is present before the first deployment but returns 404 until a live release exists.
  */
 export type ProjectEnvironmentReleaseWorkloadResponse = {
+  workload_config_hash?: string;
   workload_slug: string;
   workload_name: string;
   status: 'live' | 'not_deployed';

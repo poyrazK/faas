@@ -634,7 +634,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
 	}
-	app, err := b.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, b.store, dep)
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)
@@ -1392,7 +1392,9 @@ func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.F
 	// status flip above. The deployment lookup matches the one
 	// in emitBuildSucceeded (line 619) so we don't have a second
 	// store reader.
-	if _, serr := b.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), msg); serr != nil {
+	// ErrNotFound means no stage was in flight (the build failed after its
+	// last stage closed, e.g. during artifact export): nothing to stamp.
+	if _, serr := b.store.MarkDeploymentStageFailed(ctx, depID, time.Now(), msg); serr != nil && !errors.Is(serr, state.ErrNotFound) {
 		b.log.Warn("builderd: stamp failed stage", "deployment", depID, "err", serr)
 	}
 	// ADR-048 §4: builder-time metering on terminal build

@@ -99,6 +99,46 @@ func TestWebhookAutomationAPIReceiptsAndRouting(t *testing.T) {
 		t.Fatalf("ordinary delivery not restored: %v", err)
 	}
 }
+
+func TestGenericWebhookAutomationAPIUsesSignedHeadersAndDurableFanout(t *testing.T) {
+	e, app, _ := seedWebhookAutomationAPI(t)
+	endpoint := mustCreateGenericInboundWebhook(t, e, app.Slug)
+	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID
+	zero := int64(0)
+	bound := e.do(t, http.MethodPut, path+"/automation-binding", api.PutWebhookAutomationBindingRequest{
+		ExpectedVersion: &zero, WorkflowName: "paid", EventType: "invoice.*", TakeOverDelivery: true,
+	}, nil)
+	if bound.Code != http.StatusOK {
+		t.Fatalf("bind generic endpoint=%d %s", bound.Code, bound.Body.String())
+	}
+	body := []byte(`{"data":{"object":{"id":"in_generic","amount_paid":150}}}`)
+	timestamp := time.Now().UTC()
+	first := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_invoice", "invoice.paid", timestamp)
+	var receipt api.WebhookAutomationReceiptResponse
+	if first.Code != http.StatusAccepted || json.Unmarshal(first.Body.Bytes(), &receipt) != nil || receipt.Status != "accepted" || receipt.Duplicate {
+		t.Fatalf("generic automation start=%d %s", first.Code, first.Body.String())
+	}
+	endpointUUID, err := uuid.Parse(endpoint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.EventSource != "gregale.inbound.generic."+endpointUUID.String() {
+		t.Fatalf("event source=%q", receipt.EventSource)
+	}
+	duplicate := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_invoice", "invoice.paid", timestamp)
+	if duplicate.Code != http.StatusAccepted || json.Unmarshal(duplicate.Body.Bytes(), &receipt) != nil || !receipt.Duplicate {
+		t.Fatalf("generic retry=%d %s", duplicate.Code, duplicate.Body.String())
+	}
+	changedType := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_invoice", "invoice.refunded", timestamp)
+	if changedType.Code != http.StatusConflict {
+		t.Fatalf("changed type for same generic event id=%d %s", changedType.Code, changedType.Body.String())
+	}
+	work, err := e.store.ClaimDuePublishedEvent(t.Context(), time.Now().UTC())
+	if err != nil || len(work.RecipientSnapshot) != 1 || work.RecipientSnapshot[0].Source != receipt.EventSource || work.RecipientSnapshot[0].WebhookProvider != state.InboundWebhookProviderGeneric {
+		t.Fatalf("generic outbox snapshot=%+v err=%v", work, err)
+	}
+}
+
 func TestWebhookAutomationAPIValidationOwnershipAndRuntime(t *testing.T) {
 	e, app, endpoint := seedWebhookAutomationAPI(t)
 	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID

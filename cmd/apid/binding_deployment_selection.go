@@ -1,4 +1,4 @@
-// adr: 428 — only platform binding probes may select a live deployment explicitly.
+// adr: 428, 582 — only platform binding probes and smoke commands may select a live deployment explicitly.
 package main
 
 import (
@@ -35,6 +35,9 @@ func (s *server) selectBindingVerificationDeployment(ctx context.Context, app st
 }
 
 func (s *server) selectAppTaskDeployment(ctx context.Context, app state.App, resolved api.ResolvedCreateAppTaskRequest) (state.Deployment, *api.Problem) {
+	if resolved.SmokeDeploymentID != "" {
+		return s.selectBindingVerificationDeployment(ctx, app, resolved.SmokeDeploymentID)
+	}
 	if resolved.VerificationDeploymentID != "" {
 		return s.selectBindingVerificationDeployment(ctx, app, resolved.VerificationDeploymentID)
 	}

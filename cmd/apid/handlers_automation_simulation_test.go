@@ -25,17 +25,25 @@ func TestAutomationSimulationAPIHasNoExecutionEffects(t *testing.T) {
 	e.s.WithWorkflowRuntimeEnabled(false)
 	before, _ := e.store.ListEvents(ctx, e.acct.ID, 100)
 	spec := api.WorkflowSpec{Name: "paid", Steps: []api.WorkflowStepSpec{
-		{Name: "lookup", Run: "lookup", Input: json.RawMessage(`"{{input.id}}"`)},
+		{Name: "lookup", Run: "lookup", Input: json.RawMessage(`"{{input.id}}"`), Retry: &api.WorkflowRetrySpec{MaxAttempts: 2}, OnFailure: "fallback"},
+		{Name: "fallback", Run: "recover"},
 		{Name: "send", Path: "/send", DependsOn: []string{"lookup"}, Input: json.RawMessage(`"{{steps.lookup.output}}"`)},
 	}}
-	request := api.SimulateAutomationRequest{Definition: spec, Input: json.RawMessage(`{"id":9007199254740993}`), MockOutputs: map[string]json.RawMessage{"lookup": json.RawMessage(`null`)}}
+	status := 503
+	request := api.SimulateAutomationRequest{Definition: spec, Input: json.RawMessage(`{"id":9007199254740993}`), MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
+		"lookup": {{Outcome: "failure", HTTPStatus: &status}, {Outcome: "success", Output: json.RawMessage(`null`)}},
+	}}
 	response := e.do(t, "POST", "/v1/apps/"+app.Slug+"/automations:simulate", request, nil)
 	var trace api.SimulateAutomationResponse
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &trace) != nil || !trace.DefinitionValid || trace.Complete || len(trace.Trace) != 2 {
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &trace) != nil || !trace.DefinitionValid || trace.Complete || len(trace.Trace) != 3 {
 		t.Fatalf("simulation=%d %s", response.Code, response.Body.String())
 	}
-	if trace.Trace[0].State != "mocked" || trace.Trace[1].State != "would_execute" || string(trace.Trace[1].Input) != "null" {
-		t.Fatalf("sample flow: %+v", trace)
+	rows := make(map[string]api.AutomationSimulationStep, len(trace.Trace))
+	for _, row := range trace.Trace {
+		rows[row.StepName] = row
+	}
+	if rows["lookup"].State != "mocked" || len(rows["lookup"].Attempts) != 2 || rows["fallback"].Reason != state.WorkflowSkipRouteNotTaken || rows["send"].State != "would_execute" || string(rows["send"].Input) != "null" {
+		t.Fatalf("sample flow: %+v", trace.Trace)
 	}
 	runs, _, err := e.store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10})
 	if err != nil || len(runs) != 0 {

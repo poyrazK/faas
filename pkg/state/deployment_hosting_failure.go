@@ -108,6 +108,9 @@ func (m *MemStore) FailDeploymentWithHostingReceipt(ctx context.Context, id stri
 			return false, fmt.Errorf("decode hosting failure stage: %w", err)
 		}
 	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return false, err
+	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
 		return false, err
 	}

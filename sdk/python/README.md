@@ -1,104 +1,5 @@
 # faas_sdk
-A client library for accessing the Gregale FaaS REST API
-
-The SDK includes `verify_webhook` for verifying signed outbound Gregale
-webhook requests. See
-[`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
-for usage and delivery-ID deduplication guidance.
-
-## Agent execution streams
-
-The `FaaSClient` façade includes a typed, resumable iterator for disposable
-executions. It reconnects with the latest SSE cursor after a transient
-disconnect:
-
-```python
-from faas_sdk import FaaSClient
-
-with FaaSClient(base_url="https://api.example.com", token="...") as client:
-    for event in client.watch_execution(execution_id):
-        if event.type in {"stdout", "stderr"}:
-            print(event.chunk or "", end="")
-        if event.type == "terminal":
-            print(event.status)
-```
-
-Use `async for` with `client.awatch_execution(execution_id)` when running in
-an async application. The generated
-`faas_sdk.api.runs.stream_execution_events` endpoint remains available for
-callers that need the raw response body.
-
-For the common submit-and-wait flow, the façade composes create, resumable
-watching, and the terminal receipt:
-
-```python
-from faas_sdk import FaaSClient
-
-with FaaSClient(base_url="https://api.example.com", token="...") as client:
-    receipt = client.run_execution(
-        {"runtime": "node22", "source": "console.log('hello')"},
-        on_event=lambda event: print(event.chunk or "", end="")
-        if event.type == "stdout" else None,
-    )
-```
-
-Use `await client.arun_execution(...)` with an async callback in an async
-application. Source/files are staged only in the guest's ephemeral scratch
-filesystem; no customer storage disk is attached.
-
-## Container listeners
-
-The generated clients expose UDP listener operations and TCP TLS policy/status.
-UDP ingress requires operator source-CIDR/firewall rollout and a declared guest
-UDP port. Creation reserves a disabled endpoint; enable it explicitly after the
-deployment and edge are configured:
-
-```python
-from faas_sdk import FaaSClient
-from faas_sdk.api.apps import create_app_udp_listener, update_app_udp_listener
-from faas_sdk.models import CreateUDPListenerRequest, UpdateUDPListenerRequest
-
-with FaaSClient(base_url="https://api.example.com", token="...") as client:
-    udp = create_app_udp_listener.sync(
-        "app", client=client.inner,
-        body=CreateUDPListenerRequest(name="dns", guest_port=5353),
-    )
-    if udp is not None:
-        update_app_udp_listener.sync(
-            "app", udp.name, client=client.inner,
-            body=UpdateUDPListenerRequest(enabled=True),
-        )
-```
-
-For an existing TCP listener, TLS termination requires a verified app-owned
-hostname and a certificate bundle provisioned by the edge operator. Changing TLS
-policy disables the listener; enable it separately after provisioning:
-
-```python
-from faas_sdk.api.apps import app_tcp_listener_tls_status, update_app_tcp_listener
-from faas_sdk.models import TCPListenerTLSConfig, UpdateTCPListenerRequest
-
-with FaaSClient(base_url="https://api.example.com", token="...") as client:
-    update_app_tcp_listener.sync(
-        "app", "echo", client=client.inner,
-        body=UpdateTCPListenerRequest(
-            tls=TCPListenerTLSConfig(mode="terminate", hostname="echo.example.com"),
-        ),
-    )
-    update_app_tcp_listener.sync(
-        "app", "echo", client=client.inner,
-        body=UpdateTCPListenerRequest(enabled=True),
-    )
-    status = app_tcp_listener_tls_status.sync("app", "echo", client=client.inner)
-    if status is not None:
-        print(status.observations)
-```
-
-Supply exactly one of `enabled` or `tls` in each TCP update. Certificate status
-covers observed edges only; empty observations and `unknown` do not establish
-readiness. It does not prove fleet coverage, client trust or guest availability.
-Native listener qualification remains pending; see the
-[qualification procedure](../../docs/container-qualification.md).
+A client library for accessing one-box FaaS REST API
 
 ## Usage
 First, create a client:
@@ -142,6 +43,55 @@ async with client as client:
     response: Response[MyDataModel] = await get_my_data_model.asyncio_detailed(client=client)
 ```
 
+## Managed realtime publish retries
+
+Publish messages with the generated realtime operation and pass a stable
+`idempotency_key` when retrying one logical event. Reuse it only with the same
+delivery mode, decoded payload, and binary flag:
+
+```python
+import base64
+
+from faas_sdk.api.realtime.publish_managed_realtime_channel import sync_detailed
+from faas_sdk.models import ManagedRealtimeMessageRequest
+
+payload = b'{"job_id":"job-42","progress":100}'
+response = sync_detailed(
+    slug="my-app",
+    id="ENDPOINT_ID",
+    channel="jobs",
+    client=client,
+    body=ManagedRealtimeMessageRequest(
+        data_base64=base64.b64encode(payload).decode("ascii"),
+    ),
+    idempotency_key="job-event:job-42:complete",
+)
+```
+
+The server replays the original queue outcome for 24 hours. A replay of a
+partial publish does not retry subscribers that missed it; a different payload
+or delivery mode with the same key returns `409`. An in-flight or uncertain
+reservation also returns `409` while the key remains active.
+
+For resumable delivery, opt into `delivery="retained"`. This preview requires
+the apid retained-history and realtimed resume flags, a stable idempotency key,
+and a payload no larger than 4 KiB. The response contains the committed channel
+sequence; v2 clients replay from that cursor after reconnecting:
+
+```python
+retained = sync_detailed(
+    slug="my-app",
+    id="ENDPOINT_ID",
+    channel="jobs",
+    client=client,
+    body=ManagedRealtimeMessageRequest(
+        data_base64=base64.b64encode(payload).decode("ascii"),
+    ),
+    idempotency_key="job-event:job-42:complete:retained",
+    delivery="retained",
+)
+```
+
 By default, when you're calling an HTTPS API it will attempt to verify that SSL is working correctly. Using certificate verification is highly recommended most of the time, but sometimes you may need to authenticate to a server (especially an internal server) using a custom certificate bundle.
 
 ```python
@@ -172,6 +122,20 @@ Things to know:
 1. All path/query params, and bodies become method arguments.
 1. If your endpoint had any tags on it, the first tag will be used as a module name for the function (my_tag above)
 1. Any endpoint which did not have a tag will be in `faas_sdk.api.default`
+
+## Transactional operation handlers
+
+For managed HTTP operations, build the context with
+`operation_request_from_headers(headers, method, raw_target, raw_body)`, preserving
+repeated headers. Use `with_operation_transaction(connection, operation, callback)`
+or `await awith_operation_transaction(...)` with an idle, exclusively leased
+psycopg connection configured with `autocommit=True`. The callback's business
+writes and result/webhook intent commit together; retries recover the saved body.
+
+Install `operation_receipt_schema` explicitly as the database owner. Send
+`response.body` unchanged as `application/json`; `response.replayed` reports
+recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
+for synchronous and async examples, retention, and uncertain commit handling.
 
 ## Login-target observation
 
@@ -283,6 +247,7 @@ The middleware scopes context to each HTTP or WebSocket request. The proxy
 still verifies release membership from the caller deployment's network
 identity; the header is context, not authorization.
 
+
 ## Advanced customizations
 
 There are more settings on the generated `Client` class which let you control more runtime behavior, check out the docstring on that class for more info. You can also customize the underlying `httpx.Client` or `httpx.AsyncClient` (depending on your use-case):
@@ -331,3 +296,41 @@ If you want to install this client into another project without publishing it (e
 1. If that project is not using Poetry:
     1. Build a wheel with `poetry build -f wheel`
     1. Install that wheel from the other project `pip install <path-to-wheel>`
+## Internal HTTP Operations preview
+
+Production Operations submission remains disabled. Generated
+`faas_sdk.api.operations` modules expose typed submission, status, event,
+cancellation, runtime reporting, artifact download and account recovery routes.
+
+HTTP handlers can import `GregaleOperations` from
+`faas_sdk.operations_runtime` and use its `run_request(headers)` async context
+manager around a trusted Gregale guest request. Call `progress(report)` or
+`artifact(report)` with the generated request models and a stable `report_id`.
+The helper fetches fresh workload identity for each report, rejects native
+execution context and isolates authority between concurrent requests. Its public
+`context()` omits the ephemeral capability. The caller owns the injected
+`httpx.AsyncClient` and closes it during shutdown.
+
+See [Operations](../../docs/operations.md) for the separate business and webhook
+outcomes, retained result bytes, scoped credentials and rollout status.
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.
+
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

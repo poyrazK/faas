@@ -1,6 +1,7 @@
 package sched
 
 // adr: 755
+// adr: 791
 // adr: 766
 import (
 	"context"
@@ -54,11 +55,23 @@ func newRegionalWarmFixture(t *testing.T) regionalWarmFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	warm, err := s.CreateInstanceWithMode(t.Context(), app.ID, dep.ID, string(state.StateWarm), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
+	warm, err := s.CreateInstanceWithMode(t.Context(), app.ID, dep.ID, string(state.StateWaking), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetInstanceRuntime(t.Context(), warm.ID, "fc-"+warm.ID, "10.100.0.2", 20001); err != nil {
+	values, err := s.RuntimeAppValuesForDeployment(t.Context(), acct.ID, app.ID, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppConfigFence(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{
+		AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: node.ID, WakeID: warm.WakeID,
+		ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence.SecretFence, ConfigFence: fence,
+		Netns: "fc-" + warm.ID, HostIP: "10.100.0.2", GuestUID: 20001,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	warm, err = s.InstanceByID(t.Context(), warm.ID)
@@ -171,14 +184,14 @@ func TestRegionalWarmResumeUncertainIssuanceAndDispatchRetainHolds(t *testing.T)
 				}
 				return lost
 			}
-			if err := f.engine.dispatchRegionalWarmResume(t.Context(), f.warm, p); !errors.Is(err, lost) {
+			if err := f.engine.dispatchRegionalWarmResume(t.Context(), f.warm, p, false); !errors.Is(err, lost) {
 				t.Fatal(err)
 			}
 			if f.vmm.resumeCalls != 0 || f.vmm.destroys != 0 || f.engine.ledger.Concurrency(f.app.ID) != 1 {
 				t.Fatal("uncertain resume fell back or released")
 			}
 			f.vmm.resumeHook = nil
-			if err := f.engine.dispatchRegionalWarmResume(t.Context(), f.warm, f.prepare(t)); err != nil || len(f.vmm.placements) != 2 || *f.vmm.placements[0].Seat != *f.vmm.placements[1].Seat {
+			if err := f.engine.dispatchRegionalWarmResume(t.Context(), f.warm, f.prepare(t), false); err != nil || len(f.vmm.placements) != 2 || *f.vmm.placements[0].Seat != *f.vmm.placements[1].Seat {
 				t.Fatal("transport retry changed intent", err)
 			}
 			warm, err := f.store.InstanceByID(t.Context(), f.warm.ID)
@@ -339,7 +352,7 @@ func TestRegionalWarmResumeProductionGateAndLegacyCleanupRemainFrozen(t *testing
 	// A legacy-only transport never gets a regional resume fallback.
 	f.engine.vmm = f.vmm.warmResumeFakeVMM
 	p := f.prepare(t)
-	if err := f.engine.dispatchRegionalWarmResume(t.Context(), f.warm, p); err == nil || f.vmm.resumeCalls != 0 {
+	if err := f.engine.dispatchRegionalWarmResume(t.Context(), f.warm, p, false); err == nil || f.vmm.resumeCalls != 0 {
 		t.Fatal("missing regional capability fell back", err)
 	}
 }

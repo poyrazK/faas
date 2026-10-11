@@ -22,7 +22,9 @@ func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.Sour
 			return simpleapp.Plan{}, err
 		}
 		if resolved == shapeFunction {
-			return simpleapp.Plan{}, fmt.Errorf("simple app deploys are HTTP applications; use the normal function path for handler-only source")
+			// production-us hunt #4: the old text ("use the normal function
+			// path") named no command, for four of the built-in templates.
+			return simpleapp.Plan{}, fmt.Errorf("--plan previews HTTP apps; this source is a function. Preview it with `gregale deploy --diff` or `gregale deploy --dry-run`, then deploy with `gregale deploy`")
 		}
 		inferred, err := frameworkprofile.AnalyzeDir(sourceDir)
 		if err != nil {

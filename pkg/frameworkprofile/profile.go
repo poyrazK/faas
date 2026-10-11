@@ -25,7 +25,8 @@ const (
 	maxSourceFileBytes = 1 << 20
 )
 
-// Profile is the inferred run contract for an API source tree.
+// Profile persists source-derived runtime defaults and, for project images,
+// the command contract captured at deployment admission.
 type Profile struct {
 	Version   string `json:"version"`
 	Framework string `json:"framework"`
@@ -52,6 +53,12 @@ type Profile struct {
 	// the effective contract used by the builder and runtime.
 	ConfigFile string    `json:"config_file,omitempty"`
 	Warnings   []Warning `json:"warnings,omitempty"`
+	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
+	// image semantics even when Cmd is nil (inherit) or the app changes class.
+	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
+	ImageHealthcheck *ImageHealthcheck `json:"image_healthcheck,omitempty"`
+	// ImageHealthcheckRequired is imaged's effective immutable-manifest receipt.
+	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
 }
 
 // Warning is actionable profile feedback. Source paths are relative to the

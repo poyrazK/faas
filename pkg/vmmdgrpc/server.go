@@ -986,6 +986,17 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		return nil, grpcerr.ToStatus(err)
 	}
 	placement, err := regionalRuntimeFromProto(req.GetRegionalRuntime())
+	if req.GetImageHealthcheckRequired() {
+		reader, ok := s.vmm.(interface {
+			ImageHealthcheckRequiredFor(string) bool
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract unavailable", "vmmd cannot verify the stored instance contract"))
+		}
+		if !reader.ImageHealthcheckRequiredFor(req.GetInstance()) {
+			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract missing", "the instance was not created with required image healthcheck readiness"))
+		}
+	}
 	if err == nil {
 		err = s.resumeWarmRequest(ctx, req.GetInstance(), placement)
 	}
@@ -993,7 +1004,7 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance(), RegionalRuntime: append([]byte(nil), req.GetRegionalRuntime()...)}, nil
+	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance(), RegionalRuntime: append([]byte(nil), req.GetRegionalRuntime()...), ImageHealthcheckVerified: req.GetImageHealthcheckRequired(), SupportsImageHealthcheckMonitoring: true}, nil
 }
 
 // WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The
@@ -1468,9 +1479,11 @@ func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingRes
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 	return &vmmdpb.PingResponse{
-		FcVersion:             s.fcVer,
-		ServerTime:            timestamppb.Now(),
-		SupportsSecretAliases: true,
+		FcVersion:                          s.fcVer,
+		ServerTime:                         timestamppb.Now(),
+		SupportsSecretAliases:              true,
+		SupportsImageHealthcheck:           true,
+		SupportsImageHealthcheckMonitoring: true,
 	}, nil
 }
 

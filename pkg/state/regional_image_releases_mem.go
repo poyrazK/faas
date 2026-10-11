@@ -46,7 +46,7 @@ func (m *MemStore) CreateRegionalImageRelease(_ context.Context, intent Regional
 		activity = &copy
 	}
 	mutation := &regionalImageReleaseMutation{intent: intent}
-	created, outboxID, err := m.createDeployment(d, activity, mutation)
+	created, outboxID, err := m.createDeploymentOwned(d, activity, mutation, nil)
 	return RegionalImageReleaseResult{Receipt: mutation.receipt, Deployment: created, ActivityOutboxID: outboxID, Replayed: mutation.replayed}, err
 }
 

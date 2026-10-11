@@ -15,7 +15,10 @@ import (
 
 type InboundWebhookProvider string
 
-const InboundWebhookProviderStripe InboundWebhookProvider = "stripe"
+const (
+	InboundWebhookProviderStripe  InboundWebhookProvider = "stripe"
+	InboundWebhookProviderGeneric InboundWebhookProvider = "generic"
+)
 
 type InboundWebhookEndpoint struct {
 	ID                  string

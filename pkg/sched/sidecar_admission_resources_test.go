@@ -1,6 +1,7 @@
 package sched
 
 // adr: 766
+// adr: 791
 import (
 	"context"
 	"encoding/json"
@@ -137,11 +138,23 @@ func TestSidecarAdmissionWarmRowRepairKeepsAllocationAsShadow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			warm, err := s.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateWarm), app.RAMMB, node.ID, uuid.NewString())
+			warm, err := s.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateWaking), app.RAMMB, node.ID, uuid.NewString())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := s.SetInstanceRuntime(t.Context(), warm.ID, "fc-"+warm.ID, "10.100.0.2", 20001); err != nil {
+			values, err := s.RuntimeAppValuesForDeployment(t.Context(), app.AccountID, app.ID, dep.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fence, err := state.NewRuntimeAppConfigFence(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{
+				AccountID: app.AccountID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
+				ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence.SecretFence, ConfigFence: fence,
+				Netns: "fc-" + warm.ID, HostIP: "10.100.0.2", GuestUID: 20001,
+			}); err != nil {
 				t.Fatal(err)
 			}
 			acct, err := s.AccountByID(t.Context(), app.AccountID)

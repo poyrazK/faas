@@ -24,7 +24,7 @@ var (
 // million and egress per GiB. Each component is rounded up independently to
 // the nearest millicent.
 func CalculateCharge(pricing api.ObjectStoragePricing, usage api.ObjectStorageUsage) (api.ObjectStorageCharge, error) {
-	if !pricing.Valid() {
+	if !pricing.Valid() || len(usage.UnavailableMeters) != 0 {
 		return api.ObjectStorageCharge{}, ErrInvalidPricing
 	}
 	for _, v := range []int64{usage.StoredByteHours, usage.RequestCount, usage.EgressBytes} {

@@ -171,6 +171,13 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 		// activates the release. Converging first must not restart them on
 		// the outgoing binaries against already-staged new configuration.
 		"faas_join_defer_service_handlers": true,
+		// fleet_verify's doctor runs the host's installed gregalectl, which
+		// during convergence is still the outgoing release: the candidate is
+		// uploaded and activated after this play. production-us rc.239/240:
+		// that old doctor failed every convergence on a finding the
+		// candidate release had already fixed. Release drift is verified
+		// after activation; node_join.yml skips this doctor pass the same way.
+		"faas_verify_run_doctor": false,
 	}
 	convergeVarsPath := filepath.Join(tempRoot, "converge-vars.json")
 	body, err := json.Marshal(convergeVars)

@@ -64,8 +64,9 @@ func (m *Manager) resumeRegionalRuntime(ctx context.Context, instance string, p 
 	inst.regionalRuntime = cloneRuntimePlacement(&p)
 	inst.regionalResumePending = true
 	spec := ServingResumeSpec{
-		AfterPausedRestore: inst.pausedRestorePending,
-		HealthcheckPath:    inst.HealthcheckPath, HealthcheckGRPC: inst.HealthcheckGRPC,
+		AfterPausedRestore:       inst.pausedRestorePending,
+		ImageHealthcheckRequired: inst.ImageHealthcheckRequired,
+		HealthcheckPath:          inst.HealthcheckPath, HealthcheckGRPC: inst.HealthcheckGRPC,
 		HealthcheckGRPCService: inst.HealthcheckGRPCService, StartupDeadlineS: inst.StartupDeadlineS,
 	}
 	inst.regionalRuntimeMu.Unlock()

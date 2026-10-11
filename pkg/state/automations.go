@@ -23,6 +23,31 @@ type Automation struct {
 	UpdatedAt        time.Time
 }
 
+// AutomationRevision is an immutable snapshot created whenever a dashboard
+// automation is published. LegacySnapshot rows were seeded from the latest
+// publication present when revision history was introduced.
+type AutomationRevision struct {
+	AppID                string
+	Name                 string
+	Version              int64
+	Definition           json.RawMessage
+	RecordedAt           time.Time
+	LegacySnapshot       bool
+	PublishedByAccountID string
+	PublishedByAPIKeyID  string
+}
+
+type AutomationRevisionListOptions struct {
+	Limit  int
+	Offset int
+}
+
+const maxAutomationRevisionOffset = int(^uint32(0) >> 1)
+
+func validAutomationRevisionListOptions(opts AutomationRevisionListOptions) bool {
+	return opts.Limit > 0 && opts.Limit <= 100 && opts.Offset >= 0 && opts.Offset <= maxAutomationRevisionOffset
+}
+
 type AutomationMutation struct {
 	Action           string
 	ExpectedVersion  int64
@@ -30,10 +55,14 @@ type AutomationMutation struct {
 	Enabled          bool
 	TakeOverManifest bool
 	RestoreManifest  bool
+	ActorAccountID   string
+	ActorAPIKeyID    string
 }
 
 type AutomationStore interface {
 	ListAutomations(context.Context, string) ([]Automation, error)
+	ListAutomationRevisions(context.Context, string, string, AutomationRevisionListOptions) ([]AutomationRevision, int, error)
+	GetAutomationRevision(context.Context, string, string, int64) (AutomationRevision, error)
 	MutateAutomation(context.Context, string, string, AutomationMutation) (Automation, error)
 	EffectiveWorkflowDefinitions(context.Context, string, json.RawMessage) (json.RawMessage, error)
 }
@@ -42,6 +71,7 @@ var (
 	ErrAutomationVersionConflict   = errors.New("automation: version changed; reload before editing")
 	ErrAutomationOwnershipConflict = errors.New("automation: explicit confirmation is required to change YAML ownership")
 	ErrAutomationInvalid           = errors.New("automation: invalid definition")
+	ErrAutomationRevisionNotFound  = errors.New("automation: revision not found")
 )
 
 type AutomationQuotaError struct {
@@ -57,6 +87,11 @@ func copyAutomation(a Automation) Automation {
 	a.Draft = cloneWorkflowJSON(a.Draft)
 	a.Published = cloneWorkflowJSON(a.Published)
 	return a
+}
+
+func copyAutomationRevision(revision AutomationRevision) AutomationRevision {
+	revision.Definition = cloneWorkflowJSON(revision.Definition)
+	return revision
 }
 
 // Dashboard publication owns one name, including while paused. Unpublished

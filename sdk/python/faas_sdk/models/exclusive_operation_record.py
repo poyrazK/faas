@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -13,6 +13,10 @@ from ..models.exclusive_operation_record_state import (
     check_exclusive_operation_record_state,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_effect_record import OperationEffectRecord
+
 
 T = TypeVar("T", bound="ExclusiveOperationRecord")
 
@@ -35,6 +39,7 @@ class ExclusiveOperationRecord:
     attempt_deadline: datetime.datetime | Unset = UNSET
     result: Any | Unset = UNSET
     """Platform-committed invocation result; arbitrary JSON value."""
+    effects: list[OperationEffectRecord] | Unset = UNSET
     last_error: str | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -74,6 +79,13 @@ class ExclusiveOperationRecord:
 
         result = self.result
 
+        effects: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.effects, Unset):
+            effects = []
+            for effects_item_data in self.effects:
+                effects_item = effects_item_data.to_dict()
+                effects.append(effects_item)
+
         last_error = self.last_error
 
         completed_at: str | Unset = UNSET
@@ -104,6 +116,8 @@ class ExclusiveOperationRecord:
             field_dict["attempt_deadline"] = attempt_deadline
         if result is not UNSET:
             field_dict["result"] = result
+        if effects is not UNSET:
+            field_dict["effects"] = effects
         if last_error is not UNSET:
             field_dict["last_error"] = last_error
         if completed_at is not UNSET:
@@ -113,6 +127,8 @@ class ExclusiveOperationRecord:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_effect_record import OperationEffectRecord
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -163,6 +179,15 @@ class ExclusiveOperationRecord:
 
         result = d.pop("result", UNSET)
 
+        _effects = d.pop("effects", UNSET)
+        effects: list[OperationEffectRecord] | Unset = UNSET
+        if _effects is not UNSET:
+            effects = []
+            for effects_item_data in _effects:
+                effects_item = OperationEffectRecord.from_dict(effects_item_data)
+
+                effects.append(effects_item)
+
         last_error = d.pop("last_error", UNSET)
 
         _completed_at = d.pop("completed_at", UNSET)
@@ -185,6 +210,7 @@ class ExclusiveOperationRecord:
             lease_expires_at=lease_expires_at,
             attempt_deadline=attempt_deadline,
             result=result,
+            effects=effects,
             last_error=last_error,
             completed_at=completed_at,
         )

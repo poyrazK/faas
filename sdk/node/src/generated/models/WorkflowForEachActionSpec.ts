@@ -2,14 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkflowGuardSpec } from './WorkflowGuardSpec.js';
 import type { WorkflowOutboundSpec } from './WorkflowOutboundSpec.js';
 import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 /**
  * Exactly one of run, path or outbound. No nested iteration, dependencies,
- * guards or exception routes. Omitted input sends the item itself. Explicit
- * input templates read input.item, input.index, input.input (original run input)
- * and outputs of the parent's declared dependencies. Inputs are never re-rendered
- * on retry. Mutating outbound retries require provider idempotency support.
+ * waits, joins or exception routes. An optional when guard is evaluated once
+ * for each item using input.item, input.index and input.input, plus outputs of
+ * the parent's declared dependencies. Omitted input sends the item itself.
+ * Explicit input templates use the same item context. Inputs and guard decisions
+ * are snapshotted before dispatch and never reevaluated on retry. Mutating
+ * outbound retries require provider idempotency support.
  *
  */
 export type WorkflowForEachActionSpec = {
@@ -26,5 +29,6 @@ export type WorkflowForEachActionSpec = {
    */
   timeout?: string;
   retry?: WorkflowRetrySpec;
+  when?: WorkflowGuardSpec;
 };
 

@@ -108,7 +108,7 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
-	RequireLiveDeployment bool                    // Explicit binding probes must remain live at atomic admission.
+	RequireLiveDeployment bool                    // Explicit binding probes and smoke callers must remain live at atomic admission.
 	BindingVerification   *BindingVerificationPin // Internal admission metadata, never caller-selected.
 	FailureRules          *workpolicy.FailureRules
 	OccurrenceID          string

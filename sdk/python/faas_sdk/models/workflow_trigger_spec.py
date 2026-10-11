@@ -22,7 +22,9 @@ class WorkflowTriggerSpec:
     patterns and a JSON content filter; matching runs receive the full CloudEvents envelope as input. Event recipients
     and workflow definitions are captured when an event is accepted. Scheduled starts skip missed minutes and default to
     skipping overlapping runs. Scheduling is active only on the live default deployment and requires the workflow
-    runtime. New deployments arm schedules before their next eligible minute.
+    runtime. New deployments arm schedules before their next eligible minute. An app owner may mark a schedule
+    tenant_configurable to let each linked customer manage only its own cadence, timezone, overlap behavior, and enabled
+    state.
 
     """
 
@@ -39,6 +41,9 @@ class WorkflowTriggerSpec:
     enabled: bool | Unset = UNSET
     """Whether the automatic trigger is enabled; defaults to true. Already accepted events and existing runs
     continue after disabling."""
+    tenant_configurable: bool | Unset = UNSET
+    """For schedule triggers, allow each linked platform tenant to manage its own schedule, timezone, overlap
+    behavior, and enabled state. Workflow input and definition remain app-owned."""
     source: str | Unset = UNSET
     """Required for event triggers; exact source or edge wildcard pattern."""
     event_type: str | Unset = UNSET
@@ -61,6 +66,8 @@ class WorkflowTriggerSpec:
             overlap = self.overlap
 
         enabled = self.enabled
+
+        tenant_configurable = self.tenant_configurable
 
         source = self.source
 
@@ -87,6 +94,8 @@ class WorkflowTriggerSpec:
             field_dict["overlap"] = overlap
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
+        if tenant_configurable is not UNSET:
+            field_dict["tenant_configurable"] = tenant_configurable
         if source is not UNSET:
             field_dict["source"] = source
         if event_type is not UNSET:
@@ -118,6 +127,8 @@ class WorkflowTriggerSpec:
 
         enabled = d.pop("enabled", UNSET)
 
+        tenant_configurable = d.pop("tenant_configurable", UNSET)
+
         source = d.pop("source", UNSET)
 
         event_type = d.pop("event_type", UNSET)
@@ -136,6 +147,7 @@ class WorkflowTriggerSpec:
             input_=input_,
             overlap=overlap,
             enabled=enabled,
+            tenant_configurable=tenant_configurable,
             source=source,
             event_type=event_type,
             filter_=filter_,

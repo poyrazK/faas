@@ -214,6 +214,15 @@ func cmdBuildStatus(args []string) int {
 		return jsonOut(writeJSON(b))
 	}
 	printBuildStatus(osStdout, b)
+	// The build row carries only a failure class. The reason ("build
+	// exited 1", the failing step) is on the deployment row, and the full
+	// output is the deployment's build log.
+	if b.Status == "failed" && b.DeploymentID != "" {
+		if dep, depErr := client.GetDeployment(context.Background(), b.DeploymentID); depErr == nil && dep.Error != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-22s %s\n", "failure_reason:", dep.Error)
+		}
+		_, _ = fmt.Fprintf(osStdout, "build log: gregale logs <slug> --deployment %s\n", b.DeploymentID)
+	}
 	return 0
 }
 

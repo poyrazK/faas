@@ -23,7 +23,7 @@ func TestRestoreDataProbeRejectsPostRestorePointMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if probe.PointInTime.Before(started) || probe.PointInTime.After(time.Now().UTC()) {
+	if probe.PointInTime.Before(started) || probe.PointInTime.After(time.Now().UTC()) || probe.PointInTime.Nanosecond() != 0 {
 		t.Fatalf("point = %v", probe.PointInTime)
 	}
 	if err := verifyRestoreProbe(ctx, conn.Conn(), probe); !errors.Is(err, managedpostgres.ErrUnavailable) {

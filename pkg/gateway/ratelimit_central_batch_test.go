@@ -21,6 +21,7 @@ type batchingCentral struct {
 	batchSize []int
 
 	hold        chan struct{}
+	batchHold   chan struct{}
 	leaderStart chan struct{}
 
 	active     atomic.Int64
@@ -62,8 +63,15 @@ func (b *batchingCentral) ConsumeToken(ctx context.Context, _, _, _ string, _, _
 	return b.tokens, true, nil
 }
 
-func (b *batchingCentral) ConsumeTokens(_ context.Context, _, _, _ string, _, _ float64, n int) (int, int, error) {
+func (b *batchingCentral) ConsumeTokens(ctx context.Context, _, _, _ string, _, _ float64, n int) (int, int, error) {
 	defer b.enter()()
+	if b.batchHold != nil {
+		select {
+		case <-b.batchHold:
+		case <-ctx.Done():
+			return 0, 0, ctx.Err()
+		}
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.batchSize = append(b.batchSize, n)
@@ -191,7 +199,10 @@ func TestCentralCoalescer_BatchErrorReachesEveryFollower(t *testing.T) {
 // TestCentralCoalescer_FollowerWaitIsBounded keeps a stalled statement from
 // holding requests longer than one consult timeout after they join.
 func TestCentralCoalescer_FollowerWaitIsBounded(t *testing.T) {
-	backend := &batchingCentral{tokens: 10}
+	// The leader has its own timeout. Its expiry starts the follower batch,
+	// which must also remain stalled while the follower's timer expires.
+	backend := &batchingCentral{tokens: 10, batchHold: make(chan struct{})}
+	t.Cleanup(func() { close(backend.batchHold) })
 	var c centralCoalescer
 	_, followers := joinBehindLeader(t, &c, backend, 1)
 	start := time.Now()

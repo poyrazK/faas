@@ -544,6 +544,28 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		d.markDead(ctx, row, "webhook: subscription disabled")
 		return
 	}
+	if row.Event == state.OperationEffectEvent {
+		guard, ok := d.store.(state.OperationEffectDeliveryStore)
+		if !ok {
+			d.markDead(ctx, row, "webhook: operation effect scope guard unavailable")
+			return
+		}
+		allowed, err := guard.OperationEffectDeliveryAllowed(ctx, row.ID)
+		if errors.Is(err, state.ErrNotOperationEffect) {
+			// Preserve arbitrary event names in the existing application outbox.
+			allowed, err = true, nil
+		}
+		if err != nil {
+			// Do not consume authority or transmit while its state is unknown.
+			// The existing in-flight lease will recover the delivery for retry.
+			d.log.WarnContext(ctx, "webhook: operation effect scope check failed", "delivery_id", row.ID)
+			return
+		}
+		if !allowed {
+			d.markDead(ctx, row, "webhook: operation effect scope or destination revoked")
+			return
+		}
+	}
 
 	// Unseal the secret. apid sealed on write; we unseal on
 	// dispatch. Mirrors the alert dispatcher's flow

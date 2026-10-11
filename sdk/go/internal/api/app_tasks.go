@@ -33,6 +33,7 @@ func (s AppTaskStatus) Terminal() bool {
 
 type CreateAppTaskRequest struct {
 	VerificationDeploymentID string   `json:"verification_deployment_id,omitempty"`
+	SmokeDeploymentID        string   `json:"smoke_deployment_id,omitempty"`
 	Command                  []string `json:"command"`
 	CommandShell             bool     `json:"command_shell,omitempty"`
 	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`

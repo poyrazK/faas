@@ -24,6 +24,7 @@ func TestS3MultipartCopyOutcomes(t *testing.T) {
 		want       error
 	}{
 		{"success", `<CopyPartResult><ETag>&quot;part&quot;</ETag><LastModified>2026-10-02T10:00:00Z</LastModified></CopyPartResult>`, 200, false, nil},
+		{"asynchronous acceptance", `<CopyPartResult><ETag>&quot;part&quot;</ETag></CopyPartResult>`, 202, false, ErrUnavailable},
 		{"source changed", `<Error><Code>PreconditionFailed</Code></Error>`, 412, true, ErrPreconditionFailed},
 		{"source missing", `<Error><Code>NoSuchKey</Code></Error>`, 404, true, ErrNotFound},
 		{"invalid range", `<Error><Code>InvalidArgument</Code></Error>`, 400, true, ErrInvalid},

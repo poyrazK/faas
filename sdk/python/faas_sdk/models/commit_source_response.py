@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.commit_source_response_contract_version import (
+    CommitSourceResponseContractVersion,
+    check_commit_source_response_contract_version,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="CommitSourceResponse")
@@ -21,6 +25,8 @@ class CommitSourceResponse:
     app_id: UUID
     name: str
     enabled: bool
+    contract_version: CommitSourceResponseContractVersion
+    allow_tenant_selection: bool
     operation_policy: str | Unset = UNSET
     """Immutable managed Operations policy. Absent only for legacy internal sources."""
     relay_status: str | Unset = UNSET
@@ -38,6 +44,10 @@ class CommitSourceResponse:
         name = self.name
 
         enabled = self.enabled
+
+        contract_version: int = self.contract_version
+
+        allow_tenant_selection = self.allow_tenant_selection
 
         operation_policy = self.operation_policy
 
@@ -63,6 +73,8 @@ class CommitSourceResponse:
                 "app_id": app_id,
                 "name": name,
                 "enabled": enabled,
+                "contract_version": contract_version,
+                "allow_tenant_selection": allow_tenant_selection,
             }
         )
         if operation_policy is not UNSET:
@@ -91,6 +103,10 @@ class CommitSourceResponse:
 
         enabled = d.pop("enabled")
 
+        contract_version = check_commit_source_response_contract_version(d.pop("contract_version"))
+
+        allow_tenant_selection = d.pop("allow_tenant_selection")
+
         operation_policy = d.pop("operation_policy", UNSET)
 
         relay_status = d.pop("relay_status", UNSET)
@@ -118,6 +134,8 @@ class CommitSourceResponse:
             app_id=app_id,
             name=name,
             enabled=enabled,
+            contract_version=contract_version,
+            allow_tenant_selection=allow_tenant_selection,
             operation_policy=operation_policy,
             relay_status=relay_status,
             last_checked_at=last_checked_at,

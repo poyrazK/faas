@@ -14,7 +14,11 @@ T = TypeVar("T", bound="BindingPromotionRequest")
 
 @_attrs_define
 class BindingPromotionRequest:
-    """Policy for a server-enforced bindings promotion; the gate is always required on this route."""
+    """Policy for a server-enforced bindings promotion; the gate is always required on this route. Stored scope policy may
+    require a shorter age or application ACKs and disallow unsupported waivers. The response reports the effective
+    policy.
+
+    """
 
     expected_serving_deployment_id: UUID | Unset = UNSET
     max_verification_age: str | Unset = "10m"

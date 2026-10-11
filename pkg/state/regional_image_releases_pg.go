@@ -46,7 +46,7 @@ func (s *PgStore) CreateRegionalImageRelease(ctx context.Context, intent Regiona
 		activity = &copy
 	}
 	mutation := &regionalImageReleaseMutation{intent: intent}
-	created, outboxID, err := s.createDeployment(ctx, d, activity, mutation)
+	created, outboxID, err := s.createDeploymentOwned(ctx, d, activity, mutation, nil)
 	return RegionalImageReleaseResult{Receipt: mutation.receipt, Deployment: created, ActivityOutboxID: outboxID, Replayed: mutation.replayed}, err
 }
 

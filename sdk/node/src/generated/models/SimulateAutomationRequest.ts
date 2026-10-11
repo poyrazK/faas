@@ -2,9 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationSimulationMockAttempt } from './AutomationSimulationMockAttempt.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * Sample workflow data and successful action results for a stateless simulation.
+ * Sample workflow data and mocked action or timeout outcomes for a stateless simulation.
  */
 export type SimulateAutomationRequest = {
   definition: WorkflowSpec;
@@ -20,5 +21,9 @@ export type SimulateAutomationRequest = {
    * Ordered successful output prefix keyed by for_each root name; waits and controls cannot be mocked.
    */
   mock_item_outputs?: Record<string, Array<any>>;
+  /**
+   * Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+   */
+  mock_attempts?: Record<string, Array<AutomationSimulationMockAttempt>>;
 };
 

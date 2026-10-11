@@ -11,7 +11,31 @@
 // a simplified version (per output.go header comment).
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestApplyJSONFlagPreservesTerminatedArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"manifest", "--", "--json"},
+		{"manifest", "--", "-j"},
+		{"manifest", "--", "--json=custom"},
+	} {
+		t.Run(args[len(args)-1], func(t *testing.T) {
+			previousJSON := jsonOutput
+			t.Cleanup(func() { jsonOutput = previousJSON })
+			jsonOutput = false
+			t.Setenv("FAAS_JSON", "0")
+			if got := applyJSONFlag(append([]string(nil), args...)); !reflect.DeepEqual(got, args) || jsonOutput {
+				t.Fatalf("args=%v json=%t, want %v and human output", got, jsonOutput, args)
+			}
+			if got := applyJSONFlag(append([]string{"--json"}, args...)); !reflect.DeepEqual(got, args) || !jsonOutput {
+				t.Fatalf("args=%v json=%t, want %v and JSON output", got, jsonOutput, args)
+			}
+		})
+	}
+}
 
 // TestJsonBoolTrue_FalseStrings pins the closed-vocab of false
 // tokens. Operator consumers (manifest, release) read this when

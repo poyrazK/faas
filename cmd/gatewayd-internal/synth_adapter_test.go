@@ -375,3 +375,34 @@ func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testin
 		t.Fatalf("debug replay persisted raw response hashes: body=%x source=%x", rows[0].BodyHash, rows[0].SourceBodyHash)
 	}
 }
+
+// production-us hunt #5 (H5-44): only schedd's workflow orchestrator may
+// assert workflow step identity to the guest; a queued or CLI envelope that
+// carries the same headers loses them.
+func TestSynthAdapterKeepsWorkflowHeadersOnlyForWorkflowInvocations(t *testing.T) {
+	headers := `{"X-Faas-Workflow-Run-Id":"run-1","X-Faas-Workflow-Step":"charge","X-Faas-Workflow-Attempt":"2"}`
+	for _, tc := range []struct {
+		source state.InvocationSource
+		want   string
+	}{
+		{state.InvocationSource("workflow"), "2"},
+		{state.InvocationQueue, ""},
+		{state.InvocationAsyncInvoke, ""},
+	} {
+		var got string
+		a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get(api.WorkflowAttemptHeader)
+				_, _ = w.Write([]byte(`{}`))
+			})
+		}}
+		if _, err := a.forwardInvocation(context.Background(), gateway.Target{InstanceID: "instance-1", NodeID: "node-1"}, state.Invocation{
+			ID: "inv-1", AppID: "app-1", Source: tc.source, Headers: []byte(headers),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("source %s: attempt header = %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}

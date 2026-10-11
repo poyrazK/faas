@@ -14,7 +14,7 @@ test('Commit helper shares the business transaction and pins the public outbox',
   let writer, observer, created = false;
   await admin.connect();
   try {
-    await admin.query(`CREATE DATABASE "${database}" TEMPLATE template0`);
+    await admin.query(`CREATE DATABASE "${database}" TEMPLATE template0 ENCODING 'UTF8'`);
     created = true;
     const url = new URL(dsn);
     url.pathname = `/${database}`;
@@ -50,6 +50,21 @@ test('Commit helper shares the business transaction and pins the public outbox',
     await writer.query('ROLLBACK');
     assert.deepEqual(await counts(), { orders: 1, events: 1 });
     assert.equal((await observer.query('SELECT count(*)::int AS events FROM business.gregale_outbox')).rows[0].events, 0);
+    const customer = randomUUID();
+    const routing = { version: 2, platform_tenant_id: customer.toUpperCase(), key: 'order-5' };
+    await writer.query('BEGIN');
+    await writer.query('INSERT INTO orders VALUES(5)');
+    const routed = await insertCommitEvent(writer, { type: 'order.created', data: { order_id: 5 }, routing });
+    assert.deepEqual(await counts(), { orders: 1, events: 1 });
+    await writer.query('COMMIT');
+    assert.deepEqual(await counts(), { orders: 2, events: 2 });
+    assert.deepEqual((await observer.query('SELECT routing FROM public.gregale_outbox WHERE event_id=$1', [routed])).rows[0].routing,
+      { ...routing, platform_tenant_id: customer });
+    await writer.query('BEGIN');
+    await insertCommitEvent(writer, { type: 'order.created', data: {}, routing });
+    await writer.query('ROLLBACK');
+    assert.deepEqual(await counts(), { orders: 2, events: 2 });
+    await assert.rejects(insertCommitEvent(writer, { type: 'order.created', data: {}, routing: { version: 2, key: null } }), TypeError);
   } finally {
     if (writer) await writer.end();
     if (observer) await observer.end();

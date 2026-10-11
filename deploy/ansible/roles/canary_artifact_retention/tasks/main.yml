@@ -14,11 +14,13 @@
     group: root
     mode: "0755"
 
+# Mode only: native-acceptance-host.yml runs this role without node_exporter,
+# so its user may not exist. 0775 matches the node_exporter role's mode.
 - name: canary_artifact_retention — create node exporter textfile directory
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
-    mode: "0755"
+    mode: "0775"
 
 - name: canary_artifact_retention — install cleanup helper
   ansible.builtin.copy:

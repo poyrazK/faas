@@ -148,6 +148,10 @@ type Group struct {
 	cfg Config
 	now func() time.Time
 	m   map[string]*breaker
+	// configFor optionally overrides cfg per key (a customer's
+	// kind=circuit_breaker rule tunes its own app's breakers, ADR-201 §2).
+	// It is called with mu held, so it must not call back into the group.
+	configFor func(key string) (Config, bool)
 	// onTransition is an optional observer for the metric surface. It is
 	// invoked while the lock is held, so implementations must not call back
 	// into the group.
@@ -159,6 +163,10 @@ func NewGroup(cfg Config, now func() time.Time) *Group {
 	if now == nil {
 		now = time.Now
 	}
+	return &Group{cfg: normalizeConfig(cfg), now: now, m: make(map[string]*breaker)}
+}
+
+func normalizeConfig(cfg Config) Config {
 	if cfg.Window <= 0 {
 		cfg.Window = time.Second
 	}
@@ -171,7 +179,27 @@ func NewGroup(cfg Config, now func() time.Time) *Group {
 	if cfg.MinRequests < 1 {
 		cfg.MinRequests = 1
 	}
-	return &Group{cfg: cfg, now: now, m: make(map[string]*breaker)}
+	return cfg
+}
+
+// WithConfigFor installs a per-key override of the group's Config. fn
+// returns false to keep the group default for a key. It runs with the group
+// lock held, so it must be fast, non-blocking and must not call back into
+// the group. Returns g for chaining. Not safe to call once the group is in
+// use.
+func (g *Group) WithConfigFor(fn func(key string) (Config, bool)) *Group {
+	g.configFor = fn
+	return g
+}
+
+// cfgAt is the effective Config for key. Caller holds g.mu.
+func (g *Group) cfgAt(key string) Config {
+	if g.configFor != nil {
+		if cfg, ok := g.configFor(key); ok {
+			return normalizeConfig(cfg)
+		}
+	}
+	return g.cfg
 }
 
 // WithTransitionObserver registers a callback fired on every state change.
@@ -189,6 +217,15 @@ func (g *Group) WithTransitionObserver(fn func(key string, from, to State)) *Gro
 // stays half-open with a permanently reserved probe slot. Every call site in
 // this repo reports through a deferred call for that reason.
 func (g *Group) Allow(key string) bool {
+	ok, _ := g.Admit(key)
+	return ok
+}
+
+// Admit is Allow that also reports whether this admission reserved the
+// half-open probe. A caller that may abandon a request before it reaches the
+// target releases the probe only when probe is true, so it cannot free a
+// probe slot another request holds.
+func (g *Group) Admit(key string) (ok, probe bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	b := g.at(key)
@@ -196,18 +233,18 @@ func (g *Group) Allow(key string) bool {
 
 	if b.state == StateOpen {
 		if now.Sub(b.openedAt) < b.openFor {
-			return false
+			return false, false
 		}
 		g.transition(key, b, StateHalfOpen)
 	}
 	if b.state == StateHalfOpen {
 		if b.probeInFlight {
-			return false
+			return false, false
 		}
 		b.probeInFlight = true
-		return true
+		return true, true
 	}
-	return true
+	return true, false
 }
 
 // Success reports a successful outcome for key.
@@ -231,6 +268,7 @@ func (g *Group) Release(key string) {
 func (g *Group) observe(key string, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	cfg := g.cfgAt(key)
 	b := g.at(key)
 	now := g.now()
 
@@ -242,24 +280,24 @@ func (g *Group) observe(key string, ok bool) {
 		if ok {
 			g.reset(b)
 			g.transition(key, b, StateClosed)
-			b.openFor = g.cfg.OpenDuration
+			b.openFor = cfg.OpenDuration
 			return
 		}
-		g.open(key, b, now)
+		g.open(key, b, now, cfg)
 		return
 	}
 
-	g.record(b, now, ok)
+	g.record(b, now, ok, cfg)
 	if b.state != StateClosed {
 		return
 	}
-	successes, failures := g.totals(b, now)
+	successes, failures := g.totals(b, now, cfg)
 	total := successes + failures
-	if total < g.cfg.MinRequests || failures == 0 {
+	if total < cfg.MinRequests || failures == 0 {
 		return
 	}
-	if float64(failures)/float64(total) >= g.cfg.FailureThreshold {
-		g.open(key, b, now)
+	if float64(failures)/float64(total) >= cfg.FailureThreshold {
+		g.open(key, b, now, cfg)
 	}
 }
 
@@ -329,7 +367,7 @@ func (g *Group) Len() int {
 func (g *Group) at(key string) *breaker {
 	b, ok := g.m[key]
 	if !ok {
-		b = &breaker{state: StateClosed, openFor: g.cfg.OpenDuration}
+		b = &breaker{state: StateClosed, openFor: g.cfgAt(key).OpenDuration}
 		g.m[key] = b
 	}
 	b.lastTouched = g.now()
@@ -337,7 +375,7 @@ func (g *Group) at(key string) *breaker {
 }
 
 // open moves a breaker into the open state and doubles the next backoff.
-func (g *Group) open(key string, b *breaker, now time.Time) {
+func (g *Group) open(key string, b *breaker, now time.Time, cfg Config) {
 	// Double from the interval just served, not from the base, so a target
 	// that keeps failing its probe is backed off geometrically rather than
 	// re-probed every OpenDuration forever.
@@ -345,11 +383,11 @@ func (g *Group) open(key string, b *breaker, now time.Time) {
 	if b.state == StateHalfOpen {
 		next *= 2
 	}
-	if next > g.cfg.MaxOpenDuration {
-		next = g.cfg.MaxOpenDuration
+	if next > cfg.MaxOpenDuration {
+		next = cfg.MaxOpenDuration
 	}
-	if next < g.cfg.OpenDuration {
-		next = g.cfg.OpenDuration
+	if next < cfg.OpenDuration {
+		next = cfg.OpenDuration
 	}
 	b.openFor = next
 	b.openedAt = now
@@ -372,8 +410,8 @@ func (g *Group) transition(key string, b *breaker, to State) {
 
 // record increments the bucket covering now, aging out any bucket that has
 // fallen outside the window.
-func (g *Group) record(b *breaker, now time.Time, ok bool) {
-	span := g.cfg.Window / windowBuckets
+func (g *Group) record(b *breaker, now time.Time, ok bool, cfg Config) {
+	span := cfg.Window / windowBuckets
 	if span <= 0 {
 		span = time.Nanosecond
 	}
@@ -399,10 +437,10 @@ func (g *Group) record(b *breaker, now time.Time, ok bool) {
 }
 
 // totals sums the buckets still inside the window.
-func (g *Group) totals(b *breaker, now time.Time) (successes, failures int) {
+func (g *Group) totals(b *breaker, now time.Time, cfg Config) (successes, failures int) {
 	for i := range b.buckets {
 		slot := &b.buckets[i]
-		if slot.at.IsZero() || now.Sub(slot.at) >= g.cfg.Window {
+		if slot.at.IsZero() || now.Sub(slot.at) >= cfg.Window {
 			continue
 		}
 		successes += slot.successes

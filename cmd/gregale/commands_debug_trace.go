@@ -16,7 +16,8 @@ import (
 // guarantees with `requests show` without exposing the operator-only trace
 // ring endpoint.
 func cmdDebugRequestsTrace(args []string) int {
-	if len(args) != 2 {
+	args, ok := debugRequestRefArgs(args)
+	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale debug requests trace <slug> <request-id-or-row-id>", debugCmdDocsTopic)
 		return 1
 	}

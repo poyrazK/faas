@@ -68,7 +68,9 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		{"on_failure_destination_id", inv.OnFailureDestinationID, false, &params.OnFailureDestinationID},
 		{"platform_tenant_id", inv.PlatformTenantID, false, &params.PlatformTenantID},
 		{"queue_binding_id", inv.QueueBindingID, false, &params.QueueBindingID},
+		{"environment_id", inv.EnvironmentID, false, &params.EnvironmentID},
 		{"occurrence_id", inv.OccurrenceID, false, &params.OccurrenceID},
+		{"replayed_from_invocation_id", inv.ReplayedFromInvocationID, false, &params.ReplayedFromInvocationID},
 	} {
 		if input.value == "" && !input.required {
 			continue
@@ -78,6 +80,11 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 			return Invocation{}, fmt.Errorf("%w: invocation %s must be a UUID", ErrInvalidArgument, input.name)
 		}
 		*input.target = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	if inv.ReplayedFromInvocationID != "" {
+		if err := refreshEventReplayCapacity(ctx, db, inv.ReplayedFromInvocationID); err != nil {
+			return Invocation{}, err
+		}
 	}
 	row, err := sqlc.New().EnqueueInvocationRow(ctx, db, params)
 	if err != nil {
@@ -104,7 +111,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 	inv := Invocation{
 		ID: uuidString(row.ID), AppID: uuidString(row.AppID), AccountID: uuidString(row.AccountID),
-		OperationID:     uuidString(row.OperationID),
+		EnvironmentID: uuidString(row.EnvironmentID), OperationID: uuidString(row.OperationID),
 		DeploymentScope: row.DeploymentScope, PlatformTenantID: uuidString(row.PlatformTenantID),
 		InstanceID: row.InstanceID.String, Source: InvocationSource(row.Source),
 		QueueBindingID: uuidString(row.QueueBindingID), QueueName: row.QueueName, State: InvocationState(row.State),
@@ -114,7 +121,9 @@ func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 		AckURL: row.AckUrl.String, Result: row.Result,
 		LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), ReceivedAt: timestamptzToTimePtr(row.ReceivedAt),
 		CompletedAt: timestamptzToTimePtr(row.CompletedAt), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration,
-		QuotaReserved: row.QuotaReserved, LastError: row.LastError.String, CreatedAt: timestamptzToTime(row.CreatedAt),
+		ReplayedFromInvocationID: uuidString(row.ReplayedFromInvocationID), ReplayRootInvocationID: uuidString(row.ReplayRootInvocationID),
+		ReplayRootCreatedAt: timestamptzToTimePtr(row.ReplayRootCreatedAt),
+		QuotaReserved:       row.QuotaReserved, LastError: row.LastError.String, CreatedAt: timestamptzToTime(row.CreatedAt),
 		WorkPolicyName: row.WorkPolicyName.String, WorkPolicyRevision: row.WorkPolicyRevision.Int64,
 		WorkKeyDigest: row.WorkKeyDigest, WorkFairnessDigest: row.WorkFairnessDigest,
 		WorkFairnessLimit: int(row.WorkFairnessLimit.Int32), WorkExpiresAt: timestamptzToTimePtr(row.WorkExpiresAt),

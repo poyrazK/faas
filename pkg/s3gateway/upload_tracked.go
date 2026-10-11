@@ -2,7 +2,10 @@ package s3gateway
 
 import (
 	"context"
+	"crypto/md5" // #nosec G501 -- Required S3 Content-MD5 protocol checksum.
+	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,7 +51,9 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 	// Disable redirects even when an injected client permits them. No replayable body.
 	client := *h.client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := client.Do(upstream) // #nosec G704 -- The immutable registry backend signs the URL; customers supply only the object key and metadata.
+	response, err := objectstorageactivity.ExecuteUpload(ctx, h.store, req.bucket, c, func(context.Context) (*http.Response, error) {
+		return client.Do(upstream)
+	})
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
@@ -69,16 +75,39 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		h.providerHTTPError(w, r, req, response.StatusCode, c.Key)
 		return
 	}
-	ack, err := objectstorage.VerifyObjectWriteAcknowledgment(response.Header)
+	ack, err := objectstorage.VerifyProviderObjectWriteAcknowledgment(req.provider, response.Header)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
 	c.ETag = ack.ETag
-	verified, err := objectstorage.VerifyEncryptionAcknowledgment(response.Header, c.Encryption)
+	verified, err := objectstorage.VerifyProviderEncryptionAcknowledgment(req.provider, response.Header, c.Encryption)
 	if err != nil {
 		h.providerError(w, r, req, err, c.Key)
 		return
+	}
+	if !c.Protection.Empty() {
+		ctx, bindErr := h.protectionContext(r.Context(), req, c.Protection)
+		if bindErr != nil {
+			h.providerError(w, r, req, bindErr, c.Key)
+			return
+		}
+		c.VerifiedProtection, err = req.provider.(objectstorage.ObjectWriteProtectionProvider).ConfirmObjectWriteProtection(ctx, req.bucket.PhysicalName, c.Key, ack.ProviderVersionID, c.ID, c.Bytes, false, ack.ETag)
+		if err != nil {
+			h.providerError(w, r, req, err, c.Key)
+			return
+		}
+	}
+	if _, gcs := req.provider.(*objectstorage.GCS); gcs && !c.Encryption.Empty() {
+		if !h.recordProviderRequest(w, r, req) {
+			return
+		}
+		proof, err := req.provider.(objectstorage.ObjectEncryptionProvider).ConfirmEncryptedObject(r.Context(), req.bucket.PhysicalName, c.Key, c.ID, c.Bytes, c.Encryption)
+		if err != nil || proof.ProviderVersionID != ack.ProviderVersionID {
+			h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
+			return
+		}
+		verified = proof.Encryption
 	}
 	c.VerifiedEncryption = verified
 	c.Status = "completed"
@@ -109,9 +138,23 @@ func (h *Handler) finishGatewayPut(parent context.Context, st state.ObjectTracke
 }
 
 func (h *Handler) gatewayPutRequest(ctx context.Context, r *http.Request, req requestContext, key string, file *os.File, metadata objectstorage.ObjectMetadata, c state.ObjectUploadCompletion) (*http.Request, error) {
+	var err error
+	ctx, err = h.protectionContext(ctx, req, c.Protection)
+	if err != nil {
+		return nil, err
+	}
+	if !c.Protection.Empty() {
+		checksum := md5.New() // #nosec G401 -- S3 requires the protocol checksum; this is not a security hash.
+		if _, err = io.Copy(checksum, file); err != nil {
+			return nil, objectstorage.ErrUnavailable
+		}
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
+			return nil, objectstorage.ErrUnavailable
+		}
+		ctx = objectstorage.WithObjectWriteChecksum(ctx, base64.StdEncoding.EncodeToString(checksum.Sum(nil)))
+	}
 	sign := objectstorage.SignRequest{Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: metadata.ContentType, ExpiresIn: int64(api.ObjectGatewayPutURLTTL.Seconds()), CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition, ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage, Metadata: metadata.Metadata, Tags: metadata.Tags}
 	var signed objectstorage.SignedRequest
-	var err error
 	if !c.Encryption.Empty() {
 		signer, ok := req.provider.(objectstorage.ObjectEncryptionProvider)
 		if !ok {
@@ -155,7 +198,7 @@ func (h *Handler) admitGatewayPut(w http.ResponseWriter, r *http.Request, req re
 		c, ready := h.loadURLPutReceipt(w, r, req, st)
 		return st, c, ready
 	}
-	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending", Encryption: req.encryption.Clone()}, h.registry.Accounting)
+	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending", Protection: req.protection.Clone(), Encryption: req.encryption.Clone()}, h.registry.Accounting)
 	return st, c, h.writeAdmissionError(w, r, req, err)
 }
 func (h *Handler) dispatchGatewayPut(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, bool) {

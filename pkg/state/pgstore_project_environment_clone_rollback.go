@@ -32,6 +32,7 @@ func (s *PgStore) RollbackProjectEnvironmentClone(ctx context.Context, accountID
 	if slug == "production" {
 		return ErrConflict
 	}
+
 	var hasDeployments, hasManagedSecrets bool
 	if err := tx.QueryRow(ctx, `
 		select exists (
@@ -48,6 +49,9 @@ func (s *PgStore) RollbackProjectEnvironmentClone(ctx context.Context, accountID
 	}
 	if hasDeployments || hasManagedSecrets {
 		return ErrConflict
+	}
+	if err := cleanupEnvironmentInvocationsDB(ctx, tx, accountID, projectID, slug); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from app_envs e using apps a

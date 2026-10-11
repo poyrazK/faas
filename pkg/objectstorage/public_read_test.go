@@ -60,6 +60,12 @@ func TestValidPublicReadPath(t *testing.T) {
 }
 
 func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
+	for _, mode := range []string{"", api.ObjectStorageGatewaySafetyV1} {
+		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode) })
+	}
+}
+
+func publicReadServesWithoutNext(t *testing.T, mode string) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/" || len(r.URL.Query()) != 0 {
 			t.Errorf("upstream request = %s %s", r.Method, r.URL.Path)
@@ -118,6 +124,13 @@ func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if mode != "" {
+		since := time.Now().UTC().Add(-time.Minute)
+		registry.Accounting.AccountingMode = mode
+		registry.Accounting.GatewayMeteringSince = &since
+		registry.Accounting.MaxMonthlyCostMillicents = 0
+		registry.Accounting.MaxMonthlyEgressBytes = 3
+	}
 	nextCalled := false
 	h, err := NewPublicReadHandler(PublicReadConfig{
 		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, AppsDomain: "apps.example",
@@ -141,5 +154,12 @@ func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
 	metrics, err := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC())
 	if err != nil || len(metrics) != 1 || metrics[0].RequestCount != 1 || metrics[0].EgressBytes != 3 {
 		t.Fatalf("metrics = %+v, err=%v", metrics, err)
+	}
+	if mode != "" {
+		blocked := httptest.NewRecorder()
+		h.ServeHTTP(blocked, req.Clone(t.Context()))
+		if blocked.Code != 503 || blocked.Header().Get("Cache-Control") == publicImmutableCacheControl {
+			t.Fatal("public asset bypassed consumed egress budget", blocked.Code)
+		}
 	}
 }

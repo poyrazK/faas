@@ -78,6 +78,72 @@ func TestWorkflowScheduleStartsAndExecutesWithoutAdapter(t *testing.T) {
 	}
 }
 
+func TestTenantWorkflowSchedulesRunPerActiveTenantLink(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "tenant-schedule-loop@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tenant-schedule-loop",
+		Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions := json.RawMessage(`[{"name":"report","trigger":{"type":"schedule","schedule":"* * * * *","timezone":"UTC","overlap":"skip"},"steps":[{"name":"generate","run":"report"}]}]`)
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, ImageDigest: "sha256:abc", Workflows: definitions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	tenantStore := store
+	var tenantIDs []string
+	for i := range 2 {
+		ref := fmt.Sprintf("schedule-customer-%d", i)
+		tenant, _, err := tenantStore.CreatePlatformTenant(ctx, account.ID, ref, ref, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, ref, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tenantStore.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+			t.Fatal(err)
+		}
+		tenantIDs = append(tenantIDs, tenant.ID)
+	}
+	engine, _ := makeEngine(t, store, &fakeWakeVMM{})
+	now := time.Date(2026, 10, 6, 10, 0, 30, 0, time.UTC)
+	loop := NewLoop(nil, engine, slog.Default()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
+	if err := loop.runWorkflowSchedulesTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := loop.runWorkflowSchedulesTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A second scheduler at the same minute observes durable tenant cursors.
+	restarted := NewLoop(nil, engine, slog.Default()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
+	if err := restarted.runWorkflowSchedulesTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runs, total, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10})
+	if err != nil || total != 2 || len(runs) != 2 {
+		t.Fatalf("tenant scheduled runs=%+v total=%d err=%v", runs, total, err)
+	}
+	seen := map[string]bool{}
+	for _, run := range runs {
+		seen[run.PlatformTenantID] = true
+	}
+	if !seen[tenantIDs[0]] || !seen[tenantIDs[1]] {
+		t.Fatalf("runs did not preserve each tenant identity: %+v", seen)
+	}
+}
+
 func TestWorkflowSchedulesHaveCapacityWhileHandlersAreBusy(t *testing.T) {
 	pool := newWorkPool(quietLog(), nil)
 	release := fillSlots(t, pool, workWorkflowDispatch)

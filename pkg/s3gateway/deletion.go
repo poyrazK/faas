@@ -44,6 +44,8 @@ func (h *Handler) deleteObjectIntent(ctx context.Context, req requestContext, ke
 		return nil
 	}
 	svc := objectstorage.DeletionService{Store: st, Provider: req.provider, BeforeRequest: before}
+	// Admission and original recovery share one durable deletion journal;
+	// generic request completion supplies no authority to settle that journal.
 	j, e := svc.Start(ctx, req.bucket, key, selector, id, h.registry.Accounting)
 	if e == nil && j.State != "completed" {
 		e = objectstorage.ErrUnavailable

@@ -49,13 +49,15 @@
   register: pg_svc
   failed_when: false  # CI/chroot may not have systemd
 
+# Same owner/mode as the node_exporter role; the collector writes through its
+# node_exporter supplementary group instead of owning the shared directory.
 - name: postgres — allow metrics collector to publish node_exporter textfiles
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
-    owner: postgres
+    owner: node_exporter
     group: node_exporter
-    mode: "0755"
+    mode: "0775"
 
 - name: postgres — install ordinary-connection capacity collector
   ansible.builtin.copy:

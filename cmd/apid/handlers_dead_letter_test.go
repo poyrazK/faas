@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -258,5 +259,24 @@ func TestAccountUnifiedDeadLetter_PreventsCrossAccountRead(t *testing.T) {
 	probe := foreign.do(t, http.MethodGet, "/v1/account/dlq/"+events.Events[0].ID, nil, nil)
 	if probe.Code != http.StatusNotFound {
 		t.Fatalf("cross-account account DLQ status = %d, want 404; body=%s", probe.Code, probe.Body.String())
+	}
+}
+
+// pgDeadLetterIDStore reproduces PgStore's answer for an id that is not a UUID.
+type pgDeadLetterIDStore struct{ *state.MemStore }
+
+func (pgDeadLetterIDStore) DeadLetterEventByID(context.Context, string, string) (state.DeadLetterEvent, error) {
+	return state.DeadLetterEvent{}, state.ErrInvalidArgument
+}
+
+// production-us hunt #4: `dlq inspect <app> not-an-id` returned 500 Internal
+// Error on Postgres, which rejects a non-UUID event id before the lookup.
+func TestUnifiedDeadLetter_MalformedIDIsNotFound(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "dlq-owner")
+	e.s.store = pgDeadLetterIDStore{MemStore: e.store}
+	rec := e.do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq/not-an-id", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("malformed id status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }

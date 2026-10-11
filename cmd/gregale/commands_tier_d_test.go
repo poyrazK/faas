@@ -308,6 +308,19 @@ func TestTierD_AppSecurity_PostureReadOnly(t *testing.T) {
 	}
 }
 
+// production-us hunt #4 (H4-40): a bare `app <slug> security` sent an empty
+// PATCH and printed "security updated". Without a mutation flag it reads.
+func TestTierD_AppSecurity_BareIsRead(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"app_id":"a1","slug":"demo","profile":"public","score":90,"findings":[]}`, http.StatusOK)
+	if code := cmdAppSecurity("demo", nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "GET" {
+		t.Fatalf("bare security sent %s %s, want a read-only GET", f.sawMethod, f.sawPath)
+	}
+}
+
 // TestTierD_AppSecurity_FalseFlagWorks pins the literal-string gate:
 // `--require-signed=false` (lowercase) must parse to bool(false), not
 // fail closed. strconv.ParseBool's looseness (accepts "1", "t", "T",
@@ -547,6 +560,32 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 	}
 	if _, present := got["scheduled_at"]; present {
 		t.Fatalf("relative request unexpectedly serialized scheduled_at: %v", got)
+	}
+}
+
+// production-us hunt #4: `delayed-task add --app <slug> 20s` is the spelling
+// the help prints, and the parser rejected it as an unexpected positional.
+func TestTierD_DelayedTaskAdd_PositionalDuration(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := cmdDelayedTaskAdd([]string{"--app", "demo", "20s", "--path", "/delayed"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["delay_seconds"] != float64(20) || got["path"] != "/delayed" {
+		t.Fatalf("body = %v, want delay_seconds=20 path=/delayed", got)
+	}
+	for _, args := range [][]string{
+		{"--app", "demo", "20s", "--delay", "30m"},
+		{"--app", "demo", "20s", "--scheduled-at", "2030-01-01T00:00:00Z"},
+		{"--app", "demo", "20s", "30s"},
+	} {
+		if code := cmdDelayedTaskAdd(args); code != 1 {
+			t.Fatalf("cmdDelayedTaskAdd(%q) = %d, want 1: a positional duration cannot combine with other timing", args, code)
+		}
 	}
 }
 

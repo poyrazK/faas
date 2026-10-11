@@ -11,10 +11,11 @@ from faas_sdk.models.simulate_automation_response import SimulateAutomationRespo
 from faas_sdk.types import UNSET
 
 REQUEST = {
-    "definition": {"name": "sample", "steps": [{"name": "a", "run": "a"}]},
+    "definition": {"name": "sample", "steps": [{"name": "a", "run": "a"}, {"name": "b", "run": "b"}]},
     "input": {"number": 9007199254740993, "active": False},
     "mock_outputs": {"a": None},
     "mock_item_outputs": {"batch": [False, None]},
+    "mock_attempts": {"b": [{"outcome": "failure", "http_status": 503}, {"outcome": "success", "output": None}]},
 }
 RESPONSE = {
     "definition_valid": True,
@@ -22,8 +23,20 @@ RESPONSE = {
     "complete": False,
     "issues": [],
     "warnings": [],
-    "step_order": ["a"],
-    "trace": [{"step_name": "a", "kind": "run", "state": "mocked", "output": None, "when_matched": False}],
+    "step_order": ["b"],
+    "trace": [
+        {
+            "step_name": "b",
+            "kind": "run",
+            "state": "mocked",
+            "output": None,
+            "when_matched": False,
+            "attempts": [
+                {"attempt": 1, "outcome": "failure", "http_status": 503},
+                {"attempt": 2, "outcome": "success"},
+            ],
+        }
+    ],
 }
 
 
@@ -40,6 +53,8 @@ def assert_trace(response):
     assert response.complete is False
     assert response.trace[0].output is None
     assert response.trace[0].when_matched is False
+    assert len(response.trace[0].attempts) == 2
+    assert response.trace[0].attempts[0].http_status == 503
     assert response.trace[0].input_ is UNSET
     assert response.to_dict() == RESPONSE
 

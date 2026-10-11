@@ -156,6 +156,7 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"smoke":                     true,
 		"containers":                true,
 		"exclusive-operations-only": true,
+		"managed-operation-only":    true,
 	}
 	var sum, laneMax time.Duration
 	for phase, d := range phaseOuterBudgets(t) {

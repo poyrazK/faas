@@ -110,6 +110,7 @@ func (s *server) runSafeReleaseEmergencyAbort(ctx context.Context) {
 		s.log.Error("safe release worker lease health store is unavailable")
 		return
 	}
+	checkedStore := bindingCheckedEmergencyRecoveryStore{SafeReleaseEmergencyRecoveryStore: store, server: s}
 	counter := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "faas_safe_release_emergency_abort_total",
 		Help: "APID emergency canary abort outcomes after the worker lease expires.",
@@ -131,7 +132,7 @@ func (s *server) runSafeReleaseEmergencyAbort(ctx context.Context) {
 			s.log.Warn("safe release worker lease observation failed", "err", err)
 		}
 		cancel()
-		serving, err := emergencyAbortSweep(ctx, store, s.log, observe)
+		serving, err := emergencyAbortSweep(ctx, checkedStore, s.log, observe)
 		if err == nil {
 			leaseMetrics.serving.Set(float64(serving))
 		} else if ctx.Err() == nil {

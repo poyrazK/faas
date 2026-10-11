@@ -77,6 +77,17 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		AdmitResize: func(ctx context.Context, accountID string, target managedpostgres.Spec) error {
+			account, err := accountStore.AccountByID(ctx, accountID)
+			if err != nil {
+				return err
+			}
+			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			if !ok || limits.DatabasesMax <= 0 || !managedPostgresPlanAllows(limits, target) || (!target.ScaleToZero && !limits.AlwaysOnAllowed) {
+				return managedpostgres.ErrQuotaExceeded
+			}
+			return nil
+		},
 		Admit: func(ctx context.Context, accountID string) error {
 			if !registry.UsagePolicy().Enabled {
 				return nil

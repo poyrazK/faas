@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -38,7 +39,7 @@ import (
 // `gregale invocations get` errors. Mirrors PrintUsage's docs URL
 // convention (output.go:144) so the line carries the stable docs
 // site pointer.
-const invocationGetCmdUsage = "usage: gregale invocations get [--json|--replay] <id>"
+const invocationGetCmdUsage = "usage: gregale invocations get [--json] [--replay|--replay-keyed] <id>"
 
 const invocationWaitCmdUsage = "usage: gregale invocations wait [--json] [--timeout D] [--interval D] <id>"
 
@@ -114,13 +115,18 @@ func cmdInvocationsWait(args []string) int {
 					return code
 				}
 			}
-			_, _ = fmt.Fprintf(osStderr, "gregale: timed out waiting for invocation %s; it may still be running (inspect with `gregale invocations get %s`)\n", id, id)
+			problem := api.Problem{
+				Status:  http.StatusRequestTimeout,
+				Code:    "invocation_wait_timeout",
+				Title:   "Invocation wait timed out",
+				Detail:  fmt.Sprintf("timed out waiting for invocation %s; it may still be running", id),
+				Hint:    fmt.Sprintf("Inspect it with 'gregale invocations get %s'.", id),
+				DocsURL: cliDocsURL,
+			}
+			// The CLI wait deadline keeps its conventional exit status; it
+			// does not cancel the durable invocation on the server.
+			_ = printErr(problem.Title, &APIError{Problem: problem})
 			return 124
-		}
-		var ae *APIError
-		if errors.As(err, &ae) {
-			renderAPIError(os.Stderr, ae)
-			return exitCodeForStatus(ae.Problem.Status)
 		}
 		return printErr("Could not wait for invocation", err)
 	}
@@ -235,10 +241,11 @@ func cmdInvocationsList(args []string) int {
 func cmdInvocationsGet(args []string) int {
 	fs := newFlagSet("invocations get", flag.ContinueOnError)
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
+	replayKeyed := fs.Bool("replay-keyed", false, "recover failed keyed work in its captured policy lane")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if fs.NArg() != 1 || *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -257,8 +264,13 @@ func cmdInvocationsGet(args []string) int {
 		}
 		return printErr("Could not fetch invocation", err)
 	}
-	if *replay {
-		resp, err := client.ReplayInvocation(ctx, id)
+	if *replay || *replayKeyed {
+		var resp api.AsyncInvokeResponse
+		if *replayKeyed {
+			resp, err = client.ReplayKeyedInvocation(ctx, id)
+		} else {
+			resp, err = client.ReplayInvocation(ctx, id)
+		}
 		if err != nil {
 			var ae *APIError
 			if errors.As(err, &ae) {

@@ -505,7 +505,7 @@ func TestCDControlPlaneConvergesControlPlaneRolesBeforeActivation(t *testing.T) 
 		"COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}",
 		"if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then",
 		"trap 'rm -rf -- \"$work\"' EXIT",
-		"-r deploy/ansible/requirements.yml",
+		`ansible_collections/community/postgresql`,
 		`"$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane`,
 		`--manifest-file "$CANONICAL_ROOT/production-manifest.yaml"`,
 		`--ssh-known-hosts-file "$work/known_hosts"`,

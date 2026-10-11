@@ -943,3 +943,43 @@ func TestManagerStatsIncludesCallbackOutboxCounters(t *testing.T) {
 		t.Fatalf("Manager Stats = %+v, want pending callback counters", stats)
 	}
 }
+
+// TestDiscardDeadLetterErrorPaths covers the operator discard added for
+// production-us hunt #4 beyond the happy path exercised through the client.
+func TestDiscardDeadLetterErrorPaths(t *testing.T) {
+	var nilQueue *CallbackOutbox
+	if err := nilQueue.DiscardDeadLetter("evt_x"); !errors.Is(err, ErrCallbackOutboxUnavailable) {
+		t.Fatalf("nil outbox discard = %v, want unavailable", err)
+	}
+	if err := (HTTPHooks{}).DiscardCallbackDeadLetter("evt_x"); !errors.Is(err, ErrCallbackOutboxUnavailable) {
+		t.Fatalf("hooks without a durable queue = %v, want unavailable", err)
+	}
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxAttempts: 1})
+	if err := queue.DiscardDeadLetter("../escape"); !errors.Is(err, ErrCallbackOutboxItem) {
+		t.Fatalf("path-like id = %v, want invalid item", err)
+	}
+	if err := queue.DiscardDeadLetter("evt_unknown"); !errors.Is(err, ErrCallbackDeadLetterNotFound) {
+		t.Fatalf("unknown id = %v, want not found", err)
+	}
+	event := testCallbackEvent()
+	if claimed, err := queue.EnqueueAndClaim(event); err != nil || !claimed {
+		t.Fatalf("EnqueueAndClaim = (%v, %v)", claimed, err)
+	}
+	if err := queue.DiscardDeadLetter(event.ID); !errors.Is(err, ErrCallbackDeadLetterNotFound) {
+		t.Fatalf("discard of a pending (not dead) event = %v, want not found", err)
+	}
+	if err := queue.Fail(event.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The retained file disappearing underneath (operator rm, disk repair)
+	// reports not found and drops the stale index entry.
+	if err := os.Remove(filepath.Join(queue.deadRoot, event.ID+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.DiscardDeadLetter(event.ID); !errors.Is(err, ErrCallbackDeadLetterNotFound) {
+		t.Fatalf("discard after file removal = %v, want not found", err)
+	}
+	if stats := queue.Stats(); stats.DeadLetterTotal != 0 || stats.DeadLetterDiscards != 0 {
+		t.Fatalf("stats after vanished file = %+v, want no dead letters and no counted discard", stats)
+	}
+}

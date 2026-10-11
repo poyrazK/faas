@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (m *MemStore) webhookAutomationEndpointLocked(opts WebhookAutomationBindingOptions) (InboundWebhookEndpoint, error) {
@@ -39,7 +42,7 @@ func (m *MemStore) SaveWebhookAutomationBinding(_ context.Context, opts WebhookA
 		}
 	}
 	dep, account, eligible := m.workflowScheduleTargetLocked(endpoint.AppID)
-	if !eligible || endpoint.Provider != InboundWebhookProviderStripe {
+	if !eligible || (endpoint.Provider != InboundWebhookProviderStripe && endpoint.Provider != InboundWebhookProviderGeneric) {
 		return WebhookAutomationBinding{}, ErrWebhookAutomationUnavailable
 	}
 	spec, _, err := webhookAutomationDefinition(dep.Workflows, m.automationRecordsLocked(endpoint.AppID), opts.WorkflowName, account.Plan)
@@ -88,7 +91,15 @@ func (m *MemStore) DeleteWebhookAutomationBinding(_ context.Context, opts Webhoo
 func webhookAutomationReceiptKey(endpointID, eventID string) string {
 	return endpointID + "\x00" + eventID
 }
-func (m *MemStore) AcceptWebhookAutomation(_ context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+func (m *MemStore) AcceptWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+	eventID, eventType, err := webhookEventFromStripeBody(body)
+	if err != nil {
+		return WebhookAutomationReceipt{}, true, err
+	}
+	return m.AcceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled)
+}
+
+func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	endpoint, err := m.webhookAutomationEndpointLocked(WebhookAutomationBindingOptions{EndpointID: verified.ID, AppID: verified.AppID, AccountID: verified.AccountID})
@@ -98,13 +109,12 @@ func (m *MemStore) AcceptWebhookAutomation(_ context.Context, verified InboundWe
 	if !endpoint.Enabled || !bytes.Equal(endpoint.SigningSecretSealed, verified.SigningSecretSealed) {
 		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
 	}
-	var event struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(body, &event); err != nil {
+	if strings.TrimSpace(eventID) == "" || len(eventID) > api.WorkflowWebhookEventMaxBytes ||
+		(eventType != "" && !api.ValidInboundWebhookEventType(eventType)) ||
+		(endpoint.Provider == InboundWebhookProviderGeneric && (!api.ValidInboundWebhookEventType(eventType) || !api.ValidInboundWebhookEventID(eventID))) {
 		return WebhookAutomationReceipt{}, true, ErrAutomationInvalid
 	}
-	key := webhookAutomationReceiptKey(endpoint.ID, event.ID)
+	key := webhookAutomationReceiptKey(endpoint.ID, eventID)
 	prior, exists := m.webhookAutomationReceipts[key]
 	binding, bound := m.webhookAutomationBindings[endpoint.ID]
 	if !exists && !bound {
@@ -115,7 +125,7 @@ func (m *MemStore) AcceptWebhookAutomation(_ context.Context, verified InboundWe
 		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
 	}
 	if exists {
-		hash, err := webhookAutomationBodyHash(body)
+		hash, err := webhookAutomationBodyHashForEvent(endpoint.Provider, eventType, body)
 		if err != nil {
 			return prior, true, err
 		}
@@ -140,7 +150,7 @@ func (m *MemStore) AcceptWebhookAutomation(_ context.Context, verified InboundWe
 		}
 		return WebhookAutomationReceipt{}, true, err
 	}
-	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, reason, body, time.Now().UTC())
+	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, reason, eventID, eventType, body, time.Now().UTC())
 	if err != nil {
 		return receipt, true, err
 	}

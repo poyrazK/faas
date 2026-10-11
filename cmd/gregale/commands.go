@@ -219,6 +219,9 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 		deleteToken()
 		return printErr("Could not save CLI session", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(acct))
+	}
 	PrintOK(osStdout, "Logged in as %s (%s plan)", acct.Email, acct.Plan)
 
 	// First-run quickstart (UX §8, issue #65 D4). If the account has
@@ -228,6 +231,7 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 	if apps, err := NewClient(c.BaseURL(), plaintext).ListApps(ctx); err == nil && len(apps) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "")
 		_, _ = fmt.Fprintln(osStdout, "You're in. Next step — deploy your first app:")
+		_, _ = fmt.Fprintln(osStdout, "  gregale start                           # guided launch, test request and next steps")
 		_, _ = fmt.Fprintln(osStdout, "  cd my-project && gregale deploy         # auto-detect & ship the current directory")
 		_, _ = fmt.Fprintln(osStdout, "  gregale deploy --template hello-node    # or start from an embedded template")
 		_, _ = fmt.Fprintln(osStdout, "  gregale deploy --tarball <path.tar.gz>  # or ship a prebuilt archive")
@@ -677,6 +681,15 @@ func renderAPIError(w io.Writer, e *APIError) {
 	// rest of cmd/gregale — see output.go::writeStatus).
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if p.BindingsCheck != nil {
+		for _, blocker := range p.BindingsCheck.Blockers {
+			_, _ = fmt.Fprintf(w, "  %s: %s", blocker.Code, blocker.Message)
+			if blocker.Binding != "" {
+				_, _ = fmt.Fprintf(w, " (binding=%s scope=%s)", blocker.Binding, blocker.Scope)
+			}
+			_, _ = fmt.Fprintln(w)
+		}
 	}
 	if p.RetryAfterSeconds != nil {
 		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second

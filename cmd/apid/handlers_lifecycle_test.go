@@ -45,6 +45,24 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkerCustomMetricManifestRoundTrip(t *testing.T) {
+	want := &api.WorkerScaling{
+		Min: 1, Max: 10, Metric: api.ScalingMetricCustom,
+		Name: "mcp_tasks_outstanding", Target: 4,
+	}
+	stateManifest := stateManifestFromAPI(api.AppManifest{
+		ExecutionMode:  api.ExecutionModeWorker,
+		WorkerReplicas: want,
+	})
+	if stateManifest.WorkerReplicas == nil || stateManifest.WorkerReplicas.Name != want.Name {
+		t.Fatalf("state worker scaling = %+v, want metric name %q", stateManifest.WorkerReplicas, want.Name)
+	}
+	got := apiManifestFromState(stateManifest)
+	if !reflect.DeepEqual(got.WorkerReplicas, want) {
+		t.Fatalf("round-tripped worker scaling = %+v, want %+v", got.WorkerReplicas, want)
+	}
+}
+
 func TestAppAfterRestoreLifecycleRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	hook := &api.AfterRestoreHook{Path: "/internal/restore", TimeoutMS: 750}

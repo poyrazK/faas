@@ -162,3 +162,22 @@ legitimately cold-boot at `ColdBootTimeout` (35 s) plus admission.
   nothing was respecting it.
 - **Moving every arm off-loop, including the durable ones.** Needs outbox ack
   plumbed through the worker. Worth doing, not worth coupling to this change.
+
+## Amendment (2026-10-05): the reaper tick runs on the work pool
+
+The idle reaper still ran on the select goroutine. It parks, stops, evicts and
+reconciles lifecycle and warm pools sequentially, and a park that captures a
+snapshot is not short: across 405 production-us parks in 24 h, p50 was 0.16 s,
+p90 22.75 s and max 35 s. One tick therefore held every wake notification,
+watchdog sweep and heartbeat on the node behind its parks. It could also
+exceed `MainLoopBudget` on its own.
+
+The tick is now the `reaper` work kind: one slot, overflow drop, key `tick`.
+It is still one sequential task, so park order, per-app caps and billing
+timing are unchanged. A tick that fires while the previous one runs
+coalesces into it, and the next tick re-reads the instance table. The
+reaper's Loop-held state (`lastFloorByApp`, `runningReasonStates`) is touched
+only by that task. Engine methods already serve concurrent work-pool callers
+(prime, reconciles) and take the per-app engine lock, so a wake for the same
+app still waits for that app's park, while wakes for every other app no
+longer do. Test: `pkg/sched/loop_reaper_dispatch_test.go`.

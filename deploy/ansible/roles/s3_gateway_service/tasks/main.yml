@@ -72,6 +72,7 @@
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
     - restart faas-gatewayd-public
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — install optional provider credentials
   ansible.builtin.copy:
@@ -88,6 +89,7 @@
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
     - restart faas-gatewayd-public
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — remove stale provider credentials for ADC backends
   ansible.builtin.file:
@@ -100,6 +102,7 @@
     - restart faas-s3-gatewayd
     - restart faas-apid for object storage
     - restart faas-gatewayd-public
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — read installed provider registry
   ansible.builtin.slurp:
@@ -117,30 +120,37 @@
       us-east-1; upstream provider endpoint and region remain independent.
   when: faas_object_storage_gateway_enabled | bool
 
-- name: s3_gateway_service — create apid drop-in directory
+- name: s3_gateway_service — create APID provider drop-in directories
   ansible.builtin.file:
-    path: /etc/systemd/system/faas-apid.service.d
+    path: "/etc/systemd/system/{{ item }}.service.d"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop: [faas-apid, faas-apid-clone-worker]
 
-- name: s3_gateway_service — wire provider registry into apid
+- name: s3_gateway_service — wire provider registry into APID processes
   ansible.builtin.template:
     src: 99-faas-object-storage.conf.j2
-    dest: /etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-object-storage.conf"
     owner: root
     group: root
     mode: "0644"
   when: faas_object_storage_gateway_enabled | bool
-  notify: restart faas-apid for object storage
+  loop: [faas-apid, faas-apid-clone-worker]
+  notify:
+    - restart faas-apid for object storage
+    - restart faas-apid-clone-worker for object storage
 
-- name: s3_gateway_service — remove apid object-storage wiring when disabled
+- name: s3_gateway_service — remove APID object-storage wiring when disabled
   ansible.builtin.file:
-    path: /etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+    path: "/etc/systemd/system/{{ item }}.service.d/99-faas-object-storage.conf"
     state: absent
   when: not (faas_object_storage_gateway_enabled | bool)
-  notify: restart faas-apid for object storage
+  loop: [faas-apid, faas-apid-clone-worker]
+  notify:
+    - restart faas-apid for object storage
+    - restart faas-apid-clone-worker for object storage
 
 - name: s3_gateway_service — inspect Caddy prerequisites
   ansible.builtin.stat:

@@ -10,20 +10,22 @@ import (
 )
 
 type operationMemory struct {
-	definitions map[string]OperationDefinition
-	operations  map[string]Operation
-	events      map[string][]api.OperationEvent
-	receipts    map[string]operationIdentityReceipt
-	executions  map[string]string
-	reports     map[string]string
-	recoveries  map[string]string
-	streams     map[string]operationStreamLease
-	blobs       map[string]OperationResultBlob
+	deliveryRetries map[string]api.OperationDeliveryRetryResponse
+	definitions     map[string]OperationDefinition
+	operations      map[string]Operation
+	events          map[string][]api.OperationEvent
+	receipts        map[string]operationIdentityReceipt
+	executions      map[string]string
+	generations     map[string]int
+	reports         map[string]string
+	recoveries      map[string]string
+	streams         map[string]operationStreamLease
+	blobs           map[string]OperationResultBlob
 }
 
 func (m *MemStore) operationMemoryLocked() *operationMemory {
 	if m.operationData == nil {
-		m.operationData = &operationMemory{definitions: map[string]OperationDefinition{}, operations: map[string]Operation{}, events: map[string][]api.OperationEvent{}, receipts: map[string]operationIdentityReceipt{}, executions: map[string]string{}, reports: map[string]string{}, recoveries: map[string]string{}, blobs: map[string]OperationResultBlob{}}
+		m.operationData = &operationMemory{definitions: map[string]OperationDefinition{}, operations: map[string]Operation{}, events: map[string][]api.OperationEvent{}, receipts: map[string]operationIdentityReceipt{}, executions: map[string]string{}, generations: map[string]int{}, reports: map[string]string{}, recoveries: map[string]string{}, blobs: map[string]OperationResultBlob{}}
 	}
 	return m.operationData
 }
@@ -194,6 +196,7 @@ func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmiss
 	data.receipts[key] = operationIdentityReceipt{AccountID: op.AccountID, AppID: op.AppID, OperationID: op.ID, Fingerprint: fingerprint, ExpiresAt: now.Add(time.Duration(limits.Operations.IdempotencyRetentionSeconds) * time.Second)}
 	m.invocations[inv.ID] = inv
 	data.executions[inv.ID] = op.ID
+	data.generations[inv.ID] = op.Generation
 	return cloneOperation(op), true, nil
 }
 

@@ -59,7 +59,7 @@ func (s *PgStore) RecordObjectCustomerUsageV2(ctx context.Context, report api.Ob
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	rows, err := q.ObjectUsageBuckets(ctx, tx, mustPgUUID(report.AccountID))
+	rows, err := q.ObjectUsageBuckets(ctx, tx, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(report.AccountID), PeriodStart: objectUsageTime(report.PeriodStart)})
 	if err != nil {
 		return err
 	}

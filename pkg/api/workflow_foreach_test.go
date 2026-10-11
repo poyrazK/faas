@@ -9,7 +9,7 @@ import (
 )
 
 func TestWorkflowForEachWireValidationAndInputMapping(t *testing.T) {
-	raw := `{"name":"batch","steps":[{"name":"lookup","run":"lookup"},{"name":"send","depends_on":["lookup"],"for_each":{"items":"steps.lookup.output.items","action":{"run":"send","timeout":"30s","input":{"record":"{{input.item}}","index":"{{input.index}}","customer":"{{input.input.customer}}"},"retry":{"max_attempts":2}}}}]}`
+	raw := `{"name":"batch","steps":[{"name":"lookup","run":"lookup"},{"name":"send","depends_on":["lookup"],"for_each":{"items":"steps.lookup.output.items","max_parallel":3,"action":{"run":"send","timeout":"30s","input":{"record":"{{input.item}}","index":"{{input.index}}","customer":"{{input.input.customer}}"},"retry":{"max_attempts":2}}}}]}`
 	var spec WorkflowSpec
 	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
 		t.Fatal(err)
@@ -31,6 +31,9 @@ func TestWorkflowForEachWireValidationAndInputMapping(t *testing.T) {
 	}
 	if _, err := ValidateWorkflowDAG(decoded, PlanHobby); err != nil {
 		t.Fatal(err)
+	}
+	if decoded.Steps[1].ForEach.MaxParallel != 3 {
+		t.Fatalf("max_parallel lost during YAML round trip: %d", decoded.Steps[1].ForEach.MaxParallel)
 	}
 	items, inputs, err := ResolveWorkflowForEachInputs(spec.Steps[1], json.RawMessage(`{"customer":"c-1"}`), map[string]json.RawMessage{"lookup": json.RawMessage(`{"items":[{"n":9007199254740993,"literal":"{{input.secret}}"},null]}`)})
 	if err != nil || len(inputs) != 2 || !strings.Contains(string(items), "9007199254740993") {
@@ -56,7 +59,6 @@ func TestWorkflowForEachRejectsUnsupportedDefinitions(t *testing.T) {
 		`{"items":"input.items","unknown":true,"action":{"run":"send"}}`,
 		`{"items":"input.items","action":{"run":"send","parallelism":2}}`,
 		`{"items":"input.items","action":{"run":"send","for_each":{}}}`,
-		`{"items":"input.items","action":{"run":"send","when":{}}}`,
 		`{"items":"input.items","action":{"run":"send","on_failure":"fallback"}}`,
 		`{"items":"input.items","action":{"run":"send","depends_on":["lookup"]}}`,
 	} {
@@ -90,6 +92,46 @@ func TestWorkflowForEachRejectsUnsupportedDefinitions(t *testing.T) {
 		}
 		if _, err := ValidateWorkflowDAG(spec, PlanHobby); err == nil {
 			t.Fatal("accepted ambiguous parent options")
+		}
+	}
+}
+
+func TestWorkflowForEachItemGuardsAndFailurePolicy(t *testing.T) {
+	raw := `{"name":"batch","steps":[{"name":"lookup","run":"lookup"},{"name":"send","depends_on":["lookup"],"for_each":{"items":"steps.lookup.output.items","on_item_failure":"continue","action":{"run":"send","when":{"all":[{"ref":"input.item.enabled","op":"eq","value":true},{"ref":"steps.lookup.output.allow","op":"eq","value":true}]},"input":{"id":"{{input.item.id}}","index":"{{input.index}}"}}}}]}`
+	var spec WorkflowSpec
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateWorkflowDAG(spec, PlanHobby); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip WorkflowSpec
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil || roundTrip.Steps[1].ForEach.OnItemFailure != "continue" || roundTrip.Steps[1].ForEach.Action.When == nil {
+		t.Fatalf("item guard/policy wire round trip: %s %v", encoded, err)
+	}
+	items, inputs, matches, err := ResolveWorkflowForEachInputsWithGuards(spec.Steps[1], json.RawMessage(`{"source":"request"}`), map[string]json.RawMessage{"lookup": json.RawMessage(`{"items":[{"id":"skip","enabled":false},{"id":"send","enabled":true}],"allow":true}`)})
+	if err != nil || string(items) != `[{"enabled":false,"id":"skip"},{"enabled":true,"id":"send"}]` || len(inputs) != 2 || len(matches) != 2 || *matches[0] || !*matches[1] {
+		t.Fatalf("guard snapshots: items=%s inputs=%s matches=%v err=%v", items, inputs, matches, err)
+	}
+	if string(inputs[0]) != `{"id":"skip","index":0}` || string(inputs[1]) != `{"id":"send","index":1}` {
+		t.Fatalf("mapped item inputs: %s", inputs)
+	}
+	for _, fragment := range []string{
+		`{"items":"input.items","on_item_failure":"retry","action":{"run":"send"}}`,
+		`{"items":"input.items","max_parallel":-1,"action":{"run":"send"}}`,
+		`{"items":"input.items","max_parallel":17,"action":{"run":"send"}}`,
+		`{"items":"input.items","action":{"run":"send","when":{"ref":"steps.other.output.allowed","op":"eq","value":true}}}`,
+	} {
+		var invalid WorkflowSpec
+		if err := json.Unmarshal([]byte(`{"name":"test","steps":[{"name":"batch","for_each":`+fragment+`}]}`), &invalid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ValidateWorkflowDAG(invalid, PlanHobby); err == nil {
+			t.Fatalf("accepted invalid for_each configuration: %s", fragment)
 		}
 	}
 }

@@ -3,6 +3,16 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { FaaSClient, InboundWebhooksService } from '../src/index.js';
+import type { CreateInboundWebhookEndpointRequest } from '../src/generated/models/CreateInboundWebhookEndpointRequest.js';
+
+test('inbound webhook SDK accepts the generic HMAC provider', () => {
+  const endpoint: CreateInboundWebhookEndpointRequest = {
+    name: 'custom-events',
+    provider: 'generic',
+    signing_secret: 'generic_hmac_test_secret_material_32bytes_min',
+  };
+  assert.equal(endpoint.provider, 'generic');
+});
 
 test('webhook automation bindings preserve revision zero, takeover and receipt routes', async t => {
   let seen = 0;

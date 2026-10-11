@@ -675,6 +675,37 @@ $$;
 
 
 --
+-- Name: assert_clone_configuration_mutable(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assert_clone_configuration_mutable(project uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    guard_state text;
+BEGIN
+    IF project IS NULL THEN RETURN; END IF;
+    -- A locking read also prevents repeatable-read writers with a snapshot
+    -- predating acquisition from bypassing the committed hold.
+    SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
+    WHERE project_id = project FOR SHARE;
+    IF NOT FOUND THEN
+        -- The project BEFORE DELETE guard already admitted this deletion.
+        -- FK cascades can remove the guard before dependent rows are cleaned.
+        -- A live project with missing evidence must still fail closed.
+        IF NOT EXISTS (SELECT 1 FROM projects WHERE id = project) THEN RETURN; END IF;
+        RAISE EXCEPTION 'project configuration guard is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    IF guard_state <> 'open' THEN
+        RAISE EXCEPTION 'source configuration is held for stage capture'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_write_fenced';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: assert_global_directory_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -789,6 +820,39 @@ $$;
 
 
 --
+-- Name: authorize_binding_release_traffic(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_binding_release_traffic(fences jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f jsonb; observed text; d deployments%ROWTYPE; p app_binding_release_policies%ROWTYPE;
+BEGIN
+ FOR f IN SELECT value FROM jsonb_array_elements(fences) LOOP
+  SELECT r.epoch::text||':'||r.revision::text INTO observed FROM app_binding_promotion_revisions r
+  JOIN apps a ON a.id=r.app_id WHERE r.app_id=(f->>'app_id')::uuid AND a.account_id=(f->>'account_id')::uuid AND a.status<>'deleted'
+  FOR UPDATE OF r;
+  IF observed IS NULL OR observed<>f->>'revision' THEN
+   RAISE EXCEPTION 'binding facts changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  SELECT * INTO d FROM deployments WHERE id=(f->>'deployment_id')::uuid AND app_id=(f->>'app_id')::uuid;
+  IF d.id IS NULL OR d.status<>'live' OR d.scope<>f->>'scope' OR coalesce(d.rootfs_key,'')='' OR coalesce(d.image_digest,'')='' THEN
+   RAISE EXCEPTION 'binding deployment changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  IF NULLIF(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN
+   RAISE EXCEPTION 'binding evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+  END IF;
+  SELECT * INTO p FROM app_binding_release_policies WHERE app_id=d.app_id AND scope=d.scope;
+  IF p.mode='enforce' AND NOT coalesce((f->>'policy_revision')::bigint=p.revision AND (f->>'max_age_seconds')::numeric>0 AND (f->>'max_age_seconds')::numeric<=p.max_age_seconds AND NOT (f->>'allow_unsupported')::boolean AND (NOT p.require_application_ack OR (f->>'require_application_ack')::boolean),false) THEN
+   RAISE EXCEPTION 'binding release policy changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+ END LOOP;
+ PERFORM set_config('gregale.binding_release_fences',fences::text,true);
+ RETURN true;
+END $$;
+
+
+--
 -- Name: automatic_route_check_capture_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -818,6 +882,36 @@ CREATE FUNCTION public.automatic_route_check_intent_changed() RETURNS trigger
 BEGIN
     IF TG_OP = 'INSERT' OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.sha256 IS DISTINCT FROM OLD.sha256 THEN
         PERFORM enqueue_automatic_route_check(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: bind_deployment_runtime_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_deployment_runtime_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    selected_environment uuid;
+    original_environment uuid;
+BEGIN
+    SELECT s.environment_id INTO STRICT selected_environment
+    FROM project_environment_workload_specs s
+    JOIN project_environments e ON e.id=s.environment_id
+    JOIN apps a ON a.id=s.app_id AND a.account_id=e.account_id AND a.project_id=e.project_id
+    JOIN deployments d ON d.app_id=a.id AND d.id=NEW.deployment_id
+    WHERE s.id=NEW.spec_id AND e.slug=CASE WHEN d.scope='default' THEN 'production' ELSE d.scope END;
+    INSERT INTO deployment_runtime_environment_owners (deployment_id, environment_id)
+    VALUES (NEW.deployment_id, selected_environment)
+    ON CONFLICT (deployment_id) DO NOTHING;
+    SELECT environment_id INTO STRICT original_environment
+    FROM deployment_runtime_environment_owners WHERE deployment_id=NEW.deployment_id;
+    IF original_environment <> selected_environment THEN
+        RAISE EXCEPTION 'deployment runtime environment is immutable' USING ERRCODE='23514';
     END IF;
     RETURN NEW;
 END;
@@ -930,6 +1024,27 @@ END $$;
 
 
 --
+-- Name: capture_binding_release_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_binding_release_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope OR NEW.revision<>OLD.revision+1) THEN
+  RAISE EXCEPTION 'release policy revision changed' USING ERRCODE='23514',CONSTRAINT='binding_release_policy_revision';
+ END IF;
+ IF NEW.mode='off' AND btrim(NEW.reason)='' THEN
+  RAISE EXCEPTION 'disabling enforcement requires a reason' USING ERRCODE='23514',CONSTRAINT='binding_release_policy_reason';
+ END IF;
+ PERFORM bump_binding_promotion_revision(NEW.app_id);
+ INSERT INTO app_binding_release_policy_history(app_id,scope,revision,policy)
+ VALUES(NEW.app_id,NEW.scope,NEW.revision,to_jsonb(NEW));
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_builder_vm_cleanup_node(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -946,6 +1061,29 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: capture_deployment_recovery_lineage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_deployment_recovery_lineage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE predecessor uuid;
+BEGIN
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ IF (SELECT count(*) FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.id<>NEW.id
+  AND d.status='live' AND d.traffic_percent>0 AND d.deleted_at IS NULL)=1 THEN
+  SELECT id INTO predecessor FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.id<>NEW.id
+   AND d.status='live' AND d.traffic_percent=100 AND d.rollout_state='complete' AND d.deleted_at IS NULL
+   AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps);
+  IF predecessor IS NOT NULL THEN
+   INSERT INTO deployment_recovery_lineage(deployment_id,predecessor_deployment_id) VALUES(NEW.id,predecessor);
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -1029,6 +1167,39 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: capture_service_binding_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_service_binding_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ old_row jsonb := CASE WHEN TG_OP='INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
+ new_row jsonb := CASE WHEN TG_OP='DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
+ old_facts jsonb;
+ new_facts jsonb;
+ target uuid;
+ watched text[] := string_to_array(TG_ARGV[0],',');
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  SELECT jsonb_object_agg(key,value) INTO old_facts FROM jsonb_each(old_row) WHERE key=ANY(watched);
+  SELECT jsonb_object_agg(key,value) INTO new_facts FROM jsonb_each(new_row) WHERE key=ANY(watched);
+  IF old_facts IS NOT DISTINCT FROM new_facts THEN RETURN NEW; END IF;
+ END IF;
+ FOR target IN SELECT a.id FROM apps a
+  WHERE a.account_id IN (NULLIF(old_row->>'account_id','')::uuid,NULLIF(new_row->>'account_id','')::uuid)
+   AND a.status<>'deleted' AND COALESCE(a.manifest->'service_bindings','[]'::jsonb)<>'[]'::jsonb
+  ORDER BY a.id LOOP
+  INSERT INTO app_binding_promotion_revisions(app_id,service_revision) VALUES(target,2)
+  ON CONFLICT(app_id) DO UPDATE SET
+   revision=app_binding_promotion_revisions.revision+1,
+   service_revision=app_binding_promotion_revisions.service_revision+1;
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
 
 
 --
@@ -1170,6 +1341,79 @@ END; $$;
 
 
 --
+-- Name: check_managed_postgres_resize_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.check_managed_postgres_resize_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r managed_postgres_resizes; d managed_postgres_databases; target_spec jsonb; actual_spec jsonb;
+BEGIN
+ SELECT * INTO r FROM managed_postgres_resizes WHERE id=NEW.id;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ SELECT * INTO d FROM managed_postgres_databases WHERE id=r.database_id FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ target_spec := r.source_spec || jsonb_build_object('Class',r.target_class);
+ IF r.target_scale_to_zero IS NOT NULL THEN
+  target_spec := target_spec || jsonb_build_object('ScaleToZero',r.target_scale_to_zero);
+ END IF;
+ actual_spec := jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,'Class',d.service_class,
+  'Availability',d.availability,'ScaleToZero',d.scale_to_zero,'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds);
+ IF r.account_id<>d.account_id OR (r.state='succeeded' AND d.observed_generation<r.generation)
+  OR (r.state='succeeded' AND d.observed_generation=r.generation AND (target_spec IS DISTINCT FROM actual_spec
+    OR r.backend_id<>d.backend_id OR r.backend_fingerprint<>d.backend_fingerprint
+    OR r.provider_resource_id IS DISTINCT FROM d.provider_resource_id OR r.data_resource_id IS DISTINCT FROM d.data_resource_id))
+  OR (r.state='pending' AND (d.state<>'updating' OR d.desired_generation<>r.generation OR d.observed_generation<>r.generation-1
+    OR d.environment_clone_operation_id IS NOT NULL OR d.clone_resource_role<>'target' OR d.cutover_id IS NOT NULL
+    OR r.backend_id<>d.backend_id OR r.backend_fingerprint<>d.backend_fingerprint
+    OR r.provider_resource_id IS DISTINCT FROM d.provider_resource_id OR r.data_resource_id IS DISTINCT FROM d.data_resource_id
+    OR r.source_spec<>jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,'Class',d.service_class,
+      'Availability',d.availability,'ScaleToZero',d.scale_to_zero,'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds))) THEN
+  RAISE EXCEPTION 'resize receipt does not match database' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+ END IF;
+ RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: check_project_dependency_release(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.check_project_dependency_release() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE gate deployment_dependency_gates; pin jsonb; target_status text; target_traffic integer; parked text;
+BEGIN
+    IF NEW.status <> 'live' OR OLD.status = 'live' OR OLD.serving_ended_at IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT * INTO gate FROM deployment_dependency_gates WHERE deployment_id = NEW.id;
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    IF gate.status = 'failed' OR (gate.status <> 'ready' AND gate.deadline_at <= clock_timestamp()) THEN
+        RAISE EXCEPTION 'dependency release gate failed' USING ERRCODE = '23514', CONSTRAINT = 'deployment_dependency_not_ready';
+    END IF;
+    FOR pin IN SELECT value FROM jsonb_array_elements(gate.pins) ORDER BY value->>'deployment_id' LOOP
+        SELECT d.status, d.traffic_percent, coalesce(d.parked_reason, '')
+        INTO target_status, target_traffic, parked
+        FROM deployments d JOIN apps a ON a.id = d.app_id JOIN apps owner ON owner.id = NEW.app_id
+        WHERE d.id = (pin->>'deployment_id')::uuid AND d.app_id = (pin->>'app_id')::uuid
+          AND a.account_id = owner.account_id AND a.project_id = owner.project_id AND a.status <> 'deleted'
+          AND a.workload_class <> 'job' AND coalesce(a.manifest->>'execution_mode', '') <> 'job'
+          AND coalesce(a.preview_pr_number, 0) = coalesce(owner.preview_pr_number, 0)
+          AND (coalesce(a.preview_of_slug, '') = '') = (coalesce(owner.preview_of_slug, '') = '')
+          AND d.scope = NEW.scope AND d.environment_workload_runtime IS NULL
+        FOR SHARE OF d;
+        IF NOT FOUND OR target_status <> 'live' OR target_traffic <= 0 OR parked <> '' THEN
+            RAISE EXCEPTION 'dependency deployment is not ready' USING ERRCODE = '23514', CONSTRAINT = 'deployment_dependency_not_ready';
+        END IF;
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: claim_global_runtime_quota_deliveries(integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1225,6 +1469,96 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+
+
+--
+-- Name: compose_object_multipart_initiation_dispatch(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compose_object_multipart_initiation_dispatch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.multipart_upload_id IS NOT NULL THEN
+  INSERT INTO object_multipart_initiation_dispatches(multipart_upload_id) VALUES(NEW.multipart_upload_id);
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: compose_object_multipart_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compose_object_multipart_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND NEW.state='initiating' AND NEW.provider_upload_id='' THEN
+  INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,multipart_upload_id)
+  SELECT NEW.id,id,'request',backend_id,backend_fingerprint,physical_name,NEW.id FROM object_buckets WHERE id=NEW.bucket_id;
+ ELSIF TG_OP='UPDATE' AND NEW.state IN ('completed','aborted') THEN
+  DELETE FROM object_bucket_mutations WHERE multipart_upload_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: compose_object_multipart_part_transfer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compose_object_multipart_part_transfer() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'INSERT' AND OLD.transfer_token IS NOT NULL AND (TG_OP='DELETE' OR NEW.transfer_token IS DISTINCT FROM OLD.transfer_token) THEN
+  UPDATE object_multipart_part_writers SET settled=true WHERE upload_id=OLD.upload_id AND part_number=OLD.part_number AND transfer_token=OLD.transfer_token AND NOT dispatched AND NOT settled;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ IF NEW.transfer_token IS NOT NULL AND (TG_OP='INSERT' OR NEW.transfer_token IS DISTINCT FROM OLD.transfer_token) THEN
+  INSERT INTO object_multipart_part_writers(upload_id,part_number,transfer_token,bucket_id,backend_id,backend_fingerprint,physical_name)
+  SELECT NEW.upload_id,NEW.part_number,NEW.transfer_token,b.id,b.backend_id,b.backend_fingerprint,b.physical_name FROM object_storage_multipart_uploads u JOIN object_buckets b ON b.id=u.bucket_id WHERE u.id=NEW.upload_id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: compose_object_multipart_part_writer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compose_object_multipart_part_writer() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.dispatched AND NOT OLD.dispatched THEN
+  INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,multipart_part_writer_id)
+  VALUES(NEW.id,NEW.bucket_id,'request',NEW.backend_id,NEW.backend_fingerprint,NEW.physical_name,NEW.id);
+ ELSIF NEW.settled AND NOT OLD.settled THEN
+  UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number AND transfer_token=NEW.transfer_token;
+  DELETE FROM object_bucket_mutations WHERE multipart_part_writer_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: compose_object_upload_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compose_object_upload_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND NEW.write_phase='prepared' AND NEW.status='pending' THEN
+  INSERT INTO object_bucket_mutations(id,bucket_id,kind,backend_id,backend_fingerprint,physical_name,upload_id)
+  SELECT NEW.id,id,'request',backend_id,backend_fingerprint,physical_name,NEW.id FROM object_buckets WHERE id=NEW.bucket_id;
+ ELSIF TG_OP='UPDATE' AND NEW.write_phase='settled' AND NEW.status IN ('completed','failed') THEN
+  DELETE FROM object_bucket_mutations WHERE upload_id=NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -1748,6 +2082,55 @@ BEGIN
     RETURN NEW;
 END
 $$;
+
+
+--
+-- Name: enforce_binding_release_graph(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_binding_release_graph() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid;
+BEGIN
+ IF (TG_OP='UPDATE' AND NEW.active=OLD.active) OR (TG_OP='INSERT' AND NOT NEW.active) THEN RETURN NEW; END IF;
+ FOR app IN SELECT id FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' ORDER BY id LOOP
+  PERFORM 1 FROM app_binding_promotion_revisions WHERE app_id=app FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM app_binding_release_policies WHERE app_id=app AND scope=NEW.environment_slug AND mode='enforce') THEN
+   RAISE EXCEPTION 'project release switching requires a binding release gate' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: enforce_binding_release_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_binding_release_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE prior_percent integer:=0; p app_binding_release_policies%ROWTYPE; f jsonb; granted boolean:=false;
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.status='live' AND OLD.app_id=NEW.app_id AND OLD.scope=NEW.scope THEN prior_percent:=OLD.traffic_percent; END IF;
+ -- Admission with positive intended traffic is also gated, so unguarded
+ -- automatic activation cannot fail only after a build has run.
+ IF NEW.traffic_percent<=prior_percent OR NEW.traffic_percent=0 OR (TG_OP='UPDATE' AND NEW.status<>'live') THEN RETURN NEW; END IF;
+ -- Even a missing policy must serialize with concurrent enabling.
+ PERFORM 1 FROM app_binding_promotion_revisions WHERE app_id=NEW.app_id FOR UPDATE;
+ SELECT * INTO p FROM app_binding_release_policies WHERE app_id=NEW.app_id AND scope=NEW.scope;
+ IF p.mode IS DISTINCT FROM 'enforce' THEN RETURN NEW; END IF;
+ FOR f IN SELECT value FROM jsonb_array_elements(coalesce(NULLIF(current_setting('gregale.binding_release_fences',true),''),'[]')::jsonb) LOOP
+  IF f->>'deployment_id'=NEW.id::text AND f->>'app_id'=NEW.app_id::text AND f->>'scope'=NEW.scope
+    AND (f->>'policy_revision')::bigint=p.revision
+    AND (NULLIF(f->>'valid_until','') IS NULL OR (f->>'valid_until')::timestamptz>clock_timestamp()) THEN granted:=true; EXIT; END IF;
+ END LOOP;
+ IF NOT granted THEN
+  RAISE EXCEPTION 'binding release requires fresh checked evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -2571,6 +2954,8 @@ DECLARE existing_type text;
 DECLARE existing_data jsonb;
 DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
+DECLARE target_app uuid;
+DECLARE target_tenant uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -2581,38 +2966,54 @@ BEGIN
         RAISE EXCEPTION 'event.published requires account, source, id, type and data'
             USING ERRCODE = '23514';
     END IF;
+    IF (NEW.data ? 'appid') <> (NEW.data ? 'platformtenantid') THEN
+        RAISE EXCEPTION 'tenant event requires app and platform tenant identity'
+            USING ERRCODE = '23514';
+    END IF;
 
-    SELECT coalesce(jsonb_agg(jsonb_build_object(
-        'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
-        'source', s.source, 'type', s.type, 'filter', s.filter,
-        'work_snapshot_captured', true,
-        'work', CASE WHEN b.subscription_id IS NULL THEN NULL
-            ELSE jsonb_build_object(
-                'policy_name', b.policy_name, 'key_selector', b.key_selector,
-                'fairness_selector', b.fairness_key_selector, 'action', b.action,
-                'policy', CASE WHEN p.name IS NULL THEN NULL
-                    ELSE jsonb_build_object(
-                        'revision', p.revision,
-                        'max_running_per_key', p.max_running_per_key,
-                        'max_running_per_fairness_key', p.max_running_per_fairness_key,
-                        'pending_updates', p.pending_updates,
-                        'debounce_ms', p.debounce_ms,
-                        'expires_after_ms', p.expires_after_ms) END)
-            END)
-        ORDER BY s.created_at, s.id), '[]'::jsonb)
-    INTO recipients
-    FROM event_subscriptions s
-    JOIN apps a ON a.id = s.app_id AND a.account_id = s.account_id
-    LEFT JOIN event_subscription_work_bindings b
-      ON b.subscription_id = s.id AND b.app_id = s.app_id
-    LEFT JOIN app_work_policies p
-      ON p.app_id = b.app_id AND p.name = b.policy_name
-    WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
-      AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
-      AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+    IF NEW.data ? 'platformtenantid' THEN
+        BEGIN
+            target_app := (NEW.data->>'appid')::uuid;
+            target_tenant := (NEW.data->>'platformtenantid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'tenant event identity must be UUIDs' USING ERRCODE = '23514';
+        END;
+        recipients := coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+            FROM workflow_tenant_event_recipients(NEW.subject, target_app, target_tenant,
+                NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+    ELSE
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
+            'source', s.source, 'type', s.type, 'filter', s.filter,
+            'work_snapshot_captured', true,
+            'work', CASE WHEN b.subscription_id IS NULL THEN NULL
+                ELSE jsonb_build_object(
+                    'policy_name', b.policy_name, 'key_selector', b.key_selector,
+                    'fairness_selector', b.fairness_key_selector, 'action', b.action,
+                    'policy', CASE WHEN p.name IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'revision', p.revision,
+                            'max_running_per_key', p.max_running_per_key,
+                            'max_running_per_fairness_key', p.max_running_per_fairness_key,
+                            'pending_updates', p.pending_updates,
+                            'debounce_ms', p.debounce_ms,
+                            'expires_after_ms', p.expires_after_ms) END)
+                END)
+            ORDER BY s.created_at, s.id), '[]'::jsonb)
+        INTO recipients
+        FROM event_subscriptions s
+        JOIN apps a ON a.id = s.app_id AND a.account_id = s.account_id
+        LEFT JOIN event_subscription_work_bindings b
+          ON b.subscription_id = s.id AND b.app_id = s.app_id
+        LEFT JOIN app_work_policies p
+          ON p.app_id = b.app_id AND p.name = b.policy_name
+        WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
+          AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
+          AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
 
-    recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
-        FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+        recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+    END IF;
 
     INSERT INTO event_fanout_outbox
         (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
@@ -3371,7 +3772,7 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
    (s.managed_postgres_binding_id IS NULL OR EXISTS (
     SELECT 1 FROM managed_postgres_bindings b WHERE b.id=s.managed_postgres_binding_id
      AND b.account_id=s.account_id AND b.app_id=s.app_id AND b.scope=s.scope
-     AND b.environment_key=s.key AND b.access IN ('read_write','read_only')))
+     AND b.environment_key=s.key AND b.access IN ('read_write','read_only','data_api')))
  ),
  baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs,
   coalesce(jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version),'{}'::jsonb) AS versions FROM eligible s)
@@ -3546,6 +3947,7 @@ CREATE TABLE public.deployments (
     build_artifact_sha256 text DEFAULT ''::text NOT NULL,
     build_artifact_bytes bigint DEFAULT 0 NOT NULL,
     environment_workload_runtime jsonb,
+    serving_ended_at timestamp with time zone,
     CONSTRAINT deployments_build_artifact_shape CHECK ((((build_artifact_key = ''::text) AND (build_artifact_sha256 = ''::text) AND (build_artifact_bytes = 0)) OR ((build_artifact_bytes > 0) AND (build_artifact_sha256 ~ '^[0-9a-f]{64}$'::text) AND (build_artifact_key ~ (('^(regions/[a-z0-9]([a-z0-9-]*[a-z0-9])?/)?build-exports/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/'::text || build_artifact_sha256) || '[.]oci[.]tar$'::text))))),
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
@@ -3937,6 +4339,105 @@ $$;
 
 
 --
+-- Name: faas_capture_workflow_finished_webhook_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_capture_workflow_finished_webhook_event() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    event_account_id uuid;
+    recipient_ids uuid[];
+    event_finished_at timestamptz;
+BEGIN
+    IF OLD.status IS NOT DISTINCT FROM NEW.status
+       OR OLD.status IN ('succeeded', 'failed', 'dead')
+       OR NEW.status NOT IN ('succeeded', 'failed', 'dead') THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT a.account_id,
+           COALESCE(
+               array_agg(h.id ORDER BY h.id) FILTER (WHERE h.id IS NOT NULL),
+               ARRAY[]::uuid[]
+           )
+      INTO event_account_id, recipient_ids
+      FROM apps a
+      LEFT JOIN app_webhooks h
+        ON h.app_id = NEW.app_id
+       AND h.account_id = a.account_id
+       AND h.scope = 'app'
+       AND h.enabled
+       AND (cardinality(h.event_filter) = 0 OR 'workflow.finished' = ANY(h.event_filter))
+     WHERE a.id = NEW.app_id
+     GROUP BY a.account_id;
+
+    IF COALESCE(cardinality(recipient_ids), 0) = 0 THEN
+        RETURN NEW;
+    END IF;
+
+    event_finished_at := COALESCE(NEW.finished_at, clock_timestamp());
+    INSERT INTO app_webhook_event_outbox (
+        account_id, app_id, event, source_id, payload, recipient_webhook_ids
+    ) VALUES (
+        event_account_id,
+        NEW.app_id,
+        'workflow.finished',
+        gen_random_uuid(),
+        jsonb_build_object(
+            'app_id', NEW.app_id::text,
+            'run_id', NEW.id::text,
+            'workflow_name', NEW.workflow_name,
+            'status', NEW.status,
+            'finished_at', event_finished_at,
+            'resume_count', NEW.resume_count
+        ),
+        recipient_ids
+    ) ON CONFLICT (event, source_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_invocation_headers_own_stage(owner_app uuid, pin_headers jsonb) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT
+    EXISTS(SELECT 1 FROM deployments stage
+        WHERE stage.app_id=owner_app AND stage.scope NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-revision' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')))
+    OR EXISTS(SELECT 1 FROM project_release_sets stage JOIN apps owner
+        ON owner.project_id=stage.project_id AND owner.account_id=stage.account_id
+        WHERE owner.id=owner_app AND stage.environment_slug NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-release' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')));
+$$;
+
+
+--
+-- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_retain_dead_letter_environment_ownership() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='UPDATE' THEN NEW.environment_owned := NEW.environment_owned OR OLD.environment_owned; END IF;
+    NEW.environment_owned := NEW.environment_owned OR (NEW.source='invocation' AND (faas_invocation_headers_own_stage(NEW.app_id,NEW.headers)
+        OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=NEW.source_id
+            AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: faas_stamp_app_deletion_deadline(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4080,6 +4581,31 @@ END $$;
 
 
 --
+-- Name: fence_object_deletion_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_deletion_capture_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_admission_isolation',MESSAGE='Deletion admission requires READ COMMITTED';
+ END IF;
+ SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_bucket_not_ready',MESSAGE='Bucket cleanup fences deletion admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_deletion_capture_fenced',MESSAGE='Checkpoint capture fences new deletion admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_lifecycle_deletion(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4168,6 +4694,56 @@ BEGIN
  ) INTO allowed;
  IF NOT allowed THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lifecycle_multipart_fenced',MESSAGE='A live matching lifecycle scan and aged upload are required before admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_lifecycle_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_lifecycle_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE aid uuid; required boolean;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.protection_verified OR NEW.deletion_verified OR NEW.protection_required AND NEW.state<>'prepared' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected lifecycle intents must begin prepared and unverified';
+  END IF;
+  SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id;
+  PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
+  SELECT NEW.lifecycle_scan_id IS NOT NULL AND NEW.selector<>'' AND EXISTS(
+   SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=NEW.bucket_id
+    AND (l.enabled_required OR l.native_enabled_observed OR l.observed_snapshot->>'enabled'='true')
+  ) INTO required;
+  IF NEW.protection_required IS DISTINCT FROM required OR required AND jsonb_typeof(NEW.lifecycle_binding->'expected_delete_marker') IS DISTINCT FROM 'boolean' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected lifecycle deletion requires a frozen target classification';
+  END IF;
+ ELSE
+  IF NEW.protection_required<>OLD.protection_required OR OLD.protection_verified AND NOT NEW.protection_verified OR OLD.deletion_verified AND NOT NEW.deletion_verified THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle protection evidence is immutable';
+  END IF;
+  IF NOT OLD.protection_verified AND NEW.protection_verified AND NOT (NEW.protection_required AND OLD.state='prepared' AND NEW.state='dispatched') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection proof must accompany initial dispatch';
+  END IF;
+  IF NOT OLD.deletion_verified AND NEW.deletion_verified AND NOT (OLD.state='dispatched' AND NEW.state='completed') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Absence proof must accompany completion';
+  END IF;
+  IF NEW.last_error_code='object_protected' AND NOT (OLD.state='prepared' AND NEW.state='failed') AND OLD.last_error_code<>'object_protected' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='A dispatched uncertain attempt cannot be dismissed as protected';
+  END IF;
+  IF OLD.state='prepared' AND NEW.state='dispatched' AND NEW.protection_required AND NOT NEW.protection_verified THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Fresh native policy proof is required before lifecycle dispatch';
+  END IF;
+ END IF;
+ IF NEW.protection_required AND NEW.state='completed' AND (
+  NOT NEW.deletion_verified OR jsonb_typeof(NEW.lifecycle_binding->'expected_delete_marker') IS DISTINCT FROM 'boolean'
+  OR NEW.delete_marker::text IS DISTINCT FROM NEW.lifecycle_binding->>'expected_delete_marker'
+  OR NEW.provider_version_id IS DISTINCT FROM NEW.lifecycle_binding->>'expected_provider_version_id') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Exact lifecycle target absence proof is required before completion';
  END IF;
  RETURN NEW;
 END $$;
@@ -4268,6 +4844,86 @@ BEGIN
   IF (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=bid AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=bid AND completion_versions_observed) OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=bid AND versions_required)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before new writes';
   END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_protection_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_protection_capture_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_protection_admission_isolation',MESSAGE='Protection admission requires READ COMMITTED';
+ END IF;
+ SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_protection_bucket_not_ready',MESSAGE='Bucket cleanup fences protection admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_protection_capture_fenced',MESSAGE='Checkpoint capture fences new protection admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_upload_capture_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_upload_capture_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bucket_state text;
+BEGIN
+ -- Fence queries need a fresh snapshot after waiting for the source lock.
+ -- Reject old transaction snapshots rather than hiding a committed hold.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_admission_isolation',MESSAGE='Upload admission requires READ COMMITTED';
+ END IF;
+ -- Match the application admission order: account before source bucket.
+ -- An older replica's INSERT must not invert the account FK/row locks.
+ PERFORM id FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ SELECT state INTO bucket_state FROM object_buckets
+ WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id FOR UPDATE;
+ IF bucket_state IS DISTINCT FROM 'ready' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_bucket_not_ready',MESSAGE='Bucket cleanup fences upload admission';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=NEW.bucket_id) THEN
+  RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_upload_capture_fenced',MESSAGE='Checkpoint capture fences new upload admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_version_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_version_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid;
+BEGIN
+ IF TG_TABLE_NAME='object_buckets' THEN
+  IF NEW.state<>'deleting' OR OLD.state='deleting' THEN RETURN NEW; END IF;
+  bid:=NEW.id;
+ ELSE
+  bid:=NEW.bucket_id;
+  IF TG_OP='UPDATE' AND TG_TABLE_NAME IN ('object_bucket_object_lock','object_bucket_encryption','object_bucket_versioning') THEN
+   IF NEW.revision=OLD.revision AND NOT (NOT OLD.dispatched AND NEW.dispatched) THEN RETURN NEW; END IF;
+  END IF;
+  PERFORM 1 FROM object_buckets WHERE id=bid FOR SHARE;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_version_protection WHERE bucket_id=bid AND state IN ('waiting','applying')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_version_protection_fenced',MESSAGE='Unsettled version protection fences writes, deletion and configuration';
  END IF;
  RETURN NEW;
 END $$;
@@ -4436,6 +5092,28 @@ $$;
 
 
 --
+-- Name: fence_untracked_object_lock_write(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_untracked_object_lock_write() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='object_storage_key_grants' THEN
+  IF NEW.last_write_id IS NOT NULL THEN RETURN NEW; END IF;
+ ELSE
+  IF NEW.kind<>'proxy' OR NEW.route_receipt THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM 1 FROM accounts a JOIN object_buckets b ON b.account_id=a.id WHERE b.id=NEW.bucket_id FOR UPDATE OF a;
+ PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
+ IF EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND (enabled_required OR native_enabled_observed OR state<>'ready')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lock_admission_fenced',MESSAGE='Object Lock requires a tracked protection-aware write';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: finish_global_quota_delivery(uuid, uuid, text, text, jsonb, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4549,6 +5227,86 @@ $$;
 
 
 --
+-- Name: guard_bound_multipart_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_bound_multipart_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.multipart_upload_id IS NOT NULL OR NEW.multipart_upload_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_immutable',MESSAGE='Original multipart receipts are immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN
+  IF OLD.multipart_upload_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE id=OLD.multipart_upload_id AND state NOT IN ('completed','aborted')) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_unsettled',MESSAGE='Settle the original session before removing its provider receipt';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.multipart_upload_id IS NOT NULL THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_isolation',MESSAGE='Multipart receipt binding requires READ COMMITTED';
+  END IF;
+  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
+  PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_multipart_capture_fenced',MESSAGE='Capture fences new receipt binding';
+  END IF;
+  IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR u.state<>'initiating' OR u.provider_upload_id<>'' OR NEW.kind<>'request' OR NOT EXISTS(SELECT 1 FROM object_buckets WHERE id=u.bucket_id AND account_id=u.account_id AND app_id=u.app_id AND backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint AND physical_name=NEW.physical_name AND state='ready') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_original',MESSAGE='Bind only the original reserved session placement';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_bound_upload_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_bound_upload_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_upload_completions%ROWTYPE;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.upload_id IS NOT NULL OR NEW.upload_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_immutable',MESSAGE='Original upload receipts are immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN
+  IF OLD.upload_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_upload_completions WHERE id=OLD.upload_id AND (write_phase<>'settled' OR status NOT IN ('completed','failed'))) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_unsettled',MESSAGE='Settle the original upload before removing its provider receipt';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.upload_id IS NOT NULL THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_isolation',MESSAGE='Upload receipt binding requires READ COMMITTED';
+  END IF;
+  SELECT * INTO u FROM object_upload_completions WHERE id=NEW.upload_id;
+  PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+  SELECT * INTO u FROM object_upload_completions WHERE id=NEW.upload_id FOR UPDATE;
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_upload_capture_fenced',MESSAGE='Capture fences new receipt binding';
+  END IF;
+  IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR u.status<>'pending' OR u.write_phase<>'prepared' OR NEW.kind<>'request' OR NOT EXISTS(SELECT 1 FROM object_buckets WHERE id=u.bucket_id AND backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint AND physical_name=NEW.physical_name AND state='ready') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_original',MESSAGE='Bind only the original prepared upload placement';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_cell_from_global_directory(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4559,6 +5317,103 @@ BEGIN
     IF EXISTS (SELECT 1 FROM global_directory_owners) OR EXISTS (SELECT 1 FROM global_directory_cells) OR EXISTS (SELECT 1 FROM global_apps) THEN
         RAISE EXCEPTION 'a populated global directory cannot become a regional cell'
             USING ERRCODE = '23514', CONSTRAINT = 'global_directory_scope';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_checked_rollback_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_checked_rollback_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='live' AND NEW.traffic_percent>(CASE WHEN OLD.status='live' THEN OLD.traffic_percent ELSE 0 END)
+ AND EXISTS(SELECT 1 FROM deployment_rollback_operations r WHERE r.target_deployment_id=NEW.id AND r.status NOT IN ('complete','failed')
+   AND (r.status NOT IN ('ready','blocked') OR r.id::text IS DISTINCT FROM current_setting('faas.checked_rollback_request',true))) THEN
+  RAISE EXCEPTION 'checked rollback operation required' USING ERRCODE='23514',CONSTRAINT='checked_rollback_required';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_clone_configuration_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_clone_configuration_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    before_row jsonb := CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) ELSE '{}'::jsonb END;
+    after_row jsonb := CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) ELSE '{}'::jsonb END;
+    before_id uuid := nullif(before_row ->> TG_ARGV[1], '')::uuid;
+    after_id uuid := nullif(after_row ->> TG_ARGV[1], '')::uuid;
+    project uuid;
+BEGIN
+    -- Protection intents are frozen customer configuration. Only the original
+    -- journal's operational progress may change during a capture hold.
+    IF TG_TABLE_NAME = 'object_version_protection' AND TG_OP = 'UPDATE' THEN
+        IF (before_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            IS DISTINCT FROM (after_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            OR ((before_row ->> 'dispatched')::boolean AND NOT (after_row ->> 'dispatched')::boolean)
+            OR ((before_row ->> 'state') IN ('ready','failed') AND before_row IS DISTINCT FROM after_row)
+            OR (nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS NOT NULL AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((before_row ->> 'dispatched')::boolean AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'last_error_code') NOT IN ('preparation_failed','provider_rejected'))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'dispatched')::boolean AND (after_row ->> 'last_error_code') <> 'provider_rejected') THEN
+            RAISE EXCEPTION 'original protection intent and settled evidence are immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'object_protection_original_immutable';
+        END IF;
+        RETURN NEW;
+    END IF;
+    PERFORM generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'configuration synchronization clock is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    FOR project IN
+        SELECT DISTINCT p.project_id FROM (
+            SELECT before_id AS project_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT after_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT a.project_id FROM apps a
+                WHERE TG_ARGV[0] = 'app' AND a.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM deployments d JOIN apps a ON a.id = d.app_id
+                WHERE TG_ARGV[0] = 'deployment' AND d.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM object_buckets b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'bucket' AND b.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM managed_postgres_bindings b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'database' AND b.database_id IN (before_id, after_id)
+        ) p WHERE p.project_id IS NOT NULL ORDER BY p.project_id
+    LOOP
+        PERFORM assert_clone_configuration_mutable(project);
+    END LOOP;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_deployment_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_deployment_layer_artifacts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE key text;
+BEGIN
+    IF TG_OP = 'INSERT' OR NEW.rootfs_key IS DISTINCT FROM OLD.rootfs_key OR
+       (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')) THEN
+        FOR key IN SELECT keys.key FROM (
+            SELECT NEW.rootfs_key AS key
+            UNION SELECT storage_key FROM deployment_sidecar_layers WHERE deployment_id = NEW.id
+        ) keys WHERE coalesce(keys.key, '') <> '' ORDER BY keys.key LOOP
+            PERFORM require_retained_layer_artifact(key);
+        END LOOP;
     END IF;
     RETURN NEW;
 END;
@@ -5525,6 +6380,39 @@ END $$;
 
 
 --
+-- Name: guard_event_delivery_replay(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_event_delivery_replay() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
+ consumer_count bigint; app_count bigint; account_count bigint; scope text;
+BEGIN
+ IF NEW.state NOT IN ('pending','dispatching') THEN RETURN NEW; END IF;
+ IF TG_OP = 'UPDATE' AND OLD.state IN ('pending','dispatching') THEN RETURN NEW; END IF;
+ SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.id;
+ IF NOT FOUND AND NEW.replayed_from_invocation_id IS NOT NULL THEN
+  SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.replayed_from_invocation_id;
+ END IF;
+ IF slot.invocation_id IS NULL THEN RETURN NEW; END IF;
+ SELECT * INTO STRICT caps FROM event_delivery_capacity WHERE account_id=slot.account_id FOR UPDATE;
+ SELECT count(*), count(*) FILTER (WHERE s.app_id=slot.app_id),
+   count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
+ INTO account_count, app_count, consumer_count
+ FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
+ WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
+ scope := CASE WHEN consumer_count>=caps.consumer_limit THEN 'consumer'
+   WHEN app_count>=caps.app_limit THEN 'app' WHEN account_count>=caps.account_limit THEN 'account' END;
+ IF scope IS NOT NULL THEN
+  RAISE EXCEPTION 'event delivery capacity exhausted: %',scope USING ERRCODE='23514', CONSTRAINT='event_delivery_capacity', DETAIL=scope;
+ END IF;
+ INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_global_ingress_publication(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5701,6 +6589,22 @@ $$;
 
 
 --
+-- Name: guard_instance_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_instance_layer_artifacts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.deployment_id IS NOT NULL AND NEW.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining') THEN
+        PERFORM require_deployment_layer_artifacts(NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_invocation_deployment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5781,6 +6685,13 @@ BEGIN
   IF NEW.queue_binding_id IS NOT NULL AND NEW.source<>'queue' THEN
     RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_queue_binding_source',
       MESSAGE='binding identity requires a queue invocation';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NEW.source='queue' THEN
+    IF NEW.queue_binding_id IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_private_queue_binding',
+        MESSAGE='private queue work cannot capture a public binding';
+    END IF;
+    RETURN NEW;
   END IF;
   IF NEW.source='queue' THEN
     IF NEW.queue_binding_id IS NULL AND NEW.queue_name<>'' THEN
@@ -6043,6 +6954,57 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_resize_database(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_resize_database() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM managed_postgres_resizes WHERE database_id=OLD.id AND state='pending') THEN
+  IF TG_OP='DELETE' THEN
+   RAISE EXCEPTION 'database has an unresolved resize' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+  END IF;
+  IF ROW(NEW.account_id,NEW.backend_id,NEW.backend_fingerprint,NEW.provider_resource_id,NEW.data_resource_id,
+      NEW.region,NEW.postgres_major,NEW.service_class,NEW.availability,NEW.scale_to_zero,NEW.storage_limit_bytes,NEW.restore_window_seconds,
+      NEW.desired_generation,NEW.observed_generation,NEW.cutover_id,NEW.environment_clone_operation_id,NEW.clone_resource_role)
+      IS DISTINCT FROM ROW(OLD.account_id,OLD.backend_id,OLD.backend_fingerprint,OLD.provider_resource_id,OLD.data_resource_id,
+      OLD.region,OLD.postgres_major,OLD.service_class,OLD.availability,OLD.scale_to_zero,OLD.storage_limit_bytes,OLD.restore_window_seconds,
+      OLD.desired_generation,OLD.observed_generation,OLD.cutover_id,OLD.environment_clone_operation_id,OLD.clone_resource_role)
+      OR NEW.state<>'updating' THEN
+   RAISE EXCEPTION 'database has an unresolved resize' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_resize_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_resize_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.state='pending' AND EXISTS(SELECT 1 FROM managed_postgres_databases WHERE id=OLD.database_id) THEN
+   RAISE EXCEPTION 'pending resize intent cannot be removed' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF (to_jsonb(NEW)-'state'-'completed_at') IS DISTINCT FROM (to_jsonb(OLD)-'state'-'completed_at')
+  OR (OLD.state='succeeded' AND NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION 'resize intent is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_restore_sources(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6087,6 +7049,146 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_object_multipart_initiation_dispatch(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_object_multipart_initiation_dispatch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_storage_multipart_uploads%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.multipart_upload_id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_live',MESSAGE='Retain original initiation evidence while the provider receipt is outstanding';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_isolation',MESSAGE='Initiation dispatch requires READ COMMITTED';
+ END IF;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
+ PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
+ IF u.id IS NULL OR u.state<>'initiating' OR u.provider_upload_id<>'' OR NOT EXISTS(
+  SELECT 1 FROM object_bucket_mutations m JOIN object_buckets b ON b.id=m.bucket_id
+  WHERE m.multipart_upload_id=u.id AND m.kind='request' AND b.id=u.bucket_id AND b.account_id=u.account_id AND b.app_id=u.app_id
+  AND b.state='ready' AND b.backend_id=m.backend_id AND b.backend_fingerprint=m.backend_fingerprint AND b.physical_name=m.physical_name
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_original',MESSAGE='Initiation requires the original session receipt and placement';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.dispatched OR NEW.dispatch_token<>'' OR NEW.provider_upload_id<>'' OR u.lease_token IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_reserved',MESSAGE='Initialize dispatch evidence only with a new reservation';
+  END IF;
+ ELSIF NEW.multipart_upload_id<>OLD.multipart_upload_id OR u.lease_token IS NULL OR u.lease_token='' OR u.lease_until IS NULL OR u.lease_until<=clock_timestamp() OR NOT (
+  (NOT OLD.dispatched AND NEW.dispatched AND NEW.dispatch_token=u.lease_token AND NEW.provider_upload_id='') OR
+  (OLD.dispatched AND NEW.dispatched AND OLD.dispatch_token=u.lease_token AND NEW.dispatch_token=OLD.dispatch_token AND OLD.provider_upload_id='' AND btrim(NEW.provider_upload_id)<>'' AND NEW.provider_upload_id !~ '[[:cntrl:]]')
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_immutable',MESSAGE='Dispatch is once-only and only its live owner may record a positive reply';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_object_multipart_part_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_object_multipart_part_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.multipart_part_writer_id IS NOT NULL AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE id=OLD.multipart_part_writer_id AND NOT settled) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Settle the original part writer before deleting its receipt';
+  END IF;
+  RETURN OLD;
+ ELSIF TG_OP='UPDATE' THEN
+  IF NEW.multipart_part_writer_id IS NOT NULL OR OLD.multipart_part_writer_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Original part receipts are immutable';
+  END IF;
+ ELSIF NEW.multipart_part_writer_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM object_multipart_part_writers d WHERE d.id=NEW.multipart_part_writer_id AND d.id=NEW.id AND d.managed AND d.dispatched AND NOT d.settled AND d.bucket_id=NEW.bucket_id AND d.backend_id=NEW.backend_id AND d.backend_fingerprint=NEW.backend_fingerprint AND d.physical_name=NEW.physical_name AND NEW.kind='request') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Bind the receipt to its original claimed part attempt';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_object_multipart_part_writer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_object_multipart_part_writer() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE u object_storage_multipart_uploads%ROWTYPE; g object_storage_multipart_part_grants%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.dispatched AND NOT OLD.settled THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Uncertain part evidence cannot be deleted';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writers require READ COMMITTED';
+ END IF;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
+ PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
+ SELECT * INTO g FROM object_storage_multipart_part_grants WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number;
+ IF u.id IS NULL OR u.bucket_id<>NEW.bucket_id OR NOT EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=u.bucket_id AND b.account_id=u.account_id AND b.app_id=u.app_id AND b.state='ready' AND b.backend_id=NEW.backend_id AND b.backend_fingerprint=NEW.backend_fingerprint AND b.physical_name=NEW.physical_name) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writer requires its original placement';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='55000',CONSTRAINT='object_multipart_part_capture_fenced',MESSAGE='Capture fences new part transfer admission';
+  END IF;
+  IF NOT NEW.managed OR NEW.dispatched OR NEW.settled OR u.state<>'active' OR g.transfer_token IS DISTINCT FROM NEW.transfer_token THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Reserve part evidence only with new unfenced transfer authority';
+  END IF;
+ ELSIF (to_jsonb(NEW)-ARRAY['dispatched','settled','copy_intent','put_intent','body_sha256']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['dispatched','settled','copy_intent','put_intent','body_sha256']) OR OLD.settled OR NOT OLD.managed OR NOT (
+  (OLD.copy_intent IS NULL AND OLD.put_intent IS NULL AND OLD.body_sha256='' AND NEW.body_sha256='' AND NOT OLD.dispatched AND NEW.dispatched AND NOT NEW.settled AND u.state='active' AND u.expires_at>clock_timestamp() AND g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token AND g.unsafe_until>clock_timestamp()) OR
+  (NEW.copy_intent IS NOT DISTINCT FROM OLD.copy_intent AND NEW.put_intent IS NOT DISTINCT FROM OLD.put_intent AND NEW.body_sha256=OLD.body_sha256 AND NEW.dispatched=OLD.dispatched AND NEW.settled AND (NOT OLD.dispatched OR g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token))
+  OR (OLD.dispatched AND NOT OLD.settled AND NEW.dispatched AND NOT NEW.settled AND OLD.put_intent IS NOT NULL AND OLD.copy_intent IS NULL
+   AND NEW.put_intent IS NOT DISTINCT FROM OLD.put_intent AND NEW.copy_intent IS NOT DISTINCT FROM OLD.copy_intent
+   AND (OLD.body_sha256='' OR OLD.body_sha256=NEW.body_sha256) AND NEW.body_sha256 ~ '^[0-9a-f]{64}$' AND g.transfer_token IS NOT DISTINCT FROM NEW.transfer_token
+   AND (OLD.put_intent->>'expected_sha256'='' OR OLD.put_intent->>'expected_sha256'=NEW.body_sha256))
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Dispatch once; settle only the original attempt with qualified proof';
+ END IF;
+ IF TG_OP='UPDATE' AND NOT OLD.dispatched AND NEW.dispatched AND NEW.copy_intent IS NOT NULL AND NOT COALESCE((
+  NEW.copy_intent->>'destination_key'=u.object_key AND NEW.copy_intent->>'provider_upload_id'=u.provider_upload_id
+  AND (NEW.copy_intent->>'expected_size')::bigint BETWEEN 1 AND g.max_bytes
+  AND (NEW.copy_intent->>'source_size')::bigint >= (NEW.copy_intent->>'expected_size')::bigint
+  AND NEW.copy_intent->>'source_etag'<>'' AND NEW.copy_intent->>'source_key'<>''
+  AND ((g.source_bucket_id IS NULL AND NEW.copy_intent->>'source_bucket_id'=u.bucket_id::text)
+   OR (NEW.copy_intent->>'source_bucket_id'=g.source_bucket_id::text AND NEW.copy_intent->>'source_key'=g.source_key))
+  AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.id::text=NEW.copy_intent->>'source_bucket_id' AND b.account_id=u.account_id AND b.state='ready'
+   AND b.backend_id=NEW.copy_intent->>'source_backend_id' AND b.backend_fingerprint=NEW.copy_intent->>'source_backend_fingerprint' AND b.physical_name=NEW.copy_intent->>'source_physical_name')
+  AND (((NEW.copy_intent->>'has_range')::boolean AND (NEW.copy_intent->>'range_first')::bigint>=0 AND (NEW.copy_intent->>'range_last')::bigint<(NEW.copy_intent->>'source_size')::bigint
+    AND (NEW.copy_intent->>'expected_size')::bigint=(NEW.copy_intent->>'range_last')::bigint-(NEW.copy_intent->>'range_first')::bigint+1)
+   OR (NOT (NEW.copy_intent->>'has_range')::boolean AND (NEW.copy_intent->>'range_first')::bigint=0 AND (NEW.copy_intent->>'range_last')::bigint=0 AND NEW.copy_intent->>'expected_size'=NEW.copy_intent->>'source_size'))
+ ),false) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Copy intent requires the original measured source, range and destination';
+ END IF;
+ IF TG_OP='UPDATE' AND NOT OLD.dispatched AND NEW.dispatched AND NEW.put_intent IS NOT NULL AND NOT COALESCE((
+  NEW.copy_intent IS NULL AND g.source_bucket_id IS NULL
+  AND NEW.put_intent->>'destination_key'=u.object_key AND NEW.put_intent->>'provider_upload_id'=u.provider_upload_id
+  AND ((g.url_credential_id IS NULL AND (NEW.put_intent->>'expected_size')::bigint BETWEEN 1 AND g.max_bytes)
+   OR (g.url_credential_id IS NOT NULL AND u.part_count>0 AND u.part_size_bytes>0 AND u.size_bytes>0
+    AND NEW.part_number BETWEEN 1 AND u.part_count
+    AND (NEW.put_intent->>'expected_size')::bigint=least(u.part_size_bytes,u.size_bytes-(NEW.part_number-1)::bigint*u.part_size_bytes)))
+  AND (NEW.put_intent->>'expected_sha256'='' OR NEW.put_intent->>'expected_sha256' ~ '^[0-9a-f]{64}$')
+ ),false) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='PUT intent requires its original destination and admitted size';
+ END IF;
+ RETURN NEW;
+END $_$;
 
 
 --
@@ -6604,6 +7706,9 @@ CREATE FUNCTION public.guard_retired_queue_invocation() RETURNS trigger
     AS $$
 DECLARE binding_retired_at timestamptz; binding_scope text; binding_environment uuid;
 BEGIN
+  IF NEW.environment_id IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
   IF NEW.source='queue' AND (TG_OP='INSERT' OR
     (NEW.state='dispatching' AND OLD.state IS DISTINCT FROM 'dispatching')) THEN
     SELECT b.retired_at,b.deployment_scope,b.environment_id INTO binding_retired_at,binding_scope,binding_environment FROM queue_bindings b
@@ -6686,6 +7791,36 @@ $$;
 
 
 --
+-- Name: guard_sidecar_layer_artifact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_sidecar_layer_artifact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM require_retained_layer_artifact(NEW.storage_key);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_snapshot_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_snapshot_layer_artifacts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NOT NEW.stale THEN
+        PERFORM require_deployment_layer_artifacts(NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_worker_admission_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6734,6 +7869,24 @@ BEGIN
     ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
         RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: initialize_clone_configuration_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.initialize_clone_configuration_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO project_environment_clone_configuration_guards(project_id, account_id)
+    VALUES (NEW.id, NEW.account_id)
+    ON CONFLICT (project_id) DO UPDATE SET account_id = EXCLUDED.account_id,
+        generation = project_environment_clone_configuration_guards.generation + 1
+    WHERE project_environment_clone_configuration_guards.state = 'open';
     RETURN NEW;
 END;
 $$;
@@ -6911,6 +8064,21 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: keep_failed_rollback_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.keep_failed_rollback_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'failed' AND OLD.status = 'snapshotting' AND OLD.serving_ended_at IS NOT NULL THEN
+  NEW.status := 'superseded';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -7292,6 +8460,20 @@ $$;
 
 
 --
+-- Name: notify_project_environment_workload_head(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_project_environment_workload_head() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('app_changed', NEW.app_id::text);
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: notify_runtime_config_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7361,6 +8543,43 @@ BEGIN
     RETURN NEW;
 END
 $$;
+
+
+--
+-- Name: object_event_hold_retention_valid(jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_event_hold_retention_valid(r jsonb, writing boolean) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE p jsonb; n numeric; d timestamptz;
+BEGIN
+ IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR octet_length(r::text)>16384
+  OR EXISTS(SELECT 1 FROM jsonb_object_keys(r) AS k WHERE k NOT IN ('mode','retain_until_date','event_hold','event_hold_duration')) THEN RETURN false; END IF;
+ IF r='{}'::jsonb THEN RETURN true; END IF;
+ IF jsonb_typeof(r->'mode') IS DISTINCT FROM 'string' OR r->>'mode' NOT IN ('COMPLIANCE','GOVERNANCE') THEN RETURN false; END IF;
+ IF r ? 'retain_until_date' THEN
+  IF jsonb_typeof(r->'retain_until_date') IS DISTINCT FROM 'string' OR r->>'retain_until_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN false; END IF;
+  d:=(r->>'retain_until_date')::timestamptz;
+  IF NOT isfinite(d) OR extract(year FROM d) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'event_hold' THEN
+  IF jsonb_typeof(r->'event_hold') IS DISTINCT FROM 'string' OR r->>'event_hold' NOT IN ('ON','OFF') THEN RETURN false; END IF;
+ ELSE
+  RETURN r ? 'retain_until_date' AND NOT r ? 'event_hold_duration';
+ END IF;
+ IF r ? 'event_hold_duration' THEN
+  p:=r->'event_hold_duration';
+  IF jsonb_typeof(p) IS DISTINCT FROM 'object' OR (SELECT count(*) FROM jsonb_object_keys(p))<>1 OR NOT (p ? 'days' OR p ? 'years') THEN RETURN false; END IF;
+  IF jsonb_typeof(coalesce(p->'days',p->'years')) IS DISTINCT FROM 'number' OR coalesce(p->>'days',p->>'years') !~ '^[0-9]+$' THEN RETURN false; END IF;
+  n:=coalesce(p->>'days',p->>'years')::numeric;
+  IF n<1 OR n>(CASE WHEN p ? 'days' THEN 36500 ELSE 100 END) THEN RETURN false; END IF;
+ END IF;
+ IF r->>'event_hold'='ON' AND NOT r ? 'event_hold_duration' THEN RETURN false; END IF;
+ IF writing THEN RETURN r->>'event_hold'<>'OFF' OR NOT r ? 'event_hold_duration'; END IF;
+ RETURN r ? 'retain_until_date';
+EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow OR numeric_value_out_of_range THEN RETURN false;
+END $_$;
 
 
 --
@@ -7458,37 +8677,59 @@ END $_$;
 
 
 --
--- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: valid_object_event_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
+CREATE FUNCTION public.valid_object_event_protected_url_request(r jsonb) RETURNS boolean
     LANGUAGE plpgsql IMMUTABLE STRICT
     AS $$
-DECLARE method text;
 BEGIN
- IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
-  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart'] <> '{}'::jsonb OR
-  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
-  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
-  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
- method:=r->>'method';
- IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
- IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
- IF r ? 'multipart' THEN
-  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
-   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
-   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
-   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
-   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
-   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
-   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
-  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
- END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
- RETURN true;
+ IF NOT coalesce(valid_object_protected_url_request(r-'protection'),false) THEN RETURN false; END IF;
+ IF NOT r ? 'protection' THEN RETURN true; END IF;
+ RETURN coalesce(r->>'method'='PUT' AND NOT r ? 'multipart' AND r->'protection'<>'{}' AND
+  valid_object_event_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection')),false);
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
+
+
+--
+-- Name: valid_object_event_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_event_write_protection(p jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+DECLARE r jsonb; d jsonb; t timestamptz; minimum timestamptz; period jsonb; n integer;
+BEGIN
+ IF p='{}' THEN RETURN true; END IF;
+ IF jsonb_typeof(p) IS DISTINCT FROM 'object' OR octet_length(p::text)>16384 OR p-ARRAY['enabled','revision','captured_at','default_retention','requested']<>'{}' OR p->'enabled' IS DISTINCT FROM 'true'::jsonb OR
+  p ? 'revision' AND (jsonb_typeof(p->'revision') IS DISTINCT FROM 'number' OR p->>'revision' !~ '^[0-9]+$' OR (p->>'revision')::numeric NOT BETWEEN 0 AND 9007199254740991) OR jsonb_typeof(p->'captured_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+ t:=(p->>'captured_at')::timestamptz;
+ IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ IF p ? 'default_retention' AND NOT coalesce(valid_object_lock_configuration(jsonb_build_object('enabled',true,'default_retention',p->'default_retention')),false) THEN RETURN false; END IF;
+ r:=coalesce(p->'requested','{}'::jsonb);
+ IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR r-ARRAY['retention','legal_hold']<>'{}' THEN RETURN false; END IF;
+ IF r ? 'retention' THEN
+  d:=r->'retention';
+  IF d='{}' OR NOT object_event_hold_retention_valid(d,true) OR NOT (d->>'event_hold'='ON' OR d ? 'retain_until_date') THEN RETURN false; END IF;
+  IF d ? 'retain_until_date' AND date_trunc('milliseconds',(d->>'retain_until_date')::timestamptz)<>(d->>'retain_until_date')::timestamptz THEN RETURN false; END IF;
+  IF d->>'event_hold'='ON' THEN period:=d->'event_hold_duration'; END IF;
+ ELSE
+  d:=p->'default_retention';
+  period:=d->'default_event_hold';
+  IF d ? 'days' THEN minimum:=t+(d->>'days')::integer*interval '1 day'; END IF;
+  IF d ? 'years' THEN minimum:=t+(d->>'years')::integer*interval '1 year'; END IF;
+  IF minimum IS NOT NULL AND extract(year FROM minimum) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ END IF;
+ IF period IS NOT NULL THEN
+  n:=CASE WHEN period ? 'days' THEN (period->>'days')::integer ELSE (period->>'years')::integer*365 END;
+  minimum:=t+n*interval '1 day';
+  IF extract(year FROM minimum) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold') IS DISTINCT FROM 'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $_$;
 
 
 --
@@ -7534,11 +8775,16 @@ CREATE TABLE public.object_storage_multipart_uploads (
     encryption_verified boolean DEFAULT false NOT NULL,
     fixed_admission boolean DEFAULT false NOT NULL,
     encryption_default_revision bigint DEFAULT 0 NOT NULL,
+    protection_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    protection_lease_token text DEFAULT ''::text NOT NULL,
+    protection_verified boolean DEFAULT false NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
+    CONSTRAINT object_multipart_event_protection_snapshot CHECK (public.valid_object_event_write_protection(protection_snapshot)),
     CONSTRAINT object_multipart_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((lifecycle_binding -> 'scan_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_upload_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_provider_upload_id'::text) = provider_upload_id) AND (provider_upload_id <> ''::text) AND (jsonb_typeof((lifecycle_binding -> 'expected_created_at'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_created_at'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND (state = ANY (ARRAY['aborting'::text, 'aborted'::text]))))),
     CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
+    CONSTRAINT object_multipart_protection_phase CHECK ((((protection_lease_token = ''::text) OR ((protection_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (protection_lease_token = lease_token))) AND ((NOT protection_verified) OR ((protection_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched AND (completion_version_id <> ''::text) AND (completion_version_id <> 'null'::text))) AND ((protection_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR protection_verified))),
     CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -7560,6 +8806,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_part_count_check CHECK (((part_count >= 0) AND (part_count <= 10000))),
     CONSTRAINT object_storage_multipart_uploads_part_revision_check CHECK ((part_revision >= 0)),
     CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_multipart_uploads_protection_lease_token_check CHECK ((octet_length(protection_lease_token) <= 128)),
     CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
     CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
     CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
@@ -7593,6 +8840,7 @@ CREATE TABLE public.object_storage_s3_credentials (
     url_api_key_id uuid,
     url_expires_at timestamp with time zone,
     url_receipt_id uuid,
+    CONSTRAINT object_s3_event_protected_url_request CHECK (((url_request IS NULL) OR public.valid_object_event_protected_url_request(url_request))),
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -7603,7 +8851,6 @@ CREATE TABLE public.object_storage_s3_credentials (
     CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
     CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
     CONSTRAINT object_storage_s3_credentials_url_api_key_id_check CHECK (((url_api_key_id IS NULL) OR (url_api_key_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT object_storage_s3_credentials_url_request_check CHECK (((url_request IS NULL) OR public.valid_object_url_request(url_request))),
     CONSTRAINT object_url_credential_shape CHECK ((((url_request IS NULL) AND (url_api_key_id IS NULL) AND (url_expires_at IS NULL) AND (url_receipt_id IS NULL)) OR ((url_request IS NOT NULL) AND (url_expires_at IS NOT NULL) AND (url_expires_at > created_at) AND (url_expires_at <= (created_at + '00:15:00'::interval)) AND (managed_app_id IS NULL) AND (rotation_parent_id IS NULL) AND ((((url_request ->> 'method'::text) = 'PUT'::text) AND (permission = 'write'::text) AND (((NOT (url_request ? 'multipart'::text)) AND (url_receipt_id IS NOT NULL)) OR ((url_request ? 'multipart'::text) AND (url_receipt_id IS NULL)))) OR (((url_request ->> 'method'::text) = ANY (ARRAY['GET'::text, 'HEAD'::text])) AND (permission = 'read'::text) AND (url_receipt_id IS NULL))))))
 );
 
@@ -7860,6 +9107,127 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: project_event_routing_backlog_recipient(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_event_routing_backlog_recipient() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='DELETE' THEN
+        PERFORM refresh_event_routing_backlog(OLD.outbox_id,OLD.subscription_id);
+        RETURN OLD;
+    END IF;
+    PERFORM refresh_event_routing_backlog(NEW.outbox_id,NEW.subscription_id);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_event_routing_backlog_root(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_event_routing_backlog_root() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE sub text;
+BEGIN
+    IF TG_OP='INSERT' THEN
+        PERFORM refresh_event_routing_backlog(NEW.id);
+    ELSIF (NEW.recipient_snapshot,NEW.state,NEW.available_at,NEW.lease_until,NEW.recipient_claims,NEW.created_at,NEW.account_id)
+       IS DISTINCT FROM (OLD.recipient_snapshot,OLD.state,OLD.available_at,OLD.lease_until,OLD.recipient_claims,OLD.created_at,OLD.account_id) THEN
+        PERFORM refresh_event_routing_backlog(NEW.id);
+    ELSE
+        FOR sub IN SELECT k FROM (
+            SELECT jsonb_object_keys(NEW.recipient_progress) AS k
+            UNION SELECT jsonb_object_keys(OLD.recipient_progress) AS k
+        ) keys WHERE NEW.recipient_progress->k IS DISTINCT FROM OLD.recipient_progress->k ORDER BY k
+        LOOP PERFORM refresh_event_routing_backlog(NEW.id,sub); END LOOP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_release_member_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_member_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- The parent is inserted before its immutable members. Inactive retained
+    -- graphs and stage graph publication cannot change ordinary ingress.
+    IF EXISTS (SELECT 1 FROM project_release_sets
+               WHERE id = NEW.release_id AND active AND environment_slug = 'production') THEN
+        PERFORM record_project_release_policy_change(NEW.release_id, NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_release_set_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_set_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member_app uuid;
+BEGIN
+    IF OLD.environment_slug = 'production' THEN
+        FOR member_app IN SELECT app_id FROM project_release_members WHERE release_id = OLD.id LOOP
+            PERFORM record_project_release_policy_change(OLD.id, member_app);
+        END LOOP;
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: protect_bound_multipart_journal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_bound_multipart_journal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.id) AND (
+  (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) IS DISTINCT FROM
+  (to_jsonb(OLD)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) OR
+  (NEW.expires_at>OLD.expires_at) OR
+  (NEW.provider_upload_id IS DISTINCT FROM OLD.provider_upload_id AND NOT (OLD.state='initiating' AND OLD.provider_upload_id='' AND NEW.state='active' AND NEW.provider_upload_id<>'')) OR
+  (OLD.completion_dispatched AND (NEW.size_bytes IS DISTINCT FROM OLD.size_bytes OR NEW.completion_parts IS DISTINCT FROM OLD.completion_parts OR NEW.completion_if_match IS DISTINCT FROM OLD.completion_if_match OR NEW.completion_if_none_match IS DISTINCT FROM OLD.completion_if_none_match))
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_bound_journal_immutable',MESSAGE='An original provider receipt cannot be reassigned to another session intent';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_bound_upload_journal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_bound_upload_journal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE upload_id=OLD.id) AND
+  ((to_jsonb(NEW)-ARRAY['route_id','status','etag','error_code','write_phase','recovery_token','recovery_lease_until','recovery_retry_at','recovery_cursor','recovery_versions_observed','version_id','protection_verified','protection_dispatched','encryption_dispatched','encryption_verified']) IS DISTINCT FROM
+   (to_jsonb(OLD)-ARRAY['route_id','status','etag','error_code','write_phase','recovery_token','recovery_lease_until','recovery_retry_at','recovery_cursor','recovery_versions_observed','version_id','protection_verified','protection_dispatched','encryption_dispatched','encryption_verified']) OR
+   (NEW.route_id IS NOT NULL AND NEW.route_id IS DISTINCT FROM OLD.route_id)) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_bound_journal_immutable',MESSAGE='An original provider receipt cannot be reassigned to a different upload intent';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -8383,6 +9751,32 @@ $$;
 
 
 --
+-- Name: protect_managed_postgres_accounting_reconciliation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_managed_postgres_accounting_reconciliation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'managed postgres accounting reconciliation evidence is append-only';
+END $$;
+
+
+--
+-- Name: protect_managed_postgres_usage_import(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_managed_postgres_usage_import() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'managed postgres usage import evidence is append-only';
+END $$;
+
+
+--
 -- Name: protect_object_bucket_encryption(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8605,6 +9999,26 @@ END $$;
 
 
 --
+-- Name: protect_object_event_hold_baseline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_event_hold_baseline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.event_hold_baseline IS NOT NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Event hold baseline requires a live worker lease'; END IF;
+ ELSIF NEW.event_hold_baseline IS DISTINCT FROM OLD.event_hold_baseline THEN
+  IF OLD.event_hold_baseline IS NOT NULL OR OLD.dispatched OR NEW.dispatched OR OLD.state<>'applying' OR NEW.state<>'applying'
+   OR OLD.lease_token='' OR NEW.lease_token<>OLD.lease_token OR OLD.lease_until<=clock_timestamp() THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve immutable event hold baseline';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: protect_object_lifecycle_policy(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8730,6 +10144,65 @@ BEGIN
   END IF;
  END IF;
  IF NEW.lease_token IS NULL THEN NEW.encryption_lease_token:=''; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_initiation_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_initiation_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE d object_multipart_initiation_dispatches%ROWTYPE;
+BEGIN
+ SELECT * INTO d FROM object_multipart_initiation_dispatches WHERE multipart_upload_id=OLD.id;
+ IF d.multipart_upload_id IS NOT NULL AND OLD.state='initiating' AND (NEW.size_bytes IS DISTINCT FROM OLD.size_bytes OR NEW.part_count IS DISTINCT FROM OLD.part_count) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_intent',MESSAGE='Original initiation layout cannot change between authority checks and dispatch';
+ END IF;
+ IF d.dispatched AND d.dispatch_token<>'' AND NEW.provider_upload_id IS DISTINCT FROM OLD.provider_upload_id AND (
+  OLD.state<>'initiating' OR NEW.state<>'active' OR OLD.lease_token IS NULL OR OLD.lease_until IS NULL OR OLD.lease_until<=clock_timestamp() OR d.provider_upload_id='' OR NEW.provider_upload_id<>d.provider_upload_id
+ ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_positive_result',MESSAGE='Activate only the durably observed original initiation reply';
+ END IF;
+ IF d.dispatched AND d.provider_upload_id='' AND OLD.provider_upload_id='' AND NEW.state IN ('completed','aborted') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_uncertain',MESSAGE='An uncertain initiation cannot be settled by an empty listing or a timeout';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_part_session(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_part_session() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (NEW.state IN ('completed','aborted') AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.id AND dispatched AND NOT settled)) OR (EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.id AND NOT settled) AND (
+  (NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.object_key,NEW.provider_upload_id,NEW.encryption_snapshot,NEW.protection_snapshot) IS DISTINCT FROM
+  (OLD.account_id,OLD.app_id,OLD.bucket_id,OLD.object_key,OLD.provider_upload_id,OLD.encryption_snapshot,OLD.protection_snapshot)
+ )) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Uncertain independent writers retain their original parent intent';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_part_transfer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_part_transfer() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'INSERT' AND EXISTS(SELECT 1 FROM object_multipart_part_writers WHERE upload_id=OLD.upload_id AND part_number=OLD.part_number AND transfer_token=OLD.transfer_token AND dispatched AND NOT settled) AND (TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='An uncertain dispatched transfer cannot expire, change or be replaced';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
 
@@ -9044,6 +10517,51 @@ END $$;
 
 
 --
+-- Name: protect_object_version_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_version_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b object_buckets; owner uuid;
+BEGIN
+ -- The admission/cascade boundary uses account-before-bucket locking.
+ SELECT account_id INTO owner FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id);
+ PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id) FOR NO KEY UPDATE;
+ IF TG_OP='DELETE' THEN
+  IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve protection receipts until physical bucket deletion'; END IF;
+  RETURN OLD;
+ END IF;
+ IF NOT FOUND OR b.state<>'ready' OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection requires an owned ready bucket';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.state<>'waiting' OR NEW.dispatched OR NOT object_lock_versioning_ready(NEW.bucket_id) OR NOT object_lock_drained(NEW.bucket_id)
+   OR NOT EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND state='ready' AND observed_known AND native_enabled_observed AND observed_snapshot->>'enabled'='true')
+   OR EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=NEW.bucket_id AND state IN ('prepared','dispatched'))
+   OR EXISTS(SELECT 1 FROM object_bucket_encryption WHERE bucket_id=NEW.bucket_id AND state<>'ready') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection requires verified Object Lock and drained mutations';
+  END IF;
+  IF NEW.public_version_id<>'null' AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE id=NEW.public_version_id::uuid AND bucket_id=NEW.bucket_id AND object_key=NEW.object_key AND native_version_id=NEW.native_version_id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection requires an owned exact version';
+  END IF;
+ ELSE
+  IF (NEW.id,NEW.bucket_id,NEW.account_id,NEW.app_id,NEW.object_key,NEW.public_version_id,NEW.native_version_id,NEW.intent,NEW.created_at)
+   IS DISTINCT FROM (OLD.id,OLD.bucket_id,OLD.account_id,OLD.app_id,OLD.object_key,OLD.public_version_id,OLD.native_version_id,OLD.intent,OLD.created_at)
+   OR OLD.state IN ('ready','failed') OR OLD.dispatched AND NOT NEW.dispatched
+   OR NEW.state='applying' AND NEW.lease_token<>OLD.lease_token AND (OLD.lease_until>clock_timestamp() OR OLD.retry_at>clock_timestamp())
+   OR NOT OLD.dispatched AND NEW.dispatched AND NOT (OLD.state='applying' AND NEW.state='applying' AND OLD.lease_token=NEW.lease_token AND OLD.lease_until>clock_timestamp())
+   OR NEW.state IN ('ready','failed') AND NOT (OLD.state='applying' AND OLD.lease_until>clock_timestamp())
+   OR NEW.state='failed' AND OLD.dispatched AND NEW.last_error_code<>'provider_rejected' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection intent and leased progress are immutable';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: protect_object_version_reference(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9061,6 +10579,63 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version reference identity is immutable';
  END IF;
  NEW.versions_observed:=OLD.versions_observed OR NEW.versions_observed;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_write_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_write_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE j object_bucket_object_lock; protected boolean; url_request jsonb;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
+  SELECT * INTO j FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id;
+  protected := FOUND AND (j.enabled_required OR j.native_enabled_observed OR j.observed_snapshot->>'enabled'='true');
+  IF TG_TABLE_NAME='object_upload_completions' THEN
+   IF NEW.status='rejected' AND NEW.protection_snapshot='{}' THEN RETURN NEW; END IF;
+   SELECT c.url_request INTO url_request FROM object_storage_s3_credentials c WHERE c.id::text=NEW.subject_id AND c.url_request IS NOT NULL;
+   IF FOUND AND coalesce(url_request->'protection','{}'::jsonb) IS DISTINCT FROM coalesce(NEW.protection_snapshot->'requested','{}'::jsonb) THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Signed URL protection requires its bound receipt'; END IF;
+  END IF;
+  IF protected OR NEW.protection_snapshot<>'{}' THEN
+   IF NOT protected OR j.state<>'ready' OR NOT j.observed_known OR j.observed_snapshot->>'enabled' IS DISTINCT FROM 'true' OR
+    NOT object_lock_versioning_ready(NEW.bucket_id) OR NEW.protection_snapshot='{}' OR
+    coalesce((NEW.protection_snapshot->>'revision')::bigint,0)<>j.revision OR
+    coalesce(NEW.protection_snapshot->'default_retention','null'::jsonb) IS DISTINCT FROM coalesce(j.observed_snapshot->'default_retention','null'::jsonb) THEN
+    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='New writes require the admitted Object Lock policy';
+   END IF;
+   IF TG_TABLE_NAME='object_upload_completions' THEN
+    IF NEW.status<>'pending' OR NEW.write_phase<>'prepared' OR NEW.protection_dispatched OR NEW.protection_verified THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected write requires a prepared intent'; END IF;
+   ELSE
+    IF NEW.state<>'initiating' OR NEW.lease_token IS NOT NULL OR NEW.protection_lease_token<>'' OR NEW.protection_verified THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected multipart requires an initiating intent'; END IF;
+   END IF;
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.protection_snapshot IS DISTINCT FROM OLD.protection_snapshot OR (OLD.protection_snapshot<>'{}' AND
+  (NEW.id,NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.object_key,NEW.created_at) IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.app_id,OLD.bucket_id,OLD.object_key,OLD.created_at)) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Write protection snapshot and ownership are immutable';
+ END IF;
+ IF TG_TABLE_NAME='object_upload_completions' THEN
+  IF OLD.protection_snapshot<>'{}' AND ((NEW.bytes,NEW.origin,NEW.source_key,NEW.source_etag) IS DISTINCT FROM (OLD.bytes,OLD.origin,OLD.source_key,OLD.source_etag) OR
+   OLD.protection_dispatched AND NOT NEW.protection_dispatched OR NEW.write_phase='dispatched' AND NOT NEW.protection_dispatched OR
+   NOT OLD.protection_dispatched AND NEW.protection_dispatched AND NOT (OLD.write_phase='prepared' AND NEW.write_phase='dispatched') OR
+   NEW.protection_verified IS DISTINCT FROM OLD.protection_verified AND NOT (OLD.write_phase='dispatched' AND NEW.write_phase='settled' AND NEW.status='completed' AND NEW.protection_verified) OR
+   OLD.write_phase='settled' AND (NEW.status,NEW.etag,NEW.error_code,NEW.version_id) IS DISTINCT FROM (OLD.status,OLD.etag,OLD.error_code,OLD.version_id)) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected write requires aware dispatch and verified settlement';
+  END IF;
+ ELSE
+  IF OLD.protection_snapshot<>'{}' AND (NEW.lease_token IS NOT NULL AND NEW.protection_lease_token IS DISTINCT FROM NEW.lease_token OR
+   NEW.protection_verified IS DISTINCT FROM OLD.protection_verified AND NOT (OLD.state IN ('completing','completing_conditional') AND NEW.state='completed' AND OLD.completion_dispatched AND NEW.protection_verified)) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected multipart requires aware claims and verified completion';
+  END IF;
+  IF NEW.lease_token IS NULL THEN NEW.protection_lease_token:=''; END IF;
+ END IF;
  RETURN NEW;
 END $$;
 
@@ -9386,6 +10961,51 @@ $$;
 
 
 --
+-- Name: record_invocation_attempt_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_invocation_attempt_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  recorded_at timestamptz := clock_timestamp();
+  attempt_outcome text;
+BEGIN
+  IF NEW.source NOT IN ('async_invoke','replay') THEN RETURN NEW; END IF;
+  -- Both writes share the execution transaction. No backfill or pre-claim attempts.
+  IF OLD.state='dispatching' AND (NEW.state<>'dispatching'
+      OR NEW.attempts<>OLD.attempts OR NEW.replay_generation<>OLD.replay_generation) THEN
+    attempt_outcome := CASE
+      WHEN NEW.replay_generation<>OLD.replay_generation THEN 'unknown'
+      WHEN NEW.state='completed' THEN 'succeeded'
+      WHEN NEW.outcome='uncertain' THEN 'unknown'
+      WHEN NEW.state='pending' AND NEW.last_error='dispatch lease expired; requeued' THEN 'unknown'
+      WHEN NEW.state='pending' THEN 'retry'
+      WHEN NEW.state='failed' THEN 'failed'
+      WHEN NEW.state='dead_letter' THEN 'dead_letter'
+      WHEN NEW.state='cancelled' THEN 'cancelled'
+      ELSE 'unknown' END;
+    UPDATE invocation_attempt_history SET
+      finished_at=greatest(recorded_at,started_at), outcome=attempt_outcome,
+      error_detail=left(coalesce(NEW.last_error,''),1024),
+      next_attempt_at=CASE WHEN NEW.state='pending' THEN NEW.due_at END,
+      retain_until=least(coalesce(NEW.result_retention_until,recorded_at+interval '30 days'),recorded_at+interval '30 days')
+    WHERE invocation_id=OLD.id AND replay_generation=OLD.replay_generation
+      AND attempt=OLD.attempts AND outcome='running';
+  END IF;
+  IF NEW.state='dispatching' AND NEW.attempts>0 AND (OLD.state<>'dispatching'
+      OR NEW.attempts<>OLD.attempts OR NEW.replay_generation<>OLD.replay_generation) THEN
+    INSERT INTO invocation_attempt_history(invocation_id,account_id,app_id,
+      root_invocation_id,root_created_at,replay_generation,attempt,started_at,outcome,retain_until)
+    VALUES(NEW.id,NEW.account_id,NEW.app_id,coalesce(NEW.replay_root_invocation_id,NEW.id),
+      coalesce(NEW.replay_root_created_at,NEW.created_at),NEW.replay_generation,NEW.attempts,
+      recorded_at,'running',recorded_at+interval '30 days');
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
 -- Name: record_job_task_attempt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9453,6 +11073,52 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: record_project_release_policy_change(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_project_release_policy_change(release_uuid uuid, app_uuid uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(711901248671::bigint);
+    INSERT INTO control_plane_change_log (resource_type, resource_id, app_id, operation)
+    VALUES ('project_release', release_uuid, app_uuid, 'updated');
+    PERFORM pg_notify('app_changed', app_uuid::text);
+END;
+$$;
+
+
+--
+-- Name: refresh_event_routing_backlog(bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refresh_event_routing_backlog(p_outbox_id bigint, p_subscription_id text DEFAULT NULL::text) RETURNS void
+    LANGUAGE sql
+    AS $$
+WITH candidates AS MATERIALIZED (
+    SELECT * FROM event_routing_backlog_source
+    WHERE outbox_id=p_outbox_id AND (p_subscription_id IS NULL OR subscription_id=p_subscription_id)
+      AND routing_state IN ('pending','processing')
+), inserted AS (
+    INSERT INTO event_routing_backlog SELECT * FROM candidates ORDER BY subscription_id
+    ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
+        account_id=excluded.account_id,app_id=excluded.app_id,accepted_at=excluded.accepted_at,
+        routing_mode=excluded.routing_mode,routing_state=excluded.routing_state,capacity_scope=excluded.capacity_scope,
+        attempts=excluded.attempts,capacity_deferrals=excluded.capacity_deferrals,
+        next_attempt_at=excluded.next_attempt_at,lease_until=excluded.lease_until
+    WHERE (event_routing_backlog.account_id,event_routing_backlog.app_id,event_routing_backlog.accepted_at,
+           event_routing_backlog.routing_mode,event_routing_backlog.routing_state,event_routing_backlog.capacity_scope,
+           event_routing_backlog.attempts,event_routing_backlog.capacity_deferrals,event_routing_backlog.next_attempt_at,event_routing_backlog.lease_until)
+       IS DISTINCT FROM (excluded.account_id,excluded.app_id,excluded.accepted_at,excluded.routing_mode,excluded.routing_state,
+                         excluded.capacity_scope,excluded.attempts,excluded.capacity_deferrals,excluded.next_attempt_at,excluded.lease_until)
+)
+DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
+    AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
+    AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
+$$;
 
 
 --
@@ -9651,6 +11317,25 @@ $$;
 
 
 --
+-- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_deployment_layer_artifacts(deployment uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE key text;
+BEGIN
+    FOR key IN SELECT keys.key FROM (
+        SELECT rootfs_key AS key FROM deployments WHERE id = deployment
+        UNION SELECT storage_key FROM deployment_sidecar_layers WHERE deployment_id = deployment
+    ) keys WHERE coalesce(keys.key, '') <> '' ORDER BY keys.key LOOP
+        PERFORM require_retained_layer_artifact(key);
+    END LOOP;
+END;
+$$;
+
+
+--
 -- Name: require_fixed_multipart_admission(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9685,6 +11370,24 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_default_fenced',MESSAGE='New writes require the verified captured bucket default';
  END IF;
 END $$;
+
+
+--
+-- Name: require_retained_layer_artifact(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_retained_layer_artifact(key text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF key IS NULL OR key = '' THEN RETURN; END IF;
+    INSERT INTO layer_artifact_retention(storage_key) VALUES (key) ON CONFLICT DO NOTHING;
+    PERFORM 1 FROM layer_artifact_retention WHERE storage_key = key AND state = 'retained' FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'layer artifact is retired' USING ERRCODE = '55000', CONSTRAINT = 'layer_artifact_retention_reference_fence';
+    END IF;
+END;
+$$;
 
 
 --
@@ -10084,6 +11787,48 @@ BEGIN
     INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
         VALUES (NEW.account_id, NEW.app_id, event_name, NEW.completed_request_id, event_payload, recipients)
         ON CONFLICT (event, source_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: serialize_clone_value_publication(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.serialize_clone_value_publication() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[];
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        app_ids := ARRAY[NEW.app_id];
+    ELSIF TG_OP = 'DELETE' THEN
+        app_ids := ARRAY[OLD.app_id];
+    ELSE
+        app_ids := ARRAY[OLD.app_id, NEW.app_id];
+    END IF;
+    PERFORM id FROM apps WHERE id = ANY(app_ids) ORDER BY id FOR NO KEY UPDATE;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: serialize_runtime_deployment_configuration(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.serialize_runtime_deployment_configuration() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE deployment_ids uuid[];
+BEGIN
+    IF TG_OP='INSERT' THEN deployment_ids:=ARRAY[NEW.deployment_id];
+    ELSIF TG_OP='DELETE' THEN deployment_ids:=ARRAY[OLD.deployment_id];
+    ELSE deployment_ids:=ARRAY[OLD.deployment_id,NEW.deployment_id]; END IF;
+    PERFORM id FROM deployments WHERE id=ANY(deployment_ids) ORDER BY id FOR NO KEY UPDATE;
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
 END;
 $$;
@@ -10640,6 +12385,23 @@ $$;
 
 
 --
+-- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_deployment_serving_ended_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'live' AND NEW.traffic_percent > 0 THEN
+  NEW.serving_ended_at := NULL;
+ ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
+  NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: sync_app_task_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10809,6 +12571,104 @@ END $_$;
 
 
 --
+-- Name: valid_object_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_protected_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE method text;
+BEGIN
+ IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
+  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart','protection'] <> '{}'::jsonb OR
+  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
+  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
+  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
+ method:=r->>'method';
+ IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
+ IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
+ IF r ? 'multipart' THEN
+  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
+   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
+   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
+   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
+   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
+   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
+   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
+  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption','protection') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ IF r ? 'protection' AND (r->'protection'='{}' OR NOT valid_object_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection'))) THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
+-- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE method text;
+BEGIN
+ IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
+  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart'] <> '{}'::jsonb OR
+  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
+  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
+  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
+ method:=r->>'method';
+ IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
+ IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
+ IF r ? 'multipart' THEN
+  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
+   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
+   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
+   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
+   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
+   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
+   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
+  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
+-- Name: valid_object_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_write_protection(p jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE r jsonb; d jsonb; t timestamptz;
+BEGIN
+ IF p='{}' THEN RETURN true; END IF;
+ IF jsonb_typeof(p)<>'object' OR octet_length(p::text)>16384 OR p-ARRAY['enabled','revision','captured_at','default_retention','requested']<>'{}' OR p->'enabled' IS DISTINCT FROM 'true'::jsonb OR
+  jsonb_typeof(p->'revision') IS DISTINCT FROM 'number' AND p ? 'revision' OR coalesce((p->>'revision')::bigint,0) NOT BETWEEN 0 AND 9007199254740991 OR jsonb_typeof(p->'captured_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+ t := (p->>'captured_at')::timestamptz;
+ IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ IF p ? 'default_retention' AND (NOT valid_object_lock_configuration(jsonb_build_object('enabled',true,'default_retention',p->'default_retention')) OR p->'default_retention' ? 'default_event_hold') THEN RETURN false; END IF;
+ r := coalesce(p->'requested','{}'::jsonb);
+ IF jsonb_typeof(r)<>'object' OR r-ARRAY['retention','legal_hold']<>'{}' THEN RETURN false; END IF;
+ IF r ? 'retention' THEN
+  d := r->'retention';
+  IF jsonb_typeof(d)<>'object' OR d-ARRAY['mode','retain_until_date']<>'{}' OR coalesce(d->>'mode','') NOT IN ('GOVERNANCE','COMPLIANCE') OR jsonb_typeof(d->'retain_until_date') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+  t := (d->>'retain_until_date')::timestamptz;
+  IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 OR date_trunc('milliseconds',t)<>t THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold')<>'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
 -- Name: valid_regional_apps_domain(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10817,7 +12677,7 @@ CREATE FUNCTION public.valid_regional_apps_domain(domain text) RETURNS boolean
     AS $_$
 DECLARE label text;
 BEGIN
-    -- ADR-785, pkg/api/limits.go: 253 - 40 - 1 bytes for the DNS suffix.
+    -- ADR-657, pkg/api/limits.go: 253 - 40 - 1 bytes for the DNS suffix.
     IF octet_length(domain) > 212 OR position('.' in domain) = 0 OR
        domain !~ '^[a-z0-9.-]+$' COLLATE "C" OR domain ~ '^[0-9.]+$' COLLATE "C" THEN
         RETURN false;
@@ -10995,6 +12855,43 @@ CREATE FUNCTION public.workflow_step_definition(snapshot jsonb, name text, paren
   (SELECT def->'for_each'->'action' FROM jsonb_array_elements(snapshot->'steps') def
    WHERE def->>'name'=parent AND jsonb_typeof(def->'for_each'->'action')='object' LIMIT 1)
  END;
+$$;
+
+
+--
+-- Name: workflow_tenant_event_recipients(uuid, uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_tenant_event_recipients(target_account uuid, target_app uuid, target_tenant uuid, event_source text, event_type text) RETURNS TABLE(recipient jsonb)
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object(
+   'id', md5('gregale.workflow.tenant-event:' || a.id::text || ':' || target_tenant::text || ':' || (definition->>'name'))::uuid,
+   'account_id', a.account_id, 'app_id', a.id, 'platform_tenant_id', target_tenant,
+   'deployment_id', d.id,
+   'source', definition->'trigger'->>'source', 'type', definition->'trigger'->>'event_type',
+   'filter', coalesce(definition->'trigger'->'filter', '{}'::jsonb), 'workflow', definition)
+ FROM apps a JOIN accounts ac ON ac.id = a.account_id
+ JOIN platform_tenants t ON t.id = target_tenant AND t.account_id = a.account_id AND t.status = 'active'
+ JOIN LATERAL (
+   SELECT dep.id, dep.workflows FROM deployments dep
+   WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+   ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+ ) d ON true
+ CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id, d.workflows)) definition
+ WHERE a.id = target_app AND a.account_id = target_account AND a.status <> 'deleted'
+   AND NOT a.maintenance_mode AND a.platform_tenant_required
+   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+   AND (
+     EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
+       AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
+     OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
+       AND s.platform_tenant_id = t.id AND s.status = 'active')
+   )
+   AND definition->'trigger'->>'type' = 'event'
+   AND coalesce(definition->'trigger'->>'enabled', 'true') = 'true'
+   AND event_fanout_pattern_matches(definition->'trigger'->>'source', event_source)
+   AND event_fanout_pattern_matches(definition->'trigger'->>'event_type', event_type);
 $$;
 
 
@@ -11265,6 +13162,16 @@ CREATE TABLE public.alert_deliveries (
 
 
 --
+-- Name: alert_historical_rollback_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_historical_rollback_claims (
+    deployment_id uuid NOT NULL,
+    fire_id uuid NOT NULL
+);
+
+
+--
 -- Name: alert_presets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11296,6 +13203,22 @@ CREATE TABLE public.alert_presets (
 
 
 --
+-- Name: alert_rollback_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_rollback_actions (
+    fire_id uuid NOT NULL,
+    app_id uuid,
+    status text NOT NULL,
+    receipt jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT alert_rollback_actions_check CHECK (((receipt ?& ARRAY['id'::text, 'rule_id'::text, 'account_id'::text, 'app_id'::text, 'status'::text, 'fired_at'::text, 'updated_at'::text]) AND ((receipt ->> 'id'::text) = (fire_id)::text) AND ((receipt ->> 'status'::text) = status) AND (COALESCE((NULLIF((receipt ->> 'app_id'::text), ''::text))::uuid, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid)))),
+    CONSTRAINT alert_rollback_actions_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
+    CONSTRAINT alert_rollback_actions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'blocked'::text, 'complete'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: alert_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11320,13 +13243,16 @@ CREATE TABLE public.alert_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     action text DEFAULT 'webhook'::text NOT NULL,
+    post_deploy_rollback_window_seconds integer DEFAULT 0 NOT NULL,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
+    CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
+    CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -11526,7 +13452,46 @@ CREATE TABLE public.app_binding_promotion_revisions (
     app_id uuid NOT NULL,
     epoch uuid DEFAULT gen_random_uuid() NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
-    CONSTRAINT app_binding_promotion_revisions_revision_check CHECK ((revision > 0))
+    service_revision bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT app_binding_promotion_revisions_revision_check CHECK ((revision > 0)),
+    CONSTRAINT app_binding_promotion_revisions_service_revision_check CHECK ((service_revision > 0))
+);
+
+
+--
+-- Name: app_binding_release_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_binding_release_policies (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    mode text NOT NULL,
+    revision bigint NOT NULL,
+    max_age_seconds bigint NOT NULL,
+    require_application_ack boolean DEFAULT false NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_binding_release_policies_max_age_seconds_check CHECK (((max_age_seconds >= 1) AND (max_age_seconds <= 86400))),
+    CONSTRAINT app_binding_release_policies_mode_check CHECK ((mode = ANY (ARRAY['off'::text, 'enforce'::text]))),
+    CONSTRAINT app_binding_release_policies_reason_check CHECK (((octet_length(reason) <= 256) AND (reason !~ '[[:cntrl:]]'::text))),
+    CONSTRAINT app_binding_release_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT app_binding_release_policies_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: app_binding_release_policy_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_binding_release_policy_history (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    revision bigint NOT NULL,
+    policy jsonb NOT NULL,
+    changed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_binding_release_policy_history_policy_check CHECK ((jsonb_typeof(policy) = 'object'::text)),
+    CONSTRAINT app_binding_release_policy_history_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT app_binding_release_policy_history_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
 );
 
 
@@ -12001,7 +13966,7 @@ CREATE TABLE public.app_runtime_config_scope_changes (
     app_id uuid NOT NULL,
     scope text NOT NULL,
     changed_at timestamp with time zone NOT NULL,
-    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT app_runtime_config_scope_changes_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64)))
 );
 
@@ -12409,7 +14374,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -12437,7 +14402,7 @@ CREATE TABLE public.app_webhooks (
     receiver_cooldown_until timestamp with time zone,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
-    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 7)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7])))))),
+    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
@@ -12972,8 +14937,10 @@ CREATE TABLE public.commit_receipts (
     completed_at timestamp with time zone,
     accepted_at timestamp with time zone DEFAULT now() NOT NULL,
     operation_id uuid,
+    routing jsonb,
     CONSTRAINT commit_receipt_one_operation CHECK (((((invocation_id IS NOT NULL))::integer + ((operation_id IS NOT NULL))::integer) = 1)),
-    CONSTRAINT commit_receipts_operation_state_check CHECK ((operation_state = ANY (ARRAY['accepted'::text, 'running'::text, 'completed'::text, 'cancelled'::text, 'failed'::text, 'unknown'::text])))
+    CONSTRAINT commit_receipts_operation_state_check CHECK ((operation_state = ANY (ARRAY['accepted'::text, 'running'::text, 'completed'::text, 'cancelled'::text, 'failed'::text, 'unknown'::text]))),
+    CONSTRAINT commit_receipts_routing_check CHECK (((routing IS NULL) OR COALESCE(((jsonb_typeof(routing) = 'object'::text) AND ((routing -> 'version'::text) = '2'::jsonb) AND (jsonb_typeof((routing -> 'key'::text)) = ANY (ARRAY['string'::text, 'number'::text, 'boolean'::text]))), false)))
 );
 
 
@@ -13011,7 +14978,10 @@ CREATE TABLE public.commit_sources (
     oldest_pending_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     operation_policy text,
+    contract_version integer DEFAULT 1 NOT NULL,
+    allow_tenant_selection boolean DEFAULT false NOT NULL,
     CONSTRAINT commit_source_operation_policy_name CHECK (((operation_policy IS NULL) OR (operation_policy ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
+    CONSTRAINT commit_sources_contract_version_check CHECK (((contract_version = ANY (ARRAY[1, 2])) AND ((NOT allow_tenant_selection) OR (contract_version = 2)))),
     CONSTRAINT commit_sources_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
     CONSTRAINT commit_sources_relay_status_check CHECK ((relay_status = ANY (ARRAY['unconfigured'::text, 'healthy'::text, 'credential_unavailable'::text, 'database_unavailable'::text, 'schema_unqualified'::text, 'source_binding_unqualified'::text, 'replay_pending'::text, 'retention_unqualified'::text, 'cleanup_pending'::text, 'blocked_scan_pending'::text, 'blocked_status_pending'::text, 'handoff_pending'::text, 'status_unavailable'::text, 'blocked_events'::text])))
 );
@@ -13501,11 +15471,32 @@ CREATE TABLE public.customer_operation_definitions (
     release_id text DEFAULT ''::text NOT NULL,
     spec jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    workflow_snapshot jsonb,
+    CONSTRAINT customer_operation_definition_target CHECK (((((NOT (spec ? 'workflow'::text)) AND (workflow_snapshot IS NULL)) OR ((jsonb_typeof((spec -> 'workflow'::text)) = 'object'::text) AND (NOT ((spec ? 'method'::text) OR (spec ? 'path'::text))) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'name'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'name'::text) <> ''::text) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'result_step'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'result_step'::text) <> ''::text) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'progress_stage'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'progress_stage'::text) <> ''::text) AND (jsonb_typeof(workflow_snapshot) = 'object'::text) AND ((workflow_snapshot ->> 'name'::text) = ((spec -> 'workflow'::text) ->> 'name'::text)) AND (jsonb_typeof((workflow_snapshot -> 'steps'::text)) = 'array'::text))) IS TRUE)),
     CONSTRAINT customer_operation_definitions_check CHECK (((spec ->> 'name'::text) = name)),
     CONSTRAINT customer_operation_definitions_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
     CONSTRAINT customer_operation_definitions_revision_check CHECK ((revision ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_definitions_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
     CONSTRAINT customer_operation_definitions_spec_check CHECK ((jsonb_typeof(spec) = 'object'::text))
+);
+
+
+--
+-- Name: customer_operation_delivery_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_delivery_retries (
+    operation_id uuid NOT NULL,
+    retry_id text NOT NULL,
+    delivery_id uuid NOT NULL,
+    expected_replay_generation integer NOT NULL,
+    replay_generation integer NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_delivery_re_expected_replay_generation_check CHECK (((expected_replay_generation >= 0) AND (expected_replay_generation < 2147483647))),
+    CONSTRAINT customer_operation_delivery_retries_check CHECK ((replay_generation = (expected_replay_generation + 1))),
+    CONSTRAINT customer_operation_delivery_retries_check1 CHECK ((expires_at > queued_at)),
+    CONSTRAINT customer_operation_delivery_retries_retry_id_check CHECK (((octet_length(retry_id) >= 1) AND (octet_length(retry_id) <= 128)))
 );
 
 
@@ -13523,7 +15514,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -13535,8 +15526,18 @@ CREATE TABLE public.customer_operation_events (
 CREATE TABLE public.customer_operation_executions (
     operation_id uuid NOT NULL,
     generation integer NOT NULL,
-    invocation_id uuid NOT NULL,
+    invocation_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    workflow_run_id uuid,
+    job_run_id uuid,
+    execution_id uuid GENERATED ALWAYS AS (COALESCE(invocation_id, workflow_run_id, job_run_id)) STORED NOT NULL,
+    execution_kind text GENERATED ALWAYS AS (
+CASE
+    WHEN (invocation_id IS NOT NULL) THEN 'http'::text
+    WHEN (workflow_run_id IS NOT NULL) THEN 'workflow'::text
+    ELSE 'job'::text
+END) STORED NOT NULL,
+    CONSTRAINT customer_operation_executions_backend_check CHECK (((num_nonnulls(invocation_id, workflow_run_id, job_run_id) = 1) AND (execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])))),
     CONSTRAINT customer_operation_executions_generation_check CHECK ((generation > 0))
 );
 
@@ -13629,11 +15630,15 @@ CREATE TABLE public.customer_operations (
     app_id uuid NOT NULL,
     platform_tenant_id uuid NOT NULL,
     definition_id uuid NOT NULL,
-    current_invocation_id uuid NOT NULL,
+    current_invocation_id uuid,
     state text NOT NULL,
     record jsonb NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    current_execution_id uuid GENERATED ALWAYS AS (COALESCE(((record ->> 'current_execution_id'::text))::uuid, current_invocation_id)) STORED NOT NULL,
+    execution_kind text GENERATED ALWAYS AS (COALESCE((record ->> 'execution_kind'::text), 'http'::text)) STORED NOT NULL,
+    execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
+    CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
     CONSTRAINT customer_operations_check CHECK (((record ->> 'id'::text) = (id)::text)),
     CONSTRAINT customer_operations_check1 CHECK (((record ->> 'state'::text) = state)),
     CONSTRAINT customer_operations_check2 CHECK (((record ->> 'account_id'::text) = (account_id)::text)),
@@ -13719,6 +15724,54 @@ CREATE TABLE public.customer_operation_stream_leases (
     account_id uuid NOT NULL,
     operation_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: customer_operation_workflow_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_claims (
+    workflow_run_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    execution_kind text DEFAULT 'workflow'::text NOT NULL,
+    attempt integer NOT NULL,
+    capability_digest text NOT NULL,
+    lease_until timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_workflow_claims_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_workflow_claims_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_workflow_claims_execution_kind_check CHECK ((execution_kind = 'workflow'::text)),
+    CONSTRAINT customer_operation_workflow_claims_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_claims_lease_until_check CHECK (isfinite(lease_until))
+);
+
+
+--
+-- Name: customer_operation_workflow_guest_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_guest_claims (
+    workflow_run_id uuid NOT NULL,
+    step_name text NOT NULL,
+    step_attempt integer NOT NULL,
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    execution_kind text DEFAULT 'workflow'::text NOT NULL,
+    coordinator_attempt integer NOT NULL,
+    instance_id uuid,
+    capability_digest text NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    bound_at timestamp with time zone DEFAULT now() NOT NULL,
+    dispatch_started_at timestamp with time zone,
+    CONSTRAINT customer_operation_workflow_guest_cla_coordinator_attempt_check CHECK ((coordinator_attempt > 0)),
+    CONSTRAINT customer_operation_workflow_guest_cla_dispatch_started_at_check CHECK (((dispatch_started_at IS NULL) OR isfinite(dispatch_started_at))),
+    CONSTRAINT customer_operation_workflow_guest_claim_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_workflow_guest_claims_bound_at_check CHECK (isfinite(bound_at)),
+    CONSTRAINT customer_operation_workflow_guest_claims_deadline_at_check CHECK (isfinite(deadline_at)),
+    CONSTRAINT customer_operation_workflow_guest_claims_execution_kind_check CHECK ((execution_kind = 'workflow'::text)),
+    CONSTRAINT customer_operation_workflow_guest_claims_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_guest_claims_step_attempt_check CHECK ((step_attempt > 0))
 );
 
 
@@ -13828,6 +15881,7 @@ CREATE TABLE public.dead_letter_events (
     last_failed_at timestamp with time zone DEFAULT now() NOT NULL,
     replayed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    environment_owned boolean DEFAULT false NOT NULL,
     CONSTRAINT dead_letter_events_retry_count_check CHECK ((retry_count >= 0)),
     CONSTRAINT dead_letter_events_source_check CHECK ((source = ANY (ARRAY['invocation'::text, 'trigger_record'::text, 'webhook_delivery'::text, 'job_run'::text, 'workflow_run'::text])))
 );
@@ -13963,6 +16017,24 @@ CREATE VIEW public.deployment_code_pin_deadlines AS
 
 
 --
+-- Name: deployment_dependency_gates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_dependency_gates (
+    deployment_id uuid NOT NULL,
+    pins jsonb NOT NULL,
+    started_at timestamp with time zone,
+    deadline_at timestamp with time zone,
+    status text DEFAULT 'waiting'::text NOT NULL,
+    blocker text DEFAULT ''::text NOT NULL,
+    CONSTRAINT deployment_dependency_gates_blocker_check CHECK ((length(blocker) <= 1024)),
+    CONSTRAINT deployment_dependency_gates_check CHECK ((((started_at IS NULL) AND (deadline_at IS NULL)) OR ((started_at IS NOT NULL) AND (deadline_at IS NOT NULL) AND (deadline_at > started_at)))),
+    CONSTRAINT deployment_dependency_gates_pins_check CHECK (((jsonb_typeof(pins) = 'array'::text) AND ((jsonb_array_length(pins) >= 1) AND (jsonb_array_length(pins) <= 100)))),
+    CONSTRAINT deployment_dependency_gates_status_check CHECK ((status = ANY (ARRAY['waiting'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: deployment_image_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14054,6 +16126,38 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
+-- Name: deployment_recovery_lineage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_recovery_lineage (
+    deployment_id uuid NOT NULL,
+    predecessor_deployment_id uuid,
+    CONSTRAINT deployment_recovery_lineage_check CHECK ((deployment_id <> predecessor_deployment_id))
+);
+
+
+--
+-- Name: deployment_rollback_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_rollback_operations (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    target_deployment_id uuid NOT NULL,
+    current_deployment_id uuid NOT NULL,
+    status text NOT NULL,
+    receipt jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT deployment_rollback_operations_check CHECK ((target_deployment_id <> current_deployment_id)),
+    CONSTRAINT deployment_rollback_operations_check1 CHECK (((receipt ?& ARRAY['id'::text, 'app_id'::text, 'scope'::text, 'target_deployment_id'::text, 'current_deployment_id'::text, 'status'::text]) AND ((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'scope'::text) = scope) AND ((receipt ->> 'target_deployment_id'::text) = (target_deployment_id)::text) AND ((receipt ->> 'current_deployment_id'::text) = (current_deployment_id)::text) AND ((receipt ->> 'status'::text) = status))),
+    CONSTRAINT deployment_rollback_operations_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
+    CONSTRAINT deployment_rollback_operations_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT deployment_rollback_operations_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'ready'::text, 'blocked'::text, 'routing'::text, 'complete'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: deployment_route_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -14080,6 +16184,17 @@ CREATE TABLE public.deployment_route_policy_snapshots (
     CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_runtime_environment_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_environment_owners (
+    deployment_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    CONSTRAINT deployment_runtime_environment_owners_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -14558,7 +16673,7 @@ CREATE TABLE public.environment_gitops_runtime_effects (
     CONSTRAINT environment_gitops_runtime_effects_generation_check CHECK ((generation > 0)),
     CONSTRAINT environment_gitops_runtime_effects_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_gitops_runtime_effects_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 00:00:00+00'::timestamp with time zone))
+    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 02:00:00+02'::timestamp with time zone))
 );
 
 
@@ -14598,7 +16713,7 @@ CREATE TABLE public.instance_runtime_config_receipts (
     acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT instance_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT instance_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -14636,7 +16751,7 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
     all_secrets boolean NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT snapshot_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -14709,14 +16824,14 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
             t.environment_slug,
             GREATEST(COALESCE(( SELECT c.changed_at
                    FROM public.app_runtime_config_changes c
-                  WHERE (c.app_id = t.app_id)), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
+                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
                    FROM public.app_runtime_config_scope_changes c
-                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
+                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
                    FROM (public.app_envs v
                      JOIN public.environment_managed_fields f ON (((f.source_id = t.source_id) AND (f.resource = t.resource) AND (f.field_path = ('variables/'::text || v.key)))))
-                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
+                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
                    FROM public.environment_gitops_runtime_effects x
-                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 00:00:00+00'::timestamp with time zone)) AS required_at
+                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 02:00:00+02'::timestamp with time zone)) AS required_at
            FROM targets t
         )
  SELECT source_id,
@@ -14819,6 +16934,33 @@ CREATE TABLE public.environment_workload_graphs (
 
 
 --
+-- Name: event_delivery_capacity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_delivery_capacity (
+    account_id uuid NOT NULL,
+    consumer_limit integer NOT NULL,
+    app_limit integer NOT NULL,
+    account_limit integer NOT NULL,
+    CONSTRAINT event_delivery_capacity_account_limit_check CHECK ((account_limit > 0)),
+    CONSTRAINT event_delivery_capacity_app_limit_check CHECK ((app_limit > 0)),
+    CONSTRAINT event_delivery_capacity_consumer_limit_check CHECK ((consumer_limit > 0))
+);
+
+
+--
+-- Name: event_delivery_slots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_delivery_slots (
+    invocation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id text NOT NULL
+);
+
+
+--
 -- Name: event_fanout_attempt_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14834,8 +16976,15 @@ CREATE TABLE public.event_fanout_attempt_history (
     retryable boolean DEFAULT false NOT NULL,
     last_error text DEFAULT ''::text NOT NULL,
     occurred_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT event_fanout_attempt_history_action_check CHECK ((action = ANY (ARRAY['fanout_attempt'::text, 'operator_replay'::text]))),
+    capacity_scope text DEFAULT ''::text NOT NULL,
+    capacity_deferrals bigint DEFAULT 0 NOT NULL,
+    details_truncated boolean DEFAULT false NOT NULL,
+    history_bytes bigint GENERATED ALWAYS AS ((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) STORED NOT NULL,
+    CONSTRAINT event_fanout_attempt_history_action_check CHECK ((action = ANY (ARRAY['fanout_attempt'::text, 'operator_replay'::text, 'backfill_attempt'::text]))),
     CONSTRAINT event_fanout_attempt_history_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_fanout_attempt_history_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_fanout_attempt_history_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_fanout_attempt_history_history_bytes_check CHECK ((history_bytes >= 0)),
     CONSTRAINT event_fanout_attempt_history_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
 );
 
@@ -14851,6 +17000,42 @@ ALTER TABLE public.event_fanout_attempt_history ALTER COLUMN id ADD GENERATED AL
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: event_fanout_history_summaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_fanout_history_summaries (
+    outbox_id bigint NOT NULL,
+    subscription_id text NOT NULL,
+    app_id uuid NOT NULL,
+    observed_outcomes bigint DEFAULT 0 NOT NULL,
+    capacity_deferrals bigint DEFAULT 0 NOT NULL,
+    coalesced_outcomes bigint DEFAULT 0 NOT NULL,
+    compacted_outcomes bigint DEFAULT 0 NOT NULL,
+    compacted_through_id bigint DEFAULT 0 NOT NULL,
+    compacted_through_at timestamp with time zone,
+    first_capacity_wait_at timestamp with time zone,
+    last_capacity_wait_at timestamp with time zone,
+    last_capacity_scope text DEFAULT ''::text NOT NULL,
+    last_outcome_capacity_scope text DEFAULT ''::text NOT NULL,
+    last_was_coalesced boolean DEFAULT false NOT NULL,
+    latest_id bigint DEFAULT 0 NOT NULL,
+    latest_failure_id bigint DEFAULT 0 NOT NULL,
+    latest_replay_id bigint DEFAULT 0 NOT NULL,
+    next_prune_at timestamp with time zone,
+    CONSTRAINT event_fanout_history_summarie_last_outcome_capacity_scope_check CHECK ((last_outcome_capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_fanout_history_summaries_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_fanout_history_summaries_coalesced_outcomes_check CHECK ((coalesced_outcomes >= 0)),
+    CONSTRAINT event_fanout_history_summaries_compacted_outcomes_check CHECK ((compacted_outcomes >= 0)),
+    CONSTRAINT event_fanout_history_summaries_compacted_through_id_check CHECK ((compacted_through_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_last_capacity_scope_check CHECK ((last_capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_fanout_history_summaries_latest_failure_id_check CHECK ((latest_failure_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_latest_id_check CHECK ((latest_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_latest_replay_id_check CHECK ((latest_replay_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_observed_outcomes_check CHECK ((observed_outcomes >= 0))
 );
 
 
@@ -14877,6 +17062,13 @@ CREATE TABLE public.event_fanout_outbox (
     delivered_at timestamp with time zone,
     recipient_snapshot jsonb,
     recipient_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
+    recipient_claims boolean DEFAULT false NOT NULL,
+    customer_storage_bytes bigint GENERATED ALWAYS AS (
+CASE
+    WHEN ("left"(source, 8) = 'gregale.'::text) THEN (0)::bigint
+    ELSE (((octet_length((payload)::text))::bigint + (octet_length((event_data)::text))::bigint) + (octet_length((COALESCE(recipient_snapshot, '[]'::jsonb))::text))::bigint)
+END) STORED NOT NULL,
+    CONSTRAINT event_fanout_outbox_customer_storage_bytes_check CHECK ((customer_storage_bytes >= 0)),
     CONSTRAINT event_fanout_outbox_recipient_progress_check CHECK ((jsonb_typeof(recipient_progress) = 'object'::text)),
     CONSTRAINT event_fanout_outbox_recipient_snapshot_check CHECK (((recipient_snapshot IS NULL) OR (jsonb_typeof(recipient_snapshot) = 'array'::text))),
     CONSTRAINT event_fanout_outbox_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'delivered'::text])))
@@ -14898,6 +17090,200 @@ ALTER TABLE public.event_fanout_outbox ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 
 --
+-- Name: event_fanout_recipients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_fanout_recipients (
+    outbox_id bigint NOT NULL,
+    subscription_id text NOT NULL,
+    app_id uuid NOT NULL,
+    recipient jsonb NOT NULL,
+    state text NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    total_attempts integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    claim_token uuid,
+    lease_until timestamp with time zone,
+    capacity_deferrals integer DEFAULT 0 NOT NULL,
+    generation_capacity_deferrals integer DEFAULT 0 NOT NULL,
+    backfill_job_id uuid,
+    receipt_position bigint,
+    CONSTRAINT event_fanout_recipients_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_fanout_recipients_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_fanout_recipients_check CHECK ((total_attempts >= attempts)),
+    CONSTRAINT event_fanout_recipients_check1 CHECK ((((state = 'processing'::text) AND (claim_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((state <> 'processing'::text) AND (claim_token IS NULL) AND (lease_until IS NULL)))),
+    CONSTRAINT event_fanout_recipients_generation_capacity_deferrals_check CHECK ((generation_capacity_deferrals >= 0)),
+    CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
+    CONSTRAINT event_fanout_recipients_receipt_position_check CHECK ((receipt_position > 0)),
+    CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
+    CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: event_replay_job_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_replay_job_items (
+    job_id uuid NOT NULL,
+    outbox_id bigint NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    event_source text NOT NULL,
+    event_id text NOT NULL,
+    event_type text NOT NULL,
+    schema_version text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    failure_code text DEFAULT ''::text NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    retryable boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT event_replay_job_items_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_replay_job_items_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'enqueued'::text, 'filtered'::text, 'failed'::text, 'skipped_captured'::text, 'skipped_unknown'::text, 'skipped_existing'::text, 'skipped_unsettled'::text])))
+);
+
+
+--
+-- Name: event_replay_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_replay_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    subscription_revision text NOT NULL,
+    recipient jsonb NOT NULL,
+    from_at timestamp with time zone NOT NULL,
+    until_at timestamp with time zone NOT NULL,
+    cutoff_at timestamp with time zone NOT NULL,
+    earliest_retained_at timestamp with time zone,
+    cursor_at timestamp with time zone NOT NULL,
+    cursor_outbox_id bigint DEFAULT 0 NOT NULL,
+    duplicate_policy text DEFAULT 'skip_existing'::text NOT NULL,
+    state text DEFAULT 'running'::text NOT NULL,
+    scan_complete boolean DEFAULT false NOT NULL,
+    scanned_count bigint DEFAULT 0 NOT NULL,
+    matched_count bigint DEFAULT 0 NOT NULL,
+    filtered_count bigint DEFAULT 0 NOT NULL,
+    skipped_captured_count bigint DEFAULT 0 NOT NULL,
+    skipped_unknown_count bigint DEFAULT 0 NOT NULL,
+    skipped_existing_count bigint DEFAULT 0 NOT NULL,
+    skipped_unsettled_count bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT event_replay_jobs_check CHECK (((from_at < cutoff_at) AND (cutoff_at <= until_at))),
+    CONSTRAINT event_replay_jobs_check1 CHECK ((((state = 'running'::text) AND (completed_at IS NULL)) OR ((state <> 'running'::text) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT event_replay_jobs_duplicate_policy_check CHECK ((duplicate_policy = 'skip_existing'::text)),
+    CONSTRAINT event_replay_jobs_filtered_count_check CHECK ((filtered_count >= 0)),
+    CONSTRAINT event_replay_jobs_matched_count_check CHECK ((matched_count >= 0)),
+    CONSTRAINT event_replay_jobs_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
+    CONSTRAINT event_replay_jobs_scanned_count_check CHECK ((scanned_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_captured_count_check CHECK ((skipped_captured_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_existing_count_check CHECK ((skipped_existing_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_unknown_count_check CHECK ((skipped_unknown_count >= 0)),
+    CONSTRAINT event_replay_jobs_skipped_unsettled_count_check CHECK ((skipped_unsettled_count >= 0)),
+    CONSTRAINT event_replay_jobs_state_check CHECK ((state = ANY (ARRAY['running'::text, 'completed'::text, 'completed_with_failures'::text]))),
+    CONSTRAINT event_replay_jobs_subscription_revision_check CHECK ((length(subscription_revision) = 64))
+);
+
+
+--
+-- Name: event_routing_backlog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_routing_backlog (
+    outbox_id bigint NOT NULL,
+    subscription_id text NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    routing_mode text NOT NULL,
+    routing_state text NOT NULL,
+    capacity_scope text NOT NULL,
+    attempts integer NOT NULL,
+    capacity_deferrals integer NOT NULL,
+    next_attempt_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    CONSTRAINT event_routing_backlog_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_routing_backlog_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_routing_backlog_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_routing_backlog_routing_mode_check CHECK ((routing_mode = ANY (ARRAY['event'::text, 'recipient'::text]))),
+    CONSTRAINT event_routing_backlog_routing_state_check CHECK ((routing_state = ANY (ARRAY['pending'::text, 'processing'::text])))
+);
+
+
+--
+-- Name: event_routing_backlog_source; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.event_routing_backlog_source AS
+ SELECT o.id AS outbox_id,
+    (s.recipient ->> 'id'::text) AS subscription_id,
+    o.account_id,
+    ((s.recipient ->> 'app_id'::text))::uuid AS app_id,
+    o.created_at AS accepted_at,
+        CASE
+            WHEN o.recipient_claims THEN 'recipient'::text
+            ELSE 'event'::text
+        END AS routing_mode,
+    effective.routing_state,
+        CASE
+            WHEN (effective.routing_state = 'pending'::text) THEN COALESCE((p.progress ->> 'capacity_scope'::text), ''::text)
+            ELSE ''::text
+        END AS capacity_scope,
+        CASE
+            WHEN o.recipient_claims THEN COALESCE(r.total_attempts, ((p.progress ->> 'attempts'::text))::integer, 0)
+            ELSE COALESCE(((p.progress ->> 'attempts'::text))::integer, 0)
+        END AS attempts,
+    GREATEST(COALESCE(((p.progress ->> 'capacity_deferrals'::text))::integer, 0),
+        CASE
+            WHEN o.recipient_claims THEN COALESCE(r.capacity_deferrals, 0)
+            ELSE 0
+        END) AS capacity_deferrals,
+        CASE
+            WHEN (effective.routing_state = 'pending'::text) THEN
+            CASE
+                WHEN o.recipient_claims THEN COALESCE(r.available_at, ((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone, o.available_at)
+                ELSE COALESCE(((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone,
+                CASE
+                    WHEN (o.state = 'pending'::text) THEN o.available_at
+                    ELSE NULL::timestamp with time zone
+                END)
+            END
+            ELSE NULL::timestamp with time zone
+        END AS next_attempt_at,
+        CASE
+            WHEN o.recipient_claims THEN r.lease_until
+            ELSE o.lease_until
+        END AS lease_until
+   FROM ((((public.event_fanout_outbox o
+     CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) s(recipient))
+     CROSS JOIN LATERAL ( SELECT COALESCE((o.recipient_progress -> (s.recipient ->> 'id'::text)), '{}'::jsonb) AS progress) p)
+     LEFT JOIN public.event_fanout_recipients r ON (((r.outbox_id = o.id) AND (r.subscription_id = (s.recipient ->> 'id'::text)))))
+     CROSS JOIN LATERAL ( SELECT
+                CASE
+                    WHEN o.recipient_claims THEN COALESCE(r.state, (p.progress ->> 'state'::text), 'pending'::text)
+                    ELSE COALESCE((p.progress ->> 'state'::text), 'pending'::text)
+                END AS routing_state) effective)
+  WHERE ((o.state = ANY (ARRAY['pending'::text, 'processing'::text])) AND (NULLIF((s.recipient ->> 'app_id'::text), ''::text) IS NOT NULL) AND (((s.recipient -> 'workflow'::text) IS NULL) OR ((s.recipient -> 'workflow'::text) = 'null'::jsonb)));
+
+
+--
+-- Name: event_routing_fairness; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_routing_fairness (
+    account_id uuid NOT NULL,
+    subscription_id text NOT NULL,
+    last_claimed_at timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: event_schemas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14911,6 +17297,15 @@ CREATE TABLE public.event_schemas (
     CONSTRAINT event_schemas_event_type_check CHECK (((char_length(event_type) >= 1) AND (char_length(event_type) <= 256))),
     CONSTRAINT event_schemas_source_check CHECK (((char_length(source) >= 1) AND (char_length(source) <= 256))),
     CONSTRAINT event_schemas_version_check CHECK ((version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'::text))
+);
+
+
+--
+-- Name: event_storage_admission; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_storage_admission (
+    account_id uuid NOT NULL
 );
 
 
@@ -14993,6 +17388,9 @@ CREATE TABLE public.exclusive_work_effects (
     name text NOT NULL,
     payload jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    webhook_id uuid,
+    event_type text,
+    CONSTRAINT exclusive_work_effects_adapter_check CHECK ((((webhook_id IS NULL) AND (event_type IS NULL)) OR ((webhook_id IS NOT NULL) AND (event_type IS NOT NULL) AND ((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256)) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text)))),
     CONSTRAINT exclusive_work_effects_generation_check CHECK ((generation > 0)),
     CONSTRAINT exclusive_work_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
 );
@@ -15948,7 +18346,7 @@ CREATE TABLE public.global_runtime_consents (
     regional_created_at timestamp with time zone,
     regional_revoked_at timestamp with time zone,
     CONSTRAINT global_runtime_consents_binding_check CHECK ((((jsonb_typeof(binding) = 'object'::text) AND (binding ?& ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) AND ((binding - ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalOrgID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'APIBase'::text]) = '{}'::jsonb) AND (jsonb_typeof((binding -> 'CellID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'Region'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAccountID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalOrgID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppID'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'RegionalAppSlug'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'APIBase'::text)) = 'string'::text) AND (jsonb_typeof((binding -> 'CellGeneration'::text)) = 'number'::text) AND ((binding ->> 'RegionalOrgID'::text) = ''::text) AND ((binding ->> 'CellGeneration'::text) ~ '^[1-9][0-9]*$'::text) AND (((binding ->> 'CellGeneration'::text))::numeric <= ('9007199254740991'::bigint)::numeric) AND ((binding ->> 'CellID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAccountID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'RegionalAppID'::text) ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'::text) AND ((binding ->> 'CellID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAccountID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((binding ->> 'RegionalAppID'::text) <> '00000000-0000-0000-0000-000000000000'::text) AND ((length((binding ->> 'RegionalAppSlug'::text)) >= 3) AND (length((binding ->> 'RegionalAppSlug'::text)) <= 40)) AND ((binding ->> 'RegionalAppSlug'::text) ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'::text) AND (octet_length((binding ->> 'APIBase'::text)) <= 2048) AND ((binding ->> 'APIBase'::text) ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text)) IS TRUE)),
-    CONSTRAINT global_runtime_consents_check CHECK ((isfinite(regional_created_at) AND (regional_created_at < expires_at) AND (regional_created_at <> '0001-01-01 00:00:00+00'::timestamp with time zone))),
+    CONSTRAINT global_runtime_consents_check CHECK ((isfinite(regional_created_at) AND (regional_created_at < expires_at) AND (regional_created_at <> '0001-01-01 01:55:52+01:55:52'::timestamp with time zone))),
     CONSTRAINT global_runtime_consents_check1 CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '6 days'::interval)))),
     CONSTRAINT global_runtime_consents_check2 CHECK (((status = 'revoked'::text) = (regional_revoked_at IS NOT NULL))),
     CONSTRAINT global_runtime_consents_check3 CHECK (((status <> 'active'::text) OR (regional_created_at IS NOT NULL))),
@@ -16009,7 +18407,7 @@ CREATE TABLE public.global_runtime_quota_allocations (
 
 CREATE TABLE public.global_runtime_quota_delivery_owners (
     owner_id uuid NOT NULL,
-    last_claimed_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    last_claimed_at timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     CONSTRAINT global_runtime_quota_delivery_owners_last_claimed_at_check CHECK (isfinite(last_claimed_at)),
     CONSTRAINT global_runtime_quota_delivery_owners_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
@@ -16104,7 +18502,9 @@ CREATE TABLE public.idempotency_keys (
     account_id uuid NOT NULL,
     response_status integer NOT NULL,
     response_body bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_digest bytea,
+    CONSTRAINT idempotency_keys_request_digest_chk CHECK (((request_digest IS NULL) OR (octet_length(request_digest) = 32)))
 );
 
 
@@ -16126,7 +18526,7 @@ CREATE TABLE public.inbound_webhook_endpoints (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT inbound_webhook_endpoints_delivery_path_chk CHECK ((((char_length(delivery_path) >= 1) AND (char_length(delivery_path) <= 256)) AND ("left"(delivery_path, 1) = '/'::text) AND (POSITION(('?'::text) IN (delivery_path)) = 0) AND (POSITION(('#'::text) IN (delivery_path)) = 0))),
     CONSTRAINT inbound_webhook_endpoints_name_chk CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text]))),
     CONSTRAINT inbound_webhook_endpoints_token_hash_len_chk CHECK ((octet_length(token_hash) = 32))
 );
 
@@ -16164,6 +18564,113 @@ ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance
 
 
 --
+-- Name: invocation_attempt_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_attempt_history (
+    id bigint NOT NULL,
+    invocation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    root_invocation_id uuid NOT NULL,
+    root_created_at timestamp with time zone NOT NULL,
+    replay_generation bigint NOT NULL,
+    attempt integer NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    outcome text NOT NULL,
+    error_detail text DEFAULT ''::text NOT NULL,
+    next_attempt_at timestamp with time zone,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_attempt_history_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT invocation_attempt_history_check CHECK (((outcome = 'running'::text) = (finished_at IS NULL))),
+    CONSTRAINT invocation_attempt_history_check1 CHECK (((finished_at IS NULL) OR (finished_at >= started_at))),
+    CONSTRAINT invocation_attempt_history_outcome_check CHECK ((outcome = ANY (ARRAY['running'::text, 'succeeded'::text, 'retry'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'unknown'::text]))),
+    CONSTRAINT invocation_attempt_history_replay_generation_check CHECK ((replay_generation >= 0))
+);
+
+
+--
+-- Name: invocation_attempt_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.invocation_attempt_history ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.invocation_attempt_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: invocation_environment_queue_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_environment_queue_admissions (
+    invocation_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    runtime_set_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_spec_id uuid NOT NULL,
+    pin_hash text NOT NULL,
+    settings_hash text NOT NULL,
+    definition_hash text NOT NULL,
+    queue_name text NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_environment_queue_admissions_definition_hash_check CHECK ((definition_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT invocation_environment_queue_admissions_pin_hash_check CHECK ((pin_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT invocation_environment_queue_admissions_queue_name_check CHECK ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT invocation_environment_queue_admissions_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: invocation_environment_queue_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_environment_queue_receipts (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    token_hash text NOT NULL,
+    owner_hash text NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    lease_expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_environment_queue_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT invocation_environment_queue_receipts_check CHECK ((lease_expires_at > issued_at)),
+    CONSTRAINT invocation_environment_queue_receipts_owner_hash_check CHECK ((owner_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT invocation_environment_queue_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: invocation_keyed_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_keyed_replays (
+    parent_invocation_id uuid NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    CONSTRAINT invocation_keyed_replays_check CHECK ((parent_invocation_id <> replay_invocation_id))
+);
+
+
+--
+-- Name: invocation_plain_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_plain_replays (
+    parent_invocation_id uuid NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    replay_created_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_plain_replays_check CHECK ((parent_invocation_id <> replay_invocation_id))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16177,6 +18684,48 @@ CREATE TABLE public.invocation_work_cancellations (
     CONSTRAINT invocation_work_cancellations_cancelled_count_check CHECK ((cancelled_count >= 0)),
     CONSTRAINT invocation_work_cancellations_key_digest_check CHECK ((length(key_digest) = 32)),
     CONSTRAINT invocation_work_cancellations_policy_name_check CHECK ((policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: invocation_work_environment_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_work_environment_admissions (
+    invocation_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    workload_spec_id uuid NOT NULL,
+    settings_hash text NOT NULL,
+    app_id uuid NOT NULL,
+    policy_name text NOT NULL,
+    policy_revision bigint NOT NULL,
+    key_digest bytea NOT NULL,
+    fairness_digest bytea,
+    fairness_limit integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invocation_work_environment_admissions_check CHECK ((((fairness_limit = 0) AND (fairness_digest IS NULL)) OR ((fairness_limit > 0) AND (fairness_digest IS NOT NULL) AND (length(fairness_digest) = 32)))),
+    CONSTRAINT invocation_work_environment_admissions_fairness_limit_check CHECK (((fairness_limit >= 0) AND (fairness_limit <= 1000))),
+    CONSTRAINT invocation_work_environment_admissions_key_digest_check CHECK ((length(key_digest) = 32)),
+    CONSTRAINT invocation_work_environment_admissions_policy_name_check CHECK ((policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT invocation_work_environment_admissions_policy_revision_check CHECK ((policy_revision >= 1)),
+    CONSTRAINT invocation_work_environment_admissions_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: invocation_work_environment_domains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_work_environment_domains (
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    policy_name text NOT NULL,
+    kind text NOT NULL,
+    digest bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invocation_work_environment_domains_digest_check CHECK ((length(digest) = 32)),
+    CONSTRAINT invocation_work_environment_domains_kind_check CHECK ((kind = ANY (ARRAY['key'::text, 'fairness'::text]))),
+    CONSTRAINT invocation_work_environment_domains_policy_name_check CHECK ((policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
 );
 
 
@@ -16262,6 +18811,9 @@ CREATE TABLE public.invocations (
     queue_binding_id uuid,
     replay_generation bigint DEFAULT 0 NOT NULL,
     outcome_code text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
+    replay_root_invocation_id uuid,
+    replay_root_created_at timestamp with time zone,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
@@ -16269,12 +18821,78 @@ CREATE TABLE public.invocations (
     CONSTRAINT invocations_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT invocations_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT invocations_replay_lineage_check CHECK (((replay_root_invocation_id IS NULL) OR ((source = 'replay'::text) AND (replayed_from_invocation_id IS NOT NULL) AND (replayed_from_invocation_id <> id) AND (replay_root_invocation_id <> id) AND (replay_root_created_at IS NOT NULL)))),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
     CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text]))),
     CONSTRAINT invocations_work_fairness_check CHECK ((((work_fairness_digest IS NULL) AND (work_fairness_limit IS NULL)) OR ((work_policy_name IS NOT NULL) AND (work_fairness_digest IS NOT NULL) AND (work_fairness_limit IS NOT NULL) AND (length(work_fairness_digest) = 32) AND ((work_fairness_limit >= 1) AND (work_fairness_limit <= 1000))))),
     CONSTRAINT invocations_work_lane_check CHECK ((((work_policy_name IS NULL) AND (work_key_digest IS NULL) AND (work_expires_at IS NULL) AND (work_sequence IS NULL)) OR ((work_policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (work_key_digest IS NOT NULL) AND (length(work_key_digest) = 32) AND (work_sequence > 0)))),
     CONSTRAINT invocations_work_policy_revision_check CHECK (((work_policy_revision IS NULL) OR (work_policy_revision > 0)))
 );
+
+
+--
+-- Name: production_invocation_work; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.production_invocation_work AS
+ SELECT id,
+    app_id,
+    account_id,
+    source,
+    state,
+    payload,
+    headers,
+    due_at,
+    method,
+    path,
+    cron_id,
+    scheduled_at,
+    ack_url,
+    result,
+    lease_expires_at,
+    received_at,
+    completed_at,
+    instance_id,
+    attempts,
+    last_error,
+    created_at,
+    org_id,
+    outcome,
+    deadline_at,
+    retry_policy,
+    result_retention_until,
+    replayed_from_invocation_id,
+    last_replayed_at,
+    on_success_destination_id,
+    on_failure_destination_id,
+    queue_name,
+    quota_reserved,
+    work_policy_name,
+    work_key_digest,
+    work_expires_at,
+    work_sequence,
+    work_policy_revision,
+    work_fairness_digest,
+    work_fairness_limit,
+    platform_tenant_id,
+    failure_rules,
+    occurrence_id,
+    start_deadline_at,
+    work_decision,
+    operation_id,
+    deployment_scope,
+    queue_binding_id,
+    replay_generation,
+    outcome_code,
+    environment_id
+   FROM public.invocations i
+  WHERE ((environment_id IS NULL) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocation_environment_queue_admissions p
+          WHERE (p.invocation_id = i.id)))) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocation_work_environment_admissions p
+          WHERE (p.invocation_id = i.id)))) AND (NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocation_environment_queue_receipts r
+          WHERE (r.invocation_id = i.id)))));
 
 
 --
@@ -16285,7 +18903,7 @@ CREATE VIEW public.invocations_pending_per_app AS
  SELECT app_id,
     source,
     count(*) AS pending
-   FROM public.invocations
+   FROM public.production_invocation_work
   WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]))
   GROUP BY app_id, source;
 
@@ -16510,6 +19128,7 @@ CREATE TABLE public.job_runs (
     failure_rules jsonb,
     occurrence_id uuid,
     start_deadline_at timestamp with time zone,
+    operation_id uuid,
     exclusive_operation_id uuid,
     exclusive_generation bigint,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
@@ -16649,6 +19268,23 @@ CREATE TABLE public.jobs (
     CONSTRAINT jobs_schedule_revision_check CHECK ((schedule_revision >= 1)),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
     CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
+);
+
+
+--
+-- Name: layer_artifact_retention; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.layer_artifact_retention (
+    storage_key text NOT NULL,
+    state text DEFAULT 'retained'::text NOT NULL,
+    deletion_id uuid,
+    deleted_at timestamp with time zone,
+    delete_requested_at timestamp with time zone,
+    CONSTRAINT layer_artifact_retention_check CHECK (((state = 'retained'::text) OR (delete_requested_at IS NOT NULL))),
+    CONSTRAINT layer_artifact_retention_check1 CHECK ((((state = 'retained'::text) AND (deletion_id IS NULL) AND (deleted_at IS NULL)) OR ((state = 'deleting'::text) AND (deletion_id IS NOT NULL) AND (deleted_at IS NULL)) OR ((state = 'deleted'::text) AND (deletion_id IS NOT NULL) AND (deleted_at IS NOT NULL)))),
+    CONSTRAINT layer_artifact_retention_state_check CHECK ((state = ANY (ARRAY['retained'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT layer_artifact_retention_storage_key_check CHECK (((storage_key <> ''::text) AND (length(storage_key) <= 4096)))
 );
 
 
@@ -16852,6 +19488,39 @@ CREATE TABLE public.mail_suppressions (
 
 
 --
+-- Name: managed_postgres_accounting_reconciliations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_accounting_reconciliations (
+    account_id uuid NOT NULL,
+    reconciliation_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    actor_id text NOT NULL,
+    reason text NOT NULL,
+    evidence_reference text NOT NULL,
+    evidence_sha256 text NOT NULL,
+    request_sha256 text NOT NULL,
+    preview_revision text NOT NULL,
+    request jsonb NOT NULL,
+    policy jsonb NOT NULL,
+    before_catalog jsonb NOT NULL,
+    after_catalog jsonb NOT NULL,
+    coverage_before jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_accounting_reconcilia_evidence_reference_check CHECK (((octet_length(evidence_reference) >= 1) AND (octet_length(evidence_reference) <= 256))),
+    CONSTRAINT managed_postgres_accounting_reconciliati_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_accounting_reconciliatio_evidence_sha256_check CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_accounting_reconciliation_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_accounting_reconciliations_actor_id_check CHECK (((octet_length(actor_id) >= 1) AND (octet_length(actor_id) <= 256))),
+    CONSTRAINT managed_postgres_accounting_reconciliations_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512)))
+);
+
+
+--
 -- Name: managed_postgres_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16879,7 +19548,7 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
     cutover_id uuid,
-    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
+    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
@@ -16890,6 +19559,71 @@ CREATE TABLE public.managed_postgres_bindings (
     CONSTRAINT managed_postgres_bindings_rotation_pair_check CHECK ((((rotation_previous_generation IS NULL) = (rotation_wake_id IS NULL)) AND ((rotation_previous_generation IS NULL) OR ((rotation_previous_generation >= 1) AND (rotation_previous_generation < credential_generation))) AND ((NOT rotation_cleanup_ready) OR (rotation_previous_generation IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
     CONSTRAINT managed_postgres_bindings_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'retiring'::text, 'failed'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_checkpoint_maintenance (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_database_id uuid NOT NULL,
+    reserved_by_operation_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    owner_oid bigint,
+    database_oid bigint,
+    role_requested_at timestamp with time zone,
+    database_requested_at timestamp with time zone,
+    activation_requested_at timestamp with time zone,
+    ready_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_checkpoint_m_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maint_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maintenan_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_check CHECK ((((state = 'reserved'::text) AND (role_requested_at IS NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_reserved'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_created'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'activation_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NULL)) OR ((state = 'ready'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NOT NULL)))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_database_oid_check CHECK (((database_oid > 0) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_owner_oid_check CHECK (((owner_oid > 0) AND (owner_oid <= '4294967295'::bigint))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text])))
+);
+
+
+--
+-- Name: managed_postgres_creation_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_creation_receipts (
+    kind text NOT NULL,
+    resource_id text NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    generation bigint NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    source_resource_id text NOT NULL,
+    provider_resource_id text NOT NULL,
+    provider_created_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    cleanup_started_at timestamp with time zone,
+    CONSTRAINT managed_postgres_creation_receipts_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_creation_receipts_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= provider_created_at) AND (provider_created_at <= recorded_at))),
+    CONSTRAINT managed_postgres_creation_receipts_check1 CHECK ((((kind = 'restore'::text) AND (database_id IS NOT NULL) AND (resource_id = (database_id)::text)) OR ((kind = 'snapshot'::text) AND (database_id IS NULL)))),
+    CONSTRAINT managed_postgres_creation_receipts_cleanup_started_at_check CHECK (((cleanup_started_at IS NULL) OR isfinite(cleanup_started_at))),
+    CONSTRAINT managed_postgres_creation_receipts_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_creation_receipts_kind_check CHECK ((kind = ANY (ARRAY['restore'::text, 'snapshot'::text]))),
+    CONSTRAINT managed_postgres_creation_receipts_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_created_at_check CHECK (isfinite(provider_created_at)),
+    CONSTRAINT managed_postgres_creation_receipts_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_resource_id_check CHECK (((resource_id <> ''::text) AND (length(resource_id) <= 255))),
+    CONSTRAINT managed_postgres_creation_receipts_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255)))
 );
 
 
@@ -16912,7 +19646,7 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     value_hash text,
     verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
-    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
@@ -16997,7 +19731,12 @@ CREATE TABLE public.managed_postgres_databases (
     restore_source_resource_id text,
     restore_point_in_time timestamp with time zone,
     cutover_id uuid,
+    environment_clone_operation_id uuid,
+    data_resource_id text,
+    clone_resource_role text DEFAULT 'target'::text NOT NULL,
     accounting_required boolean DEFAULT true NOT NULL,
+    CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
+    CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_databases_availability_check CHECK ((availability = ANY (ARRAY['single_zone'::text, 'high_availability'::text]))),
     CONSTRAINT managed_postgres_databases_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -17006,6 +19745,9 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT managed_postgres_databases_check2 CHECK (((state <> 'ready'::text) OR ((provider_resource_id IS NOT NULL) AND (observed_generation = desired_generation)))),
     CONSTRAINT managed_postgres_databases_check3 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT managed_postgres_databases_check4 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (provider_resource_id IS NOT NULL)))),
+    CONSTRAINT managed_postgres_databases_check5 CHECK (((clone_resource_role = 'target'::text) OR (environment_clone_operation_id IS NOT NULL))),
+    CONSTRAINT managed_postgres_databases_clone_resource_role_check CHECK ((clone_resource_role = ANY (ARRAY['target'::text, 'checkpoint'::text]))),
     CONSTRAINT managed_postgres_databases_desired_generation_check CHECK ((desired_generation >= 1)),
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
@@ -17052,6 +19794,72 @@ CREATE TABLE public.managed_postgres_health (
 
 
 --
+-- Name: managed_postgres_resizes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_resizes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    data_resource_id text NOT NULL,
+    source_spec jsonb NOT NULL,
+    target_class text NOT NULL,
+    generation bigint NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    target_scale_to_zero boolean,
+    CONSTRAINT managed_postgres_compute_policy_target_check CHECK (((target_scale_to_zero IS NULL) OR ((NOT (target_class IS DISTINCT FROM (source_spec ->> 'Class'::text))) AND (NOT (jsonb_typeof((source_spec -> 'ScaleToZero'::text)) IS DISTINCT FROM 'boolean'::text))))),
+    CONSTRAINT managed_postgres_resizes_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_resizes_backend_id_check CHECK ((length(backend_id) > 0)),
+    CONSTRAINT managed_postgres_resizes_check CHECK ((((state = 'pending'::text) AND (completed_at IS NULL)) OR ((state = 'succeeded'::text) AND (completed_at IS NOT NULL) AND (completed_at >= created_at)))),
+    CONSTRAINT managed_postgres_resizes_data_resource_id_check CHECK (((length(data_resource_id) >= 1) AND (length(data_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_resizes_generation_check CHECK ((generation > 1)),
+    CONSTRAINT managed_postgres_resizes_provider_resource_id_check CHECK (((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_resizes_source_spec_check CHECK ((jsonb_typeof(source_spec) = 'object'::text)),
+    CONSTRAINT managed_postgres_resizes_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'succeeded'::text]))),
+    CONSTRAINT managed_postgres_resizes_target_class_check CHECK ((target_class = ANY (ARRAY['development'::text, 'burstable'::text, 'production'::text])))
+);
+
+
+--
+-- Name: managed_postgres_restore_proofs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_restore_proofs (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_resource_id text NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    spec jsonb NOT NULL,
+    generation bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    data_resource_id text,
+    CONSTRAINT managed_postgres_restore_proofs_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_restore_proofs_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_restore_proofs_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_proofs_check CHECK (((database_id <> source_database_id) AND (provider_resource_id <> source_resource_id))),
+    CONSTRAINT managed_postgres_restore_proofs_check1 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (data_resource_id <> source_resource_id)))),
+    CONSTRAINT managed_postgres_restore_proofs_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_restore_proofs_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT managed_postgres_restore_proofs_operation_id_check CHECK ((operation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_restore_proofs_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_restore_proofs_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_proofs_source_database_id_check CHECK ((source_database_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_restore_proofs_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_proofs_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec <> '{}'::jsonb)))
+);
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17089,6 +19897,35 @@ CREATE TABLE public.managed_postgres_usage_coverage (
     CONSTRAINT managed_postgres_usage_coverage_check CHECK ((source_database_id IS DISTINCT FROM database_id)),
     CONSTRAINT managed_postgres_usage_coverage_check1 CHECK ((((source_database_id IS NULL) AND (collected_from IS NOT NULL) AND (collected_until IS NOT NULL) AND (collected_until > collected_from) AND (observed_at IS NOT NULL)) OR ((source_database_id IS NOT NULL) AND (collected_from IS NULL) AND (collected_until IS NULL) AND (observed_at IS NULL)))),
     CONSTRAINT managed_postgres_usage_coverage_window_seconds_check CHECK (((window_seconds >= 3600) AND (window_seconds <= 86400)))
+);
+
+
+--
+-- Name: managed_postgres_usage_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_imports (
+    account_id uuid NOT NULL,
+    import_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    actor_id text NOT NULL,
+    reason text NOT NULL,
+    evidence_reference text NOT NULL,
+    evidence_sha256 text NOT NULL,
+    request_sha256 text NOT NULL,
+    preview_revision text NOT NULL,
+    request jsonb NOT NULL,
+    policy jsonb NOT NULL,
+    before_records jsonb NOT NULL,
+    after_records jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_usage_imports_actor_id_check CHECK (((octet_length(actor_id) >= 1) AND (octet_length(actor_id) <= 256))),
+    CONSTRAINT managed_postgres_usage_imports_evidence_reference_check CHECK (((octet_length(evidence_reference) >= 1) AND (octet_length(evidence_reference) <= 256))),
+    CONSTRAINT managed_postgres_usage_imports_evidence_sha256_check CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
+    CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -17563,6 +20400,29 @@ CREATE TABLE public.object_bucket_lifecycle (
 
 
 --
+-- Name: object_bucket_mutations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_mutations (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    kind text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    upload_id uuid,
+    multipart_upload_id uuid,
+    multipart_part_writer_id uuid,
+    CONSTRAINT object_bucket_mutations_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_bucket_mutations_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_mutations_kind_check CHECK ((kind = ANY (ARRAY['request'::text, 'native_grant'::text]))),
+    CONSTRAINT object_bucket_mutations_physical_name_check CHECK ((physical_name <> ''::text)),
+    CONSTRAINT object_mutation_single_owner CHECK ((num_nonnulls(upload_id, multipart_upload_id, multipart_part_writer_id) <= 1))
+);
+
+
+--
 -- Name: object_bucket_notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17650,6 +20510,25 @@ CREATE TABLE public.object_bucket_versioning (
 
 
 --
+-- Name: object_bucket_write_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_write_fences (
+    bucket_id uuid NOT NULL,
+    token uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    clone_operation_id uuid,
+    CONSTRAINT object_bucket_write_fences_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_clone_token_check CHECK (((clone_operation_id IS NULL) OR (token = clone_operation_id))),
+    CONSTRAINT object_bucket_write_fences_physical_name_check CHECK ((physical_name <> ''::text))
+);
+
+
+--
 -- Name: object_buckets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17674,10 +20553,12 @@ CREATE TABLE public.object_buckets (
     public_read boolean DEFAULT false NOT NULL,
     serve_at text,
     environment_clone_source_bucket_id uuid,
+    environment_clone_operation_id uuid,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT object_buckets_clone_operation_origin_check CHECK (((environment_clone_operation_id IS NULL) OR (environment_clone_source_bucket_id IS NOT NULL))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text, 'protected'::text, 'cleanup_pending'::text]))),
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
@@ -17713,20 +20594,25 @@ CREATE TABLE public.object_deletions (
     lifecycle_binding jsonb DEFAULT '{}'::jsonb NOT NULL,
     target_provider_version_id text DEFAULT ''::text NOT NULL,
     recovery_claimed boolean DEFAULT false NOT NULL,
-    CONSTRAINT object_deletion_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) = '{}'::jsonb) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_version_id'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) <= 1024)) AND (jsonb_typeof((lifecycle_binding -> 'expected_last_modified'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_last_modified'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND ((((lifecycle_binding ->> 'kind'::text) = 'current'::text) AND (selector = ''::text)) OR (((lifecycle_binding ->> 'kind'::text) = ANY (ARRAY['noncurrent'::text, 'expired_marker'::text])) AND (selector <> ''::text)))))),
+    protection_required boolean DEFAULT false NOT NULL,
+    protection_verified boolean DEFAULT false NOT NULL,
+    deletion_verified boolean DEFAULT false NOT NULL,
+    CONSTRAINT object_deletion_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text, 'expected_delete_marker'::text]) = '{}'::jsonb) AND ((NOT (lifecycle_binding ? 'expected_delete_marker'::text)) OR (jsonb_typeof((lifecycle_binding -> 'expected_delete_marker'::text)) = 'boolean'::text)) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_version_id'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) <= 1024)) AND (jsonb_typeof((lifecycle_binding -> 'expected_last_modified'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_last_modified'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND ((((lifecycle_binding ->> 'kind'::text) = 'current'::text) AND (selector = ''::text)) OR (((lifecycle_binding ->> 'kind'::text) = ANY (ARRAY['noncurrent'::text, 'expired_marker'::text])) AND (selector <> ''::text)))))),
+    CONSTRAINT object_deletion_protection_proof CHECK ((((NOT protection_required) OR ((lifecycle_scan_id IS NOT NULL) AND (selector <> ''::text))) AND ((NOT protection_verified) OR (protection_required AND (state = ANY (ARRAY['dispatched'::text, 'completed'::text, 'failed'::text])))) AND ((NOT deletion_verified) OR (protection_required AND (state = 'completed'::text))) AND ((NOT protection_required) OR (state <> 'completed'::text) OR deletion_verified) AND ((last_error_code <> 'object_protected'::text) OR (protection_required AND (state = 'failed'::text))))),
     CONSTRAINT object_deletions_baseline_check CHECK (((jsonb_typeof(baseline) = 'array'::text) AND (jsonb_array_length(baseline) <= 4096) AND (octet_length((baseline)::text) <= 278530))),
     CONSTRAINT object_deletions_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_deletions_check1 CHECK (((state = ANY (ARRAY['prepared'::text, 'dispatched'::text])) OR (lease_token = ''::text))),
-    CONSTRAINT object_deletions_check2 CHECK (((state <> 'failed'::text) OR (last_error_code = ANY (ARRAY['preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text])))),
+    CONSTRAINT object_deletions_check2 CHECK (((state <> 'failed'::text) OR (last_error_code = ANY (ARRAY['preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text, 'object_protected'::text])))),
     CONSTRAINT object_deletions_check3 CHECK (((state <> 'completed'::text) OR (last_error_code = ''::text))),
     CONSTRAINT object_deletions_check4 CHECK (((state <> 'completed'::text) OR (selector <> 'null'::text) OR (version_id = 'null'::text))),
     CONSTRAINT object_deletions_check5 CHECK (((state <> 'completed'::text) OR (provider_status <> 'Enabled'::text) OR (selector <> ''::text) OR (delete_marker AND (version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_version_id <> ALL (ARRAY[''::text, 'null'::text]))))),
     CONSTRAINT object_deletions_check6 CHECK (((reserved_bytes = 0) OR ((selector = ''::text) AND (provider_status <> ''::text)))),
-    CONSTRAINT object_deletions_check7 CHECK (((provider_status = 'Enabled'::text) OR (baseline = '[]'::jsonb))),
-    CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text]))),
+    CONSTRAINT object_deletions_check7 CHECK (((provider_status = ANY (ARRAY['Enabled'::text, 'GCS_Enabled'::text, 'GCS_Suspended'::text])) OR (baseline = '[]'::jsonb))),
+    CONSTRAINT object_deletions_gcs_generation_fence CHECK (((provider_status <> ALL (ARRAY['GCS_Enabled'::text, 'GCS_Suspended'::text])) OR ((selector = ''::text) AND (target_provider_version_id = ''::text) AND (reserved_bytes = 0) AND (NOT delete_marker) AND (version_id = ''::text) AND (provider_version_id = ''::text) AND (((state = ANY (ARRAY['prepared'::text, 'failed'::text])) AND (baseline = '[]'::jsonb)) OR ((jsonb_array_length(baseline) = 1) AND (jsonb_typeof((baseline -> 0)) = 'string'::text) AND ((baseline ->> 0) ~ '^0{48}[0-7][0-9a-f]{15}$'::text)))))),
+    CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text, 'object_protected'::text]))),
     CONSTRAINT object_deletions_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
     CONSTRAINT object_deletions_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
-    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text]))),
+    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text, 'GCS_Enabled'::text, 'GCS_Suspended'::text]))),
     CONSTRAINT object_deletions_provider_version_id_check CHECK ((octet_length(provider_version_id) <= 1024)),
     CONSTRAINT object_deletions_reserved_bytes_check CHECK (((reserved_bytes >= 0) AND (reserved_bytes <= 1024))),
     CONSTRAINT object_deletions_selector_check CHECK (((selector = ANY (ARRAY[''::text, 'null'::text])) OR (selector ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -17773,6 +20659,49 @@ CREATE TABLE public.object_lifecycle_scans (
     CONSTRAINT object_lifecycle_scans_scanned_keys_check CHECK ((scanned_keys >= 0)),
     CONSTRAINT object_lifecycle_scans_scanned_uploads_check CHECK ((scanned_uploads >= 0)),
     CONSTRAINT object_lifecycle_scans_state_check CHECK ((state = ANY (ARRAY['scanning'::text, 'completed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: object_multipart_initiation_dispatches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_multipart_initiation_dispatches (
+    multipart_upload_id uuid NOT NULL,
+    dispatched boolean DEFAULT false NOT NULL,
+    dispatch_token text DEFAULT ''::text NOT NULL,
+    provider_upload_id text DEFAULT ''::text NOT NULL,
+    CONSTRAINT object_multipart_initiation_dispatches_check CHECK ((dispatched OR ((dispatch_token = ''::text) AND (provider_upload_id = ''::text)))),
+    CONSTRAINT object_multipart_initiation_dispatches_dispatch_token_check CHECK ((octet_length(dispatch_token) <= 128)),
+    CONSTRAINT object_multipart_initiation_dispatches_provider_upload_id_check CHECK ((octet_length(provider_upload_id) <= 4096))
+);
+
+
+--
+-- Name: object_multipart_part_writers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_multipart_part_writers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    upload_id uuid NOT NULL,
+    part_number integer NOT NULL,
+    transfer_token text NOT NULL,
+    managed boolean DEFAULT true NOT NULL,
+    dispatched boolean DEFAULT false NOT NULL,
+    settled boolean DEFAULT false NOT NULL,
+    bucket_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    copy_intent jsonb,
+    put_intent jsonb,
+    body_sha256 text DEFAULT ''::text NOT NULL,
+    CONSTRAINT object_multipart_part_writers_check CHECK ((managed OR dispatched)),
+    CONSTRAINT object_multipart_part_writers_check1 CHECK (((copy_intent IS NULL) OR (dispatched AND COALESCE(((jsonb_typeof(copy_intent) = 'object'::text) AND ((copy_intent ->> 'schema'::text) = '1'::text)), false)))),
+    CONSTRAINT object_multipart_part_writers_check2 CHECK (((put_intent IS NULL) OR (dispatched AND (copy_intent IS NULL) AND COALESCE(((put_intent -> 'schema'::text) = '1'::jsonb), false)))),
+    CONSTRAINT object_multipart_part_writers_check3 CHECK (((body_sha256 = ''::text) OR ((put_intent IS NOT NULL) AND (body_sha256 ~ '^[0-9a-f]{64}$'::text)))),
+    CONSTRAINT object_multipart_part_writers_part_number_check CHECK (((part_number >= 1) AND (part_number <= 10000))),
+    CONSTRAINT object_multipart_part_writers_transfer_token_check CHECK (((octet_length(transfer_token) >= 1) AND (octet_length(transfer_token) <= 128)))
 );
 
 
@@ -18078,6 +21007,41 @@ CREATE TABLE public.object_storage_request_metrics (
 
 
 --
+-- Name: object_storage_upload_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_upload_grants (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    token_hash text NOT NULL,
+    kind text NOT NULL,
+    object_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    headers jsonb NOT NULL,
+    upload_id uuid,
+    provider_upload_id text,
+    part_number integer DEFAULT 0 NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_upload_grants_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:15:00'::interval)))),
+    CONSTRAINT object_storage_upload_grants_check1 CHECK ((((kind = 'put'::text) AND (upload_id IS NULL) AND (provider_upload_id IS NULL) AND (part_number = 0)) OR ((kind = 'multipart_part'::text) AND (upload_id IS NOT NULL) AND (provider_upload_id IS NOT NULL) AND (provider_upload_id <> ''::text) AND ((part_number >= 1) AND (part_number <= 10000)) AND (size_bytes > 0)))),
+    CONSTRAINT object_storage_upload_grants_headers_check CHECK ((jsonb_typeof(headers) = 'object'::text)),
+    CONSTRAINT object_storage_upload_grants_kind_check CHECK ((kind = ANY (ARRAY['put'::text, 'multipart_part'::text]))),
+    CONSTRAINT object_storage_upload_grants_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
+    CONSTRAINT object_storage_upload_grants_physical_name_check CHECK ((physical_name <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_upload_grants_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: object_storage_usage_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18204,6 +21168,9 @@ CREATE TABLE public.object_upload_completions (
     encryption_default_revision bigint DEFAULT 0 NOT NULL,
     source_bucket_id uuid,
     source_copy_grant_id uuid,
+    protection_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    protection_dispatched boolean DEFAULT false NOT NULL,
+    protection_verified boolean DEFAULT false NOT NULL,
     CONSTRAINT object_copy_source_provenance CHECK ((((source_bucket_id IS NULL) AND (source_copy_grant_id IS NULL)) OR ((source_bucket_id IS NOT NULL) AND (source_copy_grant_id IS NOT NULL) AND (origin = 'gateway_copy'::text) AND (source_bucket_id <> bucket_id) AND (source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND (source_copy_grant_id <> '00000000-0000-0000-0000-000000000000'::uuid)))),
     CONSTRAINT object_upload_completion_version_outcome CHECK (((version_id = ''::text) OR ((write_phase = 'settled'::text) AND (status = 'completed'::text)))),
     CONSTRAINT object_upload_completion_version_shape CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -18220,7 +21187,9 @@ CREATE TABLE public.object_upload_completions (
     CONSTRAINT object_upload_completions_write_phase_check CHECK ((write_phase = ANY (ARRAY['untracked'::text, 'prepared'::text, 'dispatched'::text, 'settled'::text]))),
     CONSTRAINT object_upload_copy_source CHECK ((((origin = 'gateway_copy'::text) AND ((length(source_key) >= 1) AND (length(source_key) <= 1024)) AND ((length(source_etag) >= 1) AND (length(source_etag) <= 256)) AND (btrim(source_etag) <> ''::text) AND (POSITION((chr(10)) IN (source_etag)) = 0) AND (POSITION((chr(13)) IN (source_etag)) = 0)) OR ((origin <> 'gateway_copy'::text) AND (source_key = ''::text) AND (source_etag = ''::text)))),
     CONSTRAINT object_upload_encryption_phase CHECK ((((encryption_snapshot = '{}'::jsonb) OR (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'settled'::text]))) AND ((NOT encryption_dispatched) OR ((encryption_snapshot <> '{}'::jsonb) AND (write_phase = ANY (ARRAY['dispatched'::text, 'settled'::text])))) AND ((NOT encryption_verified) OR (encryption_dispatched AND (status = 'completed'::text) AND (write_phase = 'settled'::text))) AND ((encryption_snapshot = '{}'::jsonb) OR (status <> 'completed'::text) OR encryption_verified))),
+    CONSTRAINT object_upload_event_protection_snapshot CHECK (public.valid_object_event_write_protection(protection_snapshot)),
     CONSTRAINT object_upload_gateway_receipt CHECK (((origin <> ALL (ARRAY['gateway'::text, 'gateway_copy'::text])) OR ((route_id IS NULL) AND (idempotency_key = ''::text) AND (request_fingerprint = ''::text) AND (write_phase <> 'untracked'::text)))),
+    CONSTRAINT object_upload_protection_phase CHECK ((((protection_snapshot = '{}'::jsonb) OR (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'settled'::text]))) AND ((NOT protection_dispatched) OR ((protection_snapshot <> '{}'::jsonb) AND (write_phase = ANY (ARRAY['dispatched'::text, 'settled'::text])))) AND ((NOT protection_verified) OR (protection_dispatched AND (status = 'completed'::text) AND (write_phase = 'settled'::text) AND (version_id <> ''::text) AND (version_id <> 'null'::text))) AND ((protection_snapshot = '{}'::jsonb) OR (status <> 'completed'::text) OR protection_verified))),
     CONSTRAINT object_upload_recovery_lease CHECK (((recovery_token = ''::text) = (recovery_lease_until IS NULL))),
     CONSTRAINT object_upload_recovery_pending CHECK (((recovery_lease_until IS NULL) OR (write_phase = 'dispatched'::text))),
     CONSTRAINT object_upload_tracked_status CHECK (((write_phase = 'untracked'::text) OR (((write_phase = 'settled'::text) = (status = ANY (ARRAY['completed'::text, 'failed'::text]))) AND (status <> 'rejected'::text))))
@@ -18248,6 +21217,45 @@ CREATE TABLE public.object_upload_routes (
     CONSTRAINT object_upload_routes_key_prefix_check CHECK ((length(key_prefix) <= 256)),
     CONSTRAINT object_upload_routes_max_bytes_check CHECK ((max_bytes > 0)),
     CONSTRAINT object_upload_routes_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: object_version_protection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_version_protection (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    object_key text NOT NULL,
+    public_version_id text NOT NULL,
+    native_version_id text NOT NULL,
+    intent jsonb NOT NULL,
+    state text DEFAULT 'waiting'::text NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    dispatched boolean DEFAULT false NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    event_hold_baseline jsonb,
+    CONSTRAINT object_version_protection_check CHECK (((state = 'applying'::text) = ((lease_token <> ''::text) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT object_version_protection_check1 CHECK (((state = 'applying'::text) OR ((lease_token = ''::text) AND (lease_until IS NULL)))),
+    CONSTRAINT object_version_protection_check2 CHECK (((public_version_id = 'null'::text) = (native_version_id = 'null'::text))),
+    CONSTRAINT object_version_protection_check3 CHECK (COALESCE((((intent ->> 'id'::text) = (id)::text) AND ((intent ->> 'bucket_id'::text) = (bucket_id)::text) AND ((intent ->> 'key'::text) = object_key) AND ((intent ->> 'version_id'::text) = public_version_id)), false)),
+    CONSTRAINT object_version_protection_event_baseline CHECK ((((event_hold_baseline IS NULL) OR COALESCE((((intent ->> 'kind'::text) = 'retention'::text) AND (((intent -> 'retention'::text) ->> 'event_hold'::text) = ANY (ARRAY['ON'::text, 'OFF'::text])) AND public.object_event_hold_retention_valid(event_hold_baseline, false) AND ((((intent -> 'retention'::text) ->> 'event_hold'::text) <> 'OFF'::text) OR ((intent -> 'retention'::text) ? 'retain_until_date'::text) OR ((event_hold_baseline ->> 'event_hold'::text) = 'ON'::text))), false)) AND ((NOT COALESCE((((intent -> 'retention'::text) ->> 'event_hold'::text) = ANY (ARRAY['ON'::text, 'OFF'::text])), false)) OR (NOT (dispatched OR (state = 'ready'::text))) OR (event_hold_baseline IS NOT NULL)))),
+    CONSTRAINT object_version_protection_id_check CHECK (((id)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT object_version_protection_intent_check CHECK (((jsonb_typeof(intent) = 'object'::text) AND (octet_length((intent)::text) <= 32768) AND COALESCE(((intent ->> 'kind'::text) = ANY (ARRAY['retention'::text, 'legal_hold'::text])), false))),
+    CONSTRAINT object_version_protection_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'provider_unsupported'::text, 'provider_mismatch'::text, 'preparation_failed'::text, 'provider_rejected'::text]))),
+    CONSTRAINT object_version_protection_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
+    CONSTRAINT object_version_protection_native_version_id_check CHECK ((((octet_length(native_version_id) >= 1) AND (octet_length(native_version_id) <= 1024)) AND (native_version_id !~ '[\x01-\x1f\x7f]'::text))),
+    CONSTRAINT object_version_protection_object_key_check CHECK ((((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024)) AND (object_key !~ '[\x01-\x1f\x7f]'::text))),
+    CONSTRAINT object_version_protection_policy_shape CHECK (COALESCE(((((intent ->> 'kind'::text) = 'legal_hold'::text) AND (NOT (intent ? 'retention'::text)) AND (jsonb_typeof((intent -> 'legal_hold'::text)) = 'object'::text) AND (((intent -> 'legal_hold'::text) ->> 'status'::text) = ANY (ARRAY['ON'::text, 'OFF'::text]))) OR (((intent ->> 'kind'::text) = 'retention'::text) AND (NOT (intent ? 'legal_hold'::text)) AND public.object_event_hold_retention_valid((intent -> 'retention'::text), true))), false)),
+    CONSTRAINT object_version_protection_public_version_id_check CHECK (((public_version_id = 'null'::text) OR (public_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT object_version_protection_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'applying'::text, 'ready'::text, 'failed'::text])))
 );
 
 
@@ -18968,6 +21976,27 @@ CREATE TABLE public.platform_tenant_usage_minutes (
 
 
 --
+-- Name: platform_tenant_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_workflow_schedule_cursors (
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_workflow_schedule_cursor_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT platform_tenant_workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
+);
+
+
+--
 -- Name: platform_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19098,6 +22127,36 @@ CREATE TABLE public.private_networks (
 
 
 --
+-- Name: production_dead_letter_events; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.production_dead_letter_events AS
+ SELECT id,
+    account_id,
+    app_id,
+    source,
+    source_id,
+    origin,
+    trigger_id,
+    event_payload,
+    headers,
+    error_kind,
+    error_detail,
+    retry_count,
+    first_failed_at,
+    last_failed_at,
+    replayed_at,
+    created_at,
+    environment_owned
+   FROM public.dead_letter_events e
+  WHERE ((NOT environment_owned) AND ((source <> 'invocation'::text) OR ((NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocations i
+          WHERE ((i.id = e.source_id) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.production_invocation_work p
+                  WHERE (p.id = i.id)))))))))));
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19141,6 +22200,974 @@ CREATE TABLE public.project_environment_cleanup_jobs (
 
 
 --
+-- Name: project_environment_clone_configuration_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_captures (
+    operation_id uuid NOT NULL,
+    version integer NOT NULL,
+    configuration_hash text NOT NULL,
+    configuration json NOT NULL,
+    CONSTRAINT project_environment_clone_configuratio_configuration_hash_check CHECK ((configuration_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_configuration_cap_configuration_check CHECK ((json_typeof(configuration) = 'object'::text)),
+    CONSTRAINT project_environment_clone_configuration_captures_version_check CHECK ((version = 1))
+);
+
+
+--
+-- Name: project_environment_clone_configuration_clock; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_clock (
+    singleton boolean DEFAULT true NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT project_environment_clone_configuration_clock_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_environment_clone_configuration_clock_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: project_environment_clone_configuration_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_guards (
+    project_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    operation_id uuid,
+    state text DEFAULT 'open'::text NOT NULL,
+    source_environment text DEFAULT ''::text NOT NULL,
+    source_revision_hash text DEFAULT ''::text NOT NULL,
+    held_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_configuration_guards_check CHECK ((((state = 'open'::text) AND (operation_id IS NULL) AND (source_environment = ''::text) AND (source_revision_hash = ''::text) AND (held_at IS NULL)) OR ((state = 'held'::text) AND (operation_id IS NOT NULL) AND (source_environment <> ''::text) AND (source_revision_hash ~ '^[a-f0-9]{64}$'::text) AND (held_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_configuration_guards_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_environment_clone_configuration_guards_state_check CHECK ((state = ANY (ARRAY['open'::text, 'held'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_layer_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_layer_pins (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    storage_key text NOT NULL,
+    bytes bigint NOT NULL,
+    CONSTRAINT project_environment_clone_layer_pins_bytes_check CHECK ((bytes > 0))
+);
+
+
+--
+-- Name: project_environment_clone_materializations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_materializations (
+    operation_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    workload_settings jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_materializati_workload_settings_check CHECK (((jsonb_typeof(workload_settings) = 'object'::text) AND (workload_settings <> '{}'::jsonb))),
+    CONSTRAINT project_environment_clone_materializations_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: project_environment_clone_object_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_credentials (
+    operation_id uuid NOT NULL,
+    source_credential_id uuid NOT NULL,
+    target_credential_id uuid NOT NULL,
+    preparation_hash text NOT NULL,
+    preparation jsonb NOT NULL,
+    CONSTRAINT project_environment_clone_object_credent_preparation_hash_check CHECK ((preparation_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_credentials_check CHECK ((source_credential_id <> target_credential_id)),
+    CONSTRAINT project_environment_clone_object_credentials_preparation_check CHECK ((jsonb_typeof(preparation) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_object_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_entries (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    object_key text NOT NULL,
+    source_version text NOT NULL,
+    source_object jsonb NOT NULL,
+    copied_at timestamp with time zone,
+    target_etag text DEFAULT ''::text NOT NULL,
+    verified_sha256 text DEFAULT ''::text NOT NULL,
+    CONSTRAINT project_environment_clone_object_entries_check CHECK (((source_object ->> 'key'::text) = object_key)),
+    CONSTRAINT project_environment_clone_object_entries_check1 CHECK (((source_object ->> 'version_id'::text) = source_version)),
+    CONSTRAINT project_environment_clone_object_entries_check2 CHECK ((((copied_at IS NULL) AND (target_etag = ''::text) AND (verified_sha256 = ''::text)) OR ((copied_at IS NOT NULL) AND (verified_sha256 <> ''::text)))),
+    CONSTRAINT project_environment_clone_object_entries_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
+    CONSTRAINT project_environment_clone_object_entries_source_object_check CHECK ((jsonb_typeof(source_object) = 'object'::text)),
+    CONSTRAINT project_environment_clone_object_entries_source_version_check CHECK ((source_version <> ''::text)),
+    CONSTRAINT project_environment_clone_object_entries_verified_sha256_check CHECK (((verified_sha256 = ''::text) OR (verified_sha256 ~ '^[a-f0-9]{64}$'::text)))
+);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_grant_revocations (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    plan jsonb NOT NULL,
+    plan_sha256 text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    revocation_id text DEFAULT ''::text NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    drained_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_object_grant_r_source_bucket_id_check CHECK ((source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revo_revocation_id_check CHECK ((length(revocation_id) <= 512)),
+    CONSTRAINT project_environment_clone_object_grant_revoca_plan_sha256_check CHECK ((plan_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocat_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check CHECK (((state = 'reserved'::text) = (request_started_at IS NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check1 CHECK (((state = 'drained'::text) = (drained_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check2 CHECK (((observed_at IS NULL) = (revocation_id = ''::text))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check3 CHECK (((state <> 'drained'::text) OR (observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check4 CHECK (((observed_at IS NULL) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check5 CHECK (((request_started_at IS NULL) OR (request_started_at >= retained_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check6 CHECK (((observed_at IS NULL) OR (observed_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_check7 CHECK (((drained_at IS NULL) OR (drained_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_object_grant_revocations_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT project_environment_clone_object_grant_revocations_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'dispatched'::text, 'drained'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_object_manifests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_manifests (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    target_bucket_id uuid NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    captured_at_exact text NOT NULL,
+    manifest_hash text NOT NULL,
+    object_count integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_clone_object_manifests_check CHECK ((source_bucket_id <> target_bucket_id)),
+    CONSTRAINT project_environment_clone_object_manifests_manifest_hash_check CHECK ((manifest_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_manifests_object_count_check CHECK ((object_count >= 0))
+);
+
+
+--
+-- Name: project_environment_clone_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_operations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    source_environment text NOT NULL,
+    target_environment text NOT NULL,
+    idempotency_key text NOT NULL,
+    source_revision_hash text NOT NULL,
+    source_release_set_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    resources jsonb DEFAULT '[]'::jsonb NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    target_release_set_id uuid,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    configuration_capture_version integer DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environment_clone_lease_pair CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT project_environment_clone_op_configuration_capture_versio_check CHECK ((configuration_capture_version = ANY (ARRAY[0, 1]))),
+    CONSTRAINT project_environment_clone_operations_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT project_environment_clone_operations_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 255))),
+    CONSTRAINT project_environment_clone_operations_resources_check CHECK ((jsonb_typeof(resources) = 'array'::text)),
+    CONSTRAINT project_environment_clone_operations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT project_environment_clone_operations_source_revision_hash_check CHECK ((source_revision_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_operations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'capturing'::text, 'copying'::text, 'publishing'::text, 'ready'::text, 'failed'::text, 'compensating'::text, 'compensated'::text]))),
+    CONSTRAINT project_environment_clone_source_target_distinct CHECK ((source_environment <> target_environment))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_archives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_archives (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    storage_id text NOT NULL,
+    storage_fingerprint text NOT NULL,
+    storage_key text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    upload_started_at timestamp with time zone,
+    plaintext_bytes bigint,
+    ciphertext_bytes bigint,
+    ciphertext_sha256 text,
+    retained_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres__inventory_fingerprint_check CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ar_storage_fingerprint_check CHECK ((storage_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_arch_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_arch_upload_started_at_check CHECK (isfinite(upload_started_at)),
+    CONSTRAINT project_environment_clone_postgres_archiv_plaintext_bytes_check CHECK ((plaintext_bytes >= 5)),
+    CONSTRAINT project_environment_clone_postgres_archive_reserved_bytes_check CHECK ((reserved_bytes > 0)),
+    CONSTRAINT project_environment_clone_postgres_archives_check CHECK (((ciphertext_bytes > 0) AND (ciphertext_bytes <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_archives_check1 CHECK (((owner_id <> operation_id) AND (owner_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_archives_check2 CHECK ((storage_key = (((('postgres-copies/'::text || (operation_id)::text) || '/'::text) || (owner_id)::text) || '.age'::text))),
+    CONSTRAINT project_environment_clone_postgres_archives_check3 CHECK (((upload_started_at IS NULL) OR (upload_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_archives_check4 CHECK (((retained_at IS NULL) OR (retained_at >= upload_started_at))),
+    CONSTRAINT project_environment_clone_postgres_archives_check5 CHECK ((((state = 'reserved'::text) AND (upload_started_at IS NULL) AND (retained_at IS NULL) AND (plaintext_bytes IS NULL) AND (ciphertext_bytes IS NULL) AND (ciphertext_sha256 IS NULL)) OR ((state = 'uploading'::text) AND (upload_started_at IS NOT NULL) AND (retained_at IS NULL) AND (plaintext_bytes IS NULL) AND (ciphertext_bytes IS NULL) AND (ciphertext_sha256 IS NULL)) OR ((state = 'retained'::text) AND (upload_started_at IS NOT NULL) AND (retained_at IS NOT NULL) AND (plaintext_bytes IS NOT NULL) AND (ciphertext_bytes IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_archives_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_archives_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_archives_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_archives_retained_at_check CHECK (isfinite(retained_at)),
+    CONSTRAINT project_environment_clone_postgres_archives_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_archives_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'uploading'::text, 'retained'::text]))),
+    CONSTRAINT project_environment_clone_postgres_archives_storage_id_check CHECK (((length(storage_id) >= 1) AND (length(storage_id) <= 255)))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_bindings (
+    operation_id uuid NOT NULL,
+    source_binding_id uuid NOT NULL,
+    target_binding_id uuid NOT NULL,
+    reservation_hash text NOT NULL,
+    preparation_hash text,
+    preparation jsonb,
+    CONSTRAINT project_environment_clone_postgres_bindi_preparation_hash_check CHECK ((preparation_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_bindi_reservation_hash_check CHECK ((reservation_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_bindings_check CHECK ((source_binding_id <> target_binding_id)),
+    CONSTRAINT project_environment_clone_postgres_bindings_check1 CHECK (((preparation_hash IS NULL) = (preparation IS NULL))),
+    CONSTRAINT project_environment_clone_postgres_bindings_preparation_check CHECK ((jsonb_typeof(preparation) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_checkpoint_selections (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    maintenance_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    ciphertext bytea NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_chec_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_checkpoint__ciphertext_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= 4276224))),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_sele_key_id_check CHECK (((key_id <> ''::text) AND (length(key_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_selec_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_contents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_contents (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    reader_owner_id uuid NOT NULL,
+    reader_identity_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    captured_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_inventory_ciphertext_sha256_check3 CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check2 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_cont_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_content_reserved_bytes_check CHECK ((reserved_bytes > 0)),
+    CONSTRAINT project_environment_clone_postgres_contents_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_contents_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_contents_check1 CHECK (((owner_id <> operation_id) AND (owner_id <> source_database_id) AND (owner_id <> archive_owner_id) AND (owner_id <> reader_owner_id))),
+    CONSTRAINT project_environment_clone_postgres_contents_check2 CHECK (((captured_at IS NULL) OR (captured_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_contents_check3 CHECK ((((state = 'reserved'::text) AND (fingerprint IS NULL) AND (ciphertext IS NULL) AND (ciphertext_sha256 IS NULL) AND (captured_at IS NULL)) OR ((state = 'captured'::text) AND (fingerprint IS NOT NULL) AND (ciphertext IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (captured_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_contents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_contents_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_contents_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_contents_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_contents_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_contents_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'captured'::text]))),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check6 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_reader_identity_sha256_check CHECK ((reader_identity_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_copy_readers (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    owner_id uuid NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    endpoint_id text,
+    endpoint_created_at timestamp with time zone,
+    available boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone,
+    cleanup_requested_at timestamp with time zone,
+    cleanup_dispatched_at timestamp with time zone,
+    delete_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    capture_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres__capture_operation_ids_check CHECK ((jsonb_typeof(capture_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres__cleanup_dispatched_at_check CHECK (isfinite(cleanup_dispatched_at)),
+    CONSTRAINT project_environment_clone_postgres_c_cleanup_requested_at_check CHECK (isfinite(cleanup_requested_at)),
+    CONSTRAINT project_environment_clone_postgres_c_delete_operation_ids_check CHECK ((jsonb_typeof(delete_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres_co_endpoint_created_at_check CHECK (isfinite(endpoint_created_at)),
+    CONSTRAINT project_environment_clone_postgres_cop_request_started_at_check CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reade_endpoint_id_check CHECK (((endpoint_id IS NULL) OR ((length(endpoint_id) >= 1) AND (length(endpoint_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_copy_reade_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_retired_at_check CHECK (isfinite(retired_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check CHECK (((capture_database_id <> source_database_id) AND (owner_id <> capture_database_id) AND (owner_id <> source_database_id) AND (owner_id <> operation_id))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check1 CHECK ((((endpoint_id IS NULL) = (endpoint_created_at IS NULL)) AND ((endpoint_id IS NULL) = (observed_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check3 CHECK (((endpoint_created_at IS NULL) OR ((request_started_at IS NOT NULL) AND (endpoint_created_at >= request_started_at) AND (observed_at >= endpoint_created_at)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check4 CHECK (((cleanup_requested_at IS NULL) OR (cleanup_requested_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check5 CHECK (((cleanup_dispatched_at IS NULL) OR ((cleanup_requested_at IS NOT NULL) AND (cleanup_dispatched_at >= cleanup_requested_at) AND (endpoint_id IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check6 CHECK (((retired_at IS NULL) OR (retired_at >= cleanup_requested_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check7 CHECK (((NOT available) OR (state = 'observed'::text))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check8 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'observed'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'deleting'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND ((delete_operation_ids <> '[]'::jsonb) OR (capture_operation_ids <> '[]'::jsonb))))))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check9 CHECK (((state = ANY (ARRAY['deleting'::text, 'retired'::text])) OR ((cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'observed'::text, 'deleting'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_copy_targets (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    provider_resource_id text,
+    provider_created_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    prepared_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    deletion_started_at timestamp with time zone,
+    deletion_observed_at timestamp with time zone,
+    CONSTRAINT clone_copy_target_deletion_order CHECK (((deletion_observed_at IS NULL) OR ((deletion_observed_at >= deletion_started_at) AND (deletion_observed_at >= provider_created_at) AND (retired_at >= deletion_observed_at)))),
+    CONSTRAINT clone_copy_target_lifecycle_shape CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'preparing'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'prepared'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'deleting'::text) AND (request_started_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NULL) AND (((provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL)) OR ((provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NOT NULL)))))),
+    CONSTRAINT project_environment_clone_postgres_c_provider_resource_id_check CHECK (((provider_resource_id IS NULL) OR ((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check CHECK (((target_database_id <> capture_database_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check2 CHECK (((prepared_at IS NULL) OR (prepared_at >= provider_created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check3 CHECK (((observed_at IS NULL) OR (observed_at >= provider_created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'preparing'::text, 'prepared'::text, 'deleting'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_database_plans (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    target_pins_ciphertext_sha256 text NOT NULL,
+    role_plan_ciphertext_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_inventory_ciphertext_sha256_check2 CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_role_plan_ciphertext_sha256_check1 CHECK ((role_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_pins_ciphertext_sha2_check2 CHECK ((target_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_dat_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_data_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_p_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_database_pl_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_database_plans_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_database_plans_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_plans_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check4 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_database_sql_pins (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    database_plan_ciphertext_sha256 text NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sha_check CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check3 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_target_provider_created_at_check2 CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_post_archive_reservation_sha256_check CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_da_target_fingerprint_check1 CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_dat_ciphertext_sha256_check1 CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database__database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_database_s_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_database_sq_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pi_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pin_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pins_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pins_check1 CHECK ((captured_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check5 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_imports (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    import_id uuid NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_ciphertext_sha256 text NOT NULL,
+    target_database_id uuid NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    target_fingerprint text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    import_started_at timestamp with time zone,
+    executed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    database_sql_pins_ciphertext_sha256 text,
+    database_plan_ciphertext_sha256 text,
+    archive_reservation_sha256 text,
+    CONSTRAINT postgres_imports_preparation_tuple CHECK ((((database_sql_pins_ciphertext_sha256 IS NULL) AND (database_plan_ciphertext_sha256 IS NULL) AND (archive_reservation_sha256 IS NULL)) OR ((database_sql_pins_ciphertext_sha256 IS NOT NULL) AND (database_plan_ciphertext_sha256 IS NOT NULL) AND (archive_reservation_sha256 IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sh_check1 CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_database_sql_pins_ciphertext_check CHECK ((database_sql_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check1 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check1 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_post_target_provider_created_at_check CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postg_archive_ciphertext_sha256_check CHECK ((archive_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_imp_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_impo_import_started_at_check CHECK (isfinite(import_started_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_check CHECK (((import_id <> operation_id) AND (import_id <> source_database_id) AND (import_id <> archive_owner_id) AND (import_id <> target_database_id))),
+    CONSTRAINT project_environment_clone_postgres_imports_check1 CHECK ((target_database_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_imports_check2 CHECK ((created_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_check3 CHECK (((import_started_at IS NULL) OR (import_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_imports_check4 CHECK (((executed_at IS NULL) OR (executed_at >= import_started_at))),
+    CONSTRAINT project_environment_clone_postgres_imports_check5 CHECK ((((state = 'reserved'::text) AND (import_started_at IS NULL) AND (executed_at IS NULL)) OR ((state = 'importing'::text) AND (import_started_at IS NOT NULL) AND (executed_at IS NULL)) OR ((state = 'executed'::text) AND (import_started_at IS NOT NULL) AND (executed_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_imports_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_imports_executed_at_check CHECK (isfinite(executed_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'importing'::text, 'executed'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_inventories (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_inve_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventorie_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_inventorie_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventories_check CHECK ((capture_database_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_inventories_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_inventories_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventories_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_membership_plans (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    target_pins_ciphertext_sha256 text NOT NULL,
+    role_plan_ciphertext_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_inventory_ciphertext_sha256_check1 CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_pins_ciphertext_sha2_check1 CHECK ((target_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_role_plan_ciphertext_sha256_check CHECK ((role_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check3 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_mem_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_memb_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_membership__ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_membership_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_membership_plan_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_membership_plans_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_membership_plans_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_role_plans (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    target_pins_ciphertext_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_target_pins_ciphertext_sha25_check CHECK ((target_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_inventory_ciphertext_sha256_check CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check2 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_rol_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_role_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_role_plans_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_snapshot_restores (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    target_owner_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    target_provider_resource_id text,
+    target_created_at timestamp with time zone,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    restored_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deletion_started_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    delete_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    adopted_database_id uuid,
+    adopted_at timestamp with time zone,
+    CONSTRAINT clone_postgres_snapshot_fork_adoption_shape CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'restoring'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['restored'::text, 'adopted'::text])) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NOT NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) AND (((request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (((target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))))))),
+    CONSTRAINT project_environment_clone_pos_target_provider_resource_id_check CHECK (((target_provider_resource_id IS NULL) OR ((target_provider_resource_id <> ''::text) AND (length(target_provider_resource_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_s_backend_fingerprint_check1 CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_s_delete_operation_ids_check CHECK ((jsonb_typeof(delete_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapshot_re_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restore_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'restoring'::text, 'restored'::text, 'adopted'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check CHECK ((target_owner_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check1 CHECK (((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) = (deletion_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check10 CHECK (((adopted_at IS NULL) OR (deletion_started_at IS NULL) OR (deletion_started_at >= adopted_at))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check2 CHECK (((target_created_at IS NULL) OR (target_created_at <= observed_at))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check3 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check4 CHECK (((deleted_at IS NULL) OR (deleted_at >= deletion_started_at))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check5 CHECK (((adopted_database_id IS NULL) = (adopted_at IS NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6 CHECK (((state <> 'deleted'::text) OR (request_started_at IS NULL) OR ((target_provider_resource_id IS NOT NULL) AND (jsonb_array_length(delete_operation_ids) > 0)))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check7 CHECK (((adopted_database_id IS NULL) OR (adopted_database_id = target_owner_id))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check8 CHECK ((((adopted_at IS NULL) AND (state <> 'adopted'::text)) OR ((adopted_at IS NOT NULL) AND (state = ANY (ARRAY['adopted'::text, 'deleting'::text, 'deleted'::text]))))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check9 CHECK (((adopted_at IS NULL) OR ((restored_at IS NOT NULL) AND (adopted_at >= restored_at))))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_snapshots (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_version text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    capture_point timestamp with time zone NOT NULL,
+    provider_snapshot_id text,
+    state text DEFAULT 'capturing'::text NOT NULL,
+    snapshot_created_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    cleanup_observed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_pos_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgre_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_s_provider_snapshot_id_check CHECK (((provider_snapshot_id IS NULL) OR ((provider_snapshot_id <> ''::text) AND (length(provider_snapshot_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_sn_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapsho_source_version_check CHECK ((source_version ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapshots_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check CHECK ((capture_point <= created_at)),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check1 CHECK ((((provider_snapshot_id IS NULL) AND (snapshot_created_at IS NULL) AND (observed_at IS NULL)) OR ((provider_snapshot_id IS NOT NULL) AND (snapshot_created_at IS NOT NULL) AND (snapshot_created_at >= capture_point) AND (observed_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check2 CHECK (((state <> 'retained'::text) OR (provider_snapshot_id IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check3 CHECK (((state = 'deleted'::text) = (cleanup_observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check4 CHECK (((state <> ALL (ARRAY['requested'::text, 'retained'::text])) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_state_check CHECK ((state = ANY (ARRAY['capturing'::text, 'requested'::text, 'retained'::text, 'deleting'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_target_sql_pins (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check2 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_target_provider_created_at_check1 CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check1 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_tar_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_targ_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_target_sql__ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_check1 CHECK ((captured_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_attempts (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    attempt smallint NOT NULL,
+    verification_id uuid NOT NULL,
+    previous_attempt smallint,
+    previous_verification_id uuid,
+    previous_opened_at timestamp with time zone,
+    previous_closed_at timestamp with time zone,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text NOT NULL,
+    request_started_at timestamp with time zone,
+    window_opened_at timestamp with time zone,
+    target_database_oid bigint,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    compared_at timestamp with time zone,
+    native_closed_at timestamp with time zone,
+    verified_at timestamp with time zone,
+    failed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_v_target_database_oid_check1 CHECK (((target_database_oid >= 1) AND (target_database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_ve_request_started_at_check1 CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_ciphertext_sha256_check1 CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ver_previous_closed_at_check CHECK (isfinite(previous_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_previous_opened_at_check CHECK (isfinite(previous_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_veri_native_closed_at_check1 CHECK (isfinite(native_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_veri_window_opened_at_check1 CHECK (isfinite(window_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_verifi_reserved_bytes_check1 CHECK (((reserved_bytes >= 1) AND (reserved_bytes <= 16384))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check1 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificat_compared_at_check1 CHECK (isfinite(compared_at)),
+    CONSTRAINT project_environment_clone_postgres_verificat_fingerprint_check1 CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verificat_verified_at_check1 CHECK (isfinite(verified_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check1 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verification_a_attempt_check CHECK (((attempt >= 1) AND (attempt <= 3))),
+    CONSTRAINT project_environment_clone_postgres_verification_at_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verification_att_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text, 'verified'::text, 'failed'::text]))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempt_check10 CHECK ((((state = 'failed'::text) AND (failed_at IS NOT NULL) AND (native_closed_at IS NOT NULL) AND (verified_at IS NULL)) OR ((state = 'verified'::text) AND (failed_at IS NULL) AND (native_closed_at IS NOT NULL) AND (verified_at IS NOT NULL)) OR ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text])) AND (failed_at IS NULL) AND (native_closed_at IS NULL) AND (verified_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check1 CHECK ((((attempt = 1) AND (verification_id = original_verification_id) AND (state = 'failed'::text) AND (previous_attempt IS NULL) AND (previous_verification_id IS NULL) AND (previous_opened_at IS NULL) AND (previous_closed_at IS NULL)) OR ((attempt > 1) AND (verification_id <> original_verification_id) AND (previous_attempt IS NOT NULL) AND (previous_attempt = (attempt - 1)) AND (previous_verification_id IS NOT NULL) AND (previous_verification_id <> verification_id) AND (previous_opened_at IS NOT NULL) AND (previous_closed_at IS NOT NULL) AND (previous_closed_at >= previous_opened_at)))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check3 CHECK (((compared_at IS NULL) OR (compared_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check4 CHECK (((failed_at IS NULL) OR (failed_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check5 CHECK (((verified_at IS NULL) OR (verified_at >= compared_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check6 CHECK (((window_opened_at IS NULL) OR (previous_closed_at IS NULL) OR (window_opened_at >= previous_closed_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check7 CHECK (((native_closed_at IS NULL) OR (native_closed_at >= window_opened_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check8 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL)) OR ((state = 'verifying'::text) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text, 'failed'::text])) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NOT NULL) AND (target_database_oid IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check9 CHECK ((((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'failed'::text])) AND (ciphertext IS NULL) AND (fingerprint IS NULL) AND (ciphertext_sha256 IS NULL) AND (compared_at IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text])) AND (ciphertext IS NOT NULL) AND (fingerprint IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (compared_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verification_failed_at_check CHECK (isfinite(failed_at))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_read_budgets (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    read_bytes bigint NOT NULL,
+    sort_memory_bytes bigint NOT NULL,
+    sort_disk_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_veri_sort_memory_bytes_check CHECK (((sort_memory_bytes >= 32) AND (sort_memory_bytes <= 8388608))),
+    CONSTRAINT project_environment_clone_postgres_verifi_sort_disk_bytes_check CHECK (((sort_disk_bytes >= 32) AND (sort_disk_bytes <= '68719476736'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check2 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check2 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verificatio_read_bytes_check CHECK (((read_bytes >= 1) AND (read_bytes <= '3298534883328'::bigint)))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_read_debits (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    attempt smallint NOT NULL,
+    verification_id uuid NOT NULL,
+    retry_attempt smallint,
+    retry_verification_id uuid,
+    read_bytes bigint NOT NULL,
+    sort_memory_bytes bigint NOT NULL,
+    sort_disk_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_ver_sort_memory_bytes_check1 CHECK (((sort_memory_bytes >= 32) AND (sort_memory_bytes <= 8388608))),
+    CONSTRAINT project_environment_clone_postgres_verif_sort_disk_bytes_check1 CHECK (((sort_disk_bytes >= 32) AND (sort_disk_bytes <= '68719476736'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check3 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check3 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_read_bytes_check1 CHECK (((read_bytes >= 1) AND (read_bytes <= '1099511627776'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verification_r_attempt_check CHECK (((attempt >= 1) AND (attempt <= 3))),
+    CONSTRAINT project_environment_clone_postgres_verification_read_debi_check CHECK ((((attempt = 1) AND (verification_id = original_verification_id) AND (retry_attempt IS NULL) AND (retry_verification_id IS NULL)) OR ((attempt > 1) AND (verification_id <> original_verification_id) AND (retry_attempt IS NOT NULL) AND (retry_attempt = attempt) AND (retry_verification_id IS NOT NULL) AND (retry_verification_id = verification_id))))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verifications (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    verification_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    contents_owner_id uuid NOT NULL,
+    contents_ciphertext_sha256 text NOT NULL,
+    manifest_fingerprint text NOT NULL,
+    import_id uuid NOT NULL,
+    import_started_at timestamp with time zone NOT NULL,
+    database_sql_pins_ciphertext_sha256 text NOT NULL,
+    database_plan_ciphertext_sha256 text NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    window_opened_at timestamp with time zone,
+    target_database_oid bigint,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    compared_at timestamp with time zone,
+    native_closed_at timestamp with time zone,
+    verified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sh_check2 CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_database_sql_pins_ciphertex_check1 CHECK ((database_sql_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check3 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_post_contents_ciphertext_sha256_check CHECK ((contents_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_v_manifest_fingerprint_check CHECK ((manifest_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ve_target_database_oid_check CHECK (((target_database_oid >= 1) AND (target_database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_ver_request_started_at_check CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_veri_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_veri_import_started_at_check CHECK (isfinite(import_started_at)),
+    CONSTRAINT project_environment_clone_postgres_verif_native_closed_at_check CHECK (isfinite(native_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_verif_window_opened_at_check CHECK (isfinite(window_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_verific_reserved_bytes_check CHECK (((reserved_bytes >= 1) AND (reserved_bytes <= 16384))),
+    CONSTRAINT project_environment_clone_postgres_verificat_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_compared_at_check CHECK (isfinite(compared_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verificati_verified_at_check CHECK (isfinite(verified_at)),
+    CONSTRAINT project_environment_clone_postgres_verificatio_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verifications_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check1 CHECK (((verification_id <> operation_id) AND (verification_id <> source_database_id) AND (verification_id <> contents_owner_id) AND (verification_id <> import_id))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check3 CHECK (((compared_at IS NULL) OR (compared_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check4 CHECK (((verified_at IS NULL) OR (verified_at >= compared_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check5 CHECK (((native_closed_at IS NULL) OR (native_closed_at >= window_opened_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check6 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (ciphertext IS NULL)) OR ((state = 'verifying'::text) AND (request_started_at IS NOT NULL) AND (ciphertext IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text])) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NOT NULL) AND (target_database_oid IS NOT NULL) AND (fingerprint IS NOT NULL) AND (ciphertext IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (compared_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check7 CHECK ((((ciphertext IS NULL) AND (fingerprint IS NULL) AND (ciphertext_sha256 IS NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL) AND (compared_at IS NULL)) OR (ciphertext IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check8 CHECK ((((state = 'verified'::text) AND (native_closed_at IS NOT NULL) AND (verified_at IS NOT NULL)) OR ((state <> 'verified'::text) AND (native_closed_at IS NULL) AND (verified_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verifications_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verifications_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_verifications_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text, 'verified'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_write_fences (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_version text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    state text DEFAULT 'held'::text NOT NULL,
+    remote_terminal_state text,
+    remote_released_at timestamp with time zone,
+    released_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_source_provider_resource_id_check1 CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgr_source_data_resource_id_check1 CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres__remote_terminal_state_check CHECK (((remote_terminal_state IS NULL) OR (remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text])))),
+    CONSTRAINT project_environment_clone_postgres_wr_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_write_f_source_version_check CHECK ((source_version ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_write_fence_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_write_fences_check CHECK ((((state = 'released'::text) AND (remote_terminal_state IS NOT NULL) AND (remote_released_at IS NOT NULL) AND (released_at IS NOT NULL)) OR ((state <> 'released'::text) AND (remote_terminal_state IS NULL) AND (remote_released_at IS NULL) AND (released_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_write_fences_state_check CHECK ((state = ANY (ARRAY['held'::text, 'abandoning'::text, 'released'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_workloads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_workloads (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    source_hash text NOT NULL,
+    snapshot json NOT NULL,
+    target_deployment_id uuid,
+    target_settings_hash text DEFAULT ''::text NOT NULL,
+    CONSTRAINT project_environment_clone_workloads_check CHECK ((source_deployment_id <> target_deployment_id)),
+    CONSTRAINT project_environment_clone_workloads_check1 CHECK ((((target_deployment_id IS NULL) AND (target_settings_hash = ''::text)) OR ((target_deployment_id IS NOT NULL) AND (target_settings_hash <> ''::text)))),
+    CONSTRAINT project_environment_clone_workloads_snapshot_check CHECK ((json_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_clone_workloads_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_workloads_target_settings_hash_check CHECK (((target_settings_hash = ''::text) OR (target_settings_hash ~ '^[a-f0-9]{64}$'::text)))
+);
+
+
+--
 -- Name: project_environment_config_versions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19172,6 +23199,47 @@ CREATE TABLE public.project_environment_edge_policies (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environment_edge_policies_rules_chk CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 20)))
+);
+
+
+--
+-- Name: project_environment_promotion_feature_flags; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_feature_flags (
+    promotion_id uuid NOT NULL,
+    source_snapshot jsonb NOT NULL,
+    previous_target_snapshot jsonb NOT NULL,
+    source_hash text NOT NULL,
+    previous_target_hash text NOT NULL,
+    target_version bigint DEFAULT 0 NOT NULL,
+    rollback_version bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environment_promotion_fe_previous_target_snapshot_check CHECK ((jsonb_typeof(previous_target_snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_featur_previous_target_hash_check CHECK ((previous_target_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_feature_fl_rollback_version_check CHECK (((rollback_version >= 0) AND (rollback_version <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_promotion_feature_fla_source_snapshot_check CHECK ((jsonb_typeof(source_snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_feature_flag_target_version_check CHECK (((target_version >= 0) AND (target_version <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_promotion_feature_flags_check CHECK (((rollback_version = 0) OR ((target_version > 0) AND (rollback_version > target_version)))),
+    CONSTRAINT project_environment_promotion_feature_flags_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_promotion_workload_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_workload_specs (
+    promotion_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    prepared_spec_id uuid NOT NULL,
+    previous_spec_id uuid,
+    source_hash text NOT NULL,
+    previous_hash text NOT NULL,
+    previous_settings json NOT NULL,
+    CONSTRAINT project_environment_promotion_workload__previous_settings_check CHECK ((json_typeof(previous_settings) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_workload_spec_previous_hash_check CHECK ((previous_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_workload_specs_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -19277,6 +23345,7 @@ CREATE TABLE public.project_environment_qualifications (
     configuration_version bigint DEFAULT '-1'::integer NOT NULL,
     configuration_hash text DEFAULT ''::text NOT NULL,
     secret_revision_hashes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    workload_config_hashes jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT project_environment_qualifications_checks_shape CHECK (((jsonb_typeof(checks) = 'array'::text) AND (jsonb_array_length(checks) = 2) AND ((checks @> '[{"name": "health", "status": "passed"}]'::jsonb) OR (checks @> '[{"name": "health", "status": "failed"}]'::jsonb)) AND ((checks @> '[{"name": "smoke", "status": "passed"}]'::jsonb) OR (checks @> '[{"name": "smoke", "status": "failed"}]'::jsonb)) AND (status =
 CASE
     WHEN ((checks @> '[{"name": "health", "status": "failed"}]'::jsonb) OR (checks @> '[{"name": "smoke", "status": "failed"}]'::jsonb)) THEN 'failed'::text
@@ -19286,7 +23355,53 @@ END))),
     CONSTRAINT project_environment_qualifications_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval)))),
     CONSTRAINT project_environment_qualifications_results_shape CHECK (((checks @> '[{"name": "health", "results": [{}]}]'::jsonb) AND (checks @> '[{"name": "smoke", "results": [{}]}]'::jsonb))),
     CONSTRAINT project_environment_qualifications_secret_revisions_object_chec CHECK ((jsonb_typeof(secret_revision_hashes) = 'object'::text)),
-    CONSTRAINT project_environment_qualifications_status_check CHECK ((status = ANY (ARRAY['passed'::text, 'failed'::text])))
+    CONSTRAINT project_environment_qualifications_status_check CHECK ((status = ANY (ARRAY['passed'::text, 'failed'::text]))),
+    CONSTRAINT project_environment_qualifications_workload_config_hashes_check CHECK ((jsonb_typeof(workload_config_hashes) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_queue_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_queue_consumers (
+    id uuid NOT NULL,
+    runtime_set_id uuid NOT NULL,
+    name text NOT NULL,
+    queue_name text NOT NULL,
+    definition json NOT NULL,
+    definition_hash text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_queue_consumers_check CHECK (((json_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) IS NOT NULL) AND ((definition ->> 'name'::text) = name) AND ((definition ->> 'queue_name'::text) IS NOT NULL) AND ((definition ->> 'queue_name'::text) = queue_name))),
+    CONSTRAINT project_environment_queue_consumers_definition_hash_check CHECK ((definition_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_queue_consumers_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT project_environment_queue_consumers_queue_name_check CHECK ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: project_environment_queue_runtime_sets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_queue_runtime_sets (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_spec_id uuid NOT NULL,
+    settings_hash text NOT NULL,
+    queue_revision bigint NOT NULL,
+    binding_count integer NOT NULL,
+    book_hash text NOT NULL,
+    state text DEFAULT 'prepared'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_queue_runtime_sets_binding_count_check CHECK ((binding_count >= 0)),
+    CONSTRAINT project_environment_queue_runtime_sets_book_hash_check CHECK ((book_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_queue_runtime_sets_queue_revision_check CHECK ((queue_revision > 0)),
+    CONSTRAINT project_environment_queue_runtime_sets_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_queue_runtime_sets_state_check CHECK ((state = 'prepared'::text))
 );
 
 
@@ -19305,6 +23420,45 @@ CREATE TABLE public.project_environment_route_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environment_route_policies_explicit_chk CHECK (((NOT only_allow_declared_routes) OR (jsonb_array_length(declared_routes) > 0))),
     CONSTRAINT project_environment_route_policies_routes_array_chk CHECK (((jsonb_typeof(declared_routes) = 'array'::text) AND (jsonb_array_length(declared_routes) <= 50)))
+);
+
+
+--
+-- Name: project_environment_workload_deployment_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_workload_deployment_specs (
+    deployment_id uuid NOT NULL,
+    spec_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_environment_workload_heads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_workload_heads (
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    spec_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_environment_workload_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_workload_specs (
+    id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    config_hash text NOT NULL,
+    settings json NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_workload_specs_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_workload_specs_revision_check CHECK ((revision > 0)),
+    CONSTRAINT project_environment_workload_specs_settings_check CHECK ((json_typeof(settings) = 'object'::text))
 );
 
 
@@ -20310,6 +24464,48 @@ ALTER SEQUENCE public.runtime_config_revisions_id_seq OWNED BY public.runtime_co
 
 
 --
+-- Name: runtime_environment_scaling_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_environment_scaling_states (
+    app_id uuid NOT NULL,
+    environment_key text NOT NULL,
+    environment_id uuid,
+    scope text NOT NULL,
+    last_scale_in_at timestamp with time zone,
+    last_scale_out_at timestamp with time zone,
+    CONSTRAINT runtime_environment_scaling_states_check CHECK ((environment_key =
+CASE
+    WHEN (environment_id IS NULL) THEN ('scope:'::text || scope)
+    ELSE ('environment:'::text || (environment_id)::text)
+END)),
+    CONSTRAINT runtime_environment_scaling_states_scope_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (scope <> 'default'::text)))
+);
+
+
+--
+-- Name: runtime_instance_config_proofs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_instance_config_proofs (
+    instance_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    environment_id uuid,
+    scope text NOT NULL,
+    secret_fingerprint text NOT NULL,
+    config_fingerprint text NOT NULL,
+    CONSTRAINT runtime_instance_config_proofs_config_fingerprint_check CHECK ((config_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_instance_config_proofs_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_instance_config_proofs_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
+    CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: runtime_log_archive_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20559,7 +24755,7 @@ CREATE TABLE public.service_recovery (
     app_id uuid NOT NULL,
     revision text NOT NULL,
     claim_token uuid,
-    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     status text NOT NULL,
     failures integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
@@ -21246,6 +25442,25 @@ CREATE TABLE public.workflow_automation_definitions (
 
 
 --
+-- Name: workflow_automation_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_revisions (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    version bigint NOT NULL,
+    definition jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    legacy_snapshot boolean DEFAULT false NOT NULL,
+    published_by_account_id uuid NOT NULL,
+    published_by_api_key_id uuid,
+    CONSTRAINT workflow_automation_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
+    CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
+    CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: workflow_callback_webhook_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21289,6 +25504,29 @@ CREATE TABLE public.workflow_events (
 
 
 --
+-- Name: workflow_operation_effects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_operation_effects (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    step_name text NOT NULL,
+    operation_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    name text NOT NULL,
+    payload jsonb NOT NULL,
+    webhook_id uuid NOT NULL,
+    event_type text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_operation_effects_event_type_check CHECK ((((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256)) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text))),
+    CONSTRAINT workflow_operation_effects_generation_check CHECK ((generation > 0)),
+    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
 -- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21326,9 +25564,14 @@ CREATE TABLE public.workflow_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lease_until timestamp with time zone,
+    operation_id uuid,
     resume_count integer DEFAULT 0 NOT NULL,
     cancelled_at timestamp with time zone,
+    platform_tenant_id uuid,
+    create_idempotency_key text,
+    create_request_fingerprint bytea,
     CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
+    CONSTRAINT workflow_runs_create_idempotency_check CHECK ((((create_idempotency_key IS NULL) AND (create_request_fingerprint IS NULL)) OR ((create_idempotency_key IS NOT NULL) AND ((octet_length(create_idempotency_key) >= 1) AND (octet_length(create_idempotency_key) <= 255)) AND (create_request_fingerprint IS NOT NULL) AND (octet_length(create_request_fingerprint) = 32)))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
 );
@@ -21476,14 +25719,14 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 -- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
 
 
 --
 -- Name: log_events_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 03:00:00+03') TO ('2026-12-01 03:00:00+03');
 
 
 --
@@ -21497,21 +25740,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-09-30 21:00:00+00') TO ('2026-10-31 21:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+03') TO ('2026-11-01 00:00:00+03');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-10-31 21:00:00+00') TO ('2026-11-30 21:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+03') TO ('2026-12-01 00:00:00+03');
 
 
 --
 -- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-11-30 21:00:00+00') TO ('2026-12-31 21:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+03') TO ('2027-01-01 00:00:00+03');
 
 
 --
@@ -21651,6 +25894,14 @@ ALTER TABLE ONLY public.alert_deliveries
 
 
 --
+-- Name: alert_historical_rollback_claims alert_historical_rollback_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_historical_rollback_claims
+    ADD CONSTRAINT alert_historical_rollback_claims_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: alert_presets alert_presets_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21664,6 +25915,14 @@ ALTER TABLE ONLY public.alert_presets
 
 ALTER TABLE ONLY public.alert_presets
     ADD CONSTRAINT alert_presets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: alert_rollback_actions alert_rollback_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rollback_actions
+    ADD CONSTRAINT alert_rollback_actions_pkey PRIMARY KEY (fire_id);
 
 
 --
@@ -21792,6 +26051,22 @@ ALTER TABLE ONLY public.app_api_routes
 
 ALTER TABLE ONLY public.app_binding_promotion_revisions
     ADD CONSTRAINT app_binding_promotion_revisions_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_binding_release_policies app_binding_release_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policies
+    ADD CONSTRAINT app_binding_release_policies_pkey PRIMARY KEY (app_id, scope);
+
+
+--
+-- Name: app_binding_release_policy_history app_binding_release_policy_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policy_history
+    ADD CONSTRAINT app_binding_release_policy_history_pkey PRIMARY KEY (app_id, scope, revision);
 
 
 --
@@ -22555,6 +26830,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 
 --
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_pkey PRIMARY KEY (operation_id, retry_id);
+
+
+--
 -- Name: customer_operation_events customer_operation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22624,6 +26907,22 @@ ALTER TABLE ONLY public.customer_operation_result_blobs
 
 ALTER TABLE ONLY public.customer_operation_stream_leases
     ADD CONSTRAINT customer_operation_stream_leases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_pkey PRIMARY KEY (workflow_run_id);
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_pkey PRIMARY KEY (workflow_run_id, step_name, step_attempt);
 
 
 --
@@ -22715,6 +27014,14 @@ ALTER TABLE ONLY public.deployment_audit
 
 
 --
+-- Name: deployment_dependency_gates deployment_dependency_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_dependency_gates
+    ADD CONSTRAINT deployment_dependency_gates_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_image_preparations deployment_image_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22747,6 +27054,14 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_recovery_lineage deployment_recovery_lineage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_recovery_lineage
+    ADD CONSTRAINT deployment_recovery_lineage_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22755,11 +27070,27 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 
 --
+-- Name: deployment_rollback_operations deployment_rollback_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_route_policy_snapshots
     ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_environment_owners deployment_runtime_environment_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_environment_owners
+    ADD CONSTRAINT deployment_runtime_environment_owners_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -23139,11 +27470,35 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 
 --
+-- Name: event_delivery_capacity event_delivery_capacity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_capacity
+    ADD CONSTRAINT event_delivery_capacity_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: event_delivery_slots event_delivery_slots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_slots
+    ADD CONSTRAINT event_delivery_slots_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.event_fanout_attempt_history
     ADD CONSTRAINT event_fanout_attempt_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_fanout_history_summaries event_fanout_history_summaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_history_summaries
+    ADD CONSTRAINT event_fanout_history_summaries_pkey PRIMARY KEY (outbox_id, subscription_id);
 
 
 --
@@ -23163,11 +27518,59 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 
 --
+-- Name: event_fanout_recipients event_fanout_recipients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_recipients
+    ADD CONSTRAINT event_fanout_recipients_pkey PRIMARY KEY (outbox_id, subscription_id);
+
+
+--
+-- Name: event_replay_job_items event_replay_job_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_replay_job_items
+    ADD CONSTRAINT event_replay_job_items_pkey PRIMARY KEY (job_id, outbox_id);
+
+
+--
+-- Name: event_replay_jobs event_replay_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_replay_jobs
+    ADD CONSTRAINT event_replay_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_routing_backlog event_routing_backlog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_backlog
+    ADD CONSTRAINT event_routing_backlog_pkey PRIMARY KEY (outbox_id, subscription_id);
+
+
+--
+-- Name: event_routing_fairness event_routing_fairness_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_fairness
+    ADD CONSTRAINT event_routing_fairness_pkey PRIMARY KEY (account_id, subscription_id);
+
+
+--
 -- Name: event_schemas event_schemas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.event_schemas
     ADD CONSTRAINT event_schemas_pkey PRIMARY KEY (account_id, source, event_type, version);
+
+
+--
+-- Name: event_storage_admission event_storage_admission_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_storage_admission
+    ADD CONSTRAINT event_storage_admission_pkey PRIMARY KEY (account_id);
 
 
 --
@@ -23867,11 +28270,91 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: invocation_attempt_history invocation_attempt_history_invocation_id_replay_generation__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_attempt_history
+    ADD CONSTRAINT invocation_attempt_history_invocation_id_replay_generation__key UNIQUE (invocation_id, replay_generation, attempt);
+
+
+--
+-- Name: invocation_attempt_history invocation_attempt_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_attempt_history
+    ADD CONSTRAINT invocation_attempt_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_pkey PRIMARY KEY (invocation_id);
+
+
+--
+-- Name: invocation_environment_queue_receipts invocation_environment_queue_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_receipts
+    ADD CONSTRAINT invocation_environment_queue_receipts_pkey PRIMARY KEY (invocation_id);
+
+
+--
+-- Name: invocation_keyed_replays invocation_keyed_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_keyed_replays
+    ADD CONSTRAINT invocation_keyed_replays_pkey PRIMARY KEY (parent_invocation_id);
+
+
+--
+-- Name: invocation_keyed_replays invocation_keyed_replays_replay_invocation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_keyed_replays
+    ADD CONSTRAINT invocation_keyed_replays_replay_invocation_id_key UNIQUE (replay_invocation_id);
+
+
+--
+-- Name: invocation_plain_replays invocation_plain_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_plain_replays
+    ADD CONSTRAINT invocation_plain_replays_pkey PRIMARY KEY (parent_invocation_id);
+
+
+--
+-- Name: invocation_plain_replays invocation_plain_replays_replay_invocation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_plain_replays
+    ADD CONSTRAINT invocation_plain_replays_replay_invocation_id_key UNIQUE (replay_invocation_id);
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.invocation_work_cancellations
     ADD CONSTRAINT invocation_work_cancellations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_pkey PRIMARY KEY (invocation_id);
+
+
+--
+-- Name: invocation_work_environment_domains invocation_work_environment_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_domains
+    ADD CONSTRAINT invocation_work_environment_domains_pkey PRIMARY KEY (app_id, policy_name, kind, digest);
 
 
 --
@@ -24043,6 +28526,14 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: layer_artifact_retention layer_artifact_retention_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.layer_artifact_retention
+    ADD CONSTRAINT layer_artifact_retention_pkey PRIMARY KEY (storage_key);
+
+
+--
 -- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24091,11 +28582,75 @@ ALTER TABLE ONLY public.mail_suppressions
 
 
 --
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_r_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_r_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_database_id_key UNIQUE (database_id);
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_pkey PRIMARY KEY (account_id, reconciliation_id);
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_bindings
     ADD CONSTRAINT managed_postgres_bindings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, source_data_resource_id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_key UNIQUE (source_database_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_rec_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_rec_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
 
 
 --
@@ -24147,11 +28702,43 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 
 --
+-- Name: managed_postgres_resizes managed_postgres_resizes_database_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_database_id_generation_key UNIQUE (database_id, generation);
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resizes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_restore_proofs managed_postgres_restore_proofs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_proofs
+    ADD CONSTRAINT managed_postgres_restore_proofs_pkey PRIMARY KEY (database_id);
+
+
+--
 -- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_usage_coverage
     ADD CONSTRAINT managed_postgres_usage_coverage_pkey PRIMARY KEY (database_id, window_seconds);
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_pkey PRIMARY KEY (account_id, import_id);
 
 
 --
@@ -24371,6 +28958,38 @@ ALTER TABLE ONLY public.object_bucket_lifecycle
 
 
 --
+-- Name: object_bucket_mutations object_bucket_mutations_multipart_part_writer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_multipart_part_writer_id_key UNIQUE (multipart_part_writer_id);
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_multipart_upload_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_multipart_upload_id_key UNIQUE (multipart_upload_id);
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_upload_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_upload_id_key UNIQUE (upload_id);
+
+
+--
 -- Name: object_bucket_notifications object_bucket_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24392,6 +29011,14 @@ ALTER TABLE ONLY public.object_bucket_object_lock
 
 ALTER TABLE ONLY public.object_bucket_versioning
     ADD CONSTRAINT object_bucket_versioning_pkey PRIMARY KEY (bucket_id);
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -24424,6 +29051,30 @@ ALTER TABLE ONLY public.object_deletions
 
 ALTER TABLE ONLY public.object_lifecycle_scans
     ADD CONSTRAINT object_lifecycle_scans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_multipart_initiation_dispatches object_multipart_initiation_dispatches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_multipart_initiation_dispatches
+    ADD CONSTRAINT object_multipart_initiation_dispatches_pkey PRIMARY KEY (multipart_upload_id);
+
+
+--
+-- Name: object_multipart_part_writers object_multipart_part_writers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_multipart_part_writers
+    ADD CONSTRAINT object_multipart_part_writers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_multipart_part_writers object_multipart_part_writers_upload_id_part_number_transfe_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_multipart_part_writers
+    ADD CONSTRAINT object_multipart_part_writers_upload_id_part_number_transfe_key UNIQUE (upload_id, part_number, transfer_token);
 
 
 --
@@ -24587,6 +29238,22 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 
 --
+-- Name: object_storage_upload_grants object_storage_upload_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: object_storage_usage_heads object_storage_usage_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24648,6 +29315,14 @@ ALTER TABLE ONLY public.object_upload_routes
 
 ALTER TABLE ONLY public.object_upload_routes
     ADD CONSTRAINT object_upload_routes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_version_protection object_version_protection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_pkey PRIMARY KEY (id);
 
 
 --
@@ -25011,6 +29686,14 @@ ALTER TABLE ONLY public.platform_tenant_usage_minutes
 
 
 --
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_pkey PRIMARY KEY (app_id, platform_tenant_id, workflow_name);
+
+
+--
 -- Name: platform_tenants platform_tenants_account_id_external_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25032,6 +29715,62 @@ ALTER TABLE ONLY public.platform_tenants
 
 ALTER TABLE ONLY public.platform_tenants
     ADD CONSTRAINT platform_tenants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives postgres_archive_contents_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT postgres_archive_contents_identity UNIQUE (operation_id, source_database_id, database_oid, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents postgres_contents_verification_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT postgres_contents_verification_identity UNIQUE (operation_id, source_database_id, database_oid, owner_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins postgres_database_sql_pins_import_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT postgres_database_sql_pins_import_identity UNIQUE (operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_imports postgres_import_verification_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT postgres_import_verification_identity UNIQUE (operation_id, source_database_id, database_oid, import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories postgres_inventory_contents_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT postgres_inventory_contents_identity UNIQUE (operation_id, source_database_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers postgres_reader_contents_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT postgres_reader_contents_identity UNIQUE (operation_id, source_database_id, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications postgres_verification_attempt_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT postgres_verification_attempt_identity UNIQUE (operation_id, source_database_id, database_oid, verification_id);
 
 
 --
@@ -25131,6 +29870,470 @@ ALTER TABLE ONLY public.project_environment_cleanup_jobs
 
 
 --
+-- Name: project_environment_clone_configuration_captures project_environment_clone_configuration_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_captures
+    ADD CONSTRAINT project_environment_clone_configuration_captures_pkey PRIMARY KEY (operation_id);
+
+
+--
+-- Name: project_environment_clone_configuration_clock project_environment_clone_configuration_clock_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_clock
+    ADD CONSTRAINT project_environment_clone_configuration_clock_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_pkey PRIMARY KEY (project_id);
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_idempotency_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_idempotency_unique UNIQUE (account_id, project_id, idempotency_key);
+
+
+--
+-- Name: project_environment_clone_layer_pins project_environment_clone_layer_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_layer_pins
+    ADD CONSTRAINT project_environment_clone_layer_pins_pkey PRIMARY KEY (operation_id, app_id, storage_key);
+
+
+--
+-- Name: project_environment_clone_materializations project_environment_clone_materializations_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_materializations
+    ADD CONSTRAINT project_environment_clone_materializations_environment_id_key UNIQUE (environment_id);
+
+
+--
+-- Name: project_environment_clone_materializations project_environment_clone_materializations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_materializations
+    ADD CONSTRAINT project_environment_clone_materializations_pkey PRIMARY KEY (operation_id);
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_crede_target_credential_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_crede_target_credential_id_key UNIQUE (target_credential_id);
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_credentials_pkey PRIMARY KEY (operation_id, source_credential_id);
+
+
+--
+-- Name: project_environment_clone_object_entries project_environment_clone_object_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_entries
+    ADD CONSTRAINT project_environment_clone_object_entries_pkey PRIMARY KEY (operation_id, source_bucket_id, object_key);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocatio_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocatio_request_id_key UNIQUE (request_id);
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revocations_pkey PRIMARY KEY (operation_id, source_bucket_id);
+
+
+--
+-- Name: project_environment_clone_object_manifests project_environment_clone_object_manifests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_manifests
+    ADD CONSTRAINT project_environment_clone_object_manifests_pkey PRIMARY KEY (operation_id, source_bucket_id);
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_backend_id_backend_fingerpri_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_pos_backend_id_backend_fingerpri_key1 UNIQUE (backend_id, backend_fingerprint, target_provider_resource_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_pos_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_pos_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_snapshot_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_pos_operation_id_source_database__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database__key UNIQUE (operation_id, source_database_id, target_fingerprint);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_pos_operation_id_source_database_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_key1 UNIQUE (operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_pos_operation_id_source_database_key2; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_key2 UNIQUE (operation_id, source_database_id, database_oid, original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_storage_key_key UNIQUE (storage_key);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindin_target_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindin_target_binding_id_key UNIQUE (target_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindings_pkey PRIMARY KEY (operation_id, source_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_postgres_checkpoint_selections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_postgres_checkpoint_selections_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy__target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy__target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_capture_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_capture_database_id_key UNIQUE (capture_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_targets_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_datab_target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_datab_target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_database_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_database_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_pins_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_import_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_import_id_key UNIQUE (import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membe_target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membe_target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membership_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membership_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_original_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_original_verification_id_key UNIQUE (original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role__target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role__target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snap_adopted_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snap_adopted_database_id_key UNIQUE (adopted_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_restores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_restores_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_target_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_target_owner_id_key UNIQUE (target_owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snapshots_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_targe_target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_targe_target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_target_sql_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_target_sql_pins_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_postgres_verific_verification_id_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_postgres_verific_verification_id_key1 UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_postgres_verific_verification_id_key2; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_postgres_verific_verification_id_key2 UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifica_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verifica_verification_id_key UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_postgres_verification_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_postgres_verification_attempts_pkey PRIMARY KEY (operation_id, source_database_id, database_oid, attempt);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verification_read_budge_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verification_read_budge_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_postgres_verification_read_debit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_postgres_verification_read_debit_pkey PRIMARY KEY (operation_id, source_database_id, database_oid, attempt);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verifications_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_write_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_write_fences_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_workloads project_environment_clone_workloads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_workloads
+    ADD CONSTRAINT project_environment_clone_workloads_pkey PRIMARY KEY (operation_id, app_id);
+
+
+--
 -- Name: project_environment_config_versions project_environment_config_version_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25152,6 +30355,30 @@ ALTER TABLE ONLY public.project_environment_config_versions
 
 ALTER TABLE ONLY public.project_environment_edge_policies
     ADD CONSTRAINT project_environment_edge_policies_pkey PRIMARY KEY (app_id, environment_slug);
+
+
+--
+-- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_feature_flags
+    ADD CONSTRAINT project_environment_promotion_feature_flags_pkey PRIMARY KEY (promotion_id);
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_deployment_id_key UNIQUE (deployment_id);
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_pkey PRIMARY KEY (promotion_id, app_id);
 
 
 --
@@ -25195,11 +30422,91 @@ ALTER TABLE ONLY public.project_environment_qualifications
 
 
 --
+-- Name: project_environment_queue_consumers project_environment_queue_consume_runtime_set_id_queue_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consume_runtime_set_id_queue_name_key UNIQUE (runtime_set_id, queue_name);
+
+
+--
+-- Name: project_environment_queue_consumers project_environment_queue_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consumers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_queue_consumers project_environment_queue_consumers_runtime_set_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consumers_runtime_set_id_name_key UNIQUE (runtime_set_id, name);
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_deployment_id_key UNIQUE (deployment_id);
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: project_environment_route_policies project_environment_route_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_route_policies
     ADD CONSTRAINT project_environment_route_policies_pkey PRIMARY KEY (app_id, environment_slug);
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload__environment_id_app_id_revisio_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload__environment_id_app_id_revisio_key UNIQUE (environment_id, app_id, revision);
+
+
+--
+-- Name: project_environment_workload_deployment_specs project_environment_workload_deployment_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_deployment_specs
+    ADD CONSTRAINT project_environment_workload_deployment_specs_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: project_environment_workload_heads project_environment_workload_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_heads
+    ADD CONSTRAINT project_environment_workload_heads_pkey PRIMARY KEY (environment_id, app_id);
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_environment_id_app_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_environment_id_app_id_id_key UNIQUE (environment_id, app_id, id);
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_pkey PRIMARY KEY (id);
 
 
 --
@@ -25619,6 +30926,22 @@ ALTER TABLE ONLY public.runtime_config_revisions
 
 
 --
+-- Name: runtime_environment_scaling_states runtime_environment_scaling_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_environment_scaling_states
+    ADD CONSTRAINT runtime_environment_scaling_states_pkey PRIMARY KEY (app_id, environment_key);
+
+
+--
+-- Name: runtime_instance_config_proofs runtime_instance_config_proofs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_instance_config_proofs
+    ADD CONSTRAINT runtime_instance_config_proofs_pkey PRIMARY KEY (instance_id);
+
+
+--
 -- Name: runtime_log_archive_bindings runtime_log_archive_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26019,6 +31342,14 @@ ALTER TABLE ONLY public.workflow_automation_definitions
 
 
 --
+-- Name: workflow_automation_revisions workflow_automation_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_revisions
+    ADD CONSTRAINT workflow_automation_revisions_pkey PRIMARY KEY (app_id, name, version);
+
+
+--
 -- Name: workflow_callback_webhook_bindings workflow_callback_webhook_bindings_match_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26064,6 +31395,22 @@ ALTER TABLE ONLY public.workflow_events
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_foreach_position UNIQUE (run_id, foreach_parent, foreach_index);
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_operation_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_operation_id_name_key UNIQUE (operation_id, name);
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_pkey PRIMARY KEY (id);
 
 
 --
@@ -26233,6 +31580,20 @@ CREATE INDEX alert_deliveries_rule_fired_production_idx ON public.alert_deliveri
 --
 
 CREATE INDEX alert_presets_enabled_idx ON public.alert_presets USING btree (enabled_in_catalog, category, name) WHERE (enabled_in_catalog = true);
+
+
+--
+-- Name: alert_rollback_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rollback_app ON public.alert_rollback_actions USING btree (app_id, updated_at DESC, fire_id);
+
+
+--
+-- Name: alert_rollback_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rollback_pending ON public.alert_rollback_actions USING btree (updated_at, fire_id) WHERE (status = ANY (ARRAY['pending'::text, 'blocked'::text]));
 
 
 --
@@ -27489,6 +32850,34 @@ CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_
 
 
 --
+-- Name: customer_operation_executions_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_current_idx ON public.customer_operation_executions USING btree (operation_id, generation, execution_id, execution_kind);
+
+
+--
+-- Name: customer_operation_executions_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_identity_idx ON public.customer_operation_executions USING btree (execution_id);
+
+
+--
+-- Name: customer_operation_executions_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_owner_idx ON public.customer_operation_executions USING btree (operation_id, execution_id);
+
+
+--
+-- Name: customer_operation_idempotency_operation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_idempotency_operation_idx ON public.customer_operation_idempotency USING btree (operation_id);
+
+
+--
 -- Name: customer_operation_idempotency_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27528,6 +32917,27 @@ CREATE INDEX customer_operation_stream_leases_account_idx ON public.customer_ope
 --
 
 CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_operation_stream_leases USING btree (expires_at);
+
+
+--
+-- Name: customer_operation_workflow_claim_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_claim_expiry_idx ON public.customer_operation_workflow_claims USING btree (lease_until, workflow_run_id);
+
+
+--
+-- Name: customer_operation_workflow_guest_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_guest_instance_idx ON public.customer_operation_workflow_guest_claims USING btree (instance_id) WHERE (instance_id IS NOT NULL);
+
+
+--
+-- Name: customer_operations_account_app_creation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_account_app_creation_idx ON public.customer_operations USING btree (account_id, app_id, created_at DESC, id DESC);
 
 
 --
@@ -27738,6 +33148,20 @@ CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins
 --
 
 CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+
+--
+-- Name: deployment_rollback_active_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployment_rollback_active_scope ON public.deployment_rollback_operations USING btree (app_id, scope) WHERE (status <> ALL (ARRAY['complete'::text, 'failed'::text]));
+
+
+--
+-- Name: deployment_rollback_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_rollback_pending ON public.deployment_rollback_operations USING btree (updated_at, id) WHERE (status <> ALL (ARRAY['complete'::text, 'failed'::text]));
 
 
 --
@@ -28091,6 +33515,13 @@ CREATE UNIQUE INDEX environment_qualification_reserved_instance_unique_idx ON pu
 
 
 --
+-- Name: event_delivery_slots_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_delivery_slots_consumer ON public.event_delivery_slots USING btree (account_id, app_id, subscription_id);
+
+
+--
 -- Name: event_fanout_attempt_history_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28105,10 +33536,31 @@ CREATE INDEX event_fanout_attempt_history_recipient_idx ON public.event_fanout_a
 
 
 --
+-- Name: event_fanout_customer_storage_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_customer_storage_idx ON public.event_fanout_outbox USING btree (account_id) INCLUDE (customer_storage_bytes, state, created_at) WHERE (customer_storage_bytes > 0);
+
+
+--
 -- Name: event_fanout_failure_history_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX event_fanout_failure_history_idx ON public.event_fanout_outbox USING btree (account_id, created_at DESC, id DESC) WHERE (last_error IS NOT NULL);
+
+
+--
+-- Name: event_fanout_history_summaries_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_history_summaries_prune_idx ON public.event_fanout_history_summaries USING btree (next_prune_at, outbox_id, subscription_id) WHERE (next_prune_at IS NOT NULL);
+
+
+--
+-- Name: event_fanout_outbox_account_accepted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_outbox_account_accepted_idx ON public.event_fanout_outbox USING btree (account_id, created_at, id);
 
 
 --
@@ -28130,6 +33582,97 @@ CREATE INDEX event_fanout_outbox_pending_idx ON public.event_fanout_outbox USING
 --
 
 CREATE INDEX event_fanout_outbox_retention_idx ON public.event_fanout_outbox USING btree (delivered_at, id) WHERE (state = 'delivered'::text);
+
+
+--
+-- Name: event_fanout_recipients_backfill_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_recipients_backfill_idx ON public.event_fanout_recipients USING btree (backfill_job_id, outbox_id) WHERE (backfill_job_id IS NOT NULL);
+
+
+--
+-- Name: event_fanout_recipients_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_recipients_due_idx ON public.event_fanout_recipients USING btree (available_at, outbox_id, subscription_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_fanout_recipients_lease_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_recipients_lease_idx ON public.event_fanout_recipients USING btree (lease_until, outbox_id, subscription_id) WHERE (state = 'processing'::text);
+
+
+--
+-- Name: event_fanout_recipients_receipt_position_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_fanout_recipients_receipt_position_idx ON public.event_fanout_recipients USING btree (outbox_id, receipt_position) WHERE (receipt_position IS NOT NULL);
+
+
+--
+-- Name: event_outbox_unattributed_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_outbox_unattributed_age ON public.event_fanout_outbox USING btree (account_id, created_at, id) WHERE ((recipient_snapshot IS NULL) AND (state = ANY (ARRAY['pending'::text, 'processing'::text])));
+
+
+--
+-- Name: event_replay_job_items_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_replay_job_items_due_idx ON public.event_replay_job_items USING btree (job_id, accepted_at, outbox_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_replay_job_items_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_replay_job_items_page_idx ON public.event_replay_job_items USING btree (job_id, accepted_at, outbox_id);
+
+
+--
+-- Name: event_replay_job_items_state_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_replay_job_items_state_idx ON public.event_replay_job_items USING btree (job_id, state, accepted_at, outbox_id);
+
+
+--
+-- Name: event_replay_jobs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_replay_jobs_account_idx ON public.event_replay_jobs USING btree (account_id, created_at DESC, id DESC);
+
+
+--
+-- Name: event_replay_jobs_active_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_replay_jobs_active_target_idx ON public.event_replay_jobs USING btree (account_id, subscription_id) WHERE (state = 'running'::text);
+
+
+--
+-- Name: event_replay_jobs_running_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_replay_jobs_running_idx ON public.event_replay_jobs USING btree (created_at, id) WHERE (state = 'running'::text);
+
+
+--
+-- Name: event_routing_backlog_account_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_routing_backlog_account_age ON public.event_routing_backlog USING btree (account_id, accepted_at, outbox_id, subscription_id);
+
+
+--
+-- Name: event_routing_backlog_consumer_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_routing_backlog_consumer_age ON public.event_routing_backlog USING btree (account_id, app_id, subscription_id, accepted_at, outbox_id);
 
 
 --
@@ -28616,6 +34159,13 @@ CREATE INDEX global_runtime_quota_deliveries_due ON public.global_runtime_quota_
 
 
 --
+-- Name: idempotency_keys_publish_receipts_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idempotency_keys_publish_receipts_created_at_idx ON public.idempotency_keys USING btree (created_at) WHERE (request_digest IS NOT NULL);
+
+
+--
 -- Name: inbound_webhook_endpoints_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28770,10 +34320,45 @@ CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state
 
 
 --
+-- Name: invocation_attempt_history_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_attempt_history_retention_idx ON public.invocation_attempt_history USING btree (retain_until, id) WHERE (outcome <> 'running'::text);
+
+
+--
+-- Name: invocation_attempt_history_root_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_attempt_history_root_idx ON public.invocation_attempt_history USING btree (account_id, app_id, root_invocation_id, id DESC);
+
+
+--
+-- Name: invocation_environment_queue_domain_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_environment_queue_domain_idx ON public.invocation_environment_queue_admissions USING btree (environment_id, app_id, queue_name);
+
+
+--
 -- Name: invocation_work_cancellations_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX invocation_work_cancellations_app_created_idx ON public.invocation_work_cancellations USING btree (app_id, created_at);
+
+
+--
+-- Name: invocation_work_environment_admissions_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_work_environment_admissions_environment_idx ON public.invocation_work_environment_admissions USING btree (environment_id);
+
+
+--
+-- Name: invocation_work_environment_domains_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_work_environment_domains_environment_idx ON public.invocation_work_environment_domains USING btree (environment_id);
 
 
 --
@@ -28854,6 +34439,13 @@ CREATE INDEX invocations_due_idx ON public.invocations USING btree (due_at) WHER
 
 
 --
+-- Name: invocations_environment_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_environment_owner_idx ON public.invocations USING btree (environment_id) WHERE (environment_id IS NOT NULL);
+
+
+--
 -- Name: invocations_event_delivery_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28893,6 +34485,13 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_replay_root_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_replay_root_idx ON public.invocations USING btree (account_id, replay_root_invocation_id, created_at DESC, id DESC) WHERE (replay_root_invocation_id IS NOT NULL);
 
 
 --
@@ -29435,6 +35034,27 @@ CREATE UNIQUE INDEX managed_postgres_bindings_target_idx ON public.managed_postg
 
 
 --
+-- Name: managed_postgres_clone_capture_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_clone_capture_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'checkpoint'::text));
+
+
+--
+-- Name: managed_postgres_clone_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databases USING btree (environment_clone_operation_id) WHERE (environment_clone_operation_id IS NOT NULL);
+
+
+--
+-- Name: managed_postgres_clone_reservation_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
 -- Name: managed_postgres_cutovers_active_app_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -29495,6 +35115,13 @@ CREATE INDEX managed_postgres_health_account_idx ON public.managed_postgres_heal
 --
 
 CREATE INDEX managed_postgres_health_next_check_idx ON public.managed_postgres_health USING btree (next_check_at, database_id);
+
+
+--
+-- Name: managed_postgres_resizes_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_resizes_active_idx ON public.managed_postgres_resizes USING btree (database_id) WHERE (state = 'pending'::text);
 
 
 --
@@ -29715,6 +35342,13 @@ CREATE INDEX object_bucket_encryption_due ON public.object_bucket_encryption USI
 
 
 --
+-- Name: object_bucket_mutations_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_mutations_bucket_idx ON public.object_bucket_mutations USING btree (bucket_id);
+
+
+--
 -- Name: object_bucket_object_lock_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -29726,6 +35360,13 @@ CREATE INDEX object_bucket_object_lock_due ON public.object_bucket_object_lock U
 --
 
 CREATE INDEX object_bucket_versioning_due ON public.object_bucket_versioning USING btree (retry_at, bucket_id) WHERE (state <> 'ready'::text);
+
+
+--
+-- Name: object_bucket_write_fences_clone_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_write_fences_clone_idx ON public.object_bucket_write_fences USING btree (clone_operation_id) WHERE (clone_operation_id IS NOT NULL);
 
 
 --
@@ -29897,6 +35538,20 @@ CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.
 
 
 --
+-- Name: object_storage_upload_grants_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_upload_grants USING btree (expires_at, id);
+
+
+--
+-- Name: object_upload_capture_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_upload_capture_pending_idx ON public.object_upload_completions USING btree (bucket_id) WHERE ((status = 'pending'::text) OR ((write_phase = 'untracked'::text) AND (status = 'failed'::text)));
+
+
+--
 -- Name: object_upload_completions_bucket_receipt_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -29950,6 +35605,20 @@ CREATE INDEX object_upload_version_history_bucket_idx ON public.object_upload_co
 --
 
 CREATE INDEX object_url_credentials_expiry ON public.object_storage_s3_credentials USING btree (bucket_id, url_expires_at) WHERE (url_request IS NOT NULL);
+
+
+--
+-- Name: object_version_protection_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_version_protection_active ON public.object_version_protection USING btree (bucket_id) WHERE (state = ANY (ARRAY['waiting'::text, 'applying'::text]));
+
+
+--
+-- Name: object_version_protection_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_version_protection_due ON public.object_version_protection USING btree (retry_at, id) WHERE (state = ANY (ARRAY['waiting'::text, 'applying'::text]));
 
 
 --
@@ -30205,10 +35874,24 @@ CREATE INDEX platform_tenant_usage_minutes_read_idx ON public.platform_tenant_us
 
 
 --
+-- Name: platform_tenant_workflow_schedule_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_workflow_schedule_tenant_idx ON public.platform_tenant_workflow_schedule_cursors USING btree (platform_tenant_id, app_id);
+
+
+--
 -- Name: platform_tenants_account_created_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX platform_tenants_account_created_id_idx ON public.platform_tenants USING btree (account_id, created_at DESC, id DESC);
+
+
+--
+-- Name: postgres_contents_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX postgres_contents_account_holds ON public.project_environment_clone_postgres_contents USING btree (account_id);
 
 
 --
@@ -30289,6 +35972,90 @@ CREATE INDEX project_environment_cleanup_jobs_lease_idx ON public.project_enviro
 
 
 --
+-- Name: project_environment_clone_active_target_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_active_target_uniq ON public.project_environment_clone_operations USING btree (project_id, target_environment) WHERE (status = ANY (ARRAY['pending'::text, 'capturing'::text, 'copying'::text, 'publishing'::text, 'failed'::text, 'compensating'::text]));
+
+
+--
+-- Name: project_environment_clone_layer_pins_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_layer_pins_key_idx ON public.project_environment_clone_layer_pins USING btree (storage_key);
+
+
+--
+-- Name: project_environment_clone_object_uncopied_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_object_uncopied_idx ON public.project_environment_clone_object_entries USING btree (operation_id, source_bucket_id, object_key) WHERE (copied_at IS NULL);
+
+
+--
+-- Name: project_environment_clone_operations_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_operations_status_idx ON public.project_environment_clone_operations USING btree (status, updated_at) WHERE (status <> ALL (ARRAY['ready'::text, 'failed'::text]));
+
+
+--
+-- Name: project_environment_clone_postgres_archives_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_archives_account_holds ON public.project_environment_clone_postgres_archives USING btree (account_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_capture_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_copy_capture_holds ON public.project_environment_clone_postgres_copy_targets USING btree (capture_database_id) WHERE (state <> 'retired'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_fork_account_quota; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_fork_account_quota ON public.project_environment_clone_postgres_snapshot_restores USING btree (account_id) WHERE ((state <> 'deleted'::text) AND (adopted_database_id IS NULL));
+
+
+--
+-- Name: project_environment_clone_postgres_readers_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_readers_account_holds ON public.project_environment_clone_postgres_copy_readers USING btree (account_id) WHERE (state <> 'retired'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_source_hold; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_snapshot_source_hold ON public.project_environment_clone_postgres_snapshots USING btree (source_database_id) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fence_dataset_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_dataset_owner ON public.project_environment_clone_postgres_write_fences USING btree (backend_id, backend_fingerprint, source_data_resource_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fence_source_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_source_owner ON public.project_environment_clone_postgres_write_fences USING btree (source_database_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: project_environment_clone_worker_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_worker_due_idx ON public.project_environment_clone_operations USING btree (next_attempt_at, created_at, id) WHERE (status = ANY (ARRAY['pending'::text, 'capturing'::text, 'copying'::text, 'publishing'::text, 'compensating'::text]));
+
+
+--
 -- Name: project_environment_config_latest_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -30321,6 +36088,13 @@ CREATE INDEX project_environment_promotions_lookup_idx ON public.project_environ
 --
 
 CREATE INDEX project_environment_qualifications_latest_idx ON public.project_environment_qualifications USING btree (account_id, project_id, environment_slug, release_set_id, created_at DESC, id DESC);
+
+
+--
+-- Name: project_environment_queue_runtime_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_queue_runtime_environment_idx ON public.project_environment_queue_runtime_sets USING btree (environment_id, app_id);
 
 
 --
@@ -31423,6 +37197,13 @@ CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree
 
 
 --
+-- Name: workflow_operation_effects_attempt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
+
+
+--
 -- Name: workflow_runs_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -31430,10 +37211,52 @@ CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_i
 
 
 --
+-- Name: workflow_runs_app_name_concurrency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_name_concurrency_idx ON public.workflow_runs USING btree (app_id, workflow_name, status, started_at) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+
+--
+-- Name: workflow_runs_app_name_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_name_created_idx ON public.workflow_runs USING btree (app_id, workflow_name, created_at DESC);
+
+
+--
+-- Name: workflow_runs_app_tenant_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_app_tenant_history_idx ON public.workflow_runs USING btree (app_id, platform_tenant_id, created_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_create_idempotency_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workflow_runs_create_idempotency_idx ON public.workflow_runs USING btree (app_id, workflow_name, create_idempotency_key) WHERE (create_idempotency_key IS NOT NULL);
+
+
+--
 -- Name: workflow_runs_dispatch_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (scheduled_for) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+
+--
+-- Name: workflow_runs_operation_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_operation_due_idx ON public.workflow_runs USING btree (operation_id, status, scheduled_for) WHERE (operation_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
 
 
 --
@@ -32305,6 +38128,27 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 
 
 --
+-- Name: project_release_sets binding_release_graph; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_release_graph BEFORE INSERT OR UPDATE OF active ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.enforce_binding_release_graph();
+
+
+--
+-- Name: app_binding_release_policies binding_release_policy_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_release_policy_changed AFTER INSERT OR UPDATE ON public.app_binding_release_policies FOR EACH ROW EXECUTE FUNCTION public.capture_binding_release_policy();
+
+
+--
+-- Name: deployments binding_release_traffic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_release_traffic BEFORE INSERT OR UPDATE OF traffic_percent, status, scope, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_binding_release_traffic();
+
+
+--
 -- Name: build_provenance build_provenance_sbom_region; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32351,6 +38195,279 @@ CREATE TRIGGER capture_environment_qualification_execution AFTER INSERT ON publi
 --
 
 CREATE TRIGGER capture_instance_capacity BEFORE INSERT OR UPDATE OF capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_instance_capacity();
+
+
+--
+-- Name: deployments checked_rollback_traffic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER checked_rollback_traffic BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_checked_rollback_traffic();
+
+
+--
+-- Name: app_environment_secret_ref_suppressions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_environment_secret_refs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_environment_workload_intents clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_envs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_secrets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: app_work_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_work_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: apps clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: deployment_sidecar_layers clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: deployment_sidecar_secret_reload_signals clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: deployments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: environment_git_sources clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: event_subscription_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: feature_flag_versions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: managed_postgres_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: managed_postgres_databases clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('database', 'id');
+
+
+--
+-- Name: object_bucket_encryption clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_lifecycle clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_object_lock clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_bucket_versioning clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_buckets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: object_storage_s3_credentials clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: object_version_protection clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+
+--
+-- Name: project_environment_config_versions clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_edge_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_route_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_environment_workload_deployment_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+
+--
+-- Name: project_environment_workload_heads clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environment_workload_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: project_release_members clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_release_sets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+
+--
+-- Name: projects clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'id');
+
+
+--
+-- Name: queue_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: trigger_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.trigger_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+
+--
+-- Name: project_environment_edge_policies clone_edge_policy_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_edge_policy_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF app_id, account_id, project_id, environment_slug, rules ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
+-- Name: project_environment_route_policies clone_route_policy_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_route_policy_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF app_id, account_id, project_id, environment_slug, only_allow_declared_routes, declared_routes ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
+-- Name: app_secrets clone_secret_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_class, secret_version, delivery_version, created_at, managed_postgres_binding_id, managed_object_storage_credential_id, managed_credential_ref, managed_credential_generation ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
+-- Name: app_envs clone_variable_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_variable_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF account_id, app_id, scope, key, value, created_at ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
 
 
 --
@@ -32480,6 +38597,13 @@ CREATE TRIGGER data_upstreams_notify_trg AFTER INSERT OR DELETE OR UPDATE ON pub
 
 
 --
+-- Name: dead_letter_events dead_letter_events_environment_ownership; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER dead_letter_events_environment_ownership BEFORE INSERT OR UPDATE ON public.dead_letter_events FOR EACH ROW EXECUTE FUNCTION public.faas_retain_dead_letter_environment_ownership();
+
+
+--
 -- Name: debug_regression_observations debug_regression_observations_webhooks_insert; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32501,6 +38625,20 @@ CREATE TRIGGER deployment_aliases_app_changed AFTER INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: deployments deployment_dependency_release_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_dependency_release_check BEFORE UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.check_project_dependency_release();
+
+
+--
+-- Name: deployments deployment_failed_rollback_keeps_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.keep_failed_rollback_target();
+
+
+--
 -- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32508,10 +38646,31 @@ CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON publi
 
 
 --
+-- Name: deployments deployment_recovery_lineage_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_recovery_lineage_capture AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_deployment_recovery_lineage();
+
+
+--
+-- Name: project_environment_workload_deployment_specs deployment_runtime_environment_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_runtime_environment_bound AFTER INSERT OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.bind_deployment_runtime_environment();
+
+
+--
 -- Name: deployment_scope_exclusions deployment_scope_exclusions_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER deployment_scope_exclusions_set_updated_at_trg BEFORE UPDATE ON public.deployment_scope_exclusions FOR EACH ROW EXECUTE FUNCTION public.deployment_scope_exclusions_set_updated_at();
+
+
+--
+-- Name: deployments deployment_serving_ended_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_serving_ended_at();
 
 
 --
@@ -32554,6 +38713,13 @@ CREATE TRIGGER deployments_failed_stage_fence BEFORE INSERT OR UPDATE OF status,
 --
 
 CREATE TRIGGER deployments_failed_traffic_fence BEFORE INSERT OR UPDATE OF status, traffic_percent, rollout_state, rollout_aborted_at ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_failed_deployment_traffic_fence();
+
+
+--
+-- Name: deployments deployments_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_layer_artifact_guard BEFORE INSERT OR UPDATE OF rootfs_key, status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_deployment_layer_artifacts();
 
 
 --
@@ -32757,6 +38923,27 @@ CREATE TRIGGER environment_secret_reference_baseline BEFORE INSERT OR DELETE OR 
 --
 
 CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_intent();
+
+
+--
+-- Name: invocations event_delivery_replay_capacity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_event_delivery_replay();
+
+
+--
+-- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_routing_backlog_recipient AFTER INSERT OR DELETE OR UPDATE ON public.event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION public.project_event_routing_backlog_recipient();
+
+
+--
+-- Name: event_fanout_outbox event_routing_backlog_root; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_routing_backlog_root AFTER INSERT OR UPDATE OF recipient_snapshot, recipient_progress, state, available_at, lease_until, recipient_claims, created_at, account_id ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.project_event_routing_backlog_root();
 
 
 --
@@ -33271,6 +39458,20 @@ CREATE TRIGGER inbound_webhooks_delete_exclusive_binding AFTER DELETE ON public.
 
 
 --
+-- Name: projects initialize_clone_configuration_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.initialize_clone_configuration_guard();
+
+
+--
+-- Name: instances instance_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_layer_artifact_guard BEFORE INSERT OR UPDATE OF deployment_id, state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_instance_layer_artifacts();
+
+
+--
 -- Name: events instance_readiness_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33310,6 +39511,13 @@ CREATE TRIGGER instances_started_at_set_trg BEFORE INSERT ON public.instances FO
 --
 
 CREATE TRIGGER instances_worker_admission_identity BEFORE UPDATE OF state, mode ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_worker_admission_identity();
+
+
+--
+-- Name: invocations invocation_attempt_history_transition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_attempt_history_transition AFTER UPDATE OF state, attempts, replay_generation ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_invocation_attempt_history();
 
 
 --
@@ -33439,6 +39647,13 @@ CREATE TRIGGER jobs_schedule_revision BEFORE UPDATE ON public.jobs FOR EACH ROW 
 
 
 --
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliation_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_accounting_reconciliation_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_accounting_reconciliations FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_accounting_reconciliation();
+
+
+--
 -- Name: apps managed_postgres_admission_fence_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33488,10 +39703,38 @@ CREATE TRIGGER managed_postgres_instance_admission_guard BEFORE INSERT OR UPDATE
 
 
 --
+-- Name: managed_postgres_databases managed_postgres_resize_database_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_resize_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_resize_database();
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resize_intent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_resize_intent_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_resizes FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_resize_intent();
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resize_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER managed_postgres_resize_receipt_guard AFTER INSERT OR UPDATE ON public.managed_postgres_resizes DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_managed_postgres_resize_receipt();
+
+
+--
 -- Name: managed_postgres_databases managed_postgres_restore_sources_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_restore_sources();
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_import_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_usage_imports FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_usage_import();
 
 
 --
@@ -33705,6 +39948,13 @@ CREATE TRIGGER object_deletion_capacity_fence BEFORE INSERT OR UPDATE ON public.
 
 
 --
+-- Name: object_deletions object_deletion_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_capture_admission BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion_capture_admission();
+
+
+--
 -- Name: object_bucket_versioning object_deletion_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33740,10 +39990,24 @@ CREATE TRIGGER object_deletion_protected BEFORE UPDATE ON public.object_deletion
 
 
 --
+-- Name: object_deletions object_deletion_protection_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_protection_fence BEFORE INSERT OR UPDATE ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_lifecycle_protection();
+
+
+--
 -- Name: object_storage_write_admissions object_deletion_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER object_deletion_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_version_protection object_event_hold_baseline_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_event_hold_baseline_guard BEFORE INSERT OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.protect_object_event_hold_baseline();
 
 
 --
@@ -33845,6 +40109,20 @@ CREATE TRIGGER object_lock_key_grant_fence BEFORE INSERT OR UPDATE ON public.obj
 
 
 --
+-- Name: object_storage_key_grants object_lock_legacy_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lock_legacy_key_fence BEFORE INSERT ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_untracked_object_lock_write();
+
+
+--
+-- Name: object_storage_write_admissions object_lock_legacy_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lock_legacy_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_untracked_object_lock_write();
+
+
+--
 -- Name: object_storage_multipart_uploads object_lock_multipart_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33866,10 +40144,24 @@ CREATE TRIGGER object_lock_write_fence BEFORE INSERT ON public.object_storage_wr
 
 
 --
+-- Name: object_storage_multipart_uploads object_multipart_bound_journal; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_bound_journal BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_bound_multipart_journal();
+
+
+--
 -- Name: object_storage_multipart_uploads object_multipart_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER object_multipart_capacity_fence BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_capture_admission BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
 
 
 --
@@ -33901,10 +40193,94 @@ CREATE TRIGGER object_multipart_encryption_immutable BEFORE INSERT OR UPDATE ON 
 
 
 --
+-- Name: object_bucket_mutations object_multipart_initiation_dispatch_composition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_initiation_dispatch_composition AFTER INSERT ON public.object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION public.compose_object_multipart_initiation_dispatch();
+
+
+--
+-- Name: object_multipart_initiation_dispatches object_multipart_initiation_dispatch_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_initiation_dispatch_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_multipart_initiation_dispatches FOR EACH ROW EXECUTE FUNCTION public.guard_object_multipart_initiation_dispatch();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_initiation_result_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_initiation_result_guard BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_initiation_result();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_mutation_composition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_mutation_composition AFTER INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.compose_object_multipart_mutation();
+
+
+--
+-- Name: object_bucket_mutations object_multipart_mutation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_mutation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION public.guard_bound_multipart_mutation();
+
+
+--
+-- Name: object_bucket_mutations object_multipart_part_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION public.guard_object_multipart_part_receipt();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_part_session_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_session_guard BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_part_session();
+
+
+--
+-- Name: object_storage_multipart_part_grants object_multipart_part_transfer_composition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_transfer_composition AFTER INSERT OR DELETE OR UPDATE ON public.object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION public.compose_object_multipart_part_transfer();
+
+
+--
+-- Name: object_storage_multipart_part_grants object_multipart_part_transfer_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_transfer_guard BEFORE DELETE OR UPDATE ON public.object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_part_transfer();
+
+
+--
 -- Name: object_storage_multipart_uploads object_multipart_part_url_deadline_protected; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER object_multipart_part_url_deadline_protected BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_part_url_deadline();
+
+
+--
+-- Name: object_multipart_part_writers object_multipart_part_writer_composition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_writer_composition AFTER UPDATE ON public.object_multipart_part_writers FOR EACH ROW EXECUTE FUNCTION public.compose_object_multipart_part_writer();
+
+
+--
+-- Name: object_multipart_part_writers object_multipart_part_writer_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_multipart_part_writers FOR EACH ROW EXECUTE FUNCTION public.guard_object_multipart_part_writer();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_protection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_protection_guard BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_write_protection();
 
 
 --
@@ -33950,10 +40326,31 @@ CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON public.object_
 
 
 --
+-- Name: object_version_protection object_protection_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_protection_capture_admission BEFORE INSERT ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.fence_object_protection_capture_admission();
+
+
+--
 -- Name: object_upload_completions object_route_encryption_receipt_bound; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER object_route_encryption_receipt_bound BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_route_encryption_receipt();
+
+
+--
+-- Name: object_upload_completions object_upload_bound_journal; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_bound_journal BEFORE UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_bound_upload_journal();
+
+
+--
+-- Name: object_upload_completions object_upload_capture_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_capture_admission BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
 
 
 --
@@ -33968,6 +40365,27 @@ CREATE TRIGGER object_upload_default_bound BEFORE INSERT OR UPDATE ON public.obj
 --
 
 CREATE TRIGGER object_upload_encryption_immutable BEFORE INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_upload_encryption();
+
+
+--
+-- Name: object_upload_completions object_upload_mutation_composition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_mutation_composition AFTER INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.compose_object_upload_mutation();
+
+
+--
+-- Name: object_bucket_mutations object_upload_mutation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_mutation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION public.guard_bound_upload_mutation();
+
+
+--
+-- Name: object_upload_completions object_upload_protection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_protection_guard BEFORE INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_write_protection();
 
 
 --
@@ -33996,6 +40414,13 @@ CREATE TRIGGER object_url_write_guard BEFORE INSERT OR UPDATE ON public.object_u
 --
 
 CREATE TRIGGER object_version_history_latch BEFORE UPDATE OF recovery_versions_observed ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.retain_object_version_history_latch();
+
+
+--
+-- Name: object_version_protection object_version_protection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_version_protection_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.protect_object_version_protection();
 
 
 --
@@ -34122,6 +40547,34 @@ CREATE TRIGGER private_network_peering_set_updated_at_trg BEFORE UPDATE ON publi
 --
 
 CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.private_networks FOR EACH ROW EXECUTE FUNCTION public.private_network_set_updated_at();
+
+
+--
+-- Name: project_environment_workload_heads project_environment_workload_head_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_workload_head_changed AFTER INSERT OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.notify_project_environment_workload_head();
+
+
+--
+-- Name: project_release_members project_release_member_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_member_policy_changed_trg AFTER INSERT ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.project_release_member_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_changed_trg AFTER UPDATE OF active ON public.project_release_sets FOR EACH ROW WHEN ((old.active IS DISTINCT FROM new.active)) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_deleted_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.project_release_sets FOR EACH ROW WHEN (old.active) EXECUTE FUNCTION public.project_release_set_policy_changed();
 
 
 --
@@ -34468,6 +40921,20 @@ CREATE TRIGGER runtime_config_operations_notify AFTER INSERT OR UPDATE ON public
 
 
 --
+-- Name: project_environment_workload_deployment_specs runtime_deployment_specs_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_deployment_specs_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
+-- Name: deployment_runtime_environment_owners runtime_environment_owners_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_environment_owners FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
 -- Name: runtime_log_archive_bindings runtime_log_archive_binding_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -34503,10 +40970,45 @@ CREATE TRIGGER runtime_log_archive_retention_guard BEFORE INSERT OR UPDATE ON pu
 
 
 --
+-- Name: deployment_sidecar_layers runtime_sidecar_layers_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_sidecar_layers_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
+-- Name: deployment_sidecar_secret_reload_signals runtime_sidecar_signals_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_sidecar_signals_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
 -- Name: runtime_snapshots runtime_snapshots_profile_identity; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER runtime_snapshots_profile_identity BEFORE UPDATE ON public.runtime_snapshots FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_profile_identity();
+
+
+--
+-- Name: apps service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('id,account_id,slug,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
+
+
+--
+-- Name: github_deploy_policies service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.github_deploy_policies FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('project_id,account_id,preview_service_policy');
+
+
+--
+-- Name: scenario_test_members service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.scenario_test_members FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('account_id,run_id,workload_name,app_id');
 
 
 --
@@ -34573,10 +41075,24 @@ CREATE TRIGGER service_capacity_plan_before BEFORE UPDATE OF plan ON public.acco
 
 
 --
+-- Name: deployment_sidecar_layers sidecar_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER sidecar_layer_artifact_guard BEFORE INSERT OR UPDATE OF storage_key ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_sidecar_layer_artifact();
+
+
+--
 -- Name: snapshots snapshot_fanout_event_after_snapshot; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER snapshot_fanout_event_after_snapshot AFTER INSERT OR UPDATE OF storage_key, stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_fanout_event_on_snapshot();
+
+
+--
+-- Name: snapshots snapshot_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshot_layer_artifact_guard BEFORE INSERT OR UPDATE OF deployment_id, stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.guard_snapshot_layer_artifacts();
 
 
 --
@@ -34706,6 +41222,76 @@ CREATE TRIGGER triggers_delete_exclusive_broker_binding AFTER DELETE ON public.t
 
 
 --
+-- Name: object_buckets version_protection_bucket_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_bucket_fence BEFORE UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_capacity_reconciliations version_protection_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_capacity_fence BEFORE INSERT ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_deletions version_protection_delete_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_delete_fence BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_bucket_encryption version_protection_encryption_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_encryption_fence BEFORE INSERT OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_key_grants version_protection_grant_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_grant_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_bucket_object_lock version_protection_lock_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_lock_fence BEFORE INSERT OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_multipart_uploads version_protection_multipart_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_multipart_fence BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_upload_completions version_protection_upload_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_upload_fence BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_bucket_versioning version_protection_versioning_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_versioning_fence BEFORE INSERT OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_write_admissions version_protection_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
 -- Name: workflow_callback_webhook_bindings workflow_callback_routing_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -34731,6 +41317,13 @@ CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR
 --
 
 CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_dead_letter_event();
+
+
+--
+-- Name: workflow_runs workflow_runs_capture_finished_webhook_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
 
 
 --
@@ -34823,6 +41416,30 @@ ALTER TABLE ONLY public.alert_deliveries
 
 ALTER TABLE ONLY public.alert_deliveries
     ADD CONSTRAINT alert_deliveries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_historical_rollback_claims alert_historical_rollback_claims_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_historical_rollback_claims
+    ADD CONSTRAINT alert_historical_rollback_claims_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rollback_actions alert_rollback_actions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rollback_actions
+    ADD CONSTRAINT alert_rollback_actions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rollback_actions alert_rollback_actions_fire_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rollback_actions
+    ADD CONSTRAINT alert_rollback_actions_fire_id_fkey FOREIGN KEY (fire_id) REFERENCES public.alert_deliveries(id) ON DELETE CASCADE;
 
 
 --
@@ -35031,6 +41648,22 @@ ALTER TABLE ONLY public.app_api_routes
 
 ALTER TABLE ONLY public.app_binding_promotion_revisions
     ADD CONSTRAINT app_binding_promotion_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_binding_release_policies app_binding_release_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policies
+    ADD CONSTRAINT app_binding_release_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_binding_release_policy_history app_binding_release_policy_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_binding_release_policy_history
+    ADD CONSTRAINT app_binding_release_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -36162,11 +42795,19 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 
 --
--- Name: customer_operation_events customer_operation_events_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_events customer_operation_events_execution_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_events
-    ADD CONSTRAINT customer_operation_events_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT customer_operation_events_execution_owner_fkey FOREIGN KEY (operation_id, execution_id) REFERENCES public.customer_operation_executions(operation_id, execution_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -36186,11 +42827,27 @@ ALTER TABLE ONLY public.customer_operation_executions
 
 
 --
+-- Name: customer_operation_executions customer_operation_executions_job_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operation_executions customer_operation_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_executions
     ADD CONSTRAINT customer_operation_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_executions customer_operation_executions_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
 
 
 --
@@ -36218,11 +42875,11 @@ ALTER TABLE ONLY public.customer_operation_recoveries
 
 
 --
--- Name: customer_operation_reports customer_operation_reports_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: customer_operation_reports customer_operation_reports_execution_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_reports
-    ADD CONSTRAINT customer_operation_reports_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT customer_operation_reports_execution_owner_fkey FOREIGN KEY (operation_id, execution_id) REFERENCES public.customer_operation_executions(operation_id, execution_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -36250,6 +42907,46 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 
 --
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_execution_identity_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_execution_identity_fkey FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_g_workflow_run_id_step_name_st_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_g_workflow_run_id_step_name_st_fkey FOREIGN KEY (workflow_run_id, step_name, step_attempt) REFERENCES public.workflow_step_attempts(run_id, step_name, attempt) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_execution_identity_fke; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_execution_identity_fke FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE SET NULL;
+
+
+--
 -- Name: customer_operations customer_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36263,6 +42960,14 @@ ALTER TABLE ONLY public.customer_operations
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_current_execution_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_current_execution_fkey FOREIGN KEY (id, execution_generation, current_execution_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -36370,6 +43075,14 @@ ALTER TABLE ONLY public.deployment_aliases
 
 
 --
+-- Name: deployment_dependency_gates deployment_dependency_gates_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_dependency_gates
+    ADD CONSTRAINT deployment_dependency_gates_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_image_preparations deployment_image_preparations_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36426,6 +43139,22 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_recovery_lineage deployment_recovery_lineage_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_recovery_lineage
+    ADD CONSTRAINT deployment_recovery_lineage_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_recovery_lineage deployment_recovery_lineage_predecessor_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_recovery_lineage
+    ADD CONSTRAINT deployment_recovery_lineage_predecessor_deployment_id_fkey FOREIGN KEY (predecessor_deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36442,6 +43171,30 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 
 --
+-- Name: deployment_rollback_operations deployment_rollback_operations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollback_operations deployment_rollback_operations_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_current_deployment_id_fkey FOREIGN KEY (current_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_rollback_operations deployment_rollback_operations_target_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_rollback_operations
+    ADD CONSTRAINT deployment_rollback_operations_target_deployment_id_fkey FOREIGN KEY (target_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36455,6 +43208,14 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_route_policy_snapshots
     ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_environment_owners deployment_runtime_environment_owners_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_environment_owners
+    ADD CONSTRAINT deployment_runtime_environment_owners_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -36866,11 +43627,43 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 
 --
+-- Name: event_delivery_capacity event_delivery_capacity_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_capacity
+    ADD CONSTRAINT event_delivery_capacity_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_delivery_slots event_delivery_slots_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_slots
+    ADD CONSTRAINT event_delivery_slots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.event_delivery_capacity(account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_delivery_slots event_delivery_slots_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_slots
+    ADD CONSTRAINT event_delivery_slots_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.event_fanout_attempt_history
     ADD CONSTRAINT event_fanout_attempt_history_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_fanout_history_summaries event_fanout_history_summaries_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_history_summaries
+    ADD CONSTRAINT event_fanout_history_summaries_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
 
 --
@@ -36882,11 +43675,67 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 
 --
+-- Name: event_fanout_recipients event_fanout_recipients_backfill_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_recipients
+    ADD CONSTRAINT event_fanout_recipients_backfill_job_id_fkey FOREIGN KEY (backfill_job_id) REFERENCES public.event_replay_jobs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: event_fanout_recipients event_fanout_recipients_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_recipients
+    ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_replay_job_items event_replay_job_items_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_replay_job_items
+    ADD CONSTRAINT event_replay_job_items_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_replay_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_replay_jobs event_replay_jobs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_replay_jobs
+    ADD CONSTRAINT event_replay_jobs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_routing_backlog event_routing_backlog_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_backlog
+    ADD CONSTRAINT event_routing_backlog_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_routing_fairness event_routing_fairness_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_fairness
+    ADD CONSTRAINT event_routing_fairness_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: event_schemas event_schemas_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.event_schemas
     ADD CONSTRAINT event_schemas_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_storage_admission event_storage_admission_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_storage_admission
+    ADD CONSTRAINT event_storage_admission_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -37474,6 +44323,102 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: invocation_attempt_history invocation_attempt_history_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_attempt_history
+    ADD CONSTRAINT invocation_attempt_history_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.project_environment_queue_consumers(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_runtime_set_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_runtime_set_id_fkey FOREIGN KEY (runtime_set_id) REFERENCES public.project_environment_queue_runtime_sets(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_workload_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id);
+
+
+--
+-- Name: invocation_environment_queue_receipts invocation_environment_queue_receipts_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_receipts
+    ADD CONSTRAINT invocation_environment_queue_receipts_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_keyed_replays invocation_keyed_replays_parent_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_keyed_replays
+    ADD CONSTRAINT invocation_keyed_replays_parent_invocation_id_fkey FOREIGN KEY (parent_invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_plain_replays invocation_plain_replays_parent_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_plain_replays
+    ADD CONSTRAINT invocation_plain_replays_parent_invocation_id_fkey FOREIGN KEY (parent_invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: invocations invocation_platform_tenant_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37495,6 +44440,54 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocation_work_cancellations
     ADD CONSTRAINT invocation_work_cancellations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_workload_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id);
+
+
+--
+-- Name: invocation_work_environment_domains invocation_work_environment_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_domains
+    ADD CONSTRAINT invocation_work_environment_domains_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_domains invocation_work_environment_domains_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_domains
+    ADD CONSTRAINT invocation_work_environment_domains_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
 
 
 --
@@ -37535,6 +44528,14 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocations
     ADD CONSTRAINT invocations_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES public.crons(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invocations invocations_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocations
+    ADD CONSTRAINT invocations_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
 
 
 --
@@ -37762,6 +44763,22 @@ ALTER TABLE ONLY public.mail_suppressions
 
 
 --
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37791,6 +44808,38 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 ALTER TABLE ONLY public.managed_postgres_bindings
     ADD CONSTRAINT managed_postgres_bindings_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maint_reserved_by_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maint_reserved_by_operation_id_fkey FOREIGN KEY (reserved_by_operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_creation_receipts managed_postgres_creation_receipts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_creation_receipts
+    ADD CONSTRAINT managed_postgres_creation_receipts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
 
 
 --
@@ -37874,6 +44923,30 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 
 --
+-- Name: managed_postgres_resizes managed_postgres_resizes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_resizes managed_postgres_resizes_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_resizes
+    ADD CONSTRAINT managed_postgres_resizes_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_restore_proofs managed_postgres_restore_proofs_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_proofs
+    ADD CONSTRAINT managed_postgres_restore_proofs_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_databases managed_postgres_restore_source_database_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37911,6 +44984,22 @@ ALTER TABLE ONLY public.managed_postgres_usage_coverage
 
 ALTER TABLE ONLY public.managed_postgres_usage
     ADD CONSTRAINT managed_postgres_usage_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -38146,6 +45235,38 @@ ALTER TABLE ONLY public.object_bucket_lifecycle
 
 
 --
+-- Name: object_bucket_mutations object_bucket_mutations_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_multipart_part_writer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_multipart_part_writer_id_fkey FOREIGN KEY (multipart_part_writer_id) REFERENCES public.object_multipart_part_writers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_multipart_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_multipart_upload_id_fkey FOREIGN KEY (multipart_upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_upload_completions(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: object_bucket_notifications object_bucket_notifications_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38175,6 +45296,22 @@ ALTER TABLE ONLY public.object_bucket_versioning
 
 ALTER TABLE ONLY public.object_bucket_versioning
     ADD CONSTRAINT object_bucket_versioning_capacity_job_id_fkey FOREIGN KEY (capacity_job_id) REFERENCES public.object_storage_capacity_reconciliations(id);
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_clone_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_clone_operation_id_fkey FOREIGN KEY (clone_operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --
@@ -38215,6 +45352,30 @@ ALTER TABLE ONLY public.object_deletions
 
 ALTER TABLE ONLY public.object_lifecycle_scans
     ADD CONSTRAINT object_lifecycle_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_multipart_initiation_dispatches object_multipart_initiation_dispatches_multipart_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_multipart_initiation_dispatches
+    ADD CONSTRAINT object_multipart_initiation_dispatches_multipart_upload_id_fkey FOREIGN KEY (multipart_upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_multipart_part_writers object_multipart_part_writers_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_multipart_part_writers
+    ADD CONSTRAINT object_multipart_part_writers_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: object_multipart_part_writers object_multipart_part_writers_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_multipart_part_writers
+    ADD CONSTRAINT object_multipart_part_writers_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
 
 
 --
@@ -38426,6 +45587,38 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 
 --
+-- Name: object_storage_upload_grants object_storage_upload_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
+
+
+--
 -- Name: object_storage_usage_heads object_storage_usage_heads_account_id_backend_id_period_st_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38527,6 +45720,30 @@ ALTER TABLE ONLY public.object_upload_routes
 
 ALTER TABLE ONLY public.object_upload_routes
     ADD CONSTRAINT object_upload_routes_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_version_protection object_version_protection_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_version_protection object_version_protection_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_version_protection object_version_protection_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --
@@ -38922,11 +46139,51 @@ ALTER TABLE ONLY public.platform_tenant_usage_minutes
 
 
 --
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_curso_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_curso_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_tenant_workflow_schedule_cursors platform_tenant_workflow_schedule_cursors_last_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
+    ADD CONSTRAINT platform_tenant_workflow_schedule_cursors_last_run_id_fkey FOREIGN KEY (last_run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
+
+
+--
 -- Name: platform_tenants platform_tenants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.platform_tenants
     ADD CONSTRAINT platform_tenants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_imports postgres_imports_original_preparation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT postgres_imports_original_preparation FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
 
 
 --
@@ -39010,6 +46267,710 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 
 --
+-- Name: project_environment_clone_configuration_captures project_environment_clone_configuration_captu_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_captures
+    ADD CONSTRAINT project_environment_clone_configuration_captu_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guard_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guard_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_configuration_guards project_environment_clone_configuration_guards_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_guards
+    ADD CONSTRAINT project_environment_clone_configuration_guards_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_layer_pins project_environment_clone_layer_pins_operation_id_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_layer_pins
+    ADD CONSTRAINT project_environment_clone_layer_pins_operation_id_app_id_fkey FOREIGN KEY (operation_id, app_id) REFERENCES public.project_environment_clone_workloads(operation_id, app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_layer_pins project_environment_clone_layer_pins_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_layer_pins
+    ADD CONSTRAINT project_environment_clone_layer_pins_storage_key_fkey FOREIGN KEY (storage_key) REFERENCES public.layer_artifact_retention(storage_key);
+
+
+--
+-- Name: project_environment_clone_materializations project_environment_clone_materializations_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_materializations
+    ADD CONSTRAINT project_environment_clone_materializations_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_entries project_environment_clone_obj_operation_id_source_bucket_i_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_entries
+    ADD CONSTRAINT project_environment_clone_obj_operation_id_source_bucket_i_fkey FOREIGN KEY (operation_id, source_bucket_id) REFERENCES public.project_environment_clone_object_manifests(operation_id, source_bucket_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_cred_target_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_cred_target_credential_id_fkey FOREIGN KEY (target_credential_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_credentials_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_credentials_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_grant_revocations project_environment_clone_object_grant_revoca_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_grant_revocations
+    ADD CONSTRAINT project_environment_clone_object_grant_revoca_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_object_manifests project_environment_clone_object_manifests_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_manifests
+    ADD CONSTRAINT project_environment_clone_object_manifests_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_operations_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_operations_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_po_operation_id_source_databas_fkey10; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey10 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_role_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_po_operation_id_source_databas_fkey11; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey11 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_role_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_po_operation_id_source_databas_fkey12; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey12 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_database_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_po_operation_id_source_databas_fkey13; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey13 FOREIGN KEY (operation_id, source_database_id, database_oid) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_po_operation_id_source_databas_fkey14; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey14 FOREIGN KEY (operation_id, source_database_id, inventory_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_po_operation_id_source_databas_fkey15; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey15 FOREIGN KEY (operation_id, source_database_id, database_oid, archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_po_operation_id_source_databas_fkey16; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey16 FOREIGN KEY (operation_id, source_database_id, reader_owner_id) REFERENCES public.project_environment_clone_postgres_copy_readers(operation_id, source_database_id, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey17; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey17 FOREIGN KEY (operation_id, source_database_id, database_oid, contents_owner_id, contents_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_contents(operation_id, source_database_id, database_oid, owner_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey18; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey18 FOREIGN KEY (operation_id, source_database_id, database_oid, import_id) REFERENCES public.project_environment_clone_postgres_imports(operation_id, source_database_id, database_oid, import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey19; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey19 FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_po_operation_id_source_databas_fkey20; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey20 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verifications(operation_id, source_database_id, database_oid, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_po_operation_id_source_databas_fkey21; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey21 FOREIGN KEY (operation_id, source_database_id, database_oid, previous_attempt, previous_verification_id) REFERENCES public.project_environment_clone_postgres_verification_attempts(operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_po_operation_id_source_databas_fkey22; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey22 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verifications(operation_id, source_database_id, database_oid, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_po_operation_id_source_databas_fkey23; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey23 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verification_read_budgets(operation_id, source_database_id, database_oid, original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_po_operation_id_source_databas_fkey24; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey24 FOREIGN KEY (operation_id, source_database_id, database_oid, retry_attempt, retry_verification_id) REFERENCES public.project_environment_clone_postgres_verification_attempts(operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_po_operation_id_source_databas_fkey25; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey25 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_write_fences(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey1 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_po_operation_id_source_database_fkey2; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey2 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_po_operation_id_source_database_fkey3; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey3 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_po_operation_id_source_database_fkey4; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey4 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_po_operation_id_source_database_fkey5; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey5 FOREIGN KEY (operation_id, source_database_id, database_oid) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_po_operation_id_source_database_fkey6; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey6 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_copy_targets(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_po_operation_id_source_database_fkey7; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey7 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_po_operation_id_source_database_fkey8; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey8 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_copy_targets(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_po_operation_id_source_database_fkey9; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey9 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_target_sql_pins(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_fkey FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshots(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindi_target_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindi_target_binding_id_fkey FOREIGN KEY (target_binding_id) REFERENCES public.managed_postgres_bindings(id);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindings_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindings_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_postgres_checkpoi_maintenance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_postgres_checkpoi_maintenance_id_fkey FOREIGN KEY (maintenance_id) REFERENCES public.managed_postgres_checkpoint_maintenance(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_co_capture_database_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_co_capture_database_id_fkey1 FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_cop_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_cop_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_targets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_dat_target_database_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_dat_target_database_id_fkey1 FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_data_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_data_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_databa_archive_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_databa_archive_owner_id_fkey FOREIGN KEY (archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_database_pla_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_database_pla_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_database_pla_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_database_pla_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_impo_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_impo_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_import_archive_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_import_archive_owner_id_fkey FOREIGN KEY (archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inv_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inv_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_memb_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_memb_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membership_p_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membership_p_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membership_p_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membership_p_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_plans_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_plans_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_plans_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_plans_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_sna_adopted_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_sna_adopted_database_id_fkey FOREIGN KEY (adopted_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snap_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snap_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_res_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_res_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snapshots_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snapshots_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_targ_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_targ_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_target_sql_p_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_target_sql_p_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_target_sql_p_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_target_sql_p_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verificatio_account_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verificatio_account_id_fkey1 FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verificatio_project_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verificatio_project_id_fkey1 FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verification_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verification_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verification_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verification_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_writ_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_writ_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_write_fenc_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_write_fenc_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_workloads project_environment_clone_workloads_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_workloads
+    ADD CONSTRAINT project_environment_clone_workloads_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_workloads project_environment_clone_workloads_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_workloads
+    ADD CONSTRAINT project_environment_clone_workloads_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_config_versions project_environment_config_versions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39050,6 +47011,14 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 
 
 --
+-- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_feature_flags
+    ADD CONSTRAINT project_environment_promotion_feature_flags_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_promotions project_environment_promotion_previous_target_release_set__fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39063,6 +47032,46 @@ ALTER TABLE ONLY public.project_environment_promotions
 
 ALTER TABLE ONLY public.project_environment_promotions
     ADD CONSTRAINT project_environment_promotion_restored_target_release_set__fkey FOREIGN KEY (restored_target_release_set_id) REFERENCES public.project_release_sets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_sp_prepared_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_sp_prepared_spec_id_fkey FOREIGN KEY (prepared_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_sp_previous_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_sp_previous_spec_id_fkey FOREIGN KEY (previous_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
 
 
 --
@@ -39146,6 +47155,62 @@ ALTER TABLE ONLY public.project_environment_qualifications
 
 
 --
+-- Name: project_environment_queue_consumers project_environment_queue_consumers_runtime_set_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consumers_runtime_set_id_fkey FOREIGN KEY (runtime_set_id) REFERENCES public.project_environment_queue_runtime_sets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_workload_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_route_policies project_environment_route_poli_project_id_environment_slug_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39167,6 +47232,46 @@ ALTER TABLE ONLY public.project_environment_route_policies
 
 ALTER TABLE ONLY public.project_environment_route_policies
     ADD CONSTRAINT project_environment_route_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_heads project_environment_workload__environment_id_app_id_spec_i_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_heads
+    ADD CONSTRAINT project_environment_workload__environment_id_app_id_spec_i_fkey FOREIGN KEY (environment_id, app_id, spec_id) REFERENCES public.project_environment_workload_specs(environment_id, app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_deployment_specs project_environment_workload_deployment_spec_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_deployment_specs
+    ADD CONSTRAINT project_environment_workload_deployment_spec_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_deployment_specs project_environment_workload_deployment_specs_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_deployment_specs
+    ADD CONSTRAINT project_environment_workload_deployment_specs_spec_id_fkey FOREIGN KEY (spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --
@@ -39642,6 +47747,38 @@ ALTER TABLE ONLY public.runtime_config_revisions
 
 
 --
+-- Name: runtime_environment_scaling_states runtime_environment_scaling_states_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_environment_scaling_states
+    ADD CONSTRAINT runtime_environment_scaling_states_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_environment_scaling_states runtime_environment_scaling_states_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_environment_scaling_states
+    ADD CONSTRAINT runtime_environment_scaling_states_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_instance_config_proofs runtime_instance_config_proofs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_instance_config_proofs
+    ADD CONSTRAINT runtime_instance_config_proofs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_instance_config_proofs runtime_instance_config_proofs_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_instance_config_proofs
+    ADD CONSTRAINT runtime_instance_config_proofs_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
 -- Name: runtime_log_archive_bindings runtime_log_archive_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40034,6 +48171,14 @@ ALTER TABLE ONLY public.workflow_automation_definitions
 
 
 --
+-- Name: workflow_automation_revisions workflow_automation_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_revisions
+    ADD CONSTRAINT workflow_automation_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_callback_webhook_bindings workflow_callback_webhook_bindings_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40082,6 +48227,22 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
+-- Name: workflow_operation_effects workflow_operation_effects_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40103,6 +48264,14 @@ ALTER TABLE ONLY public.workflow_run_resumes
 
 ALTER TABLE ONLY public.workflow_runs
     ADD CONSTRAINT workflow_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_runs workflow_runs_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_runs
+    ADD CONSTRAINT workflow_runs_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE RESTRICT;
 
 
 --

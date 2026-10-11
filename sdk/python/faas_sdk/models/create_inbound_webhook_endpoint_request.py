@@ -17,18 +17,20 @@ T = TypeVar("T", bound="CreateInboundWebhookEndpointRequest")
 
 @_attrs_define
 class CreateInboundWebhookEndpointRequest:
-    """Create a provider-verified endpoint whose accepted events become durable app invocations.
+    """Create a provider-verified endpoint for Stripe or a custom sender using Gregale's timestamped HMAC-SHA256 protocol.
+    Accepted events become durable app invocations or automation starts when bound.
 
-    Example:
-        {'name': 'stripe-primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
-            '/internal/stripe'}
+        Example:
+            {'name': 'stripe-primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
+                '/internal/stripe'}
 
     """
 
     name: str
     provider: CreateInboundWebhookEndpointRequestProvider
     signing_secret: str
-    """Provider endpoint secret; sealed at rest and never returned."""
+    """Stripe signing secret or custom sender HMAC secret (at least 32 bytes for generic); sealed at rest and never
+    returned."""
     delivery_path: str | Unset = "/"
     enabled: bool | Unset = True
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
