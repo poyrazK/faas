@@ -32,7 +32,8 @@ schema-6-capable quota readers to every participating node before enabling
 `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED=1` in the acceptance environment.
 It requires registry management and its managed-policy/migration/tenant-quota
 prerequisites. Startup lists and deletes only its own unique private probe key,
-then verifies that key is absent. No automatic cleanup worker is enabled.
+then verifies that key is absent. Background continuation has a separate flag
+and is disabled by default.
 
 Select one account/app/immutable environment/platform-tenant scope through the
 existing exact entity selectors. The namespace/key identifies the scope; the
@@ -118,9 +119,85 @@ Current-epoch superseded shards are deliberately retained until the next rotatio
 Incomplete rotation uploads in future epochs are also retained until those epochs
 are strictly below a later successful barrier.
 
+## Optional background continuation
+
+Set `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED=1` only in the native
+acceptance environment after deploying compatible readers. It requires cleanup
+management and its prerequisites. Startup checks a bounded quota-root listing
+and conditional create/update/deletion of this process's unique private worker
+probe. It does not inspect or step a scope during that probe.
+
+One runtime goroutine scans up to four quota roots per sweep, including inactive
+roots, and advances a disposable discovery cursor. It operates only on the
+node's configured durable-app allowlist and existing, unfinished cleanup
+operations past their reader-grace boundary. It never starts a cleanup, rotates
+an epoch or creates a quota root. Operators still authorize start explicitly.
+
+Each eligible scope takes a known-acknowledged, 30-second CAS claim in
+`tenant-registry/workers/v1/<scope-hash>` before attempting at most one cleanup
+page. Claims and observations live outside the quota root; they are advisory
+scheduling state. Operation/checkpoint and epoch fencing remain deletion
+and accounting authority. Competing nodes defer while a claim is live. A lost
+claim acknowledgement authorizes no work. A replacement worker cannot have its
+observation overwritten by a delayed older claim because observation writes
+also compare the private object's version.
+
+Sweeps have a 45-second deadline, discovery listing a 5-second deadline, each
+scope a 15-second budget and each cleanup step a 10-second deadline. The runtime
+waits 5 seconds between sweeps; successful scopes wait at least 5 seconds between
+attempts. Failed scope attempts persist exponential backoff starting at 10 seconds
+and capped at 5 minutes. Discovery errors use a separate bounded process-local
+backoff and reset only the discovery cursor. Scope records survive restart.
+If a process dies before releasing its claim, another node resumes after lease
+expiry. Runtime cancellation stops the goroutine and its in-flight contexts.
+
+Unknown step acknowledgements never trigger an immediate blind repeat. The
+worker records a sanitized error/backoff when it can, and the next eligible
+attempt re-reads the authoritative root and uses its current checkpoint. If the
+observation acknowledgement is also unknown, the persisted claim may remain
+until expiry. This still confers no permission to repeat a stale checkpoint.
+Expired cleanup-page cursors continue to require the operator's explicit
+revision-checked `restart_cleanup` step; generic provider errors do not reset
+cleanup progress automatically. Completed operations are not attempted again.
+
+`GET .../entities/registry/cleanup` now adds `worker_enabled`, `worker`,
+`worker_status_error` and `seconds_since_last_success`. The worker flag describes
+this API node, not the whole fleet. The observation
+includes operation ID, last observed checkpoint revision, last attempt/success
+UTC times, next eligible attempt, lease expiry, consecutive failures (saturating
+at 10) and a sanitized error category. It contains no provider error text. The
+age is null before a known successful worker step; it measures observed worker
+success, not manual progress. Observations can lag the root and are never
+recovery authority. A different operation's observation is omitted. Unavailable
+worker storage produces `worker_status_error:"unavailable"` while retaining the
+authoritative cleanup response for manual recovery.
+
+Turning the worker flag off restores manual stepping and preserves checkpoints,
+backoff and unexpired claims. Disable the worker flag before disabling cleanup
+management; startup rejects a worker enabled without management. Existing
+schema-5 holds can be finished by the worker, but retain their
+hold until completion. The worker does not change schema or silently lift them.
+There is one small private observation record per attempted scope; temporary
+probe leftovers from unknown outcomes are separate from collected shard epochs.
+
+Root discovery costs scale with all quota roots, not just unfinished operations.
+Large fleets can have longer revisit intervals; high admission contention can
+also delay progress. No completion-time guarantee or cross-node exactly-once
+DELETE claim is made. Bounded contexts and short advisory leases complement the
+permanent epoch fence; delayed provider requests remain safe because they can
+only delete permanently obsolete namespaces.
+
 ## Source and native acceptance
 
-The concurrent-admission implementation at source commit
+The worker implementation at source commit
+`1f3061811ad5355af6d1aadbc2fed1c0951d0186` passed
+[remote CI run 38169049230](https://github.com/poyrazK/faas/actions/runs/38169049230).
+Validation includes four durable Go packages under the race detector (including
+eight new worker tests), 32 focused API race tests, CLI and generated-protocol
+checks, 16 Node workflow tests and the packed starter install/typecheck workflow.
+No local tests or native GCS/KVM acceptance were run for this revision.
+
+The preceding concurrent-admission implementation at source commit
 `b1ae7602d7e79352069bc023ff245a7898ffbc2e` passed
 [remote CI run 38165206034](https://github.com/poyrazK/faas/actions/runs/38165206034).
 Validation includes four durable Go packages under the race detector (including
@@ -144,7 +221,10 @@ content. API coverage checks read-only authorization, start replay, reader grace
 dispatch during grace and collection, completion and disabled/configuration
 guards. Additional source coverage checks checkpoint merges preserving concurrent
 admission, grants, connections and retirement credit; eight-attempt contention
-bounds without repeated deletion; and schema-5 hold compatibility.
+bounds without repeated deletion; and schema-5 hold compatibility. Worker
+coverage adds start authorization/grace/allowlist checks, restart recovery,
+persisted backoff, competing claims, unknown claim/delete/checkpoint outcomes,
+stale observation fencing, bounded discovery, probe isolation and cancellation.
 
 Native GCS/KVM acceptance must verify conditional cutover across nodes, old-schema
 rejection, independent warm/cold cache behavior, bounded listings/cursor restart,
@@ -152,5 +232,7 @@ process loss and delayed writes/deletes, concurrent admission and checkpoint
 contention, legacy schema-5 holds, current/future/foreign key preservation,
 permanent retirement fences, unchanged customer accounting,
 and metadata storage growth across repeated rotations. Measure reader grace and
-checkpoint contention before production enablement. No production flag, PR or
+checkpoint contention before production enablement. Worker acceptance also
+requires multi-node takeover, clock skew, shutdown/restart, prefix permissions,
+manual/worker races, observation loss and discovery cost at realistic root counts. No production flag, PR or
 deployment is part of this change.
