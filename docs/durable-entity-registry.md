@@ -70,7 +70,8 @@ Cold reads and evictions still require provider reads. Superseded and
 unpublished shard versions are retained conservatively, are control-plane storage
 outside the customer reservation budget. The opt-in
 [epoch-fenced cleanup workflow](durable-entity-registry-cleanup.md) can collect
-strictly older epochs under a scope hold; there is no automatic collector.
+strictly older epochs while current-epoch admission continues; there is no
+automatic collector.
 Never delete them based on one root scan: readers and concurrent writers may
 still reference an older snapshot. Native acceptance must measure read latency,
 metadata growth and the control-plane storage cost before release.
