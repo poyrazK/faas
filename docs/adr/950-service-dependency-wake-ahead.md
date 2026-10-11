@@ -85,6 +85,29 @@ not guess; the customer knows whether `public-api` always calls `auth`.
   wake-ahead restores the app's default target, and a keyed call still wakes
   its exact cohort on demand.
 
+## Evidence
+
+`TestServiceWakeAheadChainMetal` (n2 nested-KVM node `gregale-internal-test-1`,
+2026-10-11, `FAAS_SERVICE_WAKE_AHEAD_CYCLES=10`): three real hello-image
+guests `hop1 → hop2 → hop3`, all parked, called in order through the
+node-local service proxy, modes interleaved.
+
+| Mode | Cold 3-hop chain p50 | Restore order |
+| --- | --- | --- |
+| off | 8,025 ms | hop2 at ~+2.3–4.5 s, hop3 at ~+4.6–7.3 s (serial) |
+| declared | 4,748 ms (59% of off) | hop2 and hop3 within ~150 ms of hop1, trigger `service.wake_ahead` |
+
+Every declared cycle restored hop2 and hop3 by wake-ahead (10/10 each); no
+VM, netns or process leaked relative to the pre-run leakcheck. The node has
+2 vCPUs, so three concurrent restores contend; on a larger host the declared
+chain should approach a single restore.
+
+The run also exposed a pre-existing ADR-196 gap, independent of wake-ahead:
+the service proxy caches an app's endpoints for 5 s, so a call that lands
+within 5 s of an explicit park routes to the parked instance and answers
+`503 service has no healthy replicas` instead of waking it. Idle-timeout parks
+(≥ 30 s) never hit it.
+
 ## Rejected alternatives
 
 - **Default on for every declared edge.** This is what ADR-196 rejected. An
