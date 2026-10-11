@@ -32690,6 +32690,15 @@ func (q *Queries) LockCloneCheckpointObjectPublicationKeys(ctx context.Context, 
 	return items, nil
 }
 
+const lockCloneCheckpointSchedulerAdmission = `-- name: LockCloneCheckpointSchedulerAdmission :exec
+SELECT lock_clone_checkpoint_scheduler_admission()
+`
+
+func (q *Queries) LockCloneCheckpointSchedulerAdmission(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneCheckpointSchedulerAdmission)
+	return err
+}
+
 const lockCloneCheckpointUnusedReservationClock = `-- name: LockCloneCheckpointUnusedReservationClock :one
 SELECT generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE
 `

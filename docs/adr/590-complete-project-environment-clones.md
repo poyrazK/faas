@@ -9771,3 +9771,31 @@ runtime resources. Controlled-driver tests exercise ordering, unknown outcomes,
 lease propagation and replay, not live native qualification. Source compensation,
 capture retirement, other data-owner protocols and public full-stage admission
 retain their existing gates.
+
+### Permanent scheduler catalogue request fencing
+
+Claiming the original workload retirement journal now serializes deployment and
+instance writers before reauthenticating its frozen plan. Committing `requested`
+permanently closes catalogue admission for every original target deployment UUID
+and the complete `environment-clone:<operation-id>` deployment request namespace.
+Database guards cover scheduler instance creation, including direct exclusive and
+qualification inserts, as well as attempts to restart or reassign existing
+instances. They permit draining and terminal cleanup. Deployment identity and
+ownership cannot be relabelled to evade the fence, while metadata deletion remains
+possible. The original journal retains the fence after metadata deletion and
+worker handoff; requested ownership cannot be deleted, rewritten or moved back to
+planned. Downgrading the guard migration refuses retained requested or retired
+journals.
+
+Deployment identity admissions and instance admissions or state changes require
+READ COMMITTED isolation. Existing production writers use this isolation; an old
+REPEATABLE READ or SERIALIZABLE snapshot must retry with a current snapshot rather
+than overlook a newly committed retirement request. Concurrent tests cover an
+instance insert already waiting when the request becomes durable, and a writer
+holding a snapshot from before that request.
+
+These guards close future control-plane admission only. They do not cancel an
+already issued native RPC, prove absence of existing processes, cgroups, networks,
+routes or publication, or qualify the native owner adapter. Independent native
+observation and runtime request closure remain required before metadata cleanup.
+Public full-stage admission and live provider qualification remain gated.

@@ -61,6 +61,10 @@ func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
 				l.Token = uuid.NewString()
 			case "artifact":
 				_, err = pool.Exec(t.Context(), "UPDATE deployments SET reason='replacement' WHERE id=$1", id)
+				requireCloneSchedulerFence(t, err)
+				// Rejected relabelling preserves the original cleanup authority.
+				err = nil
+				fault = "none"
 			case "sidecar":
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_sidecar_layers(deployment_id,sidecar_name,storage_key,bytes,content_digest) VALUES($1,'foreign','foreign',1,'sha256:foreign')", id)
 			case "runtime_owner":
@@ -169,6 +173,11 @@ func TestPgCloneDeploymentCleanupRejectsChangedEvidence(t *testing.T) {
 				_, err = pool.Exec(t.Context(), "DELETE FROM project_environment_clone_deployment_cleanups WHERE operation_id=$1", l.Operation.ID)
 			case "replacement":
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,$1::jsonb)).*", deployment)
+				requireCloneSchedulerFence(t, err)
+				if err = s.CleanupProjectEnvironmentCloneDeploymentsForLease(t.Context(), l); err != nil {
+					t.Fatal("fenced replacement damaged replay", err)
+				}
+				return
 			case "late_soft":
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_audit(deployment_id,kind,actor) VALUES($1,'deploy.created','late')", id)
 			case "predecessor":

@@ -16025,3 +16025,6 @@ WHERE id=sqlc.arg(operation_id)::uuid AND account_id=sqlc.arg(account_id)::uuid 
  AND status='compensating' AND revision=sqlc.arg(expected_revision)::bigint
  AND lease_token=sqlc.arg(worker_token)::uuid AND lease_until>clock_timestamp()
  AND EXISTS(SELECT 1 FROM project_environment_clone_compensation_receipts r WHERE r.operation_id=project_environment_clone_operations.id);
+
+-- name: LockCloneCheckpointSchedulerAdmission :exec
+SELECT lock_clone_checkpoint_scheduler_admission();

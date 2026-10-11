@@ -159,7 +159,7 @@ func TestPgCheckpointCompensationReconciliationRejectsChangedWorkloadClosure(t *
 			case "native_missing":
 				_, err = pool.Exec(t.Context(), "DELETE FROM project_environment_clone_checkpoint_workload_retirements WHERE operation_id=$1", l.Operation.ID)
 				var pgerr *pgconn.PgError
-				if !errors.As(err, &pgerr) || pgerr.Code != "23503" {
+				if !errors.As(err, &pgerr) || pgerr.ConstraintName != "clone_checkpoint_scheduler_fence_retained" {
 					t.Fatal("native predecessor deleted", err)
 				}
 				retained, e := s.ReconcileProjectEnvironmentCloneCheckpointCompensation(t.Context(), l)

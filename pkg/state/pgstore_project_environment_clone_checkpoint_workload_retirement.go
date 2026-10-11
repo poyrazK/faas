@@ -198,6 +198,11 @@ func (s *PgStore) ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx c
 	var out ProjectEnvironmentCloneCheckpointWorkloadRetirement
 	dispatch := false
 	err := s.checkpointSourceCompensationTx(ctx, l, func(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) error {
+		// Serialize catalogue admissions before authenticating the original plan.
+		// The durable requested journal then rejects delayed writers after commit.
+		if err := sqlc.New().LockCloneCheckpointSchedulerAdmission(ctx, tx); err != nil {
+			return mapErr(err)
+		}
 		var err error
 		out, err = readCheckpointWorkloadRetirementTx(ctx, tx, op)
 		if err != nil || out.State != "planned" {
