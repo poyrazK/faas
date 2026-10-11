@@ -1245,10 +1245,10 @@ func TestSimulateThrottleRuleShowsGatewayDefensiveClamps(t *testing.T) {
 		t.Fatalf("Simulate: %v", err)
 	}
 	policy := result.Simulation.Steps[0].ThrottlePolicy
-	if policy == nil || policy.RequestsPerSecond != 0.5 || policy.Burst != 0 || policy.GatewayRateRPS != 1 || policy.GatewayBurst != 1 || policy.MaxKeysPerRule != api.ThrottleMaxKeysPerRuleDefault*10 || policy.MaxKeysSource != "platform_ceiling" || policy.MissingKeyPolicy != api.ThrottleMissingKeyShared {
+	if policy == nil || policy.RequestsPerSecond != 0.5 || policy.Burst != 0 || policy.GatewayRateRPS != 0.5 || policy.GatewayBurst != 1 || policy.MaxKeysPerRule != api.ThrottleMaxKeysPerRuleDefault*10 || policy.MaxKeysSource != "platform_ceiling" || policy.MissingKeyPolicy != api.ThrottleMissingKeyShared {
 		t.Fatalf("gateway defensive clamps = %#v", policy)
 	}
-	if !strings.Contains(result.Rules[0].OutcomeReason, "configured 0.5 requests/s, burst 0 (gateway effective 1 requests/s and burst 1)") {
+	if !strings.Contains(result.Rules[0].OutcomeReason, "configured 0.5 requests/s, burst 0 (gateway effective 0.5 requests/s and burst 1)") {
 		t.Fatalf("clamp explanation = %q", result.Rules[0].OutcomeReason)
 	}
 }

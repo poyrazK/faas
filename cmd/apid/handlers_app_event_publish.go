@@ -9,7 +9,9 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -43,7 +45,7 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("application identity"))
 		return
 	}
-	envelope, err := normalizePublishRequest(api.PublishEventRequest{ID: id, Source: source, Type: req.Type, Time: req.Time, Data: req.Data, SchemaVersion: req.SchemaVersion}, acct.ID)
+	envelope, err := appevents.NormalizePublishRequest(api.PublishEventRequest{ID: id, Source: source, Type: req.Type, Time: req.Time, Data: req.Data, SchemaVersion: req.SchemaVersion}, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
@@ -67,13 +69,13 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 	}
 	accepted, err := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
 	if errors.Is(err, state.ErrNotFound) {
-		if !s.validateEventSchemaForIngress(w, r, acct.ID, envelope) {
+		if !s.appEvents.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 			return
 		}
 		accepted, err = store.AcceptPublishedEvent(ctx, "apid", acct.ID, payload)
 	}
 	if err != nil {
-		if writeEventStorageCapacity(w, err) {
+		if appevents.WriteEventStorageCapacity(w, err) {
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
@@ -87,7 +89,7 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 	if !accepted.Duplicate {
 		_ = s.notif.Notify(ctx, db.NotifyEventPublished, "1")
 	}
-	receipt := api.PublishEventResponse{ID: id, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: eventReceiptURL(source, id)}
+	receipt := api.PublishEventResponse{ID: id, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: appevents.EventReceiptURL(source, id)}
 	w.Header().Set("Location", receipt.ReceiptURL)
 	writeJSON(w, http.StatusAccepted, api.AppPublishEventResponse{AppID: appID, Source: source, Duplicate: accepted.Duplicate, Receipt: receipt})
 }

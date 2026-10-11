@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -80,7 +81,7 @@ func TestEventStorageUsageEmpty(t *testing.T) {
 func TestEventStorageBytesProblem(t *testing.T) {
 	rec := httptest.NewRecorder()
 	err := fmt.Errorf("wrapped: %w", &state.EventStorageCapacityError{Resource: "bytes", Limit: 100, Observed: 101})
-	if !writeEventStorageCapacity(rec, err) {
+	if !appevents.WriteEventStorageCapacity(rec, err) {
 		t.Fatal("did not recognize storage capacity")
 	}
 	var problem api.Problem

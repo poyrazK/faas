@@ -1,6 +1,9 @@
 package gateway
 
-import "net/http"
+import (
+	"math"
+	"net/http"
+)
 
 // Edge rule kind=throttle subset (ADR-091 D20.5 amendment, see
 // migrations/00244_edge_rules_kind_throttle.sql; issue #881).
@@ -13,7 +16,7 @@ import "net/http"
 // which are platform-controlled and plan-keyed; here the customer
 // chooses a non-null RPS+burst that tightens the shared
 // plan.RateLimitRPS ceiling but never raises above it. A 429
-// response with `Retry-After: 1` +
+// response with `Retry-After` (seconds until the next token) +
 // `x-faas-rate-limit-scope: route` +
 // `X-RouteRateLimit-{Limit,Remaining,Reset}` is emitted when the
 // rule fires.
@@ -37,9 +40,10 @@ import "net/http"
 // compileThrottleRules as defence-in-depth against a direct-DB
 // write that bypassed apid-Validate (the e2e helper
 // seedEdgeRuleDirect at cmd/e2e/edge_rules_common_test.go does
-// exactly that). The compile clamps non-positive values to
+// exactly that). The compile replaces non-positive values with
 // {1 rps, 1 burst} as belt-and-braces against a 0/0 direct-DB
-// seed; the apid hard caps reject > plan ceiling.
+// seed and keeps fractional rps; the apid hard caps reject > plan
+// ceiling.
 
 // EdgeRuleThrottleResolved is the kind=throttle subset the gateway
 // matcher reads on every request. Mirrors EdgeRuleLimitResolved
@@ -135,4 +139,16 @@ func PickFirstThrottleMatch(rules []EdgeRuleThrottleResolved, requestPath, metho
 		return r
 	}
 	return nil
+}
+
+// routeThrottleRetryAfter is the Retry-After, in whole seconds, for a
+// request a route throttle denied: a denied bucket holds less than one
+// token, and the next one arrives within 1/rps seconds. Rules of 1 rps or
+// more answer 1; a 0.1 rps rule answers 10, so a client that honours the
+// header does not retry into nine more 429s.
+func routeThrottleRetryAfter(rps float64) int {
+	if !(rps > 0) || rps >= 1 {
+		return 1
+	}
+	return int(math.Ceil(1 / rps))
 }
