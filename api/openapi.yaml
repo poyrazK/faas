@@ -633,7 +633,7 @@ paths:
       - $ref: '#/components/parameters/Slug'
       - name: scope
         in: query
-        description: Exact deployment scope. Omit to select default.
+        description: Deployment scope whose object-storage release policy will be replaced. Omit for default.
         schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
     put:
       tags: [apps]
@@ -658,7 +658,7 @@ paths:
             schema: { $ref: '#/components/schemas/SetObjectStorageBindingReleasePolicyRequest' }
       responses:
         '200':
-          description: Saved policy with incremented revision.
+          description: Updated object-storage release requirements and the new policy revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
@@ -11126,11 +11126,12 @@ paths:
         '403': { $ref: '#/components/responses/PlanLimit' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     get:
       tags: [dev]
       operationId: getDevSession
       summary: Inspect a remote developer environment.
-      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
       parameters:
         - name: workspace_id
           in: query
@@ -11147,6 +11148,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
       operationId: destroyDevSession
@@ -11163,6 +11165,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/dev/test-runs/{run_id}:
     parameters:
@@ -43991,6 +43994,7 @@ components:
       description: 'Managed environment prefix to required canary mode in the selected scope. Prefixes match ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require successful cleanup. No implicit probes or writes.'
       additionalProperties: { type: string, enum: [read, write, read_write] }
     SetObjectStorageBindingReleasePolicyRequest:
+      description: Revision-guarded release policy replacement with explicit required object-storage canary modes.
       allOf:
         - $ref: '#/components/schemas/SetBindingReleasePolicyRequest'
         - type: object
@@ -44046,7 +44050,7 @@ components:
       description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
       required: [result, source, deployment_id, scope]
       properties:
-        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.' }
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.' }
         result: { type: string, description: 'Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence.' }
         reason: { type: string, description: 'Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or report_truncated.' }
         source: { type: string, description: 'Currently task_guest.' }
@@ -50411,6 +50415,10 @@ components:
           description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
         postgres:
           $ref: '#/components/schemas/DevPostgresRequest'
+        buckets:
+          type: array
+          description: Explicitly provision private workspace buckets and bindings. Requires storage:manage or admin in addition to developer session authorization. Omission preserves existing resources. Repeating a revoked binding returns conflict.
+          items: { $ref: '#/components/schemas/DevBucketRequest' }
         lease_seconds:
           type: integer
           format: int64
@@ -50529,6 +50537,24 @@ components:
         applied_at: { type: string, format: date-time, description: When the first instance acknowledged the patch. }
         apply_ms: { type: integer, format: int64, minimum: 0, description: How long the instance took to write the patch and request the restart. }
         error_code: { type: string, description: 'Bounded guest error code when state is failed, for example apply_failed or restart_failed.' }
+    DevBucketRequest:
+      description: Opt-in private bucket in the developer workspace, bound in the default secret scope. Bucket and binding names are unique within the batch.
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string, description: Omit to reuse existing placement or the current creation default. }
+        permission: { type: string, enum: [read, write, read_write], default: read_write }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', description: Defaults to GREGALE_S3_ followed by the normalized bucket name. }
+
+    DevBucketResponse:
+      description: Safe metadata for an active automatic developer bucket binding. No credential secret or provider placement is returned.
+      type: object
+      required: [bucket, binding]
+      properties:
+        bucket: { $ref: '#/components/schemas/ObjectBucket' }
+        binding: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+
     DevPostgresResponse:
       description: Safe receipt for the isolated developer database and its app binding. Credentials are injected into DATABASE_URL and never returned.
       type: object
@@ -50549,6 +50575,10 @@ components:
         app: { $ref: '#/components/schemas/AppResponse' }
         expires_at: { type: string, format: date-time }
         postgres: { $ref: '#/components/schemas/DevPostgresResponse' }
+        buckets:
+          type: array
+          description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
+          items: { $ref: '#/components/schemas/DevBucketResponse' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.

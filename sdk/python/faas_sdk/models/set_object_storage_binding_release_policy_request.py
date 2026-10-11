@@ -21,6 +21,8 @@ T = TypeVar("T", bound="SetObjectStorageBindingReleasePolicyRequest")
 
 @_attrs_define
 class SetObjectStorageBindingReleasePolicyRequest:
+    """Revision-guarded release policy replacement with explicit required object-storage canary modes."""
+
     mode: SetBindingReleasePolicyRequestMode
     expected_revision: int
     object_storage_requirements: ObjectStorageReleaseRequirements

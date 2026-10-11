@@ -547,6 +547,47 @@ the requirements migration is refused while any policy has a nonempty map; the
 guard locks policy writes so concurrent updates cannot evade it. Clear requirements
 explicitly before a reviewed rollback.
 
+## Developer workspace buckets
+
+`gregale dev --bucket assets` explicitly provisions a private bucket and managed
+binding for the developer workspace. Repeat `--bucket` for several buckets. The
+default permission is `read_write`; the default prefix for `assets` is
+`GREGALE_S3_ASSETS`. Use `gregale dev setup --bucket assets` to inspect the plan,
+or add `--start` to start the developer environment. `dev info` reports active
+automatic bindings without renewing the lease. API keys need `deploy:write` and
+`storage:manage` to provision; inspection needs `apps:read` and `storage:manage`
+to include storage binding metadata.
+
+For custom placement or permissions, put explicit opt-in settings in the selected
+source root's `gregale.yaml`:
+
+```yaml
+dev:
+  buckets:
+    - name: assets
+      permission: read_write
+      prefix: GREGALE_S3_ASSETS
+      region: us-east-1
+```
+
+An explicit `--bucket` list overrides `dev.buckets`. With `--all`, each app uses
+its own manifest unless explicit bucket flags are forwarded to every child.
+The normal top-level `buckets` section continues to attach existing buckets;
+only `dev.buckets` requests automatic creation in developer sessions.
+
+Source reloads and omitted declarations preserve bucket data, placement and
+credentials. Changing a binding's permission conflicts; a revoked automatic
+binding stays revoked across retries/restarts. Use binding rotation for credential
+rotation, or explicitly stop/restart the session for a fresh grant. Changed
+declarations can leave earlier resources in the workspace and its quota.
+
+`gregale dev --stop` and lease expiry revoke managed grants and reclaim all buckets
+owned by that developer app, including manually created ones. Cleanup failures,
+pending writes, versions or Object Lock can defer deletion; resources remain
+durable and charged while cleanup is pending. Storage must be enabled and the
+normal accounting/provisioning gates must pass. Remote development consumes real
+Gregale storage; it is separate from the starter's disposable local test fixtures.
+
 ## Node compute starter
 
 `gregale init --template object-storage-node --path files-app` materializes a private

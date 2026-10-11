@@ -5274,7 +5274,7 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
+`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5287,6 +5287,7 @@ Sync local changes to a developer environment
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+| `--bucket <NAME>` | provision a private workspace bucket; repeatable |  |
 | `--postgres` | provision an isolated PostgreSQL database and inject DATABASE_URL |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--postgres-seed <CMD>` | shell command run once in the developer app after its database is ready |  |
@@ -5418,7 +5419,7 @@ run `gregale delayed-task add` against the developer app
 
 preflight a project and prepare the first developer environment
 
-`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
+`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5430,6 +5431,7 @@ preflight a project and prepare the first developer environment
 | `--once` | sync once and exit |  |
 | `--no-logs` | do not attach runtime logs |  |
 | `--open` | open the verified URL |  |
+| `--bucket <NAME>` | provision a private workspace bucket; repeatable |  |
 | `--postgres` | provision an isolated PostgreSQL database |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--ttl <DURATION>` | environment lease after the latest sync |  |

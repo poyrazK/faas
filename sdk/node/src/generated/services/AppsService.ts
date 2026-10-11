@@ -241,7 +241,7 @@ export class AppsService {
    * neither policy updates nor promotion initiate storage writes. Old servers
    * return 404 on this route rather than silently dropping the requirements.
    *
-   * @returns BindingReleasePolicy Saved policy with incremented revision.
+   * @returns BindingReleasePolicy Updated object-storage release requirements and the new policy revision.
    * @throws ApiError
    */
   public static setObjectStorageBindingReleasePolicy({
@@ -255,7 +255,7 @@ export class AppsService {
     slug: string,
     requestBody: SetObjectStorageBindingReleasePolicyRequest,
     /**
-     * Exact deployment scope. Omit to select default.
+     * Deployment scope whose object-storage release policy will be replaced. Omit for default.
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {

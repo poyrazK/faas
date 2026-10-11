@@ -432,6 +432,8 @@ export type { DevBridgeScope } from './models/DevBridgeScope.js';
 export type { DevBridgeSession } from './models/DevBridgeSession.js';
 export type { DevBridgeSessionSummary } from './models/DevBridgeSessionSummary.js';
 export type { DevBridgeWebhookReplay } from './models/DevBridgeWebhookReplay.js';
+export type { DevBucketRequest } from './models/DevBucketRequest.js';
+export type { DevBucketResponse } from './models/DevBucketResponse.js';
 export type { DevPatchPreview } from './models/DevPatchPreview.js';
 export type { DevPatchStatusResponse } from './models/DevPatchStatusResponse.js';
 export type { DevPostgresRequest } from './models/DevPostgresRequest.js';

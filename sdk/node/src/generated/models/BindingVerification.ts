@@ -8,7 +8,7 @@ import type { BindingVerificationCheck } from './BindingVerificationCheck.js';
  */
 export type BindingVerification = {
   /**
-   * Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.
+   * Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.
    */
   object_storage_mode?: 'read' | 'write' | 'read_write';
   /**

@@ -843,6 +843,9 @@ from .dev_bridge_session_summary import DevBridgeSessionSummary
 from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
 from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
 from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
+from .dev_bucket_request import DevBucketRequest
+from .dev_bucket_request_permission import DevBucketRequestPermission
+from .dev_bucket_response import DevBucketResponse
 from .dev_patch_preview import DevPatchPreview
 from .dev_patch_preview_reason import DevPatchPreviewReason
 from .dev_patch_status_response import DevPatchStatusResponse
@@ -4365,6 +4368,9 @@ __all__ = (
     "DevBridgeSessionSummaryConnectionState",
     "DevBridgeWebhookReplay",
     "DevBridgeWebhookReplayState",
+    "DevBucketRequest",
+    "DevBucketRequestPermission",
+    "DevBucketResponse",
     "DevPatchPreview",
     "DevPatchPreviewReason",
     "DevPatchStatusResponse",

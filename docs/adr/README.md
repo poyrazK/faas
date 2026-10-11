@@ -796,3 +796,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-982: Storage client leases and retirement](982-storage-client-leases-and-retirement.md)
 
 - [ADR-983: Managed storage Node compute starter](983-managed-storage-node-compute-starter.md)
+- [ADR-984: Managed object storage for developer sessions](984-developer-managed-object-storage.md)

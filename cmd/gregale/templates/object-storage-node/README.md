@@ -78,6 +78,24 @@ Disk staging consumes guest disk and latency; choose smaller limits for your app
 
 ## Local qualification and maintenance
 
+For the remote developer loop, opt into a private workspace bucket:
+
+```sh
+gregale dev setup --bucket assets --env-file /absolute/private/files.secrets
+gregale dev --bucket assets --env-file /absolute/private/files.secrets
+gregale dev info
+gregale dev --stop
+```
+
+`dev setup` previews the plan. `dev` provisions the bucket and injects the same
+managed settings used by this app. This runs the application on Gregale's
+developer environment and uses its configured storage provider. Storage requires
+the operator's object storage service and accounting configuration to be ready.
+Each local source workspace gets separate storage. Reloading source reuses the
+bucket; stopping or lease expiry revokes access and deletes workspace buckets.
+An omitted `--bucket` preserves existing resources. A revoked automatic binding
+requires stopping/restarting the environment; ordinary reloads cannot regrant it.
+
 `npm test` uses owned local HTTP/client fixtures for authentication, exact bytes,
 rotation, failed adoption, cancellation, cleanup and shutdown. In the Gregale
 repository, `bash scripts/test-storage-node-starter.sh` materializes this embedded

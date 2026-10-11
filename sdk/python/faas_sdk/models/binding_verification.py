@@ -36,8 +36,8 @@ class BindingVerification:
     deployment_id: UUID
     scope: str
     object_storage_mode: BindingVerificationObjectStorageMode | Unset = UNSET
-    """Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write
-    requirements."""
+    """Object operation level admitted for this stored verification; missing values denote a legacy listing canary
+    and do not qualify required write operations."""
     reason: str | Unset = UNSET
     """Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or
     report_truncated."""

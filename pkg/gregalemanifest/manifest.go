@@ -1475,10 +1475,11 @@ func (c *ReleaseConfig) Validate() error {
 // manifest cannot reach outside the project by accident. Values are always
 // resolved locally by the CLI; this block never contains secret plaintext.
 type DevConfig struct {
-	EnvFile             string `yaml:"env_file,omitempty"`
-	ServiceOverrideFile string `yaml:"service_override_file,omitempty"`
-	Postgres            *bool  `yaml:"postgres,omitempty"`
-	PostgresRegion      string `yaml:"postgres_region,omitempty"`
+	Buckets             []api.DevBucketRequest `yaml:"buckets,omitempty"`
+	EnvFile             string                 `yaml:"env_file,omitempty"`
+	ServiceOverrideFile string                 `yaml:"service_override_file,omitempty"`
+	Postgres            *bool                  `yaml:"postgres,omitempty"`
+	PostgresRegion      string                 `yaml:"postgres_region,omitempty"`
 	// TTL is the environment lease as a Go duration (for example "72h").
 	// The plan ceiling is enforced by the API, not here.
 	TTL string `yaml:"ttl,omitempty"`
@@ -1510,6 +1511,9 @@ func ParseDevTTL(raw string) (time.Duration, error) {
 func (c *DevConfig) Validate() error {
 	if c == nil {
 		return nil
+	}
+	if _, err := api.NormalizeDevBuckets(c.Buckets); err != nil {
+		return fmt.Errorf("dev.buckets: %w", err)
 	}
 	if err := validateDevConfigPath("env_file", c.EnvFile); err != nil {
 		return err

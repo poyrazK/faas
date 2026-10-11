@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
 const (
@@ -38,8 +39,8 @@ func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
 // sessionRequest builds the idempotent session upsert. A zero lease leaves
 // lease_seconds unset so the API applies its default; every refresh resends
 // the chosen lease because each sync renews it from scratch.
-func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string, lease time.Duration) api.UpsertDevSessionRequest {
-	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID, LeaseSeconds: int64(lease / time.Second)}
+func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string, lease time.Duration, buckets ...api.DevBucketRequest) api.UpsertDevSessionRequest {
+	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID, LeaseSeconds: int64(lease / time.Second), Buckets: buckets}
 	if c.shape == shapeFunction {
 		req.Type = devSessionFunction
 		req.Runtime = c.runtime
@@ -273,7 +274,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]]"
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -311,6 +312,8 @@ func cmdDev(args []string) int {
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
+	var bucketNames devBucketNames
+	fs.Var(&bucketNames, "bucket", "provision a private workspace bucket; repeatable (overrides dev.buckets)")
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database and inject DATABASE_URL")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
@@ -328,6 +331,9 @@ func cmdDev(args []string) int {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
+	if *stop && explicitFlags["bucket"] {
+		return printErr("Invalid flags", fmt.Errorf("--bucket cannot be combined with --stop"))
+	}
 	if *once && *stop {
 		return printErr("Invalid flags", fmt.Errorf("--once and --stop are mutually exclusive"))
 	}
@@ -360,7 +366,7 @@ func cmdDev(args []string) int {
 	if *all {
 		return cmdDevAllFromFlags(cwd, *sourcePath, explicitFlags, devAllOptions{
 			once: *once, stop: *stop, noLogs: *noLogs, open: *open, postgres: *withPostgres, postgresRegion: *postgresRegion,
-			ttl: *ttl,
+			ttl: *ttl, buckets: bucketNames,
 		})
 	}
 	linkedContext, _, linkedErr := linkedProjectContext(cwd)
@@ -371,9 +377,12 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Invalid developer source", err)
 	}
-	manifest, err := loadDevManifest(sourceDir)
-	if err != nil {
-		return printErr("Invalid developer manifest", err)
+	var manifest *gregalemanifest.Manifest
+	if !*stop {
+		manifest, err = loadDevManifest(sourceDir)
+		if err != nil {
+			return printErr("Invalid developer manifest", err)
+		}
 	}
 	// --stop only tears the environment down, so team defaults for files that
 	// would be synced on start must not turn it into a flag conflict.
@@ -381,6 +390,13 @@ func cmdDev(args []string) int {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
 		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
+	}
+	var buckets []api.DevBucketRequest
+	if !*stop {
+		buckets, err = resolveDevBuckets(manifest, bucketNames, explicitFlags["bucket"])
+		if err != nil {
+			return printErr("Invalid developer buckets", err)
+		}
 	}
 	if *debug && *once {
 		// --once exits after one sync, which would close the local
@@ -480,7 +496,7 @@ func cmdDev(args []string) int {
 	if *debug && !devDebugSupported(sourceDir, config) {
 		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
 	}
-	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
+	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, buckets...))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
@@ -492,6 +508,9 @@ func cmdDev(args []string) int {
 		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
+		}
+		for _, bucket := range session.Buckets {
+			PrintProgress(osStdout, "Bucket: %s (%s); binding %s under %s", bucket.Bucket.Name, bucket.Bucket.State, bucket.Binding.Credential.Permission, bucket.Binding.Prefix)
 		}
 	}
 
@@ -564,6 +583,7 @@ func cmdDev(args []string) int {
 			started := time.Now()
 			devTelemetry := newDevPhaseTracker()
 			devTelemetry.setPostgres(session.Postgres)
+			devTelemetry.setBuckets(session.Buckets)
 			execution := deployExecution{
 				prefixBuildLogs:  true,
 				streamLogsOnJSON: true,
@@ -684,7 +704,11 @@ func cmdDev(args []string) int {
 		waitForChange: waitForChange,
 		resolve:       resolveDevSourceConfigWithManifest,
 		refresh: func(config devSourceConfig) error {
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
+			requests, err := resolveDevBucketsForSync(sourceDir, bucketNames, explicitFlags["bucket"])
+			if err != nil {
+				return err
+			}
+			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, requests...))
 			if refreshErr == nil {
 				session = refreshed
 			}
