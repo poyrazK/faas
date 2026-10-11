@@ -342,6 +342,13 @@ real go124 runner in the guest, 4 interleaved runs × 15 wakes per
 variant): boot-completed→first-byte p50 93 → 54 ms and gateway
 proxy→first-byte p50 66 → 42 ms. Whole-wake latency on that node is
 dominated by ext4 drive staging (p50 ~400 ms) and did not separate.
+`binary` (ADR-987) runs one static executable built from the
+customer's Dockerfile (Rust, Zig, C, C++, Go) on the `go124` base and
+runner; it adds no base image, and the `function-rust` template is the
+reference. Evidence, 2026-10-11 on `gregale-internal-test-1`: the Linux
+`go124` runner started with `--runtime binary` served a static Rust
+handler from one reused process, reported `X-Faas-Guest-Runtime: binary`,
+and replaced the process when the reseed barrier fired.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

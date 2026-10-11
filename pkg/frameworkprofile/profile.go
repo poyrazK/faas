@@ -87,6 +87,10 @@ func ProfileForFunctionRuntime(runtime string) (Profile, bool) {
 		framework = markers.FrameworkPython
 	case "go124", "go124-alpine":
 		framework = markers.FrameworkGo
+	case "binary":
+		// ADR-987: a binary function is built from the customer's
+		// Dockerfile, whose image names one static executable.
+		framework = markers.FrameworkDocker
 	default:
 		return Profile{}, false
 	}

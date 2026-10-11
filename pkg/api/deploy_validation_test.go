@@ -43,6 +43,25 @@ func TestValidFunctionRuntime(t *testing.T) {
 	}
 }
 
+// ADR-987: binary is a function runtime built from a Dockerfile that runs on
+// go124's base and runner; every other runtime is its own base.
+func TestFunctionBinaryRuntime(t *testing.T) {
+	if !ValidFunctionRuntime(FunctionRuntimeBinary) {
+		t.Fatal("binary is not an accepted function runtime")
+	}
+	if got := FunctionBaseRuntime(FunctionRuntimeBinary); got != "go124" {
+		t.Fatalf("FunctionBaseRuntime(binary) = %q, want go124", got)
+	}
+	for _, runtime := range FunctionRuntimes {
+		if runtime != FunctionRuntimeBinary && FunctionBaseRuntime(runtime) != runtime {
+			t.Errorf("FunctionBaseRuntime(%q) = %q, want itself", runtime, FunctionBaseRuntime(runtime))
+		}
+		if FunctionRuntimeBuildsFromDockerfile(runtime) != (runtime == FunctionRuntimeBinary) {
+			t.Errorf("FunctionRuntimeBuildsFromDockerfile(%q) = %v", runtime, FunctionRuntimeBuildsFromDockerfile(runtime))
+		}
+	}
+}
+
 func TestValidDeploymentImage(t *testing.T) {
 	valid := "registry.example.com/team/app@sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	if !ValidDeploymentImage(valid) {

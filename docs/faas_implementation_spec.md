@@ -84,7 +84,7 @@ Cloudflare, public network, and client distance remain separate end-to-end costs
 
 **Deploy path:** `apid` accepts source (≤ 100 MB) or OCI reference → `builderd` runs the build in an ephemeral builder microVM → OCI image → `imaged` converts it to a per-app **app layer** over a shared read-only base (two-drive scheme, §4.6) + injects `guest-init` → boots once, waits ready, pauses, snapshots → app state = `PARKED`. First deploy of an app is also its first snapshot.
 
-**Two workload models, one data plane (ADR-003):** an *App* is any HTTP server listening on `:8080` in its microVM. A *Function* is an App whose rootfs we generate from a platform runner image (node22 / node24 / python312 / python313 / go124 / go124-alpine) wrapping the customer's handler file behind the same `:8080` contract. Functions get zero new infrastructure: same lifecycle, same snapshots, same metering, same routing. Cron triggers are synthetic requests fired by `schedd`.
+**Two workload models, one data plane (ADR-003):** an *App* is any HTTP server listening on `:8080` in its microVM. A *Function* is an App whose rootfs we generate from a platform runner image (node22 / node24 / python312 / python313 / go124 / go124-alpine, plus `binary`, which runs one static executable built from the customer's Dockerfile on the go124 runner, ADR-987) wrapping the customer's handler file behind the same `:8080` contract. Functions get zero new infrastructure: same lifecycle, same snapshots, same metering, same routing. Cron triggers are synthetic requests fired by `schedd`.
 
 ---
 
@@ -413,7 +413,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Auth: API keys (`fp_live_…`, SHA-256 stored), per-user; sessions for the dashboard later. Every key scoped to an account. **Tenancy** lands in IAM-6 (ADR-061, issue #190); the tenant is the `orgs` row, APIs are path-scoped under `/v1/orgs/{slug}/...`, and cookie sessions stay account-bound. See ADR-061 for the wire-shape contract.
 - Resources (all JSON; full endpoint table in Appendix A): accounts, apps, deployments, builds, instances (read-only), usage, plans, custom_domains.
 - Deploy inputs (three, ADR-004): `POST /v1/apps/{app}/deployments` with (a) tarball upload `source` (≤ 100 MB Free/Hobby, ≤ 250 MB Pro/Scale — reject larger with `413` and a docs link), (b) `dockerfile: true` flag if tarball root has one, or (c) `image: registry.gregale.dev/...@sha256:...` reference.
-- Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
+- Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine | binary`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`); a `binary` tarball contains a root `Dockerfile` whose image names one static executable inside `/app` (ADR-987). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
 - Validation enforces plan quotas *before* work happens: deployed-sandbox count, RAM size ≤ plan cap, concurrency setting ≤ plan cap.
 - Idempotency: `Idempotency-Key` header on all POSTs, stored 24 h.
 - Never talks to vmmd/builderd directly — writes rows, notifies via `pg_notify`; owners poll/listen.
@@ -812,7 +812,7 @@ create table apps (
   account_id uuid not null references accounts(id),
   slug text unique not null,                    -- {slug}.gregale.dev
   type text not null default 'app',             -- app|function
-  runtime text,                                 -- node22|node24|python312|python313|go124|go124-alpine when function
+  runtime text,                                 -- node22|node24|python312|python313|go124|go124-alpine|binary when function
   ram_mb int not null,                          -- ≤ plan cap
   idle_timeout_s int,
   max_concurrency int not null default 1,       -- ≤ plan cap

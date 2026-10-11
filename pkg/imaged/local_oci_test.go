@@ -566,6 +566,7 @@ func TestFunctionHandlerPaths_CoversAllSupportedRuntimes(t *testing.T) {
 		RuntimePython313:   {"/app/handler.py", "/app/handler.py"},
 		RuntimeGo124:       {"/app/server", "/app/handler"},
 		RuntimeGo124Alpine: {"/app/server", "/app/handler"},
+		RuntimeBinary:      {"/app/server", "/app/handler"},
 	}
 	for runtime, want := range cases {
 		t.Run(runtime, func(t *testing.T) {

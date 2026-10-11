@@ -34,6 +34,11 @@ import (
 	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 )
 
+// reportedRuntime is the runtime this runner reports in telemetry, to the
+// restore barrier and to the handler (FAAS_RUNTIME). go124-alpine reports as
+// go124, as before; binary keeps its own identity (ADR-987).
+var reportedRuntime = "go124"
+
 type envelope struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
@@ -76,11 +81,17 @@ type response struct {
 }
 
 func main() {
-	runtime := flag.String("runtime", "go124", "runtime id (informational)")
+	runtime := flag.String("runtime", "go124", "runtime id: go124, go124-alpine or binary")
 	handlerPath := flag.String("handler", "/app/handler", "path to customer handler binary")
 	flag.Parse()
-	if *runtime != "go124" {
-		log.Printf("warning: --runtime=%s ignored; only go124 is supported by this binary", *runtime)
+	switch *runtime {
+	case "binary":
+		// ADR-987: the binary runtime shares this runner and reports its
+		// own identity in telemetry and to the handler.
+		reportedRuntime = "binary"
+	case "go124", "go124-alpine":
+	default:
+		log.Printf("warning: --runtime=%s ignored; this runner serves go124, go124-alpine and binary", *runtime)
 	}
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("go124 runner: handler not found at %s: %v", *handlerPath, err)
@@ -102,7 +113,7 @@ func main() {
 		// have no reseed preload, so on every resume the runner replaces
 		// them before the instance serves traffic; a Go process starts in
 		// milliseconds, and the replacement starts in the background.
-		internal.RegisterRestoreRecycle("go124", func() error {
+		internal.RegisterRestoreRecycle(reportedRuntime, func() error {
 			workerpool.Recycle()
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -132,7 +143,7 @@ func main() {
 	})
 	// Issue #470 / PR #470-FU-B: framework_ready signal fires once
 	// per wake when the runner's first non-5xx response lands.
-	signal := internal.NewRunnerSignal("go124", time.Now())
+	signal := internal.NewRunnerSignal(reportedRuntime, time.Now())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, *handlerPath, signal, tailWaitSec, tailPipePath)
 	})
@@ -186,7 +197,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	started := time.Now()
 	resp, processUsage, err := invokeHandler(r.Context(), handlerPath, env)
 	if err != nil {
-		internal.ObserveGuestExecution(r.Context(), "go124", started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
+		internal.ObserveGuestExecution(r.Context(), reportedRuntime, started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
 		log.Printf("go124 runner: handler error: %v", err)
 		internal.WriteHandlerFailure(w, r, err)
 		return
@@ -194,7 +205,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	if resp.Status == 0 {
 		resp.Status = http.StatusOK
 	}
-	evidence := internal.ObserveGuestExecution(r.Context(), "go124", started, resp.Status, nil).WithProcessUsage(processUsage)
+	evidence := internal.ObserveGuestExecution(r.Context(), reportedRuntime, started, resp.Status, nil).WithProcessUsage(processUsage)
 	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
 	// writing the response. The drain runs AFTER invokeHandler
 	// returns (the handler has already written to the JSONL
@@ -228,7 +239,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 func handlerSpec(handlerPath string) workerpool.Spec {
 	return workerpool.Spec{
 		Executable:     handlerPath,
-		Env:            append(os.Environ(), "FAAS_RUNTIME=go124"),
+		Env:            append(os.Environ(), "FAAS_RUNTIME="+reportedRuntime),
 		HandlerPath:    handlerPath,
 		MarkerAnywhere: true,
 	}

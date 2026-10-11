@@ -16,6 +16,28 @@ var FunctionRuntimes = []string{
 	"go124-alpine",
 	"node24",
 	"python313",
+	FunctionRuntimeBinary,
+}
+
+// FunctionRuntimeBinary runs one statically linked Linux executable, built
+// from the function's Dockerfile, in any compiled language (ADR-987). It has
+// no base image of its own: it runs on the go124 base and runner.
+const FunctionRuntimeBinary = "binary"
+
+// FunctionBaseRuntime returns the runtime whose base image and runner serve
+// runtime. Only binary differs: it shares go124's.
+func FunctionBaseRuntime(runtime string) string {
+	if runtime == FunctionRuntimeBinary {
+		return "go124"
+	}
+	return runtime
+}
+
+// FunctionRuntimeBuildsFromDockerfile reports whether a function runtime is
+// built from the customer's Dockerfile. Other function runtimes use the
+// platform's language builds and refuse a Dockerfile.
+func FunctionRuntimeBuildsFromDockerfile(runtime string) bool {
+	return runtime == FunctionRuntimeBinary
 }
 
 // ValidateExistingAppShape enforces the immutable app class and function

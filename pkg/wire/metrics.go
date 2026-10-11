@@ -405,7 +405,7 @@ type OpsMetrics struct {
 	//             DGRAM envelope; "failed" includes handler_error
 	//             AND forced_at_park — the per-plan breakdown is on
 	//             guestTailFailedTotal below)
-	// 4 plans × 5 runtimes × 3 outcomes = 60 series. Buckets
+	// 4 plans × 6 runtimes × 3 outcomes = 72 series. Buckets
 	// {0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 180, 600}: the 60s
 	// bucket matches the Scale plan's TailTimeoutS ceiling; the 180s
 	// bucket catches a runaway tail (3× the longest plan ceiling) so
@@ -2585,7 +2585,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Buckets rationale is in the OpsMetrics field doc comment.
 	guestTailSeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_guest_tail_seconds",
-		Help: "Wall-clock seconds a waitUntil(promise) task ran from registration to terminal (issue #667 / ADR-078). Labelled by {plan, runtime, outcome} — plan ∈ api.Plans, runtime ∈ {node22, node24, python312, python313, go124}, outcome ∈ {completed, failed, timeout}. 60 series total. Buckets sized for the Free→Scale TailTimeoutS matrix (5…60s) plus a 180s bucket for a runaway tail and a 600s bucket matching buildDur's ceiling.",
+		Help: "Wall-clock seconds a waitUntil(promise) task ran from registration to terminal (issue #667 / ADR-078). Labelled by {plan, runtime, outcome} — plan ∈ api.Plans, runtime ∈ {node22, node24, python312, python313, go124, binary}, outcome ∈ {completed, failed, timeout}. 72 series total. Buckets sized for the Free→Scale TailTimeoutS matrix (5…60s) plus a 180s bucket for a runaway tail and a 600s bucket matching buildDur's ceiling.",
 		Buckets: []float64{
 			0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 180, 600,
 		},
@@ -5000,15 +5000,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// outcome) cartesian for guestTailSeconds, the (plan × reason)
 	// cartesian for guestTailFailedTotal, and the plan set for
 	// tailCapReached. All three are closed sets; runtime is the
-	// ADR-052 hard-coded list of 5 images (bumping this list is
+	// ADR-052 hard-coded runtime list (5 images plus binary, ADR-987) (bumping this list is
 	// the load-bearing step when a new runtime is added). An idle
 	// box with no waitUntil traffic would otherwise render the
 	// §12 tail-watchdog panels as "no data" until the first tail
-	// fires. 60 + 16 + 4 = 80 series; the cardinality test pins
+	// fires. 72 + 16 + 4 = 92 series; the cardinality test pins
 	// the bound.
 	for _, plan := range api.Plans {
 		for _, runtime := range []string{
-			"node22", "node24", "python312", "python313", "go124",
+			"node22", "node24", "python312", "python313", "go124", "binary",
 		} {
 			for _, outcome := range []string{"completed", "failed", "timeout"} {
 				guestTailSeconds.WithLabelValues(string(plan), runtime, outcome)

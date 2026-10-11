@@ -250,7 +250,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
+			"Invalid runtime", "functions require runtime "+strings.Join(api.FunctionRuntimes, ", "))
 	}
 	visibility := api.AppVisibility(req.Visibility)
 	if visibility == "" {
