@@ -9686,3 +9686,6 @@ const CommitRecoveryStallThresholdMax = CommitRecoveryDiagnosticAgeMax
 // Durable alert queues reserve one terminal notification per active incident.
 const CommitRecoveryAlertQueueMax = 1024
 const CommitRecoveryAlertSequenceMax uint64 = 9007199254740991
+
+// EventConsumerDeliveryHealthSampleMax bounds the oldest pending blocker sample.
+const EventConsumerDeliveryHealthSampleMax = 50

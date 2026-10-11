@@ -9,6 +9,7 @@ import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
+import type { EventConsumerDeliveryHealth } from '../models/EventConsumerDeliveryHealth.js';
 import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecutionHealth.js';
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
@@ -1417,6 +1418,49 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         503: `Workflow replay request exceeded its processing deadline.`,
+      },
+    });
+  }
+  /**
+   * Inspect subscription delivery health across routing and retained execution evidence.
+   * Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Execution counts include retained handler replays and remain historically incomplete. Pending blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+   * @returns EventConsumerDeliveryHealth Independent routing, execution, and oldest pending sample reads.
+   * @throws ApiError
+   */
+  public static getEventConsumerDeliveryHealth({
+    slug,
+    subscriptionId,
+    window = '5m',
+  }: {
+    /**
+     * Application slug for this operation: inspect consumer execution health over a retained history window.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect consumer execution health over a retained history window.
+     */
+    subscriptionId: string,
+    /**
+     * Retained observation window for this operation: inspect consumer execution health over a retained history window.
+     */
+    window?: '5m' | '15m' | '1h' | '6h' | '24h',
+  }): CancelablePromise<EventConsumerDeliveryHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'window': window,
+      },
+      errors: {
+        400: `Invalid subscription identifier or observation window.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Subscription control request timed out.`,
       },
     });
   }

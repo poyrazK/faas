@@ -26,6 +26,8 @@ func cmdEvents(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "subscription-delivery-health":
+		return cmdEventsSubscriptionDeliveryHealth(args[1:])
 	case "subscription-execution-health":
 		return cmdEventsSubscriptionExecutionHealth(args[1:])
 	case "schema-rollout-preview":

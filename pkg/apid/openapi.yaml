@@ -29250,6 +29250,48 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health:
+    get:
+      tags: [events]
+      operationId: getEventConsumerDeliveryHealth
+      summary: Inspect subscription delivery health across routing and retained execution evidence.
+      description: Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Execution counts include retained handler replays and remain historically incomplete. Pending blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect consumer execution health over a retained history window."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect consumer execution health over a retained history window."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: window
+          description: "Retained observation window for this operation: inspect consumer execution health over a retained history window."
+          in: query
+          schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h], default: 5m }
+      responses:
+        '200':
+          description: Independent routing, execution, and oldest pending sample reads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventConsumerDeliveryHealth' }
+        '400':
+          description: Invalid subscription identifier or observation window.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Subscription control request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health:
     get:
       tags: [events]
@@ -53611,12 +53653,42 @@ components:
       properties:
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
 
+    EventConsumerDeliveryHealth:
+      type: object
+      additionalProperties: false
+      description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
+      required: [started_at, observed_at, routing, execution, pending_sample]
+      properties:
+        started_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        routing: { $ref: '#/components/schemas/EventConsumerHealth' }
+        execution: { $ref: '#/components/schemas/EventConsumerExecutionHealth' }
+        pending_sample: { $ref: '#/components/schemas/EventConsumerPendingSample' }
+
+    EventConsumerPendingSample:
+      type: object
+      additionalProperties: false
+      description: Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and subscription ties. Waiting reason counts cover only these recipients.
+      required: [observed_at, coverage, truncated, waiting_reasons, recipients]
+      properties:
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [oldest_pending_recipients] }
+        truncated: { type: boolean, description: More pending recipients existed in this read. }
+        waiting_reasons:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        recipients:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+
     EventConsumerExecutionHealth:
       type: object
       additionalProperties: false
       description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always incomplete.'
       required: [subscription_id, app_id, observed_at, window_start, coverage, history_complete, truncated, retained_roots, missing_roots, executions, queued, running, retrying, succeeded, failed, expired, dead_lettered, cancelled, superseded, unknown, successful_attempts, failed_attempts, unknown_attempts, window_completions, window_dead_letters, handler_failure_pct, dead_letter_rate_per_second, completion_latency_p95_seconds]
       properties:
+        latest_successful_completion_at: { type: string, format: date-time, description: Latest valid successful completion among the bounded retained executions; absent when no such completion is retained. Not an all-time watermark and not restricted to the attempt window. }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         observed_at: { type: string, format: date-time }

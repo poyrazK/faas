@@ -6,6 +6,10 @@
  * Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always incomplete.
  */
 export type EventConsumerExecutionHealth = {
+  /**
+   * Latest valid successful completion among the bounded retained executions; absent when no such completion is retained. Not an all-time watermark and not restricted to the attempt window.
+   */
+  latest_successful_completion_at?: string;
   subscription_id: string;
   app_id: string;
   observed_at: string;

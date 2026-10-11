@@ -462,3 +462,13 @@ type CommitRecoveryAlertAcknowledgement = api.CommitRecoveryAlertAcknowledgement
 func AcknowledgeCommitRecoveryAlerts(status CommitRecoveryStatusResult, acks []CommitRecoveryAlertAcknowledgement) (CommitRecoveryStatusResult, error) {
 	return api.AcknowledgeCommitRecoveryAlerts(status, acks)
 }
+
+// EventConsumerDeliveryHealth combines independent delivery health reads.
+type EventConsumerDeliveryHealth = api.EventConsumerDeliveryHealth
+type EventConsumerPendingSample = api.EventConsumerPendingSample
+
+type EventConsumerHealth = api.EventConsumerHealth
+type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
+type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
+type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
+type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy

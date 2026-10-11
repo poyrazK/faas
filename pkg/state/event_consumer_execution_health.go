@@ -53,6 +53,10 @@ func recordConsumerExecution(out *api.EventConsumerExecutionHealth, state string
 		out.Running++
 	case InvocationCompleted:
 		out.Succeeded++
+		if completed != nil && !completed.Before(accepted) && !completed.After(out.ObservedAt) && (out.LatestSuccessfulCompletionAt == nil || completed.After(*out.LatestSuccessfulCompletionAt)) {
+			at := *completed
+			out.LatestSuccessfulCompletionAt = &at
+		}
 		if completed != nil && !completed.Before(out.WindowStart) && !completed.After(out.ObservedAt) {
 			out.WindowCompletions++
 			*latencies = append(*latencies, max(0, completed.Sub(accepted).Seconds()))

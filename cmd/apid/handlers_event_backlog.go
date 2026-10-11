@@ -154,18 +154,22 @@ func eventBacklogResponse(result state.EventBacklog, q state.EventBacklogQuery, 
 		NextAfter:          encodeEventBacklogCursor("recipient", accountID, q, result.Next, state.EventBacklogConsumerPosition{}),
 		NextConsumersAfter: encodeEventBacklogCursor("consumer", accountID, q, state.EventBacklogPosition{}, result.NextConsumer)}
 	for _, entry := range result.Recipients {
-		r := entry.EventBacklogRecipient
-		r.ReceiptURL = eventReceiptURL(r.EventSource, r.EventID)
-		if r.OrderingBlocker != nil {
-			blocker := *r.OrderingBlocker
-			blocker.ReceiptURL = eventReceiptURL(blocker.EventSource, blocker.EventID)
-			r.OrderingBlocker = &blocker
-		}
-		if r.AppSlug != "" && r.ConsumerKind != "workflow" {
-			query := url.Values{"event_source": {r.EventSource}, "event_id": {r.EventID}, "subscription_id": {r.SubscriptionID}}
-			r.FanoutHistoryURL = "/v1/apps/" + url.PathEscape(r.AppSlug) + "/event-deliveries/attempts?" + query.Encode()
-		}
+		r := eventBacklogRecipientResponse(entry.EventBacklogRecipient)
 		out.Recipients = append(out.Recipients, r)
 	}
 	return out
+}
+
+func eventBacklogRecipientResponse(r api.EventBacklogRecipient) api.EventBacklogRecipient {
+	r.ReceiptURL = eventReceiptURL(r.EventSource, r.EventID)
+	if r.OrderingBlocker != nil {
+		blocker := *r.OrderingBlocker
+		blocker.ReceiptURL = eventReceiptURL(blocker.EventSource, blocker.EventID)
+		r.OrderingBlocker = &blocker
+	}
+	if r.AppSlug != "" && r.ConsumerKind != "workflow" {
+		query := url.Values{"event_source": {r.EventSource}, "event_id": {r.EventID}, "subscription_id": {r.SubscriptionID}}
+		r.FanoutHistoryURL = "/v1/apps/" + url.PathEscape(r.AppSlug) + "/event-deliveries/attempts?" + query.Encode()
+	}
+	return r
 }

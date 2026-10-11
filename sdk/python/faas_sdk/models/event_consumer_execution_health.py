@@ -11,6 +11,7 @@ from ..models.event_consumer_execution_health_coverage import (
     EventConsumerExecutionHealthCoverage,
     check_event_consumer_execution_health_coverage,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EventConsumerExecutionHealth")
 
@@ -54,6 +55,9 @@ class EventConsumerExecutionHealth:
     handler_failure_pct: float
     dead_letter_rate_per_second: float
     completion_latency_p95_seconds: float
+    latest_successful_completion_at: datetime.datetime | Unset = UNSET
+    """Latest valid successful completion among the bounded retained executions; absent when no such completion is
+    retained. Not an all-time watermark and not restricted to the attempt window."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)
@@ -112,6 +116,10 @@ class EventConsumerExecutionHealth:
 
         completion_latency_p95_seconds = self.completion_latency_p95_seconds
 
+        latest_successful_completion_at: str | Unset = UNSET
+        if not isinstance(self.latest_successful_completion_at, Unset):
+            latest_successful_completion_at = self.latest_successful_completion_at.isoformat()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -146,6 +154,8 @@ class EventConsumerExecutionHealth:
                 "completion_latency_p95_seconds": completion_latency_p95_seconds,
             }
         )
+        if latest_successful_completion_at is not UNSET:
+            field_dict["latest_successful_completion_at"] = latest_successful_completion_at
 
         return field_dict
 
@@ -208,6 +218,13 @@ class EventConsumerExecutionHealth:
 
         completion_latency_p95_seconds = d.pop("completion_latency_p95_seconds")
 
+        _latest_successful_completion_at = d.pop("latest_successful_completion_at", UNSET)
+        latest_successful_completion_at: datetime.datetime | Unset
+        if isinstance(_latest_successful_completion_at, Unset):
+            latest_successful_completion_at = UNSET
+        else:
+            latest_successful_completion_at = datetime.datetime.fromisoformat(_latest_successful_completion_at)
+
         event_consumer_execution_health = cls(
             subscription_id=subscription_id,
             app_id=app_id,
@@ -237,6 +254,7 @@ class EventConsumerExecutionHealth:
             handler_failure_pct=handler_failure_pct,
             dead_letter_rate_per_second=dead_letter_rate_per_second,
             completion_latency_p95_seconds=completion_latency_p95_seconds,
+            latest_successful_completion_at=latest_successful_completion_at,
         )
 
         return event_consumer_execution_health

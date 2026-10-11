@@ -2473,3 +2473,9 @@ Printing or writing an alert is not acknowledgement from the consumer. After pro
 The CLI saves each snapshot before emitting alerts, including final-check transitions, and re-emits unacknowledged pending entries once per resumed invocation. This is at-least-once delivery of checkpointed notifications, not exactly-once processing; deduplicate by incident ID and sequence, and apply only transitions newer than the last sequence processed for that incident. Partial acknowledgements can replay an older transition after a newer one was processed. Resume the latest snapshot of a single checkpoint stream; SDK callers must serialize checkpoint ownership and writes. Notifications that were never checkpointed have no durability guarantee. Consumer acknowledgements are explicit; stderr success does not remove pending alerts.
 
 The queue is bounded at 1,024 slots, including a reserved closing transition for every active incident. If a new opening cannot reserve both slots, monitoring stops with `alert_queue_full` and retains queued notifications and the sampled status. Acknowledge pending work and resume. No queued transition is evicted. Notification sequences are bounded to the exact integer range shared by the SDKs. Invalid saved state/acknowledgements are rejected and do not overwrite the CLI checkpoint. Non-durable watches retain the previous per-pass behavior. Delivery mutations, receipt budgets and ordinary watch completion are unchanged.
+
+`EventsService.getEventConsumerDeliveryHealth({ slug, subscriptionID, window: '15m' })`
+returns independent routing/execution reads and an oldest-first pending sample.
+Check component timestamps, truncation, and retention coverage. Sampled blocker
+counts and retained dead-letter/retry counts are not all-time event totals;
+`latest_successful_completion_at` is the latest retained observed completion.

@@ -1001,10 +1001,14 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_delivery_health import EventConsumerDeliveryHealth
 from .event_consumer_execution_health import EventConsumerExecutionHealth
 from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
 from .event_consumer_health import EventConsumerHealth
 from .event_consumer_health_coverage import EventConsumerHealthCoverage
+from .event_consumer_pending_sample import EventConsumerPendingSample
+from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
+from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
@@ -1361,6 +1365,7 @@ from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
 from .get_event_backlog_state import GetEventBacklogState
 from .get_event_backlog_waiting_reason import GetEventBacklogWaitingReason
+from .get_event_consumer_delivery_health_window import GetEventConsumerDeliveryHealthWindow
 from .get_event_consumer_execution_health_window import GetEventConsumerExecutionHealthWindow
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
@@ -4417,10 +4422,14 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerDeliveryHealth",
     "EventConsumerExecutionHealth",
     "EventConsumerExecutionHealthCoverage",
     "EventConsumerHealth",
     "EventConsumerHealthCoverage",
+    "EventConsumerPendingSample",
+    "EventConsumerPendingSampleCoverage",
+    "EventConsumerPendingSampleWaitingReasons",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
@@ -4765,6 +4774,7 @@ __all__ = (
     "GetEventBacklogOrigin",
     "GetEventBacklogState",
     "GetEventBacklogWaitingReason",
+    "GetEventConsumerDeliveryHealthWindow",
     "GetEventConsumerExecutionHealthWindow",
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",

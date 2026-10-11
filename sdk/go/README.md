@@ -875,3 +875,10 @@ with exact acknowledged pending entries removed. The input is unchanged. It does
 not poll or restore live incident confirmation. Persist the returned snapshot
 atomically under exclusive checkpoint ownership before treating acknowledgements
 as durable. Passing no acknowledgements validates the queue for inspection/replay.
+
+`client.GetEventConsumerDeliveryHealth(ctx, app, subscriptionID, "15m")` returns
+routing health, bounded retained execution health, and an oldest-first pending
+blocker sample in one request. Component timestamps describe independent reads.
+Pending sample reason counts are sampled when truncated; execution history is
+always incomplete. Latest successful completion is a retained observation, not
+an all-time delivery watermark.

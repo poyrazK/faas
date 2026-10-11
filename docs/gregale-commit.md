@@ -1701,3 +1701,32 @@ queue. Active reservations and saved evidence remain historical and unchanged.
 All operations hold checkpoint ownership and fail while another watch owns it.
 Local validation checks saved queue/selection consistency, not fresh delivery
 state or independent correspondence with an original reviewed plan.
+
+### Subscription delivery health
+
+```sh
+gregale events subscription-delivery-health my-app <subscription-id> --window 15m
+gregale --json events subscription-delivery-health my-app <subscription-id> --window 15m
+```
+
+The read-only `GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health`
+combines routing health, retained execution health, and up to 50 oldest pending
+application recipients. Routing pending/processing counts cover the live backlog.
+Execution retrying and dead-letter counts include retained handler replays, are
+bounded, and are historically incomplete; routing success alone is admission.
+`latest_successful_completion_at` is the latest valid success among retained
+executions, not an all-time watermark. It is absent when no valid retained
+completion is available. The metrics window does not restrict current execution
+state counts or this timestamp.
+
+`pending_sample.waiting_reasons` counts sampled pending recipients only. Inspect
+`truncated` before treating those counts as complete. The first recipient identifies
+the oldest pending event in that read. Paused state, circuit state, and configured
+rate describe subscription controls; sampled recipients show actual waiting reasons,
+including capacity and ordering blockers. No overall healthy verdict is inferred.
+
+Each component is an independent read with its own `observed_at`; top-level
+`started_at` and `observed_at` bound assembly. Concurrent progress may make their
+counts differ. The response is not cached, uses the existing bounded subscription
+read deadline, and fails if any component read fails. Supported windows are
+`5m`, `15m`, `1h`, `6h`, and `24h` (default `5m`).
