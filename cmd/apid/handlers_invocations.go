@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
@@ -40,58 +40,10 @@ import (
 // added the third occurrence in replayInvocation).
 const defaultInvokeMethod = "POST"
 
-// decodeJSONLimit is a MaxBytesReader-wrapped variant of decodeJSON.
-// The plan's MaxSourceBytesPerInvocation caps each event-driven payload
-// (Hobby 64 KB, Pro 256 KB, Scale 1 MB); anything larger is a 413, not
-// a 422 — the size limit is a plan cap, not a malformed-body problem.
-//
-// Returns false if the read or decode fails; the helper writes the
-// appropriate Problem response in that case so the caller can simply
-// `return`.
+// decodeJSONLimit is a facade over httpkit.DecodeJSONLimit (ADR-977): a
+// plan-capped decode that writes the 413/422 problem itself and returns false.
 func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) bool {
-	if maxBytes <= 0 {
-		maxBytes = 1 << 20 // 1 MB hard fallback — defensive only
-	}
-	if r.ContentLength > maxBytes {
-		api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), r.ContentLength))
-		return false
-	}
-	if r.Body == nil {
-		api.WriteProblem(w, api.ErrValidation("empty request body"))
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		if errors.Is(err, io.EOF) {
-			api.WriteProblem(w, api.ErrValidation("empty request body"))
-			return false
-		}
-		// MaxBytesReader returns a *http.MaxBytesError on overflow;
-		// surface as a 413 with the source-bytes cap code.
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
-			api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), int64(mbe.Limit)))
-			return false
-		}
-		api.WriteProblem(w, api.ErrValidation("malformed JSON: "+err.Error()))
-		return false
-	}
-	var extra any
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), int64(maxBytes)))
-			return false
-		}
-		if err == nil {
-			err = errors.New("request body must contain a single JSON value")
-		}
-		api.WriteProblem(w, api.ErrValidation("malformed JSON: "+err.Error()))
-		return false
-	}
-	return true
+	return httpkit.DecodeJSONLimit(w, r, dst, maxBytes)
 }
 
 // --- async invoke -----------------------------------------------------------
