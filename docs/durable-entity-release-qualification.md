@@ -5,6 +5,11 @@ visibility, reconnectable service sessions and session recovery/lifecycle. This 
 native storage or runtime behavior has passed. Production preview gates remain
 off until the operator's native qualification is recorded.
 
+Use the authenticated [readiness report](durable-entity-readiness.md) to inspect
+the serving node's app configuration and outstanding external acceptance checks.
+It does not infer release acceptance from startup success or consume admission
+budgets.
+
 ## CI evidence
 
 The `durable-entity-developer-workflow` workflow runs on its development branch
