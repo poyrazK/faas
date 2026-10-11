@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,7 +35,7 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	}
 	readReceipt := func() api.EventReceiptResponse {
 		t.Helper()
-		rec := e.do(t, "GET", eventReceiptURL("orders", "receipt-1"), nil, nil)
+		rec := e.do(t, "GET", appevents.EventReceiptURL("orders", "receipt-1"), nil, nil)
 		var result api.EventReceiptResponse
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &result) != nil {
 			t.Fatalf("receipt: %d %s", rec.Code, rec.Body)
@@ -105,7 +106,7 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	if rec := e.do(t, "POST", action.URL, nil, nil); rec.Code != 409 {
 		t.Fatalf("pruned recovery executed again: %d %s", rec.Code, rec.Body)
 	}
-	for _, path := range []string{eventReceiptReplayURL("orders", "receipt-1", work.RecipientSnapshot[0].ID) + "&after=" + url.QueryEscape(page.NextAfter), historyPath + "&after=err1.garbage", historyPath + "&limit=201", historyPath + "&after=" + url.QueryEscape(strings.Repeat("x", 8193))} {
+	for _, path := range []string{appevents.EventReceiptReplayURL("orders", "receipt-1", work.RecipientSnapshot[0].ID) + "&after=" + url.QueryEscape(page.NextAfter), historyPath + "&after=err1.garbage", historyPath + "&limit=201", historyPath + "&after=" + url.QueryEscape(strings.Repeat("x", 8193))} {
 		if rec := e.do(t, "GET", path, nil, nil); rec.Code != 400 {
 			t.Fatalf("invalid history: %d %s", rec.Code, rec.Body)
 		}
@@ -120,7 +121,7 @@ func TestEventReceiptReplayReadScope(t *testing.T) {
 	}{{api.ScopeAppsRead, 404}, {api.ScopeEventsPublish, 403}, {api.ScopeUsageRead, 403}} {
 		t.Run(test.scope, func(t *testing.T) {
 			e := setupWithScopes(t, []string{test.scope})
-			if rec := e.do(t, "GET", eventReceiptReplayURL("orders", "missing", "sub"), nil, nil); rec.Code != test.status {
+			if rec := e.do(t, "GET", appevents.EventReceiptReplayURL("orders", "missing", "sub"), nil, nil); rec.Code != test.status {
 				t.Fatalf("read scope: %d %s", rec.Code, rec.Body)
 			}
 		})
@@ -130,12 +131,12 @@ func TestEventReceiptReplayReadScope(t *testing.T) {
 // adr: 608
 func TestEventReceiptReplayCursorIdentityAndRetention(t *testing.T) {
 	history := state.EventReceiptReplayHistory{OutboxID: 1, EventSource: strings.Repeat("&", 256), EventID: strings.Repeat("<", 256), SubscriptionID: strings.Repeat(">", 256), NextCursor: state.EventReceiptReplayCursor{OutboxID: 1, CreatedAt: time.Now(), InvocationID: "00000000-0000-0000-0000-000000000001"}}
-	raw := eventReceiptReplayResponse("account", history).NextAfter
-	cursor, err := decodeEventReceiptReplayCursor(raw, "account", history.EventSource, history.EventID, history.SubscriptionID)
+	raw := appevents.EventReceiptReplayResponse("account", history).NextAfter
+	cursor, err := appevents.DecodeEventReceiptReplayCursor(raw, "account", history.EventSource, history.EventID, history.SubscriptionID)
 	if err != nil || cursor.OutboxID != 1 || cursor.InvocationID != history.NextCursor.InvocationID || !cursor.CreatedAt.Equal(history.NextCursor.CreatedAt) {
 		t.Fatalf("maximum identity cursor: %d %+v %v", len(raw), cursor, err)
 	}
-	if _, err := decodeEventReceiptReplayCursor(raw, "foreign", history.EventSource, history.EventID, history.SubscriptionID); err == nil {
+	if _, err := appevents.DecodeEventReceiptReplayCursor(raw, "foreign", history.EventSource, history.EventID, history.SubscriptionID); err == nil {
 		t.Fatal("cross-account cursor accepted")
 	}
 }

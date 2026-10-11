@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 )
 
-// Facades over pkg/apid/httpkit (ADR-977); new and lifted code calls httpkit
+// Facades over pkg/apid/httpkit (ADR-982); new and lifted code calls httpkit
 // directly.
 
 // writeCustomerInternalProblem keeps dependency and storage error text in

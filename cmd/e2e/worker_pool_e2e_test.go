@@ -37,7 +37,9 @@ func TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn(t *testing.T) {
 	//    resolved with them.
 	workerMode := api.ExecutionModeWorker
 	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug, api.UpdateAppRequest{
-		ExecutionMode:  &workerMode,
+		ExecutionMode: &workerMode,
+		// The per-app instance cap also bounds workers; the create default is one.
+		MaxConcurrency: &poolMax,
 		WorkerReplicas: &api.WorkerScaling{Min: 0, Max: poolMax},
 		ScalingPolicy: &api.ScalingPolicy{
 			Targets:           []api.ScalingTarget{{Metric: api.ScalingMetricQueueDepth, Value: 1}},
@@ -64,6 +66,9 @@ func TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn(t *testing.T) {
 	}
 	if got := app.Manifest.ExecutionMode; got != api.ExecutionModeWorker {
 		t.Fatalf("execution mode did not survive apid -> Postgres: %q", got)
+	}
+	if app.MaxConcurrency != poolMax {
+		t.Fatalf("instance cap did not survive apid -> Postgres: got=%d want=%d", app.MaxConcurrency, poolMax)
 	}
 	if got := workerCount(t, f); got != 0 {
 		t.Fatalf("min=0 pool started with %d workers before any backlog", got)

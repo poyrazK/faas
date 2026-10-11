@@ -48,11 +48,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe)
 		os.Exit(1)
 	}
+	workload, err := postgresprobe.NewPoolWorkload(context.Background(), config)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe)
+		os.Exit(1)
+	}
+	defer workload.Close()
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	server := http.Server{Addr: ":" + port, Handler: config.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	server := http.Server{Addr: ":" + port, Handler: workload.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe)
 		os.Exit(1)

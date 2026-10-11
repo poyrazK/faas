@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -56,7 +57,7 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrInternal("application identity"))
 		return
 	}
-	envelope, err := normalizePublishRequest(api.PublishEventRequest{ID: id, Source: source, Type: req.Type, Time: req.Time, Data: req.Data, SchemaVersion: req.SchemaVersion}, acct.ID)
+	envelope, err := appevents.NormalizePublishRequest(api.PublishEventRequest{ID: id, Source: source, Type: req.Type, Time: req.Time, Data: req.Data, SchemaVersion: req.SchemaVersion}, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
@@ -73,7 +74,7 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	comparison, err := store.ComparePublishedEventAcceptance(ctx, acct.ID, payload)
-	out := api.AppEventPublicationVerification{AppID: appID, Source: source, EventID: id, ReceiptURL: eventReceiptURL(source, id), ObservedAt: time.Now().UTC(), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
+	out := api.AppEventPublicationVerification{AppID: appID, Source: source, EventID: id, ReceiptURL: appevents.EventReceiptURL(source, id), ObservedAt: time.Now().UTC(), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
 	if errors.Is(err, state.ErrNotFound) {
 		out.Status, out.Reason = "unavailable", "not_retained_or_not_observed"
 		out.Acceptance = guard.Compare(nil)
@@ -81,7 +82,7 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		s.writeEventReceiptError(w, r, err)
+		s.appEvents.WriteEventReceiptError(w, r, err)
 		return
 	}
 	out.Acceptance = guard.Compare(&comparison.AcceptedAt)

@@ -10,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -106,7 +108,7 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
 		return
 	}
-	envelope, err := normalizePublishRequest(req, acct.ID)
+	envelope, err := appevents.NormalizePublishRequest(req, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
@@ -115,7 +117,7 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrValidation("gregale.* sources are reserved for platform events"))
 		return
 	}
-	if !s.validateEventSchemaForIngress(w, r, acct.ID, envelope) {
+	if !s.appEvents.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
 	clientEventID := envelope.ID
@@ -144,7 +146,7 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 			s.notFound(w, "app not found")
 			return
 		}
-		if writeEventStorageCapacity(w, err) {
+		if appevents.WriteEventStorageCapacity(w, err) {
 			return
 		}
 		var pgErr *pgconn.PgError
@@ -203,7 +205,7 @@ func (s *server) getPlatformTenantSelfEventReceipt(w http.ResponseWriter, r *htt
 	}
 	receipt, err := store.EventReceipt(r.Context(), acct.ID, source, id, cursor, limit)
 	if err != nil {
-		s.writeEventReceiptError(w, r, err)
+		s.appEvents.WriteEventReceiptError(w, r, err)
 		return
 	}
 	tenantID, ok := platformTenantSelfID(w, r)
@@ -214,7 +216,7 @@ func (s *server) getPlatformTenantSelfEventReceipt(w http.ResponseWriter, r *htt
 		s.notFound(w, "event receipt not found")
 		return
 	}
-	response := eventReceiptResponse(acct.ID, receipt)
+	response := appevents.EventReceiptResponse(acct.ID, receipt)
 	response.NextAfter = encodePlatformTenantEventReceiptCursor(app.Slug, receipt)
 	for i := range response.Recipients {
 		// Tenant event fanout contains only workflow starts. Keep the receipt

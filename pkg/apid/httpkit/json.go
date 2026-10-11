@@ -1,5 +1,5 @@
 // Package httpkit is the request/response kit shared by cmd/apid and the
-// pkg/apid/<domain> packages that are being lifted out of it (ADR-977).
+// pkg/apid/<domain> packages that are being lifted out of it (ADR-982).
 //
 // Everything here is stateless: no *server, no store, no globals. A domain
 // package that needs the authenticated app takes an AppLoader; one that needs

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -81,7 +82,7 @@ func TestEventWorkflowRecipientRecoveryPostgresHTTP(t *testing.T) {
 		}
 	}
 	read := func() api.EventReceiptResponse {
-		r := e.do(t, http.MethodGet, eventReceiptURL("orders", "workflow-recovery"), nil, nil)
+		r := e.do(t, http.MethodGet, appevents.EventReceiptURL("orders", "workflow-recovery"), nil, nil)
 		var receipt api.EventReceiptResponse
 		if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &receipt) != nil {
 			t.Fatalf("receipt=%d %s", r.Code, r.Body)

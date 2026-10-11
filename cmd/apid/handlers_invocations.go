@@ -40,7 +40,7 @@ import (
 // added the third occurrence in replayInvocation).
 const defaultInvokeMethod = "POST"
 
-// decodeJSONLimit is a facade over httpkit.DecodeJSONLimit (ADR-977): a
+// decodeJSONLimit is a facade over httpkit.DecodeJSONLimit (ADR-982): a
 // plan-capped decode that writes the 413/422 problem itself and returns false.
 func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) bool {
 	return httpkit.DecodeJSONLimit(w, r, dst, maxBytes)
