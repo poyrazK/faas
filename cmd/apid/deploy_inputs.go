@@ -465,10 +465,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	// function deploy using the runner scaffold (§4.9). The runtime must
 	// be present and the handler must point at a real export.
 	if app.Type == state.AppTypeFunction {
-		if dockerfile || hasRootDockerfile {
+		// ADR-987: a binary function is built from its Dockerfile, whose
+		// image names one static executable; every other runtime uses the
+		// platform's language build and refuses a Dockerfile.
+		if api.FunctionRuntimeBuildsFromDockerfile(app.Runtime) {
+			if !dockerfile && !hasRootDockerfile {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Dockerfile required",
+					"binary functions are built from a Dockerfile whose ENTRYPOINT is one static executable inside /app; add a Dockerfile at the source root"))
+				return
+			}
+		} else if dockerfile || hasRootDockerfile {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Dockerfile functions unsupported",
-				"function deploys use the platform runtime scaffold; remove the Dockerfile and dockerfile=true"))
+				"function deploys use the platform runtime scaffold; remove the Dockerfile and dockerfile=true, or use runtime binary to build a compiled executable from it"))
 			return
 		}
 		kind = state.DeploymentKindTarball

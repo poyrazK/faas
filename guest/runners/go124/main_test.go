@@ -148,6 +148,28 @@ func TestHandle_CrashedHandlerIsTerminalHandlerError(t *testing.T) {
 	}
 }
 
+// ADR-987: the binary runtime shares this runner; the handler and telemetry
+// see runtime=binary, not go124.
+func TestHandle_BinaryRuntimeReportsItsIdentity(t *testing.T) {
+	previous := reportedRuntime
+	reportedRuntime = "binary"
+	t.Cleanup(func() { reportedRuntime = previous })
+	path := filepath.Join(t.TempDir(), "handler")
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		`printf '{"status":200,"headers":{"Content-Type":"text/plain"},"body_b64":"%s"}\n' "$(printf '%s' "$FAAS_RUNTIME" | base64)"` + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handle(rec, httptest.NewRequest(http.MethodGet, "/", nil), path, internal.NewRunnerSignal("binary-test", time.Now()), 0, "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "binary" {
+		t.Fatalf("status %d body %q, want the handler to see FAAS_RUNTIME=binary", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(api.GuestEvidenceRuntimeHeader); got != "binary" {
+		t.Fatalf("evidence runtime = %q, want binary", got)
+	}
+}
+
 // TestHandle_PersistentHandlerIsReused drives the runner with a handler that
 // advertises the persistent protocol past the 4 KiB prefix, where a compiled
 // Go binary carries it. Every request must reach the same process, and the

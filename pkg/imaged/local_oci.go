@@ -144,7 +144,7 @@ func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, arch
 		cleanup()
 		return nil, "", func() {}, err
 	}
-	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine {
+	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine || runtime == RuntimeBinary {
 		executable, err := goFunctionExecutable(config)
 		if err != nil {
 			cleanup()
@@ -354,7 +354,7 @@ func functionHandlerPaths(runtime string) (source, target string, err error) {
 		return "/app/handler.js", "/app/node24.js", nil
 	case RuntimePython312, RuntimePython313:
 		return "/app/handler.py", "/app/handler.py", nil
-	case RuntimeGo124, RuntimeGo124Alpine:
+	case RuntimeGo124, RuntimeGo124Alpine, RuntimeBinary:
 		return "/app/server", "/app/handler", nil
 	default:
 		return "", "", fmt.Errorf("unsupported function runtime %q", runtime)
