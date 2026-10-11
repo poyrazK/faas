@@ -601,7 +601,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the account's managed integration.
+        description: UUID of the integration whose extra provider keys are listed or added.
         schema: { type: string, format: uuid }
     get:
       tags: [outbound]
@@ -646,7 +646,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the account's managed integration.
+        description: UUID of the integration that holds the extra key.
         schema: { type: string, format: uuid }
       - name: key
         in: path
@@ -670,7 +670,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the account's managed integration.
+        description: UUID of the integration whose AI budget alerts are listed.
         schema: { type: string, format: uuid }
     get:
       tags: [outbound]
@@ -699,7 +699,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the account's managed integration.
+        description: UUID of the integration whose AI request log is read.
         schema: { type: string, format: uuid }
     get:
       tags: [outbound]
@@ -733,7 +733,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIRoutes
       summary: List the account's AI fallback routes.
-      description: Requires MFA and read scope (ADR-990).
+      description: Requires MFA and read scope (ADR-990). Lists every AI route the account owns.
       responses:
         '200':
           description: AI routes.
@@ -803,7 +803,7 @@ paths:
       - name: route
         in: path
         required: true
-        description: UUID of the AI route.
+        description: UUID of the AI route whose targets are replaced.
         schema: { type: string, format: uuid }
     put:
       tags: [outbound]
@@ -1109,7 +1109,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the app's bound AI integration.
+        description: UUID of the app's bound AI integration whose guardrails are replaced.
         schema: { type: string, format: uuid }
     put:
       tags: [outbound]
@@ -45887,6 +45887,7 @@ components:
         updated_at: { type: string, format: date-time }
     OutboundAIRouteList:
       type: object
+      description: The account's AI routes.
       required: [items]
       properties:
         items:
@@ -45894,6 +45895,7 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIRoute' }
     CreateOutboundAIRouteRequest:
       type: object
+      description: 'A new AI route with a DNS-label name, an optional format and 1 to 5 ordered targets.'
       required: [name, targets]
       properties:
         name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
@@ -45908,6 +45910,7 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
     PutOutboundAIRouteTargetsRequest:
       type: object
+      description: The complete ordered target list that replaces an AI route's targets.
       required: [targets]
       properties:
         targets:
@@ -45938,6 +45941,7 @@ components:
         created_at: { type: string, format: date-time }
     OutboundCredentialKeyList:
       type: object
+      description: An integration's extra provider keys, oldest first; values are never returned.
       required: [items]
       properties:
         items:
@@ -45945,6 +45949,7 @@ components:
           items: { $ref: '#/components/schemas/OutboundCredentialKey' }
     CreateOutboundCredentialKeyRequest:
       type: object
+      description: An extra provider key to seal for outboundd, with a DNS-label label.
       required: [label, authorization]
       properties:
         label: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' }
@@ -45965,6 +45970,7 @@ components:
         crossed_at: { type: string, format: date-time }
     OutboundAIBudgetAlertList:
       type: object
+      description: An integration's AI budget alerts, newest first.
       required: [items]
       properties:
         items:
@@ -45992,6 +45998,7 @@ components:
         attempts: { type: integer, minimum: 0 }
     OutboundAIRequestLogList:
       type: object
+      description: One newest-first page of the AI request log.
       required: [items, next_before]
       properties:
         items:

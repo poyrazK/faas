@@ -92,7 +92,8 @@ def sync_detailed(
     provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
-        body (CreateOutboundAIRouteRequest):
+        body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
+            format and 1 to 5 ordered targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,7 +128,8 @@ def sync(
     provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
-        body (CreateOutboundAIRouteRequest):
+        body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
+            format and 1 to 5 ordered targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,7 +159,8 @@ async def asyncio_detailed(
     provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
-        body (CreateOutboundAIRouteRequest):
+        body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
+            format and 1 to 5 ordered targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -190,7 +193,8 @@ async def asyncio(
     provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
-        body (CreateOutboundAIRouteRequest):
+        body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
+            format and 1 to 5 ordered targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

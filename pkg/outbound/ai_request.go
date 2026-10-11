@@ -60,7 +60,7 @@ func readAIRequest(r *http.Request, integration Integration, path string) (*aiRe
 		} `json:"stream_options"`
 	}
 	if json.Unmarshal(body, &envelope) != nil {
-		return req, nil
+		return req, nil //nolint:nilerr // a body that is not a JSON object is forwarded unchanged; only the stream fields are optional reads.
 	}
 	req.streaming = envelope.Stream
 	callerAskedForUsage := envelope.StreamOptions != nil && envelope.StreamOptions.IncludeUsage != nil && *envelope.StreamOptions.IncludeUsage

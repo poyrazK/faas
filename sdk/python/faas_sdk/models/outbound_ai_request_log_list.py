@@ -16,6 +16,8 @@ T = TypeVar("T", bound="OutboundAIRequestLogList")
 
 @_attrs_define
 class OutboundAIRequestLogList:
+    """One newest-first page of the AI request log."""
+
     items: list[OutboundAIRequestLogEntry]
     next_before: datetime.datetime | None
     """Pass as before to read the next page; null on the last page."""

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OutboundAIRouteTarget } from './OutboundAIRouteTarget.js';
+/**
+ * A new AI route with a DNS-label name, an optional format and 1 to 5 ordered targets.
+ */
 export type CreateOutboundAIRouteRequest = {
   name: string;
   /**

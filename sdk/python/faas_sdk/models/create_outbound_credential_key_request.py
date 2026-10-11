@@ -11,6 +11,8 @@ T = TypeVar("T", bound="CreateOutboundCredentialKeyRequest")
 
 @_attrs_define
 class CreateOutboundCredentialKeyRequest:
+    """An extra provider key to seal for outboundd, with a DNS-label label."""
+
     label: str
     authorization: str
     """Same format as the integration's primary credential; sealed for outboundd and never returned."""

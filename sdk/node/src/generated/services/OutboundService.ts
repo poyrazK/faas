@@ -441,7 +441,7 @@ export class OutboundService {
     integration,
   }: {
     /**
-     * UUID of the account's managed integration.
+     * UUID of the integration whose extra provider keys are listed or added.
      */
     integration: string,
   }): CancelablePromise<OutboundCredentialKeyList> {
@@ -473,7 +473,7 @@ export class OutboundService {
     requestBody,
   }: {
     /**
-     * UUID of the account's managed integration.
+     * UUID of the integration whose extra provider keys are listed or added.
      */
     integration: string,
     requestBody: CreateOutboundCredentialKeyRequest,
@@ -510,7 +510,7 @@ export class OutboundService {
     key,
   }: {
     /**
-     * UUID of the account's managed integration.
+     * UUID of the integration that holds the extra key.
      */
     integration: string,
     /**
@@ -547,7 +547,7 @@ export class OutboundService {
     limit,
   }: {
     /**
-     * UUID of the account's managed integration.
+     * UUID of the integration whose AI budget alerts are listed.
      */
     integration: string,
     /**
@@ -587,7 +587,7 @@ export class OutboundService {
     before,
   }: {
     /**
-     * UUID of the account's managed integration.
+     * UUID of the integration whose AI request log is read.
      */
     integration: string,
     /**
@@ -622,7 +622,7 @@ export class OutboundService {
   }
   /**
    * List the account's AI fallback routes.
-   * Requires MFA and read scope (ADR-990).
+   * Requires MFA and read scope (ADR-990). Lists every AI route the account owns.
    * @returns OutboundAIRouteList AI routes.
    * @throws ApiError
    */
@@ -740,7 +740,7 @@ export class OutboundService {
     requestBody,
   }: {
     /**
-     * UUID of the AI route.
+     * UUID of the AI route whose targets are replaced.
      */
     route: string,
     requestBody: PutOutboundAIRouteTargetsRequest,
@@ -1104,7 +1104,7 @@ export class OutboundService {
      */
     slug: string,
     /**
-     * UUID of the app's bound AI integration.
+     * UUID of the app's bound AI integration whose guardrails are replaced.
      */
     integration: string,
     requestBody: PutOutboundBindingAIGuardrailsRequest,

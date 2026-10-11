@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OutboundAIRequestLogEntry } from './OutboundAIRequestLogEntry.js';
+/**
+ * One newest-first page of the AI request log.
+ */
 export type OutboundAIRequestLogList = {
   items: Array<OutboundAIRequestLogEntry>;
   /**

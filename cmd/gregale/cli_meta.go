@@ -781,7 +781,7 @@ var cliCommands = []cliCommand{
 				{Name: "models", Short: "comma-separated models or prefixes ending in *, or none", Value: "LIST"},
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
-			{Name: "prices", Short: "Show the price list, or replace it with `prices set <integration-id> --price ...`", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
+			{Name: "prices", Short: "Show the price list, or replace it with: prices set <integration-id> --price ...", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
 			}},
 			{Name: "usage", Short: "Show one UTC day of token usage and cost by caller and model", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{

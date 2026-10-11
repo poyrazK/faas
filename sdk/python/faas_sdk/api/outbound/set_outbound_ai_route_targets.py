@@ -86,7 +86,8 @@ def sync_detailed(
 
     Args:
         route (UUID):
-        body (PutOutboundAIRouteTargetsRequest):
+        body (PutOutboundAIRouteTargetsRequest): The complete ordered target list that replaces an
+            AI route's targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,7 +121,8 @@ def sync(
 
     Args:
         route (UUID):
-        body (PutOutboundAIRouteTargetsRequest):
+        body (PutOutboundAIRouteTargetsRequest): The complete ordered target list that replaces an
+            AI route's targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +151,8 @@ async def asyncio_detailed(
 
     Args:
         route (UUID):
-        body (PutOutboundAIRouteTargetsRequest):
+        body (PutOutboundAIRouteTargetsRequest): The complete ordered target list that replaces an
+            AI route's targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,7 +184,8 @@ async def asyncio(
 
     Args:
         route (UUID):
-        body (PutOutboundAIRouteTargetsRequest):
+        body (PutOutboundAIRouteTargetsRequest): The complete ordered target list that replaces an
+            AI route's targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

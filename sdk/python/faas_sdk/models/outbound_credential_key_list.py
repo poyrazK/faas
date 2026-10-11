@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OutboundCredentialKeyList")
 
 @_attrs_define
 class OutboundCredentialKeyList:
+    """An integration's extra provider keys, oldest first; values are never returned."""
+
     items: list[OutboundCredentialKey]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

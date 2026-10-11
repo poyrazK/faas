@@ -1429,7 +1429,7 @@ Set one app&#39;s per-minute limits, model allow-list and output-token ceiling (
 
 ### ai prices
 
-Show the price list, or replace it with `prices set &lt;integration-id&gt; --price ...`
+Show the price list, or replace it with: prices set &lt;integration-id&gt; --price ...
 
 `gregale ai prices [--price <SPEC>] [set] <integration-id>`
 

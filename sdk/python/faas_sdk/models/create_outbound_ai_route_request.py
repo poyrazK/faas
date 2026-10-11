@@ -21,6 +21,8 @@ T = TypeVar("T", bound="CreateOutboundAIRouteRequest")
 
 @_attrs_define
 class CreateOutboundAIRouteRequest:
+    """A new AI route with a DNS-label name, an optional format and 1 to 5 ordered targets."""
+
     name: str
     targets: list[OutboundAIRouteTarget]
     format_: CreateOutboundAIRouteRequestFormat | Unset = UNSET

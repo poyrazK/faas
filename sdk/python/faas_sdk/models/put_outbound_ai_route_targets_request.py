@@ -15,6 +15,8 @@ T = TypeVar("T", bound="PutOutboundAIRouteTargetsRequest")
 
 @_attrs_define
 class PutOutboundAIRouteTargetsRequest:
+    """The complete ordered target list that replaces an AI route's targets."""
+
     targets: list[OutboundAIRouteTarget]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

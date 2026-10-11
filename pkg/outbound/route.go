@@ -240,7 +240,7 @@ func bufferRouteBody(r *http.Request) ([]byte, bool, error) {
 func (h *Handler) translateRouteTarget(ctx context.Context, target AIRouteTarget, providerPath, rawQuery string, body []byte) (routeTranslation, error) {
 	integration, err := h.Resolver.Integration(ctx, target.IntegrationID)
 	if err != nil {
-		return routeTranslation{path: providerPath, rawQuery: rawQuery, body: body}, nil
+		return routeTranslation{path: providerPath, rawQuery: rawQuery, body: body}, nil //nolint:nilerr // the ordinary path reports the lookup failure and the route falls back past it.
 	}
 	translation, err := translateRouteRequest(integration.AIProvider, providerPath, rawQuery, body, target.Model)
 	if err != nil {

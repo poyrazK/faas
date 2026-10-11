@@ -119,6 +119,7 @@ func TestRelayAttributesRequestsToTheConnectionApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK || string(body) != "provider-ok" {
 		t.Fatalf("relay response = %d %q", resp.StatusCode, body)
@@ -150,6 +151,7 @@ func TestRelayRejectsTokenAuthenticatedIntegrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusForbidden || !bytes.Contains(body, []byte("outbound_relay_not_supported")) {
 		t.Fatalf("legacy via relay = %d %s", resp.StatusCode, body)

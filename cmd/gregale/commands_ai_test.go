@@ -3,6 +3,10 @@ package main
 // adr: 990 — euro amounts become integer millicents without floating point.
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -65,6 +69,43 @@ func TestReadCredentialLine(t *testing.T) {
 	}
 	if aiRouteCallPath(api.OutboundAIRouteFormatOpenAI) != "v1/chat/completions" || aiRouteCallPath("native") != "<provider path>" {
 		t.Fatal("route call path")
+	}
+}
+
+func TestCmdAIJSONOutput(t *testing.T) {
+	resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/outbound/integrations/int-1/ai-usage":
+			_ = json.NewEncoder(w).Encode(api.OutboundAIUsageResponse{UsageDate: "2026-10-11", AIProvider: "openai", DailyTokenCount: 42,
+				Items: []api.OutboundAIUsageItem{{Caller: "runs", Model: "gpt-4o", Requests: 1, InputTokens: 30, OutputTokens: 12}}})
+		case "/v1/outbound/integrations/int-1/ai-alerts":
+			_ = json.NewEncoder(w).Encode(api.OutboundAIBudgetAlertList{Items: []api.OutboundAIBudgetAlert{{ID: "a1", Budget: "daily_cost", ThresholdPercent: 80}}})
+		case "/v1/outbound/integrations/int-1/credential-keys":
+			_ = json.NewEncoder(w).Encode(api.OutboundCredentialKeyList{Items: []api.OutboundCredentialKey{{ID: "k1", Label: "second"}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+	for _, args := range [][]string{{"usage", "int-1"}, {"alerts", "int-1"}, {"keys", "list", "int-1"}} {
+		buf.Reset()
+		if code := cmdAI(args); code != 0 {
+			t.Fatalf("gregale ai %v --json = %d", args, code)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+			t.Fatalf("gregale ai %v --json is not JSON: %v\n%s", args, err, buf.String())
+		}
 	}
 }
 

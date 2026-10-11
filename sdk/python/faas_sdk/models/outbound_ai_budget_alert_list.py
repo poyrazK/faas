@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OutboundAIBudgetAlertList")
 
 @_attrs_define
 class OutboundAIBudgetAlertList:
+    """An integration's AI budget alerts, newest first."""
+
     items: list[OutboundAIBudgetAlert]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

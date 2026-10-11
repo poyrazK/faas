@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OutboundAIRouteList")
 
 @_attrs_define
 class OutboundAIRouteList:
+    """The account's AI routes."""
+
     items: list[OutboundAIRoute]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

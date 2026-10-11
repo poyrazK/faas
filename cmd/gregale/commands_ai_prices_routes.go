@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiPricesUsage = "usage: gregale ai prices <integration-id> | gregale ai prices set <integration-id> --price model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] ..."
+const aiPricesUsage = "usage: gregale ai prices <integration-id> | gregale ai prices set <integration-id> --price model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] (repeatable)"
 
 // cmdAIPrices shows or replaces a price list. Prices are EUR per million
 // tokens; "model=*" prices any model without a longer matching prefix.
@@ -216,7 +216,7 @@ func cmdAIRoutesCreate(client *api.Client, args []string) int {
 	fs.Var(&targetValues, "target", "<integration-id>[:<model>] in fallback order (repeatable, required)")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 || !api.ValidOutboundAIRouteName(*name) || !api.ValidOutboundAIRouteFormat(*format) {
 		return printErr("Invalid ai routes create arguments",
-			errors.New("usage: gregale ai routes create --name <name> [--format native|openai] --target <integration-id>[:<model>] ..."))
+			errors.New("usage: gregale ai routes create --name <name> [--format native|openai] --target <integration-id>[:<model>] (repeatable)"))
 	}
 	targets, err := parseAIRouteTargets(targetValues)
 	if err != nil {
@@ -238,7 +238,7 @@ func cmdAIRoutesSet(client *api.Client, args []string) int {
 	var targetValues stringListFlag
 	fs.Var(&targetValues, "target", "<integration-id>[:<model>] in fallback order (repeatable, required)")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
-		return printErr("Invalid ai routes set arguments", errors.New("usage: gregale ai routes set <route-id> --target <integration-id>[:<model>] ..."))
+		return printErr("Invalid ai routes set arguments", errors.New("usage: gregale ai routes set <route-id> --target <integration-id>[:<model>] (repeatable)"))
 	}
 	targets, err := parseAIRouteTargets(targetValues)
 	if err != nil {
