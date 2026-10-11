@@ -628,8 +628,8 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID 
 	if action == "" || action == state.AlertActionWebhook {
 		return
 	}
-	if rule.Metric == state.AlertMetricPreAuthTargetThreshold || rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct {
-		e.log.Warn("alerts: pre-auth target metric cannot execute a deployment action", "rule", rule.ID)
+	if api.IsEdgeSecurityAlertMetric(string(rule.Metric)) {
+		e.log.Warn("alerts: edge security metric cannot execute a deployment action", "rule", rule.ID)
 		stats.ActionSkipped++
 		return
 	}
@@ -1033,7 +1033,7 @@ type investigationPaths struct {
 
 func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule) investigationPaths {
 	workflow := isWorkflowMetric(rule.Metric)
-	if (!workflow && rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
+	if (!workflow && !preAuthObservationMetric(rule.Metric)) || rule.AppID == "" {
 		return investigationPaths{}
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.WorkflowAlertSnapshotReadTimeout)
@@ -1057,6 +1057,16 @@ func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule
 		observations: "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng,
 		dashboard:    "/dashboard/apps/" + slug + "/pre-auth?range=" + rng,
 	}
+}
+
+// preAuthObservationMetric reports metrics whose alert payload links to the
+// app's pre-auth observations and dashboard view.
+func preAuthObservationMetric(metric state.AlertMetric) bool {
+	switch metric {
+	case state.AlertMetricPreAuthTargetThreshold, state.AlertMetricPreAuthTargetSignalGapPct, state.AlertMetricPreAuthPressure:
+		return true
+	}
+	return false
 }
 
 func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths) ([]byte, map[string]any, error) {

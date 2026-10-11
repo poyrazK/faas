@@ -137,6 +137,36 @@ func TestAPIConsumerUsageReadSurface(t *testing.T) {
 	}
 }
 
+// Prod hunt #9: `gregale consumers usage --since <today>` returned 500
+// "could not load API consumer usage". The window snaps to UTC midnight and
+// is half-open, so since=today is empty; the ledger answers ErrNotFound.
+func TestAPIConsumerUsageEmptyWindowIsEmptyNot500(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-usage-empty")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-usage-empty/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "customer-empty", Name: "Customer Empty",
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil {
+		t.Fatalf("decode consumer: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02") + "T11:00:00Z"
+	read := e.do(t, http.MethodGet, "/v1/apps/consumer-usage-empty/consumers/"+consumer.ID+"/usage?since="+today, nil, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("empty window: %d %s, want 200", read.Code, read.Body)
+	}
+	var usage api.APIConsumerUsageResponse
+	if err := json.Unmarshal(read.Body.Bytes(), &usage); err != nil {
+		t.Fatalf("decode usage: %v", err)
+	}
+	if usage.RequestCount != 0 || len(usage.Buckets) != 0 || !usage.PeriodStart.Equal(usage.PeriodEnd) {
+		t.Fatalf("empty window usage = %+v", usage)
+	}
+}
+
 func TestUpdateAppConsumerAuthMode(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	mustSeedApp(t, e, "consumer-mode")

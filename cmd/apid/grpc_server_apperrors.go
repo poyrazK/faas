@@ -247,7 +247,7 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 		ErrorClass:          req.GetErrorClass(),
 		SampleMessage:       "",
 		DeploymentID:        deploymentUUID,
-		HeadersSample:       []byte(req.GetHeadersSampleJson()),
+		HeadersSample:       headersSampleJSONB(req.GetHeadersSampleJson()),
 		Redactions:          redactions,
 		InstanceID:          req.GetInstanceId(),
 		NodeID:              req.GetNodeId(),
@@ -298,6 +298,19 @@ func (a *appErrorsReceiver) observe(outcome string) {
 
 // validateIncrementRequest enforces the wire invariants. Returns
 // nil on success; a non-nil status error otherwise.
+// headersSampleJSONB maps the gateway's headers sample onto the nullable
+// jsonb column. The gateway sends an empty sample for every occurrence after
+// a fingerprint's first (only the first sample is kept), and Postgres rejects
+// an empty string as jsonb. That failed the per-request insert, so on
+// production-us 479 of 486 5xx observations lost their drill-down row and
+// never reached Issues (hunt #9). An empty sample is NULL.
+func headersSampleJSONB(sample string) []byte {
+	if sample == "" {
+		return nil
+	}
+	return []byte(sample)
+}
+
 func validateIncrementRequest(req *apidpb.IncrementAppErrorRequest) error {
 	if req == nil {
 		return status.Error(codes.InvalidArgument, "nil request")

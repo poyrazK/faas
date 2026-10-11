@@ -49,7 +49,7 @@ func (s *server) getObjectBucketEncryption(w http.ResponseWriter, r *http.Reques
 
 func (s *server) putObjectBucketEncryption(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.objectStorageEnabled() {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return
 	}
 	b, svc, ok := s.bucketEncryptionService(w, r, acct)

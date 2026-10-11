@@ -67,7 +67,7 @@ func (s *server) listObjectS3CopySources(w http.ResponseWriter, r *http.Request,
 }
 func (s *server) setObjectS3CopySource(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.objectStorageEnabled() {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return
 	}
 	b, sources, ok := s.copySourceManagement(w, r, acct)
@@ -117,7 +117,7 @@ func (s *server) authorizeCopySourceManagement(w http.ResponseWriter, r *http.Re
 		return source, false
 	}
 	if s.objectStorage == nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		bucketProblem(w, errObjectStorageDisabled)
 		return source, false
 	}
 	backend, err := s.objectStorage.Resolve(destination.BackendID, destination.BackendFingerprint)

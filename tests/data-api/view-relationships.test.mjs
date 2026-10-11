@@ -182,7 +182,7 @@ export async function exercise(url:string, token:string) {
     const [code] = await once(diff, 'exit')
     assert.equal(code, 1, output)
     const changes = JSON.parse(output).changes
-    assert.ok(changes.some(c => c.path === 'api.order_cards' && c.breaking && c.reason.includes('relationship metadata')))
+    assert.ok(changes.some(c => c.path === 'api.order_cards[orders_buyer_fkey->customers]' && c.breaking && c.reason.startsWith('relationship removed')))
     assert.ok(!changes.some(c => c.reason.includes('field type changed')))
   }
   await owner.query(`CREATE VIEW api.oversized_definition AS SELECT '${'x'.repeat(300000)}'::text AS body`)
