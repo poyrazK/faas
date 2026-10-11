@@ -9358,3 +9358,33 @@ transaction must authenticate this original evidence together with native
 closure, account for separately proven managed-secret retirement, reject foreign
 borrowers and persist exact catalogue removal atomically. Native qualification
 remains deferred.
+
+### Atomic copied-configuration cleanup after native closure
+
+The private leased state transaction now removes copied variables, sealed
+unmanaged secrets, secret references/suppressions, feature flag versions, project
+configuration versions, and route/edge policies only after verifying the original
+materialization ownership receipt and completed native workload retirement. It
+persists the exact post-deletion manifest with the original ownership digest,
+native plan digest and native observation digest in the same transaction. A lost
+commit reply verifies that receipt and current post-state without recapturing
+ownership or dispatching native work. Receipt-write failure rolls deletion back;
+stale leases, legacy materializations without original ownership, foreign rows,
+changed proof/time, or repopulated settings block deletion and replay.
+
+The eleven-table manifest remains bounded by `CloneConfigurationOwnershipMaxBytes`
+and contains hashes rather than configuration values. The eight removed table
+hashes must be the hash of an empty array; the original environment, workload
+heads and workload specs must remain byte-for-byte identical. Migration rollback
+refuses every retained cleanup receipt. Frozen captures, deployment pins, original
+materialization, and native ownership journals remain retained.
+
+This transaction deliberately retains environment metadata and workload heads,
+specs and pins: invocation/queue/promotion borrowers require separate retirement
+before those rows can be removed safely. Managed-secret ownership or per-runtime
+secret-reload observation rows, external field owners, managed fields or GitOps
+sources also block this cleanup; they must not disappear
+through an unproven cascade or be treated as ordinary copied configuration.
+Published release withdrawal, separately deleted managed-secret normalization,
+whole-stage terminal compensation and public full-stage admission remain gated.
+Native provider qualification remains deferred.

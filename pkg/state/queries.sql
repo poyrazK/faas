@@ -15715,3 +15715,42 @@ SELECT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions t WHERE t.ap
  OR EXISTS(SELECT 1 FROM project_environment_config_versions t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM project_environment_edge_policies t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM project_environment_route_policies t WHERE t.project_id=sqlc.arg(project_id)::uuid AND t.environment_slug=sqlc.arg(environment)::text) AS foreign_scope;
+
+-- name: ReadCloneConfigurationCleanup :one
+SELECT * FROM project_environment_clone_configuration_cleanups WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneConfigurationCleanup :exec
+INSERT INTO project_environment_clone_configuration_cleanups(operation_id,ownership_sha256,native_plan_sha256,native_observation_sha256,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6);
+
+-- name: CloneConfigurationCleanupHasBorrowers :one
+SELECT EXISTS(SELECT 1 FROM app_secrets s WHERE s.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND s.scope=sqlc.arg(environment)::text
+ AND (s.managed_postgres_binding_id IS NOT NULL OR s.managed_object_storage_credential_id IS NOT NULL OR s.managed_credential_ref IS NOT NULL))
+ OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations s WHERE s.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND s.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)
+ OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)
+ OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=sqlc.arg(environment_id)::uuid)::boolean AS blocked;
+
+-- name: DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions :exec
+DELETE FROM app_environment_secret_ref_suppressions WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND scope=sqlc.arg(environment)::text;
+
+-- name: DeleteCloneConfigurationAppEnvironmentSecretRefs :exec
+DELETE FROM app_environment_secret_refs WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND scope=sqlc.arg(environment)::text;
+
+-- name: DeleteCloneConfigurationAppEnvs :exec
+DELETE FROM app_envs WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND scope=sqlc.arg(environment)::text;
+
+-- name: DeleteCloneConfigurationAppSecrets :exec
+DELETE FROM app_secrets WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=sqlc.arg(project_id)::uuid) AND scope=sqlc.arg(environment)::text;
+
+-- name: DeleteCloneConfigurationFeatureFlagVersions :exec
+DELETE FROM feature_flag_versions WHERE environment_id=sqlc.arg(environment_id)::uuid;
+
+-- name: DeleteCloneConfigurationProjectEnvironmentConfigVersions :exec
+DELETE FROM project_environment_config_versions WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text;
+
+-- name: DeleteCloneConfigurationProjectEnvironmentEdgePolicies :exec
+DELETE FROM project_environment_edge_policies WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text;
+
+-- name: DeleteCloneConfigurationProjectEnvironmentRoutePolicies :exec
+DELETE FROM project_environment_route_policies WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text;

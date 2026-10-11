@@ -187,6 +187,8 @@ func TestPgCloneConfigurationOwnershipMigrationRefusesEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	dropEmptyConfigurationCleanupForParentMigration(t, tx)
 	for _, sql := range []string{parts[1], parts[0], parts[1], parts[0]} {
 		if _, err = tx.Exec(t.Context(), sql); err != nil {
 			t.Fatal("empty migration replay", err)

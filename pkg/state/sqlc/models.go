@@ -5300,6 +5300,16 @@ type ProjectEnvironmentCloneConfigurationCapture struct {
 	Configuration     []byte
 }
 
+type ProjectEnvironmentCloneConfigurationCleanup struct {
+	OperationID             pgtype.UUID
+	OwnershipSha256         string
+	NativePlanSha256        string
+	NativeObservationSha256 string
+	Manifest                []byte
+	ManifestSha256          string
+	CleanedAt               pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneConfigurationClock struct {
 	Singleton  bool
 	Generation int64

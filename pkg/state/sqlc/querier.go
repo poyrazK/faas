@@ -224,6 +224,7 @@ type Querier interface {
 	CloneCheckpointPostgresCredentialPublished(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointSourceCompensationHasHolds(ctx context.Context, db DBTX, cloneOperationID pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
+	CloneConfigurationCleanupHasBorrowers(ctx context.Context, db DBTX, arg CloneConfigurationCleanupHasBorrowersParams) (pgtype.Bool, error)
 	CloneConfigurationOwnershipScopeIsForeign(ctx context.Context, db DBTX, arg CloneConfigurationOwnershipScopeIsForeignParams) (pgtype.Bool, error)
 	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
 	CloneObjectGrantRevocationInsert(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationInsertParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
@@ -432,6 +433,14 @@ type Querier interface {
 	DeleteCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationSecretParams) (int64, error)
 	DeleteCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointPgAppSecretParams) (int64, error)
 	DeleteCloneCheckpointUnusedObjectReservationBucket(ctx context.Context, db DBTX, arg DeleteCloneCheckpointUnusedObjectReservationBucketParams) (int64, error)
+	DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvironmentSecretRefSuppressionsParams) error
+	DeleteCloneConfigurationAppEnvironmentSecretRefs(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvironmentSecretRefsParams) error
+	DeleteCloneConfigurationAppEnvs(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvsParams) error
+	DeleteCloneConfigurationAppSecrets(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppSecretsParams) error
+	DeleteCloneConfigurationFeatureFlagVersions(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
+	DeleteCloneConfigurationProjectEnvironmentConfigVersions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentConfigVersionsParams) error
+	DeleteCloneConfigurationProjectEnvironmentEdgePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentEdgePoliciesParams) error
+	DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error
 	DeleteCron(ctx context.Context, db DBTX, arg DeleteCronParams) error
 	DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error
 	DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg DeleteCustomerAppSecretParams) (int64, error)
@@ -930,6 +939,7 @@ type Querier interface {
 	InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg InsertCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error)
 	InsertCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg InsertCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error)
 	InsertCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
+	InsertCloneConfigurationCleanup(ctx context.Context, db DBTX, arg InsertCloneConfigurationCleanupParams) error
 	InsertCloneConfigurationOwnership(ctx context.Context, db DBTX, arg InsertCloneConfigurationOwnershipParams) error
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
@@ -2288,6 +2298,7 @@ type Querier interface {
 	ReadCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg ReadCloneCheckpointUnusedObjectReservationParams) (ProjectEnvironmentCloneCheckpointUnusedObjectReservation, error)
 	ReadCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
 	ReadCloneCheckpointWorkloadRetirementMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error)
+	ReadCloneConfigurationCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCleanup, error)
 	ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error)
 	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
 	// ADR-531: private original selection precedes a coordinated capture point.

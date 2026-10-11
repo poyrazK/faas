@@ -77,11 +77,24 @@ func verifyCloneConfigurationOwnershipTx(ctx context.Context, tx pgx.Tx, op Proj
 		return "", mapErr(err)
 	}
 	current, err := cloneConfigurationOwnershipManifest(actual)
-	if err != nil || !reflect.DeepEqual(manifest, current) {
+	if err != nil {
 		return "", ErrConflict
 	}
-	return cloneCheckpointSHA(struct {
+	ownership := cloneCheckpointSHA(struct {
 		EnvironmentID, ManifestSHA256 string
 		CreatedAt                     time.Time
-	}{environmentID, row.ManifestSha256, row.CreatedAt.Time.UTC()}), nil
+	}{environmentID, row.ManifestSha256, row.CreatedAt.Time.UTC()})
+	// A saved cleanup must authenticate its exact post-state even if an observer
+	// restores the original rows; absence or equality alone is not authority.
+	_, cleanupErr := q.ReadCloneConfigurationCleanup(ctx, tx, mustPgUUID(op.ID))
+	if cleanupErr == nil {
+		if err = verifyCloneConfigurationCleanupTx(ctx, tx, op, environmentID, ownership, manifest, current); err != nil {
+			return "", err
+		}
+	} else if !errors.Is(mapErr(cleanupErr), ErrNotFound) {
+		return "", mapErr(cleanupErr)
+	} else if !reflect.DeepEqual(manifest, current) {
+		return "", ErrConflict
+	}
+	return ownership, nil
 }

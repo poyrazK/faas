@@ -43091,3 +43091,15 @@ CREATE TABLE project_environment_clone_configuration_ownership (
  manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+
+-- ADR-590: private copied-configuration cleanup, retaining workload ownership.
+CREATE TABLE project_environment_clone_configuration_cleanups (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
+ FOREIGN KEY(operation_id) REFERENCES project_environment_clone_checkpoint_workload_retirements(operation_id) ON DELETE RESTRICT,
+ ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
+ native_plan_sha256 text NOT NULL CHECK(native_plan_sha256 ~ '^[a-f0-9]{64}$'),
+ native_observation_sha256 text NOT NULL CHECK(native_observation_sha256 ~ '^[a-f0-9]{64}$'),
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);

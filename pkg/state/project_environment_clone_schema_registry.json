@@ -6082,6 +6082,19 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_configuration_cleanups",
+    "columns": [
+      "cleaned_at",
+      "manifest",
+      "manifest_sha256",
+      "native_observation_sha256",
+      "native_plan_sha256",
+      "operation_id",
+      "ownership_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_configuration_clock",
     "columns": [
       "generation",

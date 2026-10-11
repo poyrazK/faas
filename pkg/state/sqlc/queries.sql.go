@@ -5270,6 +5270,28 @@ func (q *Queries) CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx cont
 	return column_1, err
 }
 
+const cloneConfigurationCleanupHasBorrowers = `-- name: CloneConfigurationCleanupHasBorrowers :one
+SELECT EXISTS(SELECT 1 FROM app_secrets s WHERE s.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND s.scope=$2::text
+ AND (s.managed_postgres_binding_id IS NOT NULL OR s.managed_object_storage_credential_id IS NOT NULL OR s.managed_credential_ref IS NOT NULL))
+ OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations s WHERE s.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND s.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=$3::uuid)
+ OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=$3::uuid)
+ OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=$3::uuid)::boolean AS blocked
+`
+
+type CloneConfigurationCleanupHasBorrowersParams struct {
+	ProjectID     pgtype.UUID
+	Environment   string
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) CloneConfigurationCleanupHasBorrowers(ctx context.Context, db DBTX, arg CloneConfigurationCleanupHasBorrowersParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneConfigurationCleanupHasBorrowers, arg.ProjectID, arg.Environment, arg.EnvironmentID)
+	var blocked pgtype.Bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
 const cloneConfigurationOwnershipScopeIsForeign = `-- name: CloneConfigurationOwnershipScopeIsForeign :one
 SELECT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
  OR EXISTS(SELECT 1 FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
@@ -9365,6 +9387,113 @@ func (q *Queries) DeleteCloneCheckpointUnusedObjectReservationBucket(ctx context
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteCloneConfigurationAppEnvironmentSecretRefSuppressions = `-- name: DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions :exec
+DELETE FROM app_environment_secret_ref_suppressions WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppEnvironmentSecretRefSuppressionsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvironmentSecretRefSuppressionsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppEnvironmentSecretRefSuppressions, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationAppEnvironmentSecretRefs = `-- name: DeleteCloneConfigurationAppEnvironmentSecretRefs :exec
+DELETE FROM app_environment_secret_refs WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppEnvironmentSecretRefsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppEnvironmentSecretRefs(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvironmentSecretRefsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppEnvironmentSecretRefs, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationAppEnvs = `-- name: DeleteCloneConfigurationAppEnvs :exec
+DELETE FROM app_envs WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppEnvsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppEnvs(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppEnvs, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationAppSecrets = `-- name: DeleteCloneConfigurationAppSecrets :exec
+DELETE FROM app_secrets WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppSecretsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppSecrets(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppSecretsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppSecrets, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationFeatureFlagVersions = `-- name: DeleteCloneConfigurationFeatureFlagVersions :exec
+DELETE FROM feature_flag_versions WHERE environment_id=$1::uuid
+`
+
+func (q *Queries) DeleteCloneConfigurationFeatureFlagVersions(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationFeatureFlagVersions, environmentID)
+	return err
+}
+
+const deleteCloneConfigurationProjectEnvironmentConfigVersions = `-- name: DeleteCloneConfigurationProjectEnvironmentConfigVersions :exec
+DELETE FROM project_environment_config_versions WHERE project_id=$1::uuid AND environment_slug=$2::text
+`
+
+type DeleteCloneConfigurationProjectEnvironmentConfigVersionsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationProjectEnvironmentConfigVersions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentConfigVersionsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentConfigVersions, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationProjectEnvironmentEdgePolicies = `-- name: DeleteCloneConfigurationProjectEnvironmentEdgePolicies :exec
+DELETE FROM project_environment_edge_policies WHERE project_id=$1::uuid AND environment_slug=$2::text
+`
+
+type DeleteCloneConfigurationProjectEnvironmentEdgePoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationProjectEnvironmentEdgePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentEdgePoliciesParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentEdgePolicies, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationProjectEnvironmentRoutePolicies = `-- name: DeleteCloneConfigurationProjectEnvironmentRoutePolicies :exec
+DELETE FROM project_environment_route_policies WHERE project_id=$1::uuid AND environment_slug=$2::text
+`
+
+type DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentRoutePolicies, arg.ProjectID, arg.Environment)
+	return err
 }
 
 const deleteCron = `-- name: DeleteCron :exec
@@ -18806,6 +18935,32 @@ func (q *Queries) InsertCloneCheckpointWorkloadRetirement(ctx context.Context, d
 		&i.RetiredAt,
 	)
 	return i, err
+}
+
+const insertCloneConfigurationCleanup = `-- name: InsertCloneConfigurationCleanup :exec
+INSERT INTO project_environment_clone_configuration_cleanups(operation_id,ownership_sha256,native_plan_sha256,native_observation_sha256,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type InsertCloneConfigurationCleanupParams struct {
+	OperationID             pgtype.UUID
+	OwnershipSha256         string
+	NativePlanSha256        string
+	NativeObservationSha256 string
+	Manifest                []byte
+	ManifestSha256          string
+}
+
+func (q *Queries) InsertCloneConfigurationCleanup(ctx context.Context, db DBTX, arg InsertCloneConfigurationCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneConfigurationCleanup,
+		arg.OperationID,
+		arg.OwnershipSha256,
+		arg.NativePlanSha256,
+		arg.NativeObservationSha256,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
 }
 
 const insertCloneConfigurationOwnership = `-- name: InsertCloneConfigurationOwnership :exec
@@ -49350,6 +49505,25 @@ func (q *Queries) ReadCloneCheckpointWorkloadRetirementMaterialization(ctx conte
 		&i.EnvironmentID,
 		&i.WorkloadSettings,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readCloneConfigurationCleanup = `-- name: ReadCloneConfigurationCleanup :one
+SELECT operation_id, ownership_sha256, native_plan_sha256, native_observation_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_configuration_cleanups WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneConfigurationCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCleanup, error) {
+	row := db.QueryRow(ctx, readCloneConfigurationCleanup, operationID)
+	var i ProjectEnvironmentCloneConfigurationCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.OwnershipSha256,
+		&i.NativePlanSha256,
+		&i.NativeObservationSha256,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CleanedAt,
 	)
 	return i, err
 }
