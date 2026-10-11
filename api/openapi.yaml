@@ -37596,6 +37596,177 @@ paths:
             schema:
               $ref: '#/components/schemas/OperationWorkflowReadinessCoordinationRequest'
 
+  /v1/apps/{slug}/workflow-readiness/follow-ups:
+    get:
+      operationId: ListAccountWorkflowReadinessFollowUps
+      summary: List Account readiness follow-up work queue
+      description: ListAccountWorkflowReadinessFollowUps. Read retained pending follow-ups across subscriptions for
+        an explicit application and environment. Due-time ordering puts overdue first. Pages are live and may move;
+        refresh after edits. Account reads require read scope and MFA; customer reads require Operations read.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: ListAccountWorkflowReadinessFollowUps. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: ListAccountWorkflowReadinessFollowUps. Application environment scope.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: ListAccountWorkflowReadinessFollowUps.tenant_id. Optional customer selector matches notification
+          evidence or a customer-specific subscription, including broader account watches.
+        schema:
+          type: string
+          format: uuid
+      - name: owner
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application
+          blocker ownership.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.workflow. Exact workflow name; global evaluation failures
+          have no workflow.
+        schema:
+          type: string
+          maxLength: 63
+      - name: due
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.due. Defaults to all pending follow-ups.
+        schema:
+          type: string
+          enum:
+          - all
+          - overdue
+          - upcoming
+      - name: offset
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.offset. Live zero-based offset, defaults to zero.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2000
+      - name: limit
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: ListAccountWorkflowReadinessFollowUps. Retained follow-up page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessFollowUpsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/workflow-readiness/follow-ups:
+    get:
+      operationId: ListPlatformTenantSelfWorkflowReadinessFollowUps
+      summary: List PlatformTenantSelf readiness follow-up work queue
+      description: ListPlatformTenantSelfWorkflowReadinessFollowUps. Read retained pending follow-ups across subscriptions
+        for an explicit application and environment. Due-time ordering puts overdue first. Pages are live and may
+        move; refresh after edits. Account reads require read scope and MFA; customer reads require Operations read.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: scope
+        in: query
+        required: true
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps. Application environment scope.
+        schema:
+          type: string
+      - name: app_id
+        in: query
+        required: true
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps. Application UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: owner
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from
+          application blocker ownership.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.workflow. Exact workflow name; global evaluation
+          failures have no workflow.
+        schema:
+          type: string
+          maxLength: 63
+      - name: due
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.due. Defaults to all pending follow-ups.
+        schema:
+          type: string
+          enum:
+          - all
+          - overdue
+          - upcoming
+      - name: offset
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.offset. Live zero-based offset, defaults to
+          zero.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2000
+      - name: limit
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: ListPlatformTenantSelfWorkflowReadinessFollowUps. Retained follow-up page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessFollowUpsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
 
   securitySchemes:
@@ -74939,6 +75110,194 @@ components:
       - notification
       - checked_at
       - status
+
+    OperationWorkflowReadinessFollowUpOptions:
+      type: object
+      description: Selectors for the live retained follow-up queue; offset pages may move as coordination is edited.
+      additionalProperties: false
+      properties:
+        app_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReadinessFollowUpOptions.app_id. Follow-up queue selector; customer tenant derives
+            from authentication.
+        tenant_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReadinessFollowUpOptions.tenant_id. Follow-up queue selector; customer tenant
+            derives from authentication.
+        scope:
+          type: string
+          description: OperationWorkflowReadinessFollowUpOptions.scope. Follow-up queue selector; customer tenant derives
+            from authentication.
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReadinessFollowUpOptions.owner. Follow-up queue selector; customer tenant derives
+            from authentication.
+        workflow:
+          type: string
+          maxLength: 63
+          description: OperationWorkflowReadinessFollowUpOptions.workflow. Follow-up queue selector; customer tenant
+            derives from authentication.
+        due:
+          type: string
+          enum:
+          - all
+          - overdue
+          - upcoming
+          description: OperationWorkflowReadinessFollowUpOptions.due. Follow-up queue selector; customer tenant derives
+            from authentication.
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessFollowUpOptions.offset. Follow-up queue selector; customer tenant derives
+            from authentication.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: OperationWorkflowReadinessFollowUpOptions.limit. Follow-up queue selector; customer tenant derives
+            from authentication.
+      required:
+      - scope
+    OperationWorkflowReadinessFollowUp:
+      type: object
+      description: Compact pending follow-up with original inbox references; no application readiness is inferred.
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.subscription_id. Retained notification or subscription identity;
+            tenant fields are account-only.
+          format: uuid
+        subscription_name:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.subscription_name. Retained notification or subscription identity;
+            tenant fields are account-only.
+        subscription_tenant_id:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.subscription_tenant_id. Retained notification or subscription
+            identity; tenant fields are account-only.
+          format: uuid
+        platform_tenant_id:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.platform_tenant_id. Retained notification or subscription
+            identity; tenant fields are account-only.
+          format: uuid
+        scope:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.scope. Retained notification or subscription identity; tenant
+            fields are account-only.
+        notification_id:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.notification_id. Retained notification or subscription identity;
+            tenant fields are account-only.
+          format: uuid
+        kind:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.kind. Retained notification or subscription identity; tenant
+            fields are account-only.
+        workflow:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.workflow. Retained notification or subscription identity;
+            tenant fields are account-only.
+        instance_id:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.instance_id. Retained notification or subscription identity;
+            tenant fields are account-only.
+        operation:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.operation. Retained notification or subscription identity;
+            tenant fields are account-only.
+        from_state:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.from_state. Retained notification or subscription identity;
+            tenant fields are account-only.
+        to_state:
+          type: string
+          description: OperationWorkflowReadinessFollowUp.to_state. Retained notification or subscription identity;
+            tenant fields are account-only.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReadinessFollowUp.sequence. Subscription-local notification sequence used for
+            edits and evidence checks.
+        created_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessFollowUp.created_at. Original notification creation time.
+        coordination:
+          $ref: '#/components/schemas/OperationWorkflowReadinessCoordination'
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+        overdue:
+          type: boolean
+          description: OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation
+            clock.
+      required:
+      - subscription_id
+      - subscription_name
+      - scope
+      - notification_id
+      - sequence
+      - kind
+      - created_at
+      - coordination
+      - overdue
+    OperationWorkflowReadinessFollowUpsResponse:
+      type: object
+      description: Live queue across this app/environment subscription inboxes. Owner/customer/workflow/due filters
+        apply before pagination. No notification edits are performed by this read.
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          description: OperationWorkflowReadinessFollowUpsResponse.items. Pending follow-ups ordered by due time, subscription
+            UUID and sequence.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessFollowUp'
+        evaluated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessFollowUpsResponse.evaluated_at. Shared clock for overdue classification.
+        total_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessFollowUpsResponse.total_count. Count or continuation offset within
+            the selected retained follow-ups.
+        overdue_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessFollowUpsResponse.overdue_count. Count or continuation offset within
+            the selected retained follow-ups.
+        next_offset:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessFollowUpsResponse.next_offset. Count or continuation offset within
+            the selected retained follow-ups.
+        has_more:
+          type: boolean
+          description: OperationWorkflowReadinessFollowUpsResponse.has_more. More matching retained rows follow this
+            live page.
+        retention_limited:
+          type: boolean
+          description: 'OperationWorkflowReadinessFollowUpsResponse.retention_limited. True: coordination only survives
+            within each subscription latest-100 notification window; this is not an exhaustive task inventory.'
+      required:
+      - items
+      - evaluated_at
+      - total_count
+      - overdue_count
+      - next_offset
+      - has_more
+      - retention_limited
 
   responses:
     OperationConflict:

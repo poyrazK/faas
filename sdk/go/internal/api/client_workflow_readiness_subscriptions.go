@@ -87,3 +87,34 @@ func (c *Client) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx contex
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery(app, scope, "").Encode(), nil, &out)
 	return out, err
 }
+
+func readinessFollowUpQuery(opts OperationWorkflowReadinessFollowUpOptions) url.Values {
+	q := readinessSubscriptionQuery(opts.AppID, opts.Scope, opts.TenantID)
+	if opts.Owner != "" {
+		q.Set("owner", opts.Owner)
+	}
+	if opts.Workflow != "" {
+		q.Set("workflow", opts.Workflow)
+	}
+	if opts.Due != "" {
+		q.Set("due", opts.Due)
+	}
+	if opts.Offset != 0 {
+		q.Set("offset", strconv.Itoa(opts.Offset))
+	}
+	if opts.Limit != 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	return q
+}
+func (c *Client) ListAccountWorkflowReadinessFollowUps(ctx context.Context, slug string, opts OperationWorkflowReadinessFollowUpOptions) (OperationWorkflowReadinessFollowUpsResponse, error) {
+	var out OperationWorkflowReadinessFollowUpsResponse
+	opts.AppID = ""
+	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/follow-ups?"+readinessFollowUpQuery(opts).Encode(), nil, &out)
+	return out, err
+}
+func (c *Client) ListPlatformTenantSelfWorkflowReadinessFollowUps(ctx context.Context, opts OperationWorkflowReadinessFollowUpOptions) (OperationWorkflowReadinessFollowUpsResponse, error) {
+	var out OperationWorkflowReadinessFollowUpsResponse
+	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/follow-ups?"+readinessFollowUpQuery(opts).Encode(), nil, &out)
+	return out, err
+}

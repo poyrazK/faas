@@ -18084,3 +18084,22 @@ AND (sqlc.arg(tenant)::text = '' OR tenant_id::text = sqlc.arg(tenant)::text) FO
 
 -- name: UpdateReadinessNotification :execrows
 UPDATE customer_workflow_readiness_notifications SET payload=$3 WHERE subscription_id=$1 AND sequence=$2;
+
+-- name: ListReadinessFollowUps :many
+SELECT jsonb_strip_nulls(jsonb_build_object(
+ 'subscription_id',s.id,'subscription_name',s.payload #>> '{subscription,name}',
+ 'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
+ 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),s.tenant_id::text),
+ 'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination',
+ 'workflow',n.payload #>> '{change,baseline,workflow}','instance_id',n.payload #>> '{change,baseline,instance_id}',
+ 'subject',n.payload #> '{change,baseline,subject}','operation',n.payload #>> '{change,baseline,operation}',
+ 'from_state',n.payload #>> '{change,baseline,from_state}','to_state',n.payload #>> '{change,baseline,to_state}'
+))::jsonb AS item
+FROM customer_workflow_readiness_subscriptions s
+JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid
+ AND s.scope=sqlc.arg(scope)::text AND s.operator=sqlc.arg(operator)::boolean
+ AND (s.operator OR s.tenant_id::text=sqlc.arg(tenant)::text)
+ AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ORDER BY s.id,n.sequence LIMIT sqlc.arg(candidate_limit)::integer;

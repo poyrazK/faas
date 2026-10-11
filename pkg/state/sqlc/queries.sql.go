@@ -33552,6 +33552,62 @@ func (q *Queries) ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, ar
 	return items, nil
 }
 
+const listReadinessFollowUps = `-- name: ListReadinessFollowUps :many
+SELECT jsonb_strip_nulls(jsonb_build_object(
+ 'subscription_id',s.id,'subscription_name',s.payload #>> '{subscription,name}',
+ 'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
+ 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),s.tenant_id::text),
+ 'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination',
+ 'workflow',n.payload #>> '{change,baseline,workflow}','instance_id',n.payload #>> '{change,baseline,instance_id}',
+ 'subject',n.payload #> '{change,baseline,subject}','operation',n.payload #>> '{change,baseline,operation}',
+ 'from_state',n.payload #>> '{change,baseline,from_state}','to_state',n.payload #>> '{change,baseline,to_state}'
+))::jsonb AS item
+FROM customer_workflow_readiness_subscriptions s
+JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
+WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid
+ AND s.scope=$3::text AND s.operator=$4::boolean
+ AND (s.operator OR s.tenant_id::text=$5::text)
+ AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ORDER BY s.id,n.sequence LIMIT $6::integer
+`
+
+type ListReadinessFollowUpsParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Scope          string
+	Operator       bool
+	Tenant         string
+	CandidateLimit int32
+}
+
+func (q *Queries) ListReadinessFollowUps(ctx context.Context, db DBTX, arg ListReadinessFollowUpsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listReadinessFollowUps,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Operator,
+		arg.Tenant,
+		arg.CandidateLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var item []byte
+		if err := rows.Scan(&item); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReadinessNotifications = `-- name: ListReadinessNotifications :many
 SELECT payload FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence > $2 ORDER BY sequence LIMIT $3
 `

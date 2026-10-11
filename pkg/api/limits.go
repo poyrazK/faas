@@ -9684,3 +9684,6 @@ const (
 // Shared readiness inbox coordination budgets.
 const OperationWorkflowReadinessFollowUpOwnerMaxBytes = 256
 const OperationWorkflowReadinessFollowUpNoteMaxBytes = 1024
+
+// Aggregation reads at most the existing per-app subscription/inbox budgets.
+const OperationWorkflowReadinessFollowUpCandidatesMax = OperationWorkflowReadinessSubscriptionsPerAppMax * OperationWorkflowReadinessInboxMax

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 
@@ -169,4 +170,34 @@ func (m *MemStore) updateReadinessNotification(_ context.Context, account, tenan
 		}
 	}
 	return out, ErrNotFound
+}
+
+func (m *MemStore) readReadinessFollowUps(ctx context.Context, account, tenant, app, scope string, operator bool) ([]api.OperationWorkflowReadinessFollowUp, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []api.OperationWorkflowReadinessFollowUp{}
+	data := m.operationMemoryLocked()
+	selectedTenant := tenant
+	if operator {
+		selectedTenant = ""
+	}
+	for id, r := range data.readinessSubscriptions {
+		if !readinessRecordMatches(r, account, selectedTenant, app, scope, operator) {
+			continue
+		}
+		for _, n := range data.readinessInbox[id] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if n.Coordination != nil && n.Coordination.FollowUpAt != nil {
+				out = append(out, readinessFollowUpProjection(r.Subscription, r.Tenant, n))
+			}
+		}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }

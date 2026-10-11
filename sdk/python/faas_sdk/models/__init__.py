@@ -1526,6 +1526,7 @@ from .list_account_workflow_performance_instances_condition_result import (
 from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
 from .list_account_workflow_performance_instances_gap_status import ListAccountWorkflowPerformanceInstancesGapStatus
 from .list_account_workflow_performance_instances_kind import ListAccountWorkflowPerformanceInstancesKind
+from .list_account_workflow_readiness_follow_ups_due import ListAccountWorkflowReadinessFollowUpsDue
 from .list_account_workflow_readiness_queue_requirement import ListAccountWorkflowReadinessQueueRequirement
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
@@ -1584,6 +1585,9 @@ from .list_platform_tenant_self_workflow_performance_instances_gap_status import
 )
 from .list_platform_tenant_self_workflow_performance_instances_kind import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
+)
+from .list_platform_tenant_self_workflow_readiness_follow_ups_due import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsDue,
 )
 from .list_platform_tenant_self_workflow_readiness_queue_requirement import (
     ListPlatformTenantSelfWorkflowReadinessQueueRequirement,
@@ -2228,6 +2232,10 @@ from .operation_workflow_readiness_evidence_category import OperationWorkflowRea
 from .operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
 from .operation_workflow_readiness_evidence_change_kind import OperationWorkflowReadinessEvidenceChangeKind
 from .operation_workflow_readiness_evidence_status import OperationWorkflowReadinessEvidenceStatus
+from .operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
+from .operation_workflow_readiness_follow_up_options import OperationWorkflowReadinessFollowUpOptions
+from .operation_workflow_readiness_follow_up_options_due import OperationWorkflowReadinessFollowUpOptionsDue
+from .operation_workflow_readiness_follow_ups_response import OperationWorkflowReadinessFollowUpsResponse
 from .operation_workflow_readiness_inbox_response import OperationWorkflowReadinessInboxResponse
 from .operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
 from .operation_workflow_readiness_notification_check import OperationWorkflowReadinessNotificationCheck
@@ -5145,6 +5153,7 @@ __all__ = (
     "ListAccountWorkflowPerformanceInstancesDimension",
     "ListAccountWorkflowPerformanceInstancesGapStatus",
     "ListAccountWorkflowPerformanceInstancesKind",
+    "ListAccountWorkflowReadinessFollowUpsDue",
     "ListAccountWorkflowReadinessQueueRequirement",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
@@ -5190,6 +5199,7 @@ __all__ = (
     "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesKind",
+    "ListPlatformTenantSelfWorkflowReadinessFollowUpsDue",
     "ListPlatformTenantSelfWorkflowReadinessQueueRequirement",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
@@ -5781,6 +5791,10 @@ __all__ = (
     "OperationWorkflowReadinessEvidenceChange",
     "OperationWorkflowReadinessEvidenceChangeKind",
     "OperationWorkflowReadinessEvidenceStatus",
+    "OperationWorkflowReadinessFollowUp",
+    "OperationWorkflowReadinessFollowUpOptions",
+    "OperationWorkflowReadinessFollowUpOptionsDue",
+    "OperationWorkflowReadinessFollowUpsResponse",
     "OperationWorkflowReadinessInboxResponse",
     "OperationWorkflowReadinessNotification",
     "OperationWorkflowReadinessNotificationCheck",

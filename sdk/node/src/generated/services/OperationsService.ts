@@ -51,6 +51,7 @@ import type { OperationWorkflowPerformanceSummary } from '../models/OperationWor
 import type { OperationWorkflowReadinessComparisonRequest } from '../models/OperationWorkflowReadinessComparisonRequest.js';
 import type { OperationWorkflowReadinessComparisonResponse } from '../models/OperationWorkflowReadinessComparisonResponse.js';
 import type { OperationWorkflowReadinessCoordinationRequest } from '../models/OperationWorkflowReadinessCoordinationRequest.js';
+import type { OperationWorkflowReadinessFollowUpsResponse } from '../models/OperationWorkflowReadinessFollowUpsResponse.js';
 import type { OperationWorkflowReadinessInboxResponse } from '../models/OperationWorkflowReadinessInboxResponse.js';
 import type { OperationWorkflowReadinessNotification } from '../models/OperationWorkflowReadinessNotification.js';
 import type { OperationWorkflowReadinessNotificationCheck } from '../models/OperationWorkflowReadinessNotificationCheck.js';
@@ -5374,6 +5375,160 @@ export class OperationsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List Account readiness follow-up work queue
+   * ListAccountWorkflowReadinessFollowUps. Read retained pending follow-ups across subscriptions for an explicit application and environment. Due-time ordering puts overdue first. Pages are live and may move; refresh after edits. Account reads require read scope and MFA; customer reads require Operations read.
+   * @returns OperationWorkflowReadinessFollowUpsResponse ListAccountWorkflowReadinessFollowUps. Retained follow-up page.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessFollowUps({
+    slug,
+    scope,
+    tenantId,
+    owner,
+    workflow,
+    due,
+    offset,
+    limit,
+  }: {
+    /**
+     * ListAccountWorkflowReadinessFollowUps. Application slug.
+     */
+    slug: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.tenant_id. Optional customer selector matches notification evidence or a customer-specific subscription, including broader account watches.
+     */
+    tenantId?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application blocker ownership.
+     */
+    owner?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.workflow. Exact workflow name; global evaluation failures have no workflow.
+     */
+    workflow?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.due. Defaults to all pending follow-ups.
+     */
+    due?: 'all' | 'overdue' | 'upcoming',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.offset. Live zero-based offset, defaults to zero.
+     */
+    offset?: number,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/follow-ups',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'owner': owner,
+        'workflow': workflow,
+        'due': due,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List PlatformTenantSelf readiness follow-up work queue
+   * ListPlatformTenantSelfWorkflowReadinessFollowUps. Read retained pending follow-ups across subscriptions for an explicit application and environment. Due-time ordering puts overdue first. Pages are live and may move; refresh after edits. Account reads require read scope and MFA; customer reads require Operations read.
+   * @returns OperationWorkflowReadinessFollowUpsResponse ListPlatformTenantSelfWorkflowReadinessFollowUps. Retained follow-up page.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessFollowUps({
+    scope,
+    appId,
+    owner,
+    workflow,
+    due,
+    offset,
+    limit,
+  }: {
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application UUID.
+     */
+    appId: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application blocker ownership.
+     */
+    owner?: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.workflow. Exact workflow name; global evaluation failures have no workflow.
+     */
+    workflow?: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.due. Defaults to all pending follow-ups.
+     */
+    due?: 'all' | 'overdue' | 'upcoming',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.offset. Live zero-based offset, defaults to zero.
+     */
+    offset?: number,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/follow-ups',
+      query: {
+        'scope': scope,
+        'app_id': appId,
+        'owner': owner,
+        'workflow': workflow,
+        'due': due,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -264,3 +264,9 @@ type OperationWorkflowReadinessCoordination = api.OperationWorkflowReadinessCoor
 type OperationWorkflowReadinessCoordinationRequest = api.OperationWorkflowReadinessCoordinationRequest
 
 type OperationWorkflowReadinessNotificationCheck = api.OperationWorkflowReadinessNotificationCheck
+
+type OperationWorkflowReadinessFollowUpOptions = api.OperationWorkflowReadinessFollowUpOptions
+
+type OperationWorkflowReadinessFollowUp = api.OperationWorkflowReadinessFollowUp
+
+type OperationWorkflowReadinessFollowUpsResponse = api.OperationWorkflowReadinessFollowUpsResponse

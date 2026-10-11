@@ -27,3 +27,7 @@ func (s *PgStore) UpdateWorkflowReadinessNotification(ctx context.Context, accou
 func (s *PgStore) CheckWorkflowReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, operator bool) (api.OperationWorkflowReadinessNotificationCheck, error) {
 	return checkReadinessNotification(ctx, s, account, tenant, app, scope, id, sequence, operator)
 }
+
+func (s *PgStore) ListWorkflowReadinessFollowUps(ctx context.Context, account, tenant string, opts api.OperationWorkflowReadinessFollowUpOptions, operator bool) (api.OperationWorkflowReadinessFollowUpsResponse, error) {
+	return listReadinessFollowUps(ctx, s, account, tenant, opts, operator)
+}

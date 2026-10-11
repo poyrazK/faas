@@ -375,6 +375,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}": "GetOperationDefinition",
 	"GET /v1/platform-tenant-self/customer-operations/identity":                    "GetPlatformTenantSelfOperationIdentity",
 	// Business workflow observation routes use domain-oriented SDK method names.
+	"GET /v1/apps/{slug}/workflow-readiness/follow-ups":          "ListAccountWorkflowReadinessFollowUps",
+	"GET /v1/platform-tenant-self/workflow-readiness/follow-ups": "ListPlatformTenantSelfWorkflowReadinessFollowUps",
+
 	"POST /v1/apps/{slug}/workflow-readiness/subscriptions":                            "CreateAccountWorkflowReadinessSubscription",
 	"GET /v1/apps/{slug}/workflow-readiness/subscriptions":                             "ListAccountWorkflowReadinessSubscriptions",
 	"DELETE /v1/apps/{slug}/workflow-readiness/subscriptions/{id}":                     "DeleteAccountWorkflowReadinessSubscription",

@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
+
+from attrs import define as _attrs_define
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+
+
+T = TypeVar("T", bound="OperationWorkflowReadinessFollowUp")
+
+
+@_attrs_define
+class OperationWorkflowReadinessFollowUp:
+    """Compact pending follow-up with original inbox references; no application readiness is inferred."""
+
+    subscription_id: UUID
+    """OperationWorkflowReadinessFollowUp.subscription_id. Retained notification or subscription identity; tenant
+    fields are account-only."""
+    subscription_name: str
+    """OperationWorkflowReadinessFollowUp.subscription_name. Retained notification or subscription identity; tenant
+    fields are account-only."""
+    scope: str
+    """OperationWorkflowReadinessFollowUp.scope. Retained notification or subscription identity; tenant fields are
+    account-only."""
+    notification_id: UUID
+    """OperationWorkflowReadinessFollowUp.notification_id. Retained notification or subscription identity; tenant
+    fields are account-only."""
+    kind: str
+    """OperationWorkflowReadinessFollowUp.kind. Retained notification or subscription identity; tenant fields are
+    account-only."""
+    sequence: int
+    """OperationWorkflowReadinessFollowUp.sequence. Subscription-local notification sequence used for edits and
+    evidence checks."""
+    created_at: datetime.datetime
+    """OperationWorkflowReadinessFollowUp.created_at. Original notification creation time."""
+    coordination: OperationWorkflowReadinessCoordination
+    """OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission
+    of a follow-up time clears it."""
+    overdue: bool
+    """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    subscription_tenant_id: UUID | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.subscription_tenant_id. Retained notification or subscription identity;
+    tenant fields are account-only."""
+    platform_tenant_id: UUID | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.platform_tenant_id. Retained notification or subscription identity;
+    tenant fields are account-only."""
+    workflow: str | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.workflow. Retained notification or subscription identity; tenant fields
+    are account-only."""
+    instance_id: str | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.instance_id. Retained notification or subscription identity; tenant
+    fields are account-only."""
+    operation: str | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.operation. Retained notification or subscription identity; tenant fields
+    are account-only."""
+    from_state: str | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.from_state. Retained notification or subscription identity; tenant fields
+    are account-only."""
+    to_state: str | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.to_state. Retained notification or subscription identity; tenant fields
+    are account-only."""
+    subject: OperationSubject | Unset = UNSET
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
+
+    def to_dict(self) -> dict[str, Any]:
+        subscription_id = str(self.subscription_id)
+
+        subscription_name = self.subscription_name
+
+        scope = self.scope
+
+        notification_id = str(self.notification_id)
+
+        kind = self.kind
+
+        sequence = self.sequence
+
+        created_at = self.created_at.isoformat()
+
+        coordination = self.coordination.to_dict()
+
+        overdue = self.overdue
+
+        subscription_tenant_id: str | Unset = UNSET
+        if not isinstance(self.subscription_tenant_id, Unset):
+            subscription_tenant_id = str(self.subscription_tenant_id)
+
+        platform_tenant_id: str | Unset = UNSET
+        if not isinstance(self.platform_tenant_id, Unset):
+            platform_tenant_id = str(self.platform_tenant_id)
+
+        workflow = self.workflow
+
+        instance_id = self.instance_id
+
+        operation = self.operation
+
+        from_state = self.from_state
+
+        to_state = self.to_state
+
+        subject: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.subject, Unset):
+            subject = self.subject.to_dict()
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "subscription_id": subscription_id,
+                "subscription_name": subscription_name,
+                "scope": scope,
+                "notification_id": notification_id,
+                "kind": kind,
+                "sequence": sequence,
+                "created_at": created_at,
+                "coordination": coordination,
+                "overdue": overdue,
+            }
+        )
+        if subscription_tenant_id is not UNSET:
+            field_dict["subscription_tenant_id"] = subscription_tenant_id
+        if platform_tenant_id is not UNSET:
+            field_dict["platform_tenant_id"] = platform_tenant_id
+        if workflow is not UNSET:
+            field_dict["workflow"] = workflow
+        if instance_id is not UNSET:
+            field_dict["instance_id"] = instance_id
+        if operation is not UNSET:
+            field_dict["operation"] = operation
+        if from_state is not UNSET:
+            field_dict["from_state"] = from_state
+        if to_state is not UNSET:
+            field_dict["to_state"] = to_state
+        if subject is not UNSET:
+            field_dict["subject"] = subject
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+
+        d = dict(src_dict)
+        subscription_id = UUID(d.pop("subscription_id"))
+
+        subscription_name = d.pop("subscription_name")
+
+        scope = d.pop("scope")
+
+        notification_id = UUID(d.pop("notification_id"))
+
+        kind = d.pop("kind")
+
+        sequence = d.pop("sequence")
+
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
+
+        overdue = d.pop("overdue")
+
+        _subscription_tenant_id = d.pop("subscription_tenant_id", UNSET)
+        subscription_tenant_id: UUID | Unset
+        if isinstance(_subscription_tenant_id, Unset):
+            subscription_tenant_id = UNSET
+        else:
+            subscription_tenant_id = UUID(_subscription_tenant_id)
+
+        _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
+        platform_tenant_id: UUID | Unset
+        if isinstance(_platform_tenant_id, Unset):
+            platform_tenant_id = UNSET
+        else:
+            platform_tenant_id = UUID(_platform_tenant_id)
+
+        workflow = d.pop("workflow", UNSET)
+
+        instance_id = d.pop("instance_id", UNSET)
+
+        operation = d.pop("operation", UNSET)
+
+        from_state = d.pop("from_state", UNSET)
+
+        to_state = d.pop("to_state", UNSET)
+
+        _subject = d.pop("subject", UNSET)
+        subject: OperationSubject | Unset
+        if isinstance(_subject, Unset):
+            subject = UNSET
+        else:
+            subject = OperationSubject.from_dict(_subject)
+
+        operation_workflow_readiness_follow_up = cls(
+            subscription_id=subscription_id,
+            subscription_name=subscription_name,
+            scope=scope,
+            notification_id=notification_id,
+            kind=kind,
+            sequence=sequence,
+            created_at=created_at,
+            coordination=coordination,
+            overdue=overdue,
+            subscription_tenant_id=subscription_tenant_id,
+            platform_tenant_id=platform_tenant_id,
+            workflow=workflow,
+            instance_id=instance_id,
+            operation=operation,
+            from_state=from_state,
+            to_state=to_state,
+            subject=subject,
+        )
+
+        return operation_workflow_readiness_follow_up

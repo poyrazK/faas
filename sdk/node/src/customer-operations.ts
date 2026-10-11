@@ -319,6 +319,22 @@ export class GregaleOperationClient {
     if (!UUID.test(id) || !Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Valid notification identity required');
     return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions/' + encodeURIComponent(id) + '/notifications/' + sequence + '?' + readinessSubscriptionQuery(options), 'GET', undefined, undefined, signal);
   }
+
+  workflowReadinessFollowUps(options: OperationWorkflowReadinessFollowUpOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessFollowUpsResponse> {
+    const q = readinessSubscriptionQuery(options);
+    if (options.owner !== undefined) q.set('owner', options.owner);
+    if (options.workflow !== undefined) q.set('workflow', options.workflow);
+    if (options.due !== undefined) q.set('due', options.due);
+    if (options.offset !== undefined) {
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 2000) throw new Error('Invalid follow-up offset');
+      q.set('offset', String(options.offset));
+    }
+    if (options.limit !== undefined) {
+      if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100) throw new Error('Invalid follow-up page size');
+      q.set('limit', String(options.limit));
+    }
+    return this.request('/v1/platform-tenant-self/workflow-readiness/follow-ups?' + q, 'GET', undefined, undefined, signal);
+  }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -697,3 +713,7 @@ function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscript
 export interface OperationWorkflowReadinessCoordinationRequest { revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
 export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
 export interface OperationWorkflowReadinessNotificationCheck { notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
+
+export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
+export interface OperationWorkflowReadinessFollowUp { subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
+export interface OperationWorkflowReadinessFollowUpsResponse { items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }

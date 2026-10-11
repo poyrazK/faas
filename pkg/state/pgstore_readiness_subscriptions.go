@@ -228,3 +228,21 @@ func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tena
 	}
 	return out, tx.Commit(ctx)
 }
+
+func (s *PgStore) readReadinessFollowUps(ctx context.Context, account, tenant, app, scope string, operator bool) ([]api.OperationWorkflowReadinessFollowUp, error) {
+	a, _ := operationUUID(account)
+	p, _ := operationUUID(app)
+	rows, err := sqlc.New().ListReadinessFollowUps(ctx, s.pool, sqlc.ListReadinessFollowUpsParams{AccountID: a, AppID: p, Scope: scope, Operator: operator, Tenant: canonicalReadinessTenant(tenant), CandidateLimit: api.OperationWorkflowReadinessFollowUpCandidatesMax})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := []api.OperationWorkflowReadinessFollowUp{}
+	for _, raw := range rows {
+		var row api.OperationWorkflowReadinessFollowUp
+		if err = json.Unmarshal(raw, &row); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}

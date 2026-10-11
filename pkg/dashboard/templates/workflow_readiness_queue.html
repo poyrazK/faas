@@ -67,6 +67,25 @@
 <div class="table-scroll"><table hidden id="readiness-changes"><thead><tr><th>Workflow / transition</th><th>Readiness change</th><th>Evidence</th></tr></thead><tbody></tbody></table></div>
 <noscript><p>Enable JavaScript to save and compare views. The API and SDKs also accept saved queue snapshots.</p></noscript>
 </section>
+
+<section class="card" id="readiness-followups" data-url="{{.Data.FollowUpsURL}}" data-subscriptions-url="{{.Data.SubscriptionsURL}}" data-queue-url="{{.Data.QueueURL}}" data-list-url="{{.Data.ListURL}}">
+<h2>Follow-up work queue</h2>
+<p>Pending follow-ups across this application's readiness inboxes, ordered by due time with overdue items first. Follow-up ownership tracks coordination; current readiness must be checked against application evidence.</p>
+<form id="readiness-work-form">
+<label>Environment <input name="scope" required maxlength="40" value="{{.Data.Options.Scope}}"></label>
+<label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}" placeholder="All customers"></label>
+<label>Follow-up owner <input name="owner" maxlength="256" placeholder="All owners"></label>
+<label>Workflow <input name="workflow" maxlength="63" value="{{.Data.Options.Workflow}}" placeholder="All workflows"></label>
+<label>Due <select name="due"><option value="all">All pending</option><option value="overdue">Overdue</option><option value="upcoming">Upcoming</option></select></label>
+<label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+<button type="submit">Load follow-ups</button>
+</form>
+<p id="readiness-work-message" role="status" aria-live="polite"></p>
+<ol id="readiness-work-items" aria-live="polite"></ol>
+<button type="button" id="readiness-work-more" hidden>Load more follow-ups</button>
+<p>Follow-ups share each inbox's latest-100 notification retention window. Pages are live and can move when work is edited; reload to rebuild the queue.</p>
+<noscript><p>The API and SDKs can list pending follow-ups across readiness inboxes.</p></noscript>
+</section>
 <section class="card" id="readiness-subscriptions" data-url="{{.Data.SubscriptionsURL}}" data-list-url="{{.Data.ListURL}}" data-scope="{{.Data.Options.Scope}}" data-tenant="{{.Data.Options.TenantID}}" data-workflow="{{.Data.Options.Workflow}}" data-operation="{{.Data.Options.TargetOperation}}" data-owner="{{.Data.Options.Owner}}" data-unassigned="{{.Data.Options.Unassigned}}">
 <h2>Readiness subscriptions</h2>
 <p>Save a watch using this view's customer, workflow, target Operation and owner filters. Notifications stay in a durable inbox while this page is closed. New observations establish a baseline; subsequent changes can notify you. Discovery and evidence coverage are bounded.</p>
@@ -291,7 +310,7 @@
   } catch (error) { if (epoch === generation) message.textContent = error.message; }
   finally { reading = false; }
  };
- const load = async (preferred) => {
+ const load = async (preferred, sequence = 0) => {
   const epoch = ++generation; const selected = preferred || select.value;
   try {
    const result = await request(panel.dataset.url + '?' + query());
@@ -299,8 +318,9 @@
    select.replaceChildren();
    for (const sub of result.items) { const option = document.createElement('option');option.value = sub.id;option.textContent = sub.name + ' · ' + sub.status;select.append(option); }
    if (!result.items.length) { const option = document.createElement('option');option.value = '';option.textContent = 'No subscriptions';select.append(option); }
+   if (preferred && !result.items.some(s => s.id === preferred)) {select.value='';reset();message.textContent='The requested subscription is unavailable in this scope.';return;}
    if (result.items.some(s => s.id === selected)) select.value = selected;
-   reset(); message.textContent = result.items.length + ' subscriptions in this customer and environment scope.';
+   reset(); if (sequence > 0 && select.value === preferred) after = sequence - 1; message.textContent = result.items.length + ' subscriptions in this customer and environment scope.';
    await read();
   } catch (error) { if (epoch === generation) message.textContent = error.message; }
  };
@@ -324,7 +344,56 @@
  document.getElementById('readiness-inbox-refresh').addEventListener('click',() => { if(reading)return; reset(); void read(); });
  more.addEventListener('click',() => { void read(); });
  window.setInterval(() => { if (!document.hidden) void read(); },30000);
+ const target = /^#readiness-subscriptions\/([0-9a-f-]{36})\/([0-9]+)$/.exec(window.location.hash);
+ if (target && Number.isSafeInteger(Number(target[2])) && Number(target[2]) > 0) {panel.scrollIntoView();void load(target[1],Number(target[2]));}
 })();
 
+</script>
+<script nonce="{{.Nonce}}">
+(() => {
+ const panel=document.getElementById('readiness-followups'), form=document.getElementById('readiness-work-form');
+ const list=document.getElementById('readiness-work-items'), message=document.getElementById('readiness-work-message'), more=document.getElementById('readiness-work-more');
+ const submit=form.querySelector('button');let generation=0, offset=0, loading=false, refreshPending=false, applied;
+ const ids=new Set();
+ const text=(parent,value)=>{const p=document.createElement('p');p.textContent=value;parent.append(p);return p;};
+ const request=async(url,options={})=>{const response=await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});if(!response.ok){let p;try{p=await response.json();}catch{}throw new Error(p?.detail || p?.title || 'Follow-up request failed ('+response.status+').');}return response.json();};
+ const draw=(row)=>{
+  const key=row.subscription_id+'/'+row.sequence;if(ids.has(key))return;ids.add(key);
+  const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
+  text(li,(row.overdue ? 'Overdue' : 'Upcoming')+' · '+new Date(c.follow_up_at).toLocaleString()+' · '+(c.owner || 'Unassigned'));
+  text(li,row.subscription_name+' · '+row.kind+' · '+c.status+' · '+row.scope+(row.platform_tenant_id ? ' · customer '+row.platform_tenant_id : ''));
+  if(row.workflow)text(li,row.workflow+' / '+row.instance_id+' · '+row.subject.type+': '+row.subject.id+' · '+row.operation+': '+row.from_state+' → '+row.to_state);
+  if(c.note)text(li,c.note);
+  const scopeQuery=new URLSearchParams({scope:row.scope});if(row.subscription_tenant_id)scopeQuery.set('tenant_id',row.subscription_tenant_id);
+  const inbox=document.createElement('a');inbox.href=panel.dataset.queueUrl+'?'+scopeQuery+'#readiness-subscriptions/'+encodeURIComponent(row.subscription_id)+'/'+row.sequence;inbox.textContent='Open original notification in its inbox';li.append(inbox);
+  const detail=panel.dataset.subscriptionsUrl+'/'+encodeURIComponent(row.subscription_id)+'/notifications/'+row.sequence+'?'+scopeQuery;
+  const status=text(li,'');status.setAttribute('role','status');
+  const edit=document.createElement('form'),label=document.createElement('label');label.textContent='Follow-up time (your browser timezone) ';
+  const due=document.createElement('input');due.type='datetime-local';due.required=true;due.step='0.001';const d=new Date(c.follow_up_at);due.value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);label.append(due);edit.append(label);
+  const save=document.createElement('button');save.type='submit';save.textContent='Reschedule';edit.append(save);
+  const clear=document.createElement('button');clear.type='button';clear.textContent='Clear follow-up';edit.append(clear);li.append(edit);
+  const mutate=async(followUp)=>{
+   save.disabled=true;clear.disabled=true;try{
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,follow_up_at:followUp})});
+    Object.assign(c,updated.coordination);if(!updated.coordination.follow_up_at)delete c.follow_up_at;
+    if(applied?.toString()===viewQuery)await refresh();
+   }catch(error){status.textContent=error.message+' Reload the queue before retrying a conflicting edit.';}finally{save.disabled=false;clear.disabled=false;}
+  };
+  edit.addEventListener('submit',event=>{event.preventDefault();void mutate(new Date(due.value).toISOString());});clear.addEventListener('click',()=>{void mutate(undefined);});
+  const check=document.createElement('button');check.type='button';check.textContent='Check current evidence';li.append(check);
+  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detail);if(li.isConnected)status.textContent='Current evidence: '+current.status+' at '+new Date(current.checked_at).toLocaleString()+'. '+(current.change?.explanation || 'No workflow comparison is available.');}catch(error){status.textContent=error.message;}finally{check.disabled=false;}});
+  list.append(li);
+ };
+ const read=async()=>{
+  if(!applied || loading)return;loading=true;submit.disabled=true;more.disabled=true;const epoch=generation;
+  const q=new URLSearchParams(applied);q.set('offset',String(offset));
+  try{const result=await request(panel.dataset.url+'?'+q);if(epoch!==generation)return;for(const row of result.items)draw(row);offset=result.next_offset;more.hidden=!result.has_more;message.textContent=result.total_count+' matching retained follow-ups; '+result.overdue_count+' overdue. Checked '+new Date(result.evaluated_at).toLocaleString()+'.'+(!result.items.length && !list.children.length ? ' No pending follow-ups match these filters.' : '')+(result.retention_limited ? ' Coordination is limited to retained notifications.' : '');}
+  catch(error){if(epoch===generation)message.textContent=error.message;}
+  finally{loading=false;submit.disabled=false;more.disabled=false;if(refreshPending){refreshPending=false;void refresh();}}
+ };
+ const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();more.hidden=true;await read();};
+ form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;applied=new URLSearchParams();for(const [k,v] of new FormData(form)){if(String(v).trim())applied.set(k,String(v).trim());}void refresh();});
+ more.addEventListener('click',()=>{void read();});
+})();
 </script>
 </body></html>
