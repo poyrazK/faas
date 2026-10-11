@@ -1259,6 +1259,26 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
 
+	// Workflow recovery policy and operator routes use the public client names.
+	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                         "GetEventRecoveryByRequest",
+	"GET /v1/apps/{slug}/recovery-policy":                                                 "GetWorkflowRecoveryPolicy",
+	"GET /v1/apps/{slug}/recovery-policy/health":                                          "GetWorkflowRecoveryPolicyHealth",
+	"GET /v1/apps/{slug}/recovery-policy/history":                                         "GetWorkflowRecoveryHistory",
+	"GET /v1/apps/{slug}/recovery-policy/queue":                                           "GetWorkflowRecoveryAutomaticQueue",
+	"GET /v1/apps/{slug}/recovery-policy/report":                                          "GetWorkflowRecoveryReport",
+	"GET /v1/apps/{slug}/recovery-policy/reviews":                                         "ListWorkflowRecoveryPolicyReviews",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}":                              "GetWorkflowRecoveryPolicyReview",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status":                       "GetWorkflowRecoveryReviewStatus",
+	"GET /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}":               "GetWorkflowRecoveryActionReceipt",
+	"POST /v1/apps/{slug}/recovery-policy/change-preview":                                 "PreviewWorkflowRecoveryPolicyChange",
+	"POST /v1/apps/{slug}/recovery-policy/control":                                        "ControlWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/evaluate":                                       "EvaluateWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress": "SuppressWorkflowRecoveryAutomaticAction",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision":                    "DecideWorkflowRecoveryPolicyReview",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancel":                                   "CancelWorkflowRecoveryExecution",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancellation-preview":                     "PreviewWorkflowRecoveryCancellation",
+	"PUT /v1/apps/{slug}/recovery-policy":                                                 "SetWorkflowRecoveryPolicy",
+
 	// Events delivery controls and durable recovery use descriptive SDK verbs.
 	"GET /v1/apps/{slug}/workflow-event-replay-preview":                                 "PreviewWorkflowEventReplay",
 	"POST /v1/apps/{slug}/workflow-event-replays":                                       "CreateWorkflowEventReplayBackfill",
