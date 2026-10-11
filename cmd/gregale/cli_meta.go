@@ -2592,7 +2592,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "kind", Short: "rule kind", Value: "KIND", Req: true, ClosedSet: edgeRuleKindVocab},
 				{Name: "match-host", Short: "host to match", Value: "HOST", Req: true},
-				{Name: "match-path", Short: "path to match (default /)", Value: "PATH"},
+				{Name: "match-path", Short: "path glob to match (default / covers only the root; /** covers every path)", Value: "PATH"},
 				{Name: "match-method", Short: "HTTP method to match (repeat for multiple)", Value: "METHOD"},
 				{Name: "match-header", Short: "exact request header selector (repeat)", Value: "Name=Value"},
 				{Name: "priority", Short: "match priority; lower wins (default 100)", Value: "N"},

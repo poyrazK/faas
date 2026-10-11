@@ -189,7 +189,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async (required)")
 	matchHost := fs.String("match-host", "", "host to match (required)")
-	matchPath := fs.String("match-path", "/", "path to match")
+	matchPath := fs.String("match-path", "/", "path glob to match (default / covers only the root; /** covers every path)")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")
 	var matchHeaders multiFlag
@@ -520,7 +520,18 @@ func cmdEdgeRulesCreate(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	PrintOK(osStdout, "Edge rule %s created for app %s (kind=%s, priority=%d).", out.ID, *slug, out.Kind, out.Priority)
+	warnRootOnlyProtectiveRule(*kind, visited["match-path"])
 	return 0
+}
+
+// warnRootOnlyProtectiveRule flags a gate created without --match-path. The
+// default "/" is an exact glob that covers only the root path, so a jwt, ip,
+// or maintenance rule written without a path leaves every other path open.
+func warnRootOnlyProtectiveRule(kind string, pathGiven bool) {
+	if pathGiven || !api.EdgeRuleKindUsesProtectivePathMatch(kind) {
+		return
+	}
+	PrintWarn(osStderr, "This %s rule covers only the root path /. Pass --match-path '/**' to cover every path.", kind)
 }
 
 // cmdEdgeRulesGet fetches a single edge rule by ID.
