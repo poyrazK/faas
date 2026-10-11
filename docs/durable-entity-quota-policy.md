@@ -102,3 +102,17 @@ Turning the management flag off disables its API, not enforcement of already
 managed policies. Do not delete/TTL `tenant-quotas/v1/`, downgrade its schema, or
 restore an older authority record. Native GCS/KVM and fleet acceptance are still
 external release prerequisites.
+
+## Source qualification
+
+[CI run 38150848249](https://github.com/poyrazK/faas/actions/runs/38150848249)
+passed for source commit `41c78896da0bbfe389e53870e1307fea690e123c`.
+It passed the Node build, 16 focused SDK tests, packed-starter acceptance, four
+Go durable packages under the race detector, focused CLI checks, and 25 top-level
+API tests under the race detector. New coverage exercises read-only preview,
+authorization, audited apply/replay, unknown commit recovery, stale-node fencing,
+unsafe proposal rejection, ownership-fenced cap increases and migration completion.
+
+No local tests, native GCS/KVM runs or production enablement were performed.
+Native storage, ownership failure and fleet rollout acceptance remain pending
+for the independent testing agent. This qualification does not authorize ingress.

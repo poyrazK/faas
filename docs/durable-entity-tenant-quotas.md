@@ -25,10 +25,12 @@ and a positive `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` (per-entity cap, at most
 | `FAAS_DURABLE_ENTITY_TENANT_MAX_RETAINED_BYTES` | 16 MiB | per-entity cap through 1 GiB |
 
 Values must be canonical positive integers; byte caps use integer bytes. Limits
-persist in the quota record and ordinary admission only tightens them. A node
-with weaker settings cannot reset a previously persisted limit. Raising persisted
-limits needs a future controlled migration; changing environment settings alone
-does not relax them. Do not remove/reset quota records to increase limits.
+persist in the quota record and ordinary admission only tightens legacy limits.
+A node with weaker settings cannot reset a previously persisted limit. Use the
+opt-in [quota policy workflow](durable-entity-quota-policy.md) to preview and apply
+reviewed increases, then migrate and verify entity caps. Managed policies require
+exact node configuration agreement. Changing environment settings alone does
+not relax persisted limits. Do not remove/reset quota records to increase limits.
 
 ## Admission and storage contract
 
@@ -56,8 +58,9 @@ until a controlled policy migration; it cannot quietly enlarge the execution
 cap. Existing larger reservations remain as high-water charges when caps lower. Reservations remain across restarts, receipt GC,
 cohort reclamation, failed guest execution and window expiry. This deliberately
 trades utilization for a safe admission decision without a cross-object commit.
-There is no automatic entity-reservation release or tenant aggregate inventory
-migration in this slice. At most 64 distinct entity reservations exist per scope.
+There is no automatic entity-reservation release. The opt-in migration workflow
+inventories historical entities and verifies reservation coverage. At most 64
+distinct entity reservations exist per scope.
 Existing reservations continue admitting attempts when the tenant byte cap is
 lowered; new/increased reservations and grant issuance must fit the tighter cap.
 

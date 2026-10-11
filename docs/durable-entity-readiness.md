@@ -30,6 +30,8 @@ source/configuration-bound external evidence verifier remains future work.
 The optional [quota migration workflow](durable-entity-quota-migration.md) reports
 scope progress separately. A completed coverage pass does not verify fleet
 quiescence or native acceptance, so this report retains its external blockers.
+The optional [quota policy workflow](durable-entity-quota-policy.md) reports its
+configuration separately and preserves those external blockers as well.
 
 ## Qualification
 
