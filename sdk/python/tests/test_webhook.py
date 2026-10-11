@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import time
 from uuid import UUID
 
@@ -23,7 +23,7 @@ TIMESTAMP = 1_712_345_678
 DELIVERY_ID = "delivery-123"
 BODY = b'{"type":"invoice.paid","amount":42}'
 SIGNATURE = "sha256=9733751b9a5946bb55cb0f75a16ae54fa21f3d6e827284736a9a5cdf4b07e6d8"
-NOW = datetime.fromtimestamp(TIMESTAMP, timezone.utc)
+NOW = datetime.fromtimestamp(TIMESTAMP, UTC)
 
 
 def _headers(**overrides: str | list[str]) -> dict[str, str | list[str]]:

@@ -289,6 +289,9 @@ func boot() error {
 	if err := startProfileBridge(manifest.Profiling, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
+	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
+		slog.Default().Warn("trace bridge unavailable", "err", err)
+	}
 	if manifest.AfterRestore != nil {
 		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
 	}
@@ -505,6 +508,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampProfileEnv(env, m.Profiling)
+	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
@@ -2464,6 +2468,11 @@ func pivotInto(root string) error {
 		if err := syscall.Mount(mnt.src, mnt.dst, mnt.fs, 0, ""); err != nil {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
+	}
+	// A fresh devtmpfs lacks the /dev/fd and /dev/std{in,out,err} links
+	// images expect from a container runtime (nginx logs to /dev/stderr).
+	if err := ensureStandardDevLinks("/dev"); err != nil {
+		slog.Default().Warn("post-pivot standard /dev links", "err", err)
 	}
 	return nil
 }

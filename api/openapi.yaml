@@ -10577,6 +10577,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose usage alerts are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerUsageAlerts
+      summary: List the plan usage alerts a consumer crossed.
+      description: |
+        Returns up to 100 recorded crossings of the consumer's plan alert
+        thresholds, newest first. Each crossing also emitted one
+        consumer.usage_threshold webhook; this list reconciles missed
+        deliveries.
+      responses:
+        '200':
+          description: The consumer's usage alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageAlertListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/rate-cards/{rate_card_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -43240,6 +43266,7 @@ components:
           - outbound_integration
           - guest_transport
           - platform_internal
+          - app_dependency
         kind:
           type: string
           maxLength: 64
@@ -46069,6 +46096,8 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         key: { type: string, minLength: 1, maxLength: 1024 }
         version_id: { type: string, format: uuid, description: GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object. }
+        if_match: { type: string, minLength: 1, maxLength: 256, description: 'PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are fixed in the signed capability.' }
+        if_none_match: { type: string, enum: ['*'], description: PUT only. Create only if no live object exists. Mutually exclusive with if_match. }
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }
@@ -49108,18 +49137,29 @@ components:
       properties:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1500 }
-        effective_from: { type: [string, "null"], format: date-time, description: UTC minute at which the version starts; omitted means the next UTC minute. }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order (ADR-975). Statements for periods it prices must cover one calendar month." }
+        tiers:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+          description: "Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
       type: object
-      required: [id, tenant_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      required: [id, tenant_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from, created_at]
       properties:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free units per tenant per UTC calendar month (ADR-975)." }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+          description: "Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -49338,7 +49378,7 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
 
     PlatformTenantStatementLineResponse:
-      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present. Each line is billable_units × price_millicents_per_unit; free allowance units and each ladder step have their own line. In an adjustment that re-prices a month for a tenant allowance or tiers (ADR-975), a line is the difference from finalized revisions and can be negative, while the revision total never is.
       type: object
       required: [app_id, window_start, window_end, billable_units, amount_millicents]
       properties:
@@ -49348,12 +49388,12 @@ components:
         jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time, description: Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage. }
-        billable_units: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, description: "Units on this line; negative only in a re-priced month adjustment (ADR-975)." }
         rate_card_id: { type: string, format: uuid }
         platform_tenant_rate_card_id: { type: string, format: uuid, description: Tenant-wide price source; mutually exclusive with rate_card_id. }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
-        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, description: "billable_units × price_millicents_per_unit; negative only in a re-priced month adjustment (ADR-975)." }
 
     PlatformTenantStatementResponse:
       description: One immutable initial or additive adjustment revision for a cross-app customer period, with compact invoice lines and private minute-level adjustment coverage.
@@ -49619,25 +49659,39 @@ components:
         name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', example: pro }
         max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Admitted requests per consumer per minute; over the limit the gateway returns 429." }
         max_units_per_month: { type: integer, format: int64, minimum: 0, description: "Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends." }
+        alert_thresholds_percent:
+          type: array
+          maxItems: 5
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month."
 
     UpdateAPIConsumerPlanLimitsRequest:
-      description: "Replacement limits for a consumer plan."
+      description: "Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them."
       type: object
       required: [max_requests_per_minute, max_units_per_month]
       properties:
         max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
         max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        alert_thresholds_percent:
+          type: array
+          maxItems: 5
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current thresholds; send an empty list to remove them."
 
     APIConsumerPlanResponse:
       description: "Named consumer plan with enforcement limits."
       type: object
-      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at]
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         name: { type: string }
         max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
         max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        alert_thresholds_percent:
+          type: array
+          items: { type: integer, format: int32, minimum: 1, maximum: 100 }
+          description: "The plan's usage alert thresholds, ascending; empty means no alerts."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -49752,7 +49806,7 @@ components:
         as_of: { type: string, format: date-time }
 
     APIConsumerUsageCompletenessResponse:
-      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-954)."
       type: object
       required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
       properties:
@@ -50094,6 +50148,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         slug:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
@@ -50673,6 +50729,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         visibility:
           type: [string, "null"]
           enum: [public, internal, null]
@@ -51367,6 +51425,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         entrypoint:
           type: array
           items: { type: string }
@@ -62114,6 +62174,13 @@ components:
           type: object
           additionalProperties: { type: string }
           description: 'Headers stamped on the redirect response.'
+        template:
+          type: boolean
+          description: |
+            ADR-968. Expand ${name} request values in `to` and in the
+            header values (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>; $$ is a
+            literal $). The target must start with a literal "/" or
+            "http(s)://", and only ${host} may appear before the path.
 
     EdgeRuleHeaderOp:
       description: 'One header mutation. `action` ∈ {add,set,remove}.'
@@ -62125,6 +62192,12 @@ components:
         action:
           type: string
           enum: [add, set, remove]
+        template:
+          type: boolean
+          description: |
+            ADR-968. Expand ${name} request values in `value` (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>, cookie:<name>;
+            $$ is a literal $). Control characters are dropped and each
+            value is capped at 1 KiB. Not allowed with action=remove.
 
     EdgeRuleHeadersAction:
       description: 'Mutates request + response headers. The gateway enforces a hard-coded blacklist (Host, Content-Length, Transfer-Encoding, Connection, x-faas-*).'
@@ -70180,6 +70253,45 @@ components:
         period: { type: string }
       additionalProperties: true
 
+    APIConsumerUsageAlertResponse:
+      description: "One plan alert threshold a consumer crossed in one UTC month (ADR-849)."
+      type: object
+      required: [id, consumer_id, plan_id, month_start, threshold_percent, limit_units, used_units, crossed_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        month_start: { type: string, format: date-time }
+        threshold_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        limit_units: { type: integer, format: int64, minimum: 1 }
+        used_units: { type: integer, format: int64, minimum: 0, description: "Weighted units used this month when the threshold was crossed." }
+        crossed_at: { type: string, format: date-time }
+
+    APIConsumerUsageAlertListResponse:
+      description: "A consumer's usage alerts, newest first."
+      type: object
+      required: [alerts]
+      properties:
+        alerts:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageAlertResponse' }
+
+    APIConsumerUsageThresholdWebhookPayload:
+      type: object
+      description: Data delivered with consumer.usage_threshold when a consumer crosses a plan alert threshold. alert_id is stable across retries.
+      required: [alert_id, app_id, consumer_id, external_ref, plan_id, threshold_percent, limit_units, used_units, month_start, crossed_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        plan_id: { type: string, format: uuid }
+        threshold_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        limit_units: { type: integer, format: int64, minimum: 1 }
+        used_units: { type: integer, format: int64, minimum: 0 }
+        month_start: { type: string, format: date-time }
+        crossed_at: { type: string, format: date-time }
+
     APIConsumerUsageStatementFinalizedWebhookPayload:
       type: object
       description: Complete payable usage statement delivered with usage_statement.finalized.
@@ -70420,7 +70532,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -71320,7 +71432,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -71402,7 +71514,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -71923,6 +72035,13 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+    TracingConfig:
+      description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        sample_ratio: { type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports." }
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object
@@ -72319,8 +72438,9 @@ components:
         duration_nanos: { type: integer, format: int64, minimum: 0 }
         status: { type: string, maxLength: 256 }
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
-        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal], description: "Allowlisted platform-owned dependency classification." }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
+        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-958): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
 
     DebugCriticalPathSpan:
       type: object
@@ -72331,8 +72451,9 @@ components:
         parent_span_id: { type: string, maxLength: 256 }
         name: { type: string, maxLength: 256 }
         kind: { type: string, maxLength: 256 }
-        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal] }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
+        dependency_name: { type: string, maxLength: 96 }
         status: { type: string, maxLength: 256 }
         start_time: { type: string, format: date-time }
         end_time: { type: string, format: date-time }
@@ -72361,7 +72482,7 @@ components:
       description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
       required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
         calls: { type: integer, format: int64, minimum: 1 }
@@ -72455,13 +72576,32 @@ components:
           type: array
           maxItems: 100
           items: { $ref: '#/components/schemas/DebugDependencyImpactEdge' }
+        deployment_comparison: { $ref: '#/components/schemas/DebugDependencyDeploymentComparison' }
+
+    DebugDependencyDeploymentComparison:
+      type: object
+      description: "Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
+      required: [current_deployment_id, previous_deployment_id, dependencies, truncated]
+      properties:
+        current_deployment_id: { type: string }
+        current_deployment_tag: { type: string }
+        current_commit_sha: { type: string }
+        previous_deployment_id: { type: string }
+        previous_deployment_tag: { type: string }
+        previous_commit_sha: { type: string }
+        route: { type: string }
+        dependencies:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DebugDependencyLatencyItem' }
+        truncated: { type: boolean }
 
     DebugCriticalPathSegment:
       type: object
       description: "One redacted span identity in a canonical historical critical-path signature."
       required: [type, name]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
 
@@ -72542,7 +72682,7 @@ components:
       description: "Bounded latency aggregate for one retained dependency span group. Total duration may include overlapping child spans and is not a critical-path sum."
       required: [type, name, calls, total_duration_ms, max_duration_ms]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
         calls: { type: integer, minimum: 1, maximum: 100 }
@@ -72557,7 +72697,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [request_failure, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -72669,6 +72809,7 @@ components:
           maxItems: 16
           items: { $ref: '#/components/schemas/DebugRequestDependencyLatency' }
         dependency_latency_truncated: { type: boolean, description: "True when more than 16 dependency groups were retained." }
+        dependency_comparison: { $ref: '#/components/schemas/DebugDependencyDeploymentComparison' }
         spans:
           type: array
           maxItems: 100
@@ -72706,6 +72847,19 @@ components:
         acknowledged_at: { type: string, format: date-time }
         dismissed_until: { type: string, format: date-time }
         resolved_at: { type: string, format: date-time }
+        suspected_dependency: { $ref: '#/components/schemas/DebugSuspectedDependency' }
+
+    DebugSuspectedDependency:
+      type: object
+      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."
+      required: [type, name, p95_base_ms, p95_ms, regression_factor]
+      properties:
+        type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
+        kind: { type: string, maxLength: 64 }
+        name: { type: string, maxLength: 96 }
+        p95_base_ms: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        regression_factor: { type: number, minimum: 0 }
 
     DebugRegressionActionRequest:
       type: object

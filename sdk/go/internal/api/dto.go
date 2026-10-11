@@ -102,6 +102,7 @@ type CreateAppRequest struct {
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing                *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries             int                   `json:"max_retries,omitempty"`
 	RetryPolicy            *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -144,6 +145,7 @@ type UpdateAppRequest struct {
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`

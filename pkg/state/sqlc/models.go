@@ -272,6 +272,8 @@ type ApiConsumerPlan struct {
 	MaxUnitsPerMonth     int64
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+	// Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.
+	AlertThresholdsPercent []int32
 }
 
 // Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.
@@ -323,6 +325,20 @@ type ApiConsumerRouteUsageMinute struct {
 	WindowStart   pgtype.Timestamptz
 	BillableUnits int64
 	UpdatedAt     pgtype.Timestamptz
+}
+
+// One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.
+type ApiConsumerUsageAlert struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	ConsumerID       pgtype.UUID
+	PlanID           pgtype.UUID
+	MonthStart       pgtype.Timestamptz
+	ThresholdPercent int32
+	LimitUnits       int64
+	UsedUnits        int64
+	CrossedAt        pgtype.Timestamptz
 }
 
 type ApiConsumerUsageEvent struct {
@@ -600,7 +616,6 @@ type AppEnvironmentWorkloadIntent struct {
 	AccountID       pgtype.UUID
 	AppID           pgtype.UUID
 	EnvironmentID   pgtype.UUID
-	JobID           pgtype.UUID
 	Source          []byte
 	Runtime         []byte
 	CreatedAt       pgtype.Timestamptz
@@ -609,6 +624,7 @@ type AppEnvironmentWorkloadIntent struct {
 	ServiceBindings []byte
 	Schedule        []byte
 	Variables       []byte
+	JobID           pgtype.UUID
 }
 
 type AppError struct {
@@ -1836,19 +1852,20 @@ type DeadLetterEvent struct {
 }
 
 type DebugRegressionObservation struct {
-	AppID            pgtype.UUID
-	DeploymentID     pgtype.UUID
-	Route            string
-	P95Ms            int32
-	P95BaseMs        int32
-	AffectedCount    int32
-	RegressionFactor pgtype.Numeric
-	FirstDetectedAt  pgtype.Timestamptz
-	LastDetectedAt   pgtype.Timestamptz
-	State            string
-	AcknowledgedAt   pgtype.Timestamptz
-	DismissedUntil   pgtype.Timestamptz
-	ResolvedAt       pgtype.Timestamptz
+	AppID               pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	P95Ms               int32
+	P95BaseMs           int32
+	AffectedCount       int32
+	RegressionFactor    pgtype.Numeric
+	FirstDetectedAt     pgtype.Timestamptz
+	LastDetectedAt      pgtype.Timestamptz
+	State               string
+	AcknowledgedAt      pgtype.Timestamptz
+	DismissedUntil      pgtype.Timestamptz
+	ResolvedAt          pgtype.Timestamptz
+	SuspectedDependency []byte
 }
 
 type DeployToken struct {
@@ -1963,9 +1980,9 @@ type Deployment struct {
 	GithubSourceRef            pgtype.Text
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
-	EnvironmentWorkloadHeld    bool
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
+	EnvironmentWorkloadHeld    bool
 }
 
 type DeploymentAlias struct {
@@ -5661,6 +5678,10 @@ type PlatformTenantRateCard struct {
 	PriceMillicentsPerUnit int64
 	EffectiveFrom          pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
+	// Free request units per tenant per UTC calendar month across all attributed apps, consumed in minute order while this card is effective.
+	IncludedUnitsPerMonth int64
+	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.
+	Tiers []byte
 }
 
 type PlatformTenantReconciliationReceipt struct {

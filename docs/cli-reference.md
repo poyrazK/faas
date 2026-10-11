@@ -810,11 +810,13 @@ List uploaded multipart parts
 
 Upload a file with resumable multipart transfers
 
-`gregale bucket upload [--content-type <TYPE>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+`gregale bucket upload [--content-type <TYPE>] [--if-match <ETAG>] [--if-none-match <*>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--content-type <TYPE>` | object MIME type |  |
+| `--if-match <ETAG>` | replace a matching object (single PUT only) |  |
+| `--if-none-match <*>` | create only if absent (single PUT only) |  |
 | `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
 | `--timeout <DURATION>` | transfer deadline (default 30m) |  |
 
@@ -1488,13 +1490,17 @@ gregale alerts update --app my-api --interactive
 
 Delete one alert rule
 
-`gregale alerts rm <alert-id>`
+`gregale alerts rm --app <slug> <alert-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### alerts rotate-secret
 
 Rotate the alert&#39;s webhook secret
 
-`gregale alerts rotate-secret --app <slug> [--from-stdin]`
+`gregale alerts rotate-secret --app <slug> [--from-stdin] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5044,7 +5050,12 @@ gregale deploys status v42 --app my-api --json
 
 Cancel one pending deployment
 
-`gregale deploys cancel <id>`
+`gregale deploys cancel [--app <slug>] [--reason <REASON>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to the linked project, or the deployment&#39;s own app) |  |
+| `--reason <REASON>` | cancel reason (default user) | one of `user` · `auto_quota` · `auto_health` · `system` |
 
 ### deploys reorder
 
@@ -6019,7 +6030,7 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 -
 gregale consumers completeness my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
-gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000
+gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000 --alert-at 80,100
 gregale consumers set-plan my-api CONSUMER_ID --plan free
 ```
 
@@ -6182,25 +6193,27 @@ List an app&#39;s consumer plans
 
 Create a consumer plan with request limits
 
-`gregale consumers plan-create --name <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] <slug>`
+`gregale consumers plan-create --name <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] [--alert-at <80,100>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | plan name (lowercase letters, digits, hyphens) | required |
 | `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
 | `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
+| `--alert-at <80,100>` | percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears |  |
 
 ### consumers plan-update
 
 Change a plan&#39;s limits (applied within 15 seconds)
 
-`gregale consumers plan-update --plan <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] <slug>`
+`gregale consumers plan-update --plan <NAME> [--max-requests-per-minute <N>] [--max-units-per-month <N>] [--alert-at <80,100>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--plan <NAME>` | plan name | required |
 | `--max-requests-per-minute <N>` | requests per consumer per minute; 0 is unlimited |  |
 | `--max-units-per-month <N>` | weighted units per consumer per UTC month; 0 is unlimited |  |
+| `--alert-at <80,100>` | percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears |  |
 
 ### consumers set-plan
 
@@ -6218,6 +6231,12 @@ Move a consumer onto a plan from a minute
 List a consumer&#39;s plan assignments
 
 `gregale consumers plan-history <slug> <consumer-id>`
+
+### consumers usage-alerts
+
+List the plan usage alerts a consumer crossed
+
+`gregale consumers usage-alerts <slug> <consumer-id>`
 
 
 ## platform-tenants
@@ -6388,13 +6407,15 @@ List a customer&#39;s cross-app price versions
 
 Add a customer-wide per-request price version
 
-`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--effective-from <RFC3339>]`
+`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--effective-from <RFC3339>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--id <UUID>` | platform tenant UUID | required |
 | `--currency <CODE>` | ISO-4217 currency | required |
 | `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
+| `--included-units <N>` | free requests per tenant per UTC calendar month across all apps |  |
+| `--tier <UP_TO:PRICE>` | graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units) |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
 
 ### platform-tenants statements
@@ -6579,7 +6600,7 @@ gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>]`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6596,6 +6617,7 @@ Add an edge rule
 | `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country\|ip\|composite) |  |
 | `--redirect-status <CODE>` | kind=redirect: 301\|302\|307\|308 |  |
 | `--redirect-to <URL>` | kind=redirect: Location URL |  |
+| `--template` | kind=redirect\|headers: expand ${name} request values (host, path, query, client_ip, country, asn, header:&lt;name&gt;, …) |  |
 | `--rewrite-from <PATH>` | kind=rewrite: from path |  |
 | `--rewrite-to <PATH>` | kind=rewrite: to path |  |
 | `--route-target-slug <slug>` | kind=route: target app slug |  |
@@ -6605,7 +6627,7 @@ Add an edge rule
 | `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
 | `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the app&#39;s instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it |  |
 | `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
-| `--respond-status <CODE>` | kind=respond: response status (default 200) |  |
+| `--respond-status <CODE>` | kind=respond (preview apps only): response status (default 200) |  |
 | `--respond-body <JSON>` | kind=respond: JSON response body (max 64 KiB) |  |
 | `--ip-allow <CIDR>` | kind=ip: allow CIDR (repeat) |  |
 | `--ip-deny <CIDR>` | kind=ip: deny CIDR (repeat) |  |
@@ -6659,6 +6681,27 @@ Add an edge rule
 | `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
 | `--match <JSON|@FILE|->` | match condition ANDed with the selectors (ADR-962 JSON, @file, or -) |  |
 | `--mode <MODE>` | enforce (default) or log: a log-mode rule only counts matches | one of `enforce` · `log` |
+| `--cache-methods <METHOD>` | kind=cache: cacheable method (repeatable) |  |
+| `--cache-vary-on <HEADER>` | kind=cache: header to vary on (repeatable) |  |
+| `--cors-allow-header <HEADER>` | kind=cors: allowed header (repeatable) |  |
+| `--cors-allow-method <METHOD>` | kind=cors: allowed method (repeatable) |  |
+| `--cors-allow-origin <ORIGIN>` | kind=cors: allowed origin (repeatable) |  |
+| `--cors-expose-header <HEADER>` | kind=cors: exposed header (repeatable) |  |
+| `--description <TEXT>` | operator-facing description (&lt;=1000 chars) |  |
+| `--expires-at <RFC3339>` | stop applying the rule at this RFC 3339 time |  |
+| `--expires-in <DURATION>` | stop applying the rule after this duration (e.g. 2h) |  |
+| `--headers-request-add <NAME:VALUE>` | kind=headers: request header to add (repeatable) |  |
+| `--headers-request-remove <NAME>` | kind=headers: request header to remove (repeatable) |  |
+| `--headers-request-set <NAME:VALUE>` | kind=headers: request header to set (repeatable) |  |
+| `--headers-response-add <NAME:VALUE>` | kind=headers: response header to add (repeatable) |  |
+| `--headers-response-remove <NAME>` | kind=headers: response header to remove (repeatable) |  |
+| `--headers-response-set <NAME:VALUE>` | kind=headers: response header to set (repeatable) |  |
+| `--jwt-algorithm <ALG>` | kind=jwt: allowed signing algorithm (repeatable) |  |
+| `--jwt-audience <AUDIENCE>` | kind=jwt: required audience (repeatable) |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-required-claim <NAME=VALUE>` | kind=jwt: required claim (repeatable) |  |
+| `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
+| `--redirect-header <NAME:VALUE>` | kind=redirect: extra response header (repeatable) |  |
 
 Examples:
 
@@ -6683,7 +6726,7 @@ Show one edge rule
 
 Update one edge rule
 
-`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] <id>`
+`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] [--clear-expiry] [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--jwt-require-exp] [--name <NAME>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6701,6 +6744,7 @@ Update one edge rule
 | `--rewrite-to <PATH>` | kind=rewrite: destination path |  |
 | `--redirect-status <CODE>` | kind=redirect: response status |  |
 | `--redirect-to <URL>` | kind=redirect: Location URL |  |
+| `--template` | kind=redirect\|headers: expand ${name} request values (host, path, query, client_ip, country, asn, header:&lt;name&gt;, …) |  |
 | `--redirect-header <NAME:VALUE>` | kind=redirect: extra response header (repeatable) |  |
 | `--headers-request-add <NAME:VALUE>` | kind=headers: request header to add (repeatable) |  |
 | `--headers-request-set <NAME:VALUE>` | kind=headers: request header to set (repeatable) |  |
@@ -6754,7 +6798,7 @@ Update one edge rule
 | `--circuit-max-open-seconds <SECONDS>` | kind=circuit_breaker: maximum open interval |  |
 | `--maintenance-retry-after-seconds <SECONDS>` | kind=maintenance: Retry-After hint |  |
 | `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
-| `--respond-status <CODE>` | kind=respond: response status |  |
+| `--respond-status <CODE>` | kind=respond (preview apps only): response status |  |
 | `--respond-body <JSON>` | kind=respond: JSON response body |  |
 | `--on-success-webhook <ID>` | success webhook subscription |  |
 | `--on-failure-webhook <ID>` | failure webhook subscription |  |
@@ -6781,6 +6825,12 @@ Update one edge rule
 | `--match <JSON|@FILE|->` | replace the match condition (ADR-962 JSON, @file, or -) |  |
 | `--clear-match` | remove the match condition |  |
 | `--mode <MODE>` | enforce or log (log-mode rules only count matches) | one of `enforce` · `log` |
+| `--clear-expiry` | remove the rule&#39;s expiry |  |
+| `--description <TEXT>` | operator-facing description (&lt;=1000 chars) |  |
+| `--expires-at <RFC3339>` | stop applying the rule at this RFC 3339 time |  |
+| `--expires-in <DURATION>` | stop applying the rule after this duration (e.g. 2h) |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 
 Examples:
 
@@ -10873,14 +10923,14 @@ Rotate a secret and optionally wait for runtime application
 | `--from-stdin` | read one KEY=VALUE pair from stdin |  |
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
-| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart |  |
 | `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
 
 Examples:
 
 ```sh
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --wait-for-ack --timeout 5m
 ```
 
 
@@ -11408,19 +11458,36 @@ Add a webhook
 
 Show one webhook
 
-`gregale webhooks info <webhook-id>`
+`gregale webhooks info --app <slug> <webhook-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### webhooks update
 
 Update one webhook
 
-`gregale webhooks update <id>`
+`gregale webhooks update --app <slug> [--target-url <URL>] [--retry-policy <POLICY>] [--delivery-format <FORMAT>] [--enable] [--disable] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--target-url <URL>` | new HTTPS target URL |  |
+| `--retry-policy <POLICY>` | new retry policy | one of `default` · `aggressive` · `none` |
+| `--delivery-format <FORMAT>` | new delivery format | one of `json` · `cloudevents` |
+| `--enable` | enable the webhook |  |
+| `--disable` | disable the webhook |  |
 
 ### webhooks rm
 
 Delete one webhook
 
-`gregale webhooks rm <id>`
+`gregale webhooks rm --app <slug> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### webhooks deliveries
 
@@ -11442,7 +11509,11 @@ Show the delivery ledger
 
 Retry a failed delivery
 
-`gregale webhooks retry <webhook-id> <delivery-id>`
+`gregale webhooks retry --app <slug> <webhook-id> <delivery-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### webhooks rotate-secret
 

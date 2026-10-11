@@ -56,6 +56,7 @@ const (
 	workWorkflowDispatch     workKind = "workflow_dispatch"
 	workWorkflowSchedules    workKind = "workflow_schedules"
 	workTriggerDispatch      workKind = "trigger_dispatch"
+	workQueuePushDispatch    workKind = "queue_push_dispatch"
 	workEventFanout          workKind = "event_fanout"
 	workReaper               workKind = "reaper"
 )
@@ -64,7 +65,7 @@ const (
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
 	workReaper,
 }
 
@@ -115,7 +116,10 @@ var workSpecs = map[workKind]workSpec{
 	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
-	workEventFanout:          {slots: 1, overflow: overflowDrop},
+	// Push-queue lanes (ADR-933) claim durable leases; a dropped lane is
+	// retried by the next trigger tick.
+	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},
+	workEventFanout:       {slots: 1, overflow: overflowDrop},
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.

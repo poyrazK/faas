@@ -297,6 +297,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
 		return state.App{}, api.ErrCapacity("CPU profiling is unavailable on this installation")
 	}
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+		return state.App{}, api.ErrCapacity("request tracing is unavailable on this installation")
+	}
 	lifecycle := lifecycleManifestFromCreate(req)
 	if lifecycle.PreAuthRateLimit == nil {
 		// ADR-829: protect new apps by default without changing behavior; an
@@ -930,6 +933,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
 			Profiling:                    a.Manifest.Profiling,
+			Tracing:                      a.Manifest.Tracing,
 			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
 			MaxRetries:                   a.Manifest.MaxRetries,
 			RequestTimeoutS:              a.Manifest.RequestTimeoutS,

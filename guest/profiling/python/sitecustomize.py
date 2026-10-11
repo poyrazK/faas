@@ -9,8 +9,13 @@ def _load_customer_sitecustomize():
     import importlib.util
     import sys
 
+    # Search only entries after this directory. Stacked platform bootstraps
+    # (restore reseed, profiling, tracing) each chain to the next; excluding
+    # only our own directory would find an earlier bootstrap again and recurse.
     here = os.path.realpath(os.path.dirname(__file__))
-    paths = [p for p in sys.path if os.path.realpath(p or os.getcwd()) != here]
+    resolved = [os.path.realpath(p or os.getcwd()) for p in sys.path]
+    start = resolved.index(here) + 1 if here in resolved else 0
+    paths = [p for p, r in zip(sys.path[start:], resolved[start:]) if r != here]
     spec = importlib.machinery.PathFinder.find_spec("sitecustomize", paths)
     if spec is not None and spec.origin is not None:
         customer = importlib.util.spec_from_file_location("_gregale_customer_sitecustomize", spec.origin)

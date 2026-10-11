@@ -37,7 +37,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
-| `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
+| `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_IDLE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_MAX_HEADER_BYTES` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_READ_TIMEOUT` | apid | `default` |  |  | `` |  |
@@ -170,6 +170,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
+| `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-958 tracing fixture for hosts without a matching Go toolchain |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
@@ -244,6 +245,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
+| `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958) |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_PUB` | githubd | `unit` |  |  | `` |  |
@@ -322,7 +324,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG` | postgres | `script` |  |  | `` | LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role |
 | `FAAS_OPERATIONS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional Operations workload issuer override; configures runtime trust without enabling customer admission |
 | `FAAS_OPERATIONS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed |
-| `FAAS_OTEL_FLUSH_INTERVAL` | gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
+| `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
@@ -474,7 +476,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
-| `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-911 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
+| `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-956 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |
@@ -529,6 +531,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TOKEN` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
+| `FAAS_TRACING_ENABLED` | guest, shared | `guest` |  |  | `` | stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958) |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TRUSTED_PUBLISHERS_DIR` | apid, imaged | `default` |  |  | `` |  |
 | `FAAS_TWO_NODE_ADDR_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
@@ -553,6 +556,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_UPSTREAM_PROBE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_PROBE_PARTITION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_VCPU_BUDGET` | vmmd | `default` |  |  | `` |  |
+| `FAAS_VMMD_APID_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box guest trace exports (ADR-958); vmmd_service 99-faas-spans-writer.conf |
+| `FAAS_VMMD_APID_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
+| `FAAS_VMMD_APID_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |  | `` |  |
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |  | `` |  |
@@ -562,6 +568,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_RESOURCE_JOURNAL_DIR` | vmmd, shared | `default` |  |  | `` | optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it) |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
+| `FAAS_VMMD_SPANS_WRITER_TARGET` | vmmd | `dropin` |  |  | `` | split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-958) |
 | `FAAS_VMMD_STREAM_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_TARGET_URL` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_TCP_BRIDGE_PATH` | shared | `default` |  |  | `` |  |

@@ -27,7 +27,7 @@ test('durable entity helpers match the shared Go/platform wire contract', () => 
 });
 
 test('outgoing work requires negotiated v2 while pure v1 handlers still work', () => {
-  for (const protocol of [DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION]) {
+  for (const protocol of [DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION] as const) {
     const call = fixture();
     call.protocol_version = protocol;
     if (protocol === DURABLE_ENTITY_PROTOCOL_VERSION) delete call.limits;

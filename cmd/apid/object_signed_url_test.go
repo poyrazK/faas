@@ -179,15 +179,34 @@ func signedURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, b
 	}
 	size := int64(3)
 	request := api.ObjectSignRequest{Method: "PUT", Key: "file +%ü", SizeBytes: &size, ContentType: "text/html", Metadata: map[string]string{"Color": "blue"}, Encryption: &api.ObjectEncryption{Algorithm: "aws:kms", KeyID: backend.Encryption.Keys[0].Reference}}
+	request.IfNoneMatch = "*"
 	put := issue(request)
 	if put.UploadID == "" {
 		t.Fatal("PUT receipt missing")
+	}
+	if put.Headers["If-None-Match"] != "*" {
+		t.Fatal("signed capability lost the conditional write")
+	}
+	for _, change := range []func(*http.Request){
+		func(r *http.Request) { r.Header.Del("If-None-Match") },
+		func(r *http.Request) { r.Header.Set("If-None-Match", `"changed"`) },
+		func(r *http.Request) { r.Header.Set("If-Match", `"extra"`) },
+	} {
+		if bad := send(put, change); bad.StatusCode != http.StatusForbidden {
+			t.Fatal("signed condition could be changed", bad.StatusCode)
+		}
 	}
 	bad := send(put, func(r *http.Request) { r.Header.Set("X-Amz-Meta-Extra", "unsigned") })
 	if bad.StatusCode != 403 {
 		t.Fatal("unsigned metadata accepted", bad.StatusCode)
 	}
 	response := send(put, nil)
+	native.mu.Lock()
+	preserved := native.headers.Get("If-None-Match") == "*"
+	native.mu.Unlock()
+	if !preserved {
+		t.Fatal("provider PUT lost the signed condition")
+	}
 	if response.StatusCode != 200 || response.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id") != request.Encryption.KeyID {
 		t.Fatal("owned upload acknowledgment", response.StatusCode, response.Header)
 	}

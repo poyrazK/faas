@@ -846,7 +846,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		fanout := snapshothipd.New(replicaStore, storageBackend, nodeID, log).
 			WithMetrics(fanoutMetrics).
-			// ADR-911: on unless an operator switches it off.
+			// ADR-956: on unless an operator switches it off.
 			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
@@ -1225,6 +1225,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := startProfilingReceiver(ctx, log, mgr, store, jailer); err != nil {
 		return fmt.Errorf("register profile receiver: %w", err)
 	}
+	closeTraceReceiver, err := startTraceReceiver(ctx, log, mgr, store, jailer)
+	if err != nil {
+		return fmt.Errorf("register trace receiver: %w", err)
+	}
+	defer closeTraceReceiver()
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)

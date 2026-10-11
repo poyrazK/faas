@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -1115,6 +1116,11 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 		if status == 0 {
 			status = 302 // http.StatusFound — pkg/api Validate already enforced the {301,302,307,308} set
 		}
+		toTemplate, headerTemplates, err := compileRedirectTemplates(r.Action.Redirect)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			continue
+		}
 		out = append(out, gateway.EdgeRuleRedirectResolved{
 			ID:                r.ID,
 			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
@@ -1127,6 +1133,8 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 			StatusCode:        status,
 			To:                r.Action.Redirect.To,
 			Headers:           r.Action.Redirect.Headers,
+			ToTemplate:        toTemplate,
+			HeaderTemplates:   headerTemplates,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
@@ -1158,6 +1166,16 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
+		requestOps, err := convertHeaderOps(r.Action.Headers.RequestHeaders)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			continue
+		}
+		responseOps, err := convertHeaderOps(r.Action.Headers.ResponseHeaders)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			continue
+		}
 		out = append(out, gateway.EdgeRuleHeadersResolved{
 			ID:                r.ID,
 			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
@@ -1167,8 +1185,8 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 			PathGlob:          r.MatchPath,
 			Methods:           buildMethodsMap(r.MatchMethods),
 			MatchHeaders:      buildMatchHeadersMap(r.MatchHeaders),
-			RequestHeaders:    convertHeaderOps(r.Action.Headers.RequestHeaders),
-			ResponseHeaders:   convertHeaderOps(r.Action.Headers.ResponseHeaders),
+			RequestHeaders:    requestOps,
+			ResponseHeaders:   responseOps,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
@@ -2321,15 +2339,44 @@ func buildMatchHeadersMap(headers map[string]string) map[string]string {
 // gateway-side subset type. Same shape; the cmd-side copies
 // instead of importing state from pkg/gateway (pkg/gateway keeps
 // zero-dep-on-pkg/state).
-func convertHeaderOps(in []state.EdgeRuleHeaderOp) []gateway.EdgeRuleHeaderOp {
+func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, error) {
 	if len(in) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]gateway.EdgeRuleHeaderOp, len(in))
 	for i, op := range in {
 		out[i] = gateway.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action}
+		if op.Template {
+			t, err := api.CompileEdgeRuleTemplate(op.Value, api.EdgeRuleTemplateHeader)
+			if err != nil {
+				return nil, fmt.Errorf("header %q: %w", op.Name, err)
+			}
+			out[i].Template = t
+		}
 	}
-	return out
+	return out, nil
+}
+
+// compileRedirectTemplates compiles a templated redirect (ADR-968). A
+// stored template that no longer compiles drops the rule, like an
+// unparseable match_path.
+func compileRedirectTemplates(a *state.EdgeRuleRedirectAction) (*api.EdgeRuleTemplate, map[string]*api.EdgeRuleTemplate, error) {
+	if !a.Template {
+		return nil, nil, nil
+	}
+	to, err := api.CompileEdgeRuleTemplate(a.To, api.EdgeRuleTemplateRedirect)
+	if err != nil {
+		return nil, nil, fmt.Errorf("to: %w", err)
+	}
+	headers := make(map[string]*api.EdgeRuleTemplate, len(a.Headers))
+	for name, value := range a.Headers {
+		t, err := api.CompileEdgeRuleTemplate(value, api.EdgeRuleTemplateHeader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("header %q: %w", name, err)
+		}
+		headers[name] = t
+	}
+	return to, headers, nil
 }
 
 // gatewaydEdgeRulesAud is the cmd/gatewayd-internal audit thin wrapper

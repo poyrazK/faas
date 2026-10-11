@@ -139,6 +139,9 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
+	if billing.TenantMonthlyPricing(tenantCards, start, end) {
+		return s.quotePlatformTenantMonth(r, accountID, tenantID, start, end, revision, priorStatus, usageDelta, tenantCards)
+	}
 	for _, bucket := range usageDelta {
 		if _, loaded := cards[bucket.AppID]; loaded {
 			continue
@@ -153,6 +156,40 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 		priorStatus, usageDelta, cards, tenantCards)
 }
 
+// quotePlatformTenantMonth re-prices a whole month for tenant allowances
+// and tiers (ADR-975) and bills the difference from finalized revisions.
+func (s *server) quotePlatformTenantMonth(r *http.Request, accountID, tenantID string, start, end time.Time,
+	revision int, priorStatus state.APIConsumerUsageStatementStatus, usageDelta []state.APIConsumerUsageBucket,
+	tenantCards []state.PlatformTenantRateCard) (state.PlatformTenantStatementInput, error) {
+	statements, okStatements := s.store.(state.PlatformTenantStatementStore)
+	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)
+	if !okStatements || !okCards {
+		return state.PlatformTenantStatementInput{}, state.ErrNotFound
+	}
+	if !billing.IsCalendarMonth(start, end) {
+		return state.PlatformTenantStatementInput{}, billing.ErrTenantMonthPeriodRequired
+	}
+	monthUsage, err := statements.ListPlatformTenantUsageMinutes(r.Context(), accountID, tenantID, start, end)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
+	previous, err := statements.ListPlatformTenantStatements(r.Context(), accountID, tenantID, start, end)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
+	cards := map[string][]state.APIConsumerRateCard{}
+	for _, bucket := range monthUsage {
+		if _, loaded := cards[bucket.AppID]; loaded {
+			continue
+		}
+		if cards[bucket.AppID], err = cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, bucket.AppID); err != nil {
+			return state.PlatformTenantStatementInput{}, err
+		}
+	}
+	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, time.Now().UTC(), revision, priorStatus,
+		usageDelta, monthUsage, cards, tenantCards, previous)
+}
+
 func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, billing.ErrMixedTenantCurrency):
@@ -163,7 +200,16 @@ func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {
 			"No tenant usage", "the requested period has no billable tenant-attributed usage"))
 	case errors.Is(err, billing.ErrAPIConsumerAllowanceInTenantStatement):
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Included units need an app statement", "an app rate card with included_units_per_month cannot price a cross-app statement; add a platform tenant rate card or bill through app consumer statements"))
+			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements"))
+	case errors.Is(err, billing.ErrTenantMonthPeriodRequired):
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Calendar month required", "a platform tenant rate card with a monthly allowance or tiers prices this period, so the statement must cover exactly one UTC calendar month"))
+	case errors.Is(err, billing.ErrTenantMonthOverlap):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Month already partly billed", "a finalized statement for another period covers minutes of this month; bill this tenant by calendar month once a monthly allowance or tiers apply"))
+	case errors.Is(err, billing.ErrTenantChargeDecreased):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Charge would decrease", "re-pricing the month would bill less than its finalized revisions; Gregale never issues credits"))
 	case errors.Is(err, billing.ErrTenantUsageRegressed):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Usage coverage conflict", "current usage is below an earlier immutable statement snapshot"))

@@ -279,7 +279,7 @@
       "description": "A worker deployment validates its long-lived execution mode and restart defaults before it is admitted.",
       "capabilities": ["worker-pools"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
-      "evidence": [{"kind": "test", "locator": "pkg/api/appmanifest_test.go::TestAppManifestWorkerMode"}]
+      "evidence": [{"kind": "test", "locator": "pkg/api/appmanifest_test.go::TestAppManifestWorkerMode"}, {"kind": "test", "locator": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn"}]
     },
     {
       "id": "workflow-reliability",

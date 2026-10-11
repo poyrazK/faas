@@ -264,6 +264,10 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 		return fmt.Errorf("current p95: %w", err)
 	}
 
+	// Retained spans for the suspected-dependency comparison are read at most
+	// once per app pass, and only when a route actually regressed.
+	var dependencyRows []sqlc.ListRequestTelemetryDependencySpansRow
+	dependencyRowsLoaded := false
 	for _, curRow := range current {
 		baseP95, ok := baselineByRoute[curRow.Route]
 		if !ok || baseP95 <= 0 {
@@ -314,6 +318,13 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 			AffectedCount:    affected,
 			RegressionFactor: factor,
 		}
+		if !dependencyRowsLoaded {
+			dependencyRows = s.regressionDependencyRows(ctx, log, appID, prevStart, curEnd)
+			dependencyRowsLoaded = true
+		}
+		// Column8 is the suspected_dependency jsonb (nil keeps the stored one).
+		params.Column8 = encodeSuspectedDependency(suspectedDependency(
+			buildDebugDependencyComparisonBetween(dependencyRows, uuidFromPg(cur.DeploymentID), uuidFromPg(prev.DeploymentID), curRow.Route, 0)))
 		if err := s.store.UpsertRegressionObservation(ctx, params); err != nil {
 			log.Warn("regression_cron: upsert failed",
 				"app", appID.String(),
@@ -348,6 +359,33 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 		}
 	}
 	return nil
+}
+
+// debugRegressionDependencyMaxRows bounds the span read made when an app has
+// at least one regressed route in a detector pass.
+const debugRegressionDependencyMaxRows = 1000
+
+// regressionDependencyRows loads retained spans for the detector's baseline
+// and current windows. Naming a suspect is enrichment: on any failure the
+// regression is still recorded, keeping its previously stored suspect.
+func (s *server) regressionDependencyRows(ctx context.Context, log *slog.Logger, appID pgtype.UUID, from, until time.Time) []sqlc.ListRequestTelemetryDependencySpansRow {
+	app, err := s.store.AppByID(ctx, uuidFromPg(appID))
+	if err != nil {
+		log.Warn("regression_cron: suspected dependency app lookup failed", "app", appID.String(), "err", err)
+		return nil
+	}
+	rows, err := s.store.ListRequestTelemetryDependencySpans(ctx, sqlc.ListRequestTelemetryDependencySpansParams{
+		AppID:        appID,
+		AccountID:    stringToPgUUID(app.AccountID),
+		ReceivedAt:   pgtype.Timestamptz{Time: from, Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: until, Valid: true},
+		Limit:        debugRegressionDependencyMaxRows,
+	})
+	if err != nil {
+		log.Warn("regression_cron: suspected dependency spans unavailable", "app", appID.String(), "err", err)
+		return nil
+	}
+	return rows
 }
 
 // countAffectedRequests returns the number of requests represented by

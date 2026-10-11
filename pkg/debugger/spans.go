@@ -55,8 +55,11 @@ func ParseSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
 	for _, span := range input {
 		dependencyType := sanitizeDebugDependencyType(span.Attributes["gregale.dependency.type"])
 		dependencyKind := ""
+		dependencyName := ""
 		if dependencyType != "" {
 			dependencyKind = sanitizeDebugDependencyKind(span.Attributes["gregale.dependency.kind"])
+		} else if kind, name, ok := classifyAppDependency(span); ok {
+			dependencyType, dependencyKind, dependencyName = AppDependencyType, kind, name
 		}
 		out = append(out, api.DebugTelemetrySpan{
 			TraceID:        boundDebugEvidenceText(span.TraceID, api.DebugEvidenceMaxSpanTextBytes),
@@ -71,9 +74,23 @@ func ParseSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
 			DBStatement:    sanitizeDebugDBStatement(span.DBStatement),
 			DependencyType: dependencyType,
 			DependencyKind: dependencyKind,
+			DependencyName: dependencyName,
 		})
 	}
 	return out, truncated
+}
+
+// SegmentName is the identity a span is grouped under in dependency and
+// critical-path rollups: the normalized dependency name when classified,
+// otherwise the span name.
+func SegmentName(span api.DebugTelemetrySpan) string {
+	if span.DependencyName != "" {
+		return span.DependencyName
+	}
+	if span.Name != "" {
+		return span.Name
+	}
+	return "<unnamed>"
 }
 
 func debugEvidenceTime(unixNano uint64) string {

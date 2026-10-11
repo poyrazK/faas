@@ -947,7 +947,7 @@ type Handler struct {
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
-	// consumerPlanStore and its policy cache enforce consumer plans (ADR-847).
+	// consumerPlanStore and its policy cache enforce consumer plans (ADR-953).
 	consumerPlanStore          ConsumerPlanStore
 	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
@@ -2471,8 +2471,10 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 		}
 		return false
 	}
-	// Stamp additional response headers (the rule's Headers map).
-	for k, v := range rule.Headers {
+	// Stamp additional response headers (the rule's Headers map); a
+	// templated redirect renders its target and headers first (ADR-968).
+	target, redirectHeaders := expandRedirect(rule, r)
+	for k, v := range redirectHeaders {
 		w.Header().Set(k, v)
 	}
 	status := rule.StatusCode
@@ -2499,7 +2501,7 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 		h.metrics.ObserveEdgeRuleApply("redirect", "success")
 	}
 	//nolint:gosec // rule.To is validated by apid Validate (pkg/api/dto.go:3337-3357) at create time: must be a non-empty URL/path. The customer's free-form redirect target IS the product surface — same posture as Cloudflare's "URL redirect" rules.
-	http.Redirect(w, r, rule.To, status)
+	http.Redirect(w, r, target, status)
 	return true
 }
 
@@ -2543,15 +2545,19 @@ func (h *Handler) applyEdgeRuleHeaders(w http.ResponseWriter, r *http.Request, a
 		}
 		return false
 	}
+	// Templated values render from the request as it arrived here, before
+	// any request-side op runs (ADR-968).
+	requestOps := expandHeaderOps(rule.RequestHeaders, r)
+	responseOps := expandHeaderOps(rule.ResponseHeaders, r)
 	// Request-side ops: apply directly to r.Header.
-	for _, op := range rule.RequestHeaders {
+	for _, op := range requestOps {
 		applyHeaderOp(r.Header, op)
 	}
 	// Response-side ops: wrap w with a headerRecorder that
 	// applies ops at WriteHeader commit time. Reuses the same
 	// statusRecorder pattern that PR-B streaming introduced.
-	if len(rule.ResponseHeaders) > 0 && rec != nil {
-		rec.installHeaderOps(rule.ResponseHeaders)
+	if len(responseOps) > 0 && rec != nil {
+		rec.installHeaderOps(responseOps)
 	}
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.headers_matched", nil, map[string]any{
@@ -5913,7 +5919,7 @@ haveApp:
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
 	// Consumer-attributed traffic always carries a bounded billing route so
-	// rate cards can weight routes (ADR-846); consumer auth ran above.
+	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
 	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
 		path := inferredObservedPath(r.URL.Path)
