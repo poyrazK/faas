@@ -18,3 +18,11 @@ func TestTenantAdmissionTranslatesGrantDenialWithoutProviderDetails(t *testing.T
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestGrantProviderFailureRemainsUnavailableAndPrivate(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteGrantProblem(w, errors.New("private bucket detail"))
+	if w.Code != 503 || strings.Contains(w.Body.String(), "private bucket") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
