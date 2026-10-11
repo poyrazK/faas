@@ -17,7 +17,7 @@ import httpx
 
 from .api.events import get_event_recipient_blockers
 from .client import AuthenticatedClient
-from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+from .commit_delivery_report import CommitDeliveryReadError, CommitDeliveryReportError, aget_commit_delivery_report
 from .commit_recovery_plan import _same_acceptance
 from .models.event_recipient_blocker_batch_request import EventRecipientBlockerBatchRequest
 from .models.event_recipient_blocker_batch_response import EventRecipientBlockerBatchResponse
@@ -495,12 +495,14 @@ async def awatch_commit_recovery_status(
     read_retries: int = 0,
     max_observation_age: float = 0,
     diagnostics: bool = False,
+    watch_diagnostics: bool = False,
     max_diagnostic_age: float = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Bounded polling; timeout/cancellation attaches the latest observations."""
+    diagnostics = diagnostics or watch_diagnostics
     if (
         not math.isfinite(interval)
         or not 0.1 <= interval <= 60
@@ -531,6 +533,15 @@ async def awatch_commit_recovery_status(
     def summarize(stop_reason: str) -> dict[str, Any]:
         freshness = _freshness_counts(out, max_observation_age) if max_observation_age > 0 else None
         return {
+            "watch_mode": "diagnostic_coverage" if watch_diagnostics else "recovery_settlement",
+            "diagnostic_coverage_complete": (
+                bool(
+                    out.get("diagnostics_progress", {}).get("complete")
+                    and out.get("diagnostics_progress", {}).get("fresh_complete")
+                )
+                if stop_reason == "diagnostic_coverage_complete"
+                else _diagnostic_coverage_complete(out, max_diagnostic_age)
+            ),
             "stop_reason": stop_reason,
             "passes": passes,
             "retries_consumed": used_retries,
@@ -566,9 +577,17 @@ async def awatch_commit_recovery_status(
                         resume=previous if not refreshing else None,
                         refresh=previous if refreshing else None,
                     )
+                    if diagnostics:
+                        out = await adiagnose_commit_recovery_status(
+                            client,
+                            out,
+                            previous=diagnostic_previous,
+                            max_diagnostic_age=max_diagnostic_age,
+                            strict_reads=watch_diagnostics,
+                        )
                 except CommitRecoveryStatusError as error:
                     out = error.result
-                    if diagnostics:
+                    if diagnostics and "diagnostics_progress" not in out:
                         out = _prepare_diagnostics(out, diagnostic_previous, max_diagnostic_age)
                         error.result = out
                     retry_after = _read_retry(error.__cause__)
@@ -579,10 +598,6 @@ async def awatch_commit_recovery_status(
                     used_retries += 1
                     failed = True
                     delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
-                if diagnostics and not failed:
-                    out = await adiagnose_commit_recovery_status(
-                        client, out, previous=diagnostic_previous, max_diagnostic_age=max_diagnostic_age
-                    )
                 out["monitoring"] = summarize("running")
                 phase = "callback"
                 if on_progress is not None:
@@ -590,7 +605,15 @@ async def awatch_commit_recovery_status(
                 phase = "read"
                 if loop.time() >= deadline:
                     raise TimeoutError("watch deadline exceeded")
-                if not failed and commit_recovery_status_settled(out) and _observations_fresh(out, max_observation_age):
+                if not failed and watch_diagnostics and _diagnostic_coverage_complete(out, max_diagnostic_age):
+                    out["monitoring"] = summarize("diagnostic_coverage_complete")
+                    return out
+                if (
+                    not failed
+                    and not watch_diagnostics
+                    and commit_recovery_status_settled(out)
+                    and _observations_fresh(out, max_observation_age)
+                ):
                     out["monitoring"] = summarize("settled")
                     return out
                 diagnostic_previous = out
@@ -862,6 +885,7 @@ async def adiagnose_commit_recovery_status(
     *,
     previous: dict[str, Any] | None = None,
     max_diagnostic_age: float = 0,
+    strict_reads: bool = False,
 ) -> dict[str, Any]:
     """Rotate bounded exact lookups; previous must bind to the validated selection."""
     out = _prepare_diagnostics(status, previous, max_diagnostic_age)
@@ -915,6 +939,7 @@ async def adiagnose_commit_recovery_status(
         )
     batch = None
     interrupted = None
+    transport_failure = None
     if selected:
         for cursor_name, index in selected:
             out["items"][index]["diagnostics"] = {"status": "read_error"}
@@ -924,6 +949,8 @@ async def adiagnose_commit_recovery_status(
             response = await get_event_recipient_blockers.asyncio_detailed(
                 client=client, body=EventRecipientBlockerBatchRequest.from_dict({"queries": queries})
             )
+            if response.status_code != 200:
+                raise CommitDeliveryReadError(response.status_code, response.headers)
             # Read original JSON to preserve nanosecond acceptance guards.
             batch = (
                 json.loads(response.content)
@@ -932,8 +959,8 @@ async def adiagnose_commit_recovery_status(
             )
         except (asyncio.CancelledError, TimeoutError) as error:
             interrupted = error
-        except Exception:
-            pass
+        except Exception as error:
+            transport_failure = error
     for n, (_, index) in enumerate(selected):
         row = out["items"][index]
         publication, subscription = row["selection"]["publication"], row["attempt"]["subscription_id"].lower()
@@ -993,6 +1020,8 @@ async def adiagnose_commit_recovery_status(
         _recount_diagnostics(out)
         raise CommitRecoveryStatusError(out) from interrupted
     _recount_diagnostics(out)
+    if strict_reads and transport_failure is not None:
+        raise CommitRecoveryStatusError(out) from transport_failure
     return out
 
 
@@ -1194,3 +1223,12 @@ def _diagnostic_routing_fields(observation: dict[str, Any]) -> dict[str, str]:
                 ordering_state=blocker["state"],
             )
     return fields
+
+
+def _diagnostic_coverage_complete(out: dict[str, Any], age: float) -> bool:
+    progress = out.get("diagnostics_progress")
+    if not isinstance(progress, dict):
+        return False
+    progress["max_diagnostic_age_ms"] = age * 1000
+    _recount_diagnostics(out)
+    return progress["complete"] and progress["fresh_complete"]

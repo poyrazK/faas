@@ -40,6 +40,8 @@ type CommitRecoveryStatusChange struct {
 
 // CommitRecoveryMonitoring describes this watch invocation, not delivery success.
 type CommitRecoveryMonitoring struct {
+	WatchMode                      string         `json:"watch_mode"`
+	DiagnosticCoverageComplete     bool           `json:"diagnostic_coverage_complete"`
 	MaxObservationAgeMS            int64          `json:"max_observation_age_ms,omitempty"`
 	Freshness                      map[string]int `json:"freshness,omitempty"`
 	StopReason                     string         `json:"stop_reason"`

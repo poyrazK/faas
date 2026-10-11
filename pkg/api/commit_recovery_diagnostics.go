@@ -72,7 +72,7 @@ func validateDiagnosticAge(age time.Duration) error {
 	}
 	return nil
 }
-func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, maxAge time.Duration) (CommitRecoveryStatusResult, error) {
+func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, maxAge time.Duration, strictReads ...bool) (CommitRecoveryStatusResult, error) {
 	if err := validateDiagnosticAge(maxAge); err != nil {
 		return status, err
 	}
@@ -162,8 +162,10 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 			groups = append(groups, group)
 		}
 	}
+	var transportErr error
 	if len(queries) > 0 && ctx.Err() == nil {
 		batch, readErr := c.GetEventRecipientBlockers(ctx, EventRecipientBlockerBatchRequest{Queries: queries})
+		transportErr = readErr
 		for n, index := range indices {
 			row := &out.Items[index]
 			progress.Reads++
@@ -233,6 +235,9 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 	progress.Complete = progress.Remaining == 0
 	progress.FreshComplete = progress.Freshness["fresh"] == progress.TargetCount
 	out.DiagnosticsProgress = progress
+	if len(strictReads) > 0 && strictReads[0] && transportErr != nil {
+		return out, transportErr
+	}
 	return out, nil
 }
 
@@ -330,4 +335,27 @@ func diagnosticFreshness(row CommitRecoveryStatusItem, now time.Time, maxAge tim
 		return "stale"
 	}
 	return "fresh"
+}
+
+// Recheck after callbacks and at return, because diagnostic age can change while waiting.
+func commitRecoveryDiagnosticCoverageComplete(out CommitRecoveryStatusResult, maxAge time.Duration) bool {
+	progress := out.DiagnosticsProgress
+	if progress == nil {
+		return false
+	}
+	progress.FreshnessCheckedAt = time.Now().UTC()
+	progress.MaxDiagnosticAgeMS = maxAge.Milliseconds()
+	progress.Freshness = map[string]int{"fresh": 0, "stale": 0, "unread": 0}
+	progress.TargetCount = 0
+	for _, row := range out.Items {
+		if !diagnosticTarget(row) {
+			continue
+		}
+		progress.TargetCount++
+		progress.Freshness[diagnosticFreshness(row, progress.FreshnessCheckedAt, maxAge)]++
+	}
+	progress.Remaining = progress.Freshness["unread"]
+	progress.Complete = progress.Remaining == 0
+	progress.FreshComplete = progress.Freshness["fresh"] == progress.TargetCount
+	return progress.Complete && progress.FreshComplete
 }

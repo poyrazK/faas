@@ -1580,3 +1580,38 @@ excluded. Blocker changes remain separate from receipt execution changes,
 replay attribution, coverage, freshness and delivery settlement.
 
 An explicit diagnostic refresh begins a new baseline, consistent with existing refresh behavior; ordinary resume preserves the latest validated comparison.
+
+### Watch until diagnostic coverage completes
+
+~~~sh
+gregale commit recovery-status SOURCE --plan plan.json --result apply.json \
+  --watch-diagnostics --max-diagnostic-age 30s --timeout 10m \
+  --checkpoint diagnostic-status.json
+~~~
+
+`--watch-diagnostics` enables both watch and diagnostics. It uses the existing
+50-recipient batch rotation until every relevant recipient has a valid sample
+and meets the configured diagnostic age policy, independently of execution
+settlement. Resume using `--resume diagnostic-status.json` and the same watch
+flag; the current invocation supplies the age policy. Explicit refresh starts
+new diagnostic coverage. Checkpoint ownership and atomic saving remain in effect.
+
+Successful completion reports `monitoring.watch_mode=diagnostic_coverage`,
+`stop_reason=diagnostic_coverage_complete`, and
+`diagnostic_coverage_complete=true`. CLI exit zero means diagnostic coverage
+completed; failed or unresolved deliveries remain visible and do not change that
+inspection result. `acknowledged_executions_terminal` remains independent.
+Normal `--watch` still stops on recovery settlement and keeps its existing exit
+semantics.
+
+Freshness is rechecked after progress callbacks and recorded at the completion
+decision. With age disabled, valid samples can be historical. `unavailable` and
+`acceptance_replaced` responses count as observed coverage, not routing readiness;
+unsupported recipients are excluded. Empty relevant selections complete normally.
+Small age limits may never allow the full selection to be fresh at once.
+
+Batch transport/read failures use `--read-retries` and existing retry limits;
+permanent failures stop with `read_failure`, and exhausted transient retries with
+`retry_exhausted`. Individual diagnostic item failures keep rotating until the
+overall timeout. Timeout or interruption preserves current partial coverage for
+resume. No monitoring mode submits recovery actions.

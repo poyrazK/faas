@@ -19,6 +19,7 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 
 // CommitRecoveryWatchOptions controls optional retry and evidence-age policies.
 type CommitRecoveryWatchOptions struct {
+	WatchDiagnostics  bool
 	MaxDiagnosticAge  time.Duration
 	Diagnostics       bool
 	ReadRetries       int
@@ -32,13 +33,26 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 
 // WatchCommitRecoveryStatusWithOptions enforces optional evidence freshness before settlement.
 func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), options CommitRecoveryWatchOptions) (out CommitRecoveryStatusResult, err error) {
+	if options.WatchDiagnostics {
+		options.Diagnostics = true
+	}
 	readRetries, maxAge := options.ReadRetries, options.MaxObservationAge
 	started := time.Now()
 	passes, usedRetries := 0, 0
 	reason := "read_failure"
 	summary := func(stopReason string) *CommitRecoveryMonitoring {
 		freshness, fresh := commitRecoveryFreshnessCounts(out, maxAge)
-		return &CommitRecoveryMonitoring{StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
+		mode := "recovery_settlement"
+		if options.WatchDiagnostics {
+			mode = "diagnostic_coverage"
+		}
+		coverage := false
+		if stopReason == "diagnostic_coverage_complete" && out.DiagnosticsProgress != nil {
+			coverage = out.DiagnosticsProgress.Complete && out.DiagnosticsProgress.FreshComplete
+		} else {
+			coverage = commitRecoveryDiagnosticCoverageComplete(out, options.MaxDiagnosticAge)
+		}
+		return &CommitRecoveryMonitoring{WatchMode: mode, DiagnosticCoverageComplete: coverage, StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
 	}
 	defer func() {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -91,8 +105,8 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 				stop()
 				diagnosticCtx = paused
 			}
-			diagnosed, diagnosticErr := c.diagnoseCommitRecoveryStatus(diagnosticCtx, out, diagnosticPrevious, options.MaxDiagnosticAge)
-			if diagnosticErr == nil {
+			diagnosed, diagnosticErr := c.diagnoseCommitRecoveryStatus(diagnosticCtx, out, diagnosticPrevious, options.MaxDiagnosticAge, options.WatchDiagnostics)
+			if diagnosticErr == nil || diagnosed.DiagnosticsProgress != nil {
 				out = diagnosed
 			}
 			if err == nil {
@@ -132,7 +146,11 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 			return out, ctx.Err()
 		}
 		_, fresh := commitRecoveryFreshnessCounts(out, maxAge)
-		if err == nil && CommitRecoveryStatusSettled(out) && fresh {
+		if err == nil && options.WatchDiagnostics && commitRecoveryDiagnosticCoverageComplete(out, options.MaxDiagnosticAge) {
+			reason = "diagnostic_coverage_complete"
+			return out, nil
+		}
+		if err == nil && !options.WatchDiagnostics && CommitRecoveryStatusSettled(out) && fresh {
 			reason = "settled"
 			return out, nil
 		}

@@ -24,6 +24,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	diagnosticAge := fs.Duration("max-diagnostic-age", 0, "maximum diagnostic sample age (100ms-24h; requires diagnostics; default disabled)")
 	maxAge := fs.Duration("max-observation-age", 0, "maximum watch evidence age (100ms-24h; default disabled)")
 	readRetries := fs.Int("read-retries", 0, "total transient watch read retries (0..20; default 0)")
+	watchDiagnostics := fs.Bool("watch-diagnostics", false, "watch until diagnostic coverage is complete and fresh; enables watch and diagnostics")
 	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
 	interval := fs.Duration("interval", api.CommitRecoveryWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	refreshPath := fs.String("refresh", "", "saved recovery status; reread selection and track changes")
@@ -31,7 +32,14 @@ func cmdCommitRecoveryStatus(args []string) int {
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) || *diagnosticAge < 0 || *diagnosticAge > api.CommitRecoveryDiagnosticAgeMax || (*diagnosticAge > 0 && (*diagnosticAge < api.CommitRecoveryDiagnosticAgeMin || !*diagnostics)) || *maxAge < 0 || *maxAge > api.CommitRecoveryWatchObservationAgeMax || (*maxAge > 0 && (*maxAge < api.CommitRecoveryWatchObservationAgeMin || !*watch)) {
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if *watchDiagnostics {
+		*watch = true
+		*diagnostics = true
+	}
+	if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) || *diagnosticAge < 0 || *diagnosticAge > api.CommitRecoveryDiagnosticAgeMax || (*diagnosticAge > 0 && (*diagnosticAge < api.CommitRecoveryDiagnosticAgeMin || !*diagnostics)) || *maxAge < 0 || *maxAge > api.CommitRecoveryWatchObservationAgeMax || (*maxAge > 0 && (*maxAge < api.CommitRecoveryWatchObservationAgeMin || !*watch)) {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -132,7 +140,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 				}
 			}
 		}
-		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, MaxDiagnosticAge: *diagnosticAge})
+		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
 	}
 	if !*watch && err == nil && *diagnostics {
 		if saved != nil && *resumePath != "" {
@@ -167,6 +175,12 @@ func cmdCommitRecoveryStatus(args []string) int {
 	}
 	if err != nil {
 		return commitSubscriberWaitError(err)
+	}
+	if *watchDiagnostics {
+		if out.Monitoring != nil && out.Monitoring.StopReason == "diagnostic_coverage_complete" && out.Monitoring.DiagnosticCoverageComplete {
+			return 0
+		}
+		return 1
 	}
 	if !out.Complete || out.Counts["unresolved"] > 0 || out.Counts["failed"] > 0 || out.Counts["unsupported_recipient"] > 0 {
 		return 1
