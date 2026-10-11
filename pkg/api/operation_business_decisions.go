@@ -109,11 +109,12 @@ func CanonicalOperationWorkflowChangeReason(input *OperationWorkflowChangeReason
 
 // OperationBusinessConditionDefinition declares public reasoning vocabulary on a pinned milestone step.
 type OperationBusinessConditionDefinition struct {
-	RefreshOwner          string `json:"refresh_owner,omitempty" yaml:"refresh_owner,omitempty" toml:"refresh_owner,omitempty"`
-	RefreshInstructions   string `json:"refresh_instructions,omitempty" yaml:"refresh_instructions,omitempty" toml:"refresh_instructions,omitempty"`
-	EvidenceMaxAgeSeconds int64  `json:"evidence_max_age_seconds,omitempty" yaml:"evidence_max_age_seconds,omitempty" toml:"evidence_max_age_seconds,omitempty"`
-	ID                    string `json:"id" yaml:"id" toml:"id"`
-	Description           string `json:"description" yaml:"description" toml:"description"`
+	ExpectedStates        []string `json:"expected_states,omitempty" yaml:"expected_states,omitempty" toml:"expected_states,omitempty"`
+	RefreshOwner          string   `json:"refresh_owner,omitempty" yaml:"refresh_owner,omitempty" toml:"refresh_owner,omitempty"`
+	RefreshInstructions   string   `json:"refresh_instructions,omitempty" yaml:"refresh_instructions,omitempty" toml:"refresh_instructions,omitempty"`
+	EvidenceMaxAgeSeconds int64    `json:"evidence_max_age_seconds,omitempty" yaml:"evidence_max_age_seconds,omitempty" toml:"evidence_max_age_seconds,omitempty"`
+	ID                    string   `json:"id" yaml:"id" toml:"id"`
+	Description           string   `json:"description" yaml:"description" toml:"description"`
 }
 
 // OperationBusinessConditionResult is reported by the application; Gregale never evaluates it.
@@ -130,6 +131,17 @@ func CanonicalOperationBusinessConditions(input []OperationBusinessConditionDefi
 	out := append([]OperationBusinessConditionDefinition(nil), input...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	for i, c := range out {
+		states := append([]string(nil), c.ExpectedStates...)
+		if len(states) > OperationWorkflowStatesMax {
+			return nil, fmt.Errorf("condition expected states exceed limit")
+		}
+		sort.Strings(states)
+		for j, state := range states {
+			if ValidateOperationWorkflowStateName(state) != nil || j > 0 && states[j-1] == state {
+				return nil, fmt.Errorf("condition expected states require unique valid state names")
+			}
+		}
+		out[i].ExpectedStates = states
 		if !validBusinessConditionRefreshText(c.RefreshOwner, OperationBusinessConditionRefreshOwnerMaxBytes) || !validBusinessConditionRefreshText(c.RefreshInstructions, OperationBusinessConditionRefreshInstructionsMaxBytes) {
 			return nil, fmt.Errorf("condition refresh guidance requires bounded public text without controls or surrounding whitespace")
 		}

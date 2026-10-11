@@ -948,3 +948,57 @@ results, reporting timestamps, pinned deadlines and guidance, reporting Operatio
 links and workflow history. Customer projections omit tenant identifiers. Go,
 Node and Python SDKs expose the optional summary comparison. No new persistence,
 migration, automatic verification or application action is introduced.
+
+
+### Expected condition reporting coverage
+
+A pinned workflow step condition may declare `expected_states`, a canonical
+unique list of up to 32 declared workflow state names. Omission makes no
+expectation. YAML/TOML manifests and API definitions use the same field. This
+annotation is observational: it never gates transitions, invokes checks or
+changes application-reported pass/fail/unknown results.
+
+Performance summaries include `condition_coverage` for the bounded latest-100
+ongoing sample. Expectations for the current state come from the latest reporting
+Operation's immutable definition and current contract, not a global workflow
+registry or the union of every Operation's definitions. Workflows with no declared
+expectations are counted as unconfigured, not complete. Continuous retained
+history is required; incomplete histories, conflicting latest results and
+condition/context evidence limits are explicitly excluded.
+
+Evidence matches the declaring workflow step and exact condition ID and
+description in the latest explicit contexts of the current contract. Two steps
+with the same condition vocabulary remain separate expectations. Explicit
+omission cannot resurrect an older condition, metadata-only reports preserve
+evidence, and contract changes reset contexts. Conflicting results for a step
+and condition exclude that workflow. At most 256 expected or source step-condition
+identities qualify, using the existing condition identity bound.
+
+Coverage counts expected, reported, missing and overdue conditions. Reported
+includes overdue, so expected equals reported plus missing; overdue is a subset
+of reported. A reported fail or unknown is still evidence. Missing means absent
+from current contexts, not a failed check or proof no historical report exists.
+Report freshness retains the source Operation's pinned age budget rather than
+substituting a newer definition's budget. Counts precede the canonical first-16
+condition preview per workflow and an explicit truncation flag. Workflows appear
+in stable identity order. Customer projections omit tenant identifiers.
+
+The dashboard shows coverage/exclusions, expected step and milestone vocabulary,
+application-declared guidance, matching result and report timestamp, pinned
+freshness status, reporting Operation links and workflow history. API schemas
+and Go, Node and Python SDKs expose the projection. SQLC reads existing pinned
+metadata; no migration, new persistence, authorization or execution is introduced.
+
+Example condition declaration on a workflow step:
+
+```yaml
+decision_conditions:
+  - id: payment-confirmed
+    description: Payment provider confirmation is available
+    expected_states: [ready-to-ship]
+    evidence_max_age_seconds: 3600
+    refresh_owner: payments
+```
+
+`ready-to-ship` must also be in that step's workflow `states` list. The application
+still evaluates and reports the result through its business decision facts.

@@ -1088,6 +1088,9 @@ export type { OperationWorkflowBottlenecks } from './OperationWorkflowBottleneck
 export type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 export type { OperationWorkflowConditionChange } from './OperationWorkflowConditionChange.js';
 export type { OperationWorkflowConditionComparison } from './OperationWorkflowConditionComparison.js';
+export type { OperationWorkflowConditionCoverage } from './OperationWorkflowConditionCoverage.js';
+export type { OperationWorkflowConditionCoverageEntry } from './OperationWorkflowConditionCoverageEntry.js';
+export type { OperationWorkflowConditionCoverageInstance } from './OperationWorkflowConditionCoverageInstance.js';
 export type { OperationWorkflowConditionEvidence } from './OperationWorkflowConditionEvidence.js';
 export type { OperationWorkflowConditionFreshness } from './OperationWorkflowConditionFreshness.js';
 export type { OperationWorkflowConditionOutcomeGroup } from './OperationWorkflowConditionOutcomeGroup.js';

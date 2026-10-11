@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowActiveConditionSummary } from './OperationWorkflowActiveConditionSummary.js';
+import type { OperationWorkflowConditionCoverage } from './OperationWorkflowConditionCoverage.js';
 import type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
 import type { OperationWorkflowConditionRefreshProgress } from './OperationWorkflowConditionRefreshProgress.js';
 import type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
@@ -11,6 +12,7 @@ import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerf
  * Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
  */
 export type OperationWorkflowPerformanceSummary = {
+  condition_coverage?: OperationWorkflowConditionCoverage;
   refresh_progress?: OperationWorkflowConditionRefreshProgress;
   active_conditions?: OperationWorkflowActiveConditionSummary;
   condition_outcomes?: OperationWorkflowConditionOutcomeSummary;

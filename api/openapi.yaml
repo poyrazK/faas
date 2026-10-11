@@ -38608,6 +38608,12 @@ components:
       additionalProperties: false
       required: [id, description]
       properties:
+        expected_states:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          description: Optional states where this workflow step is expected to report the condition. Names must belong to its declared workflow states. Omission declares no expectation; this never gates transitions or evaluates business truth.
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         refresh_owner: {type: string, maxLength: 128, description: Optional public team or actor responsible for refreshing this condition report. UTF-8 byte bound; no controls or surrounding whitespace. Omission is unassigned.}
         refresh_instructions: {type: string, maxLength: 1024, description: Optional public application-declared refresh instructions. UTF-8 byte bound; no controls or surrounding whitespace. Displayed as text and never executed.}
         evidence_max_age_seconds: {type: integer, format: int64, minimum: 0, maximum: 315360000, description: Optional pinned maximum condition report age in seconds. Zero or omission disables the budget; this measures reporting freshness without changing the application result.}
@@ -39213,6 +39219,7 @@ components:
       additionalProperties: false
       required: [cohort_token, evaluated_at, workflow, cohort_limit, completed, ongoing]
       properties:
+        condition_coverage: {$ref: '#/components/schemas/OperationWorkflowConditionCoverage'}
         refresh_progress: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgress'}
         active_conditions: {$ref: '#/components/schemas/OperationWorkflowActiveConditionSummary'}
         condition_outcomes: {$ref: '#/components/schemas/OperationWorkflowConditionOutcomeSummary'}
@@ -72472,6 +72479,159 @@ components:
         delta_percentage_points: { type: number, format: double, minimum: -100, maximum: 100 }
         minimum_percent: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 80 }
         maximum_change_percentage_points: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 20 }
+
+    OperationWorkflowConditionCoverage:
+      type: object
+      additionalProperties: false
+      description: Reporting coverage for current states in the bounded ongoing sample. Expectations come only from
+        the latest reporting Operation's immutable definition, not a global registry or every Operation in the workflow.
+        Missing means no matching evidence in latest explicit contexts, not a failed check or proof it was never reported
+        historically. Full continuous retained history is required. Conflicting results and over-limit evidence are
+        excluded. Reported includes overdue, so expected equals reported plus missing and overdue is a subset of reported.
+        Counts precede the per-workflow preview cap. No expectations is unconfigured coverage, not completeness.
+      required:
+      - matching_workflow_count
+      - sampled_workflow_count
+      - compared_workflow_count
+      - no_expectations_workflow_count
+      - excluded_incomplete_workflow_count
+      - excluded_ambiguous_workflow_count
+      - excluded_condition_evidence_workflow_count
+      - expected_condition_count
+      - reported_condition_count
+      - missing_condition_count
+      - overdue_condition_count
+      - cohort_truncated
+      - items
+      properties:
+        matching_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        sampled_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        compared_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        no_expectations_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_incomplete_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_ambiguous_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_condition_evidence_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        expected_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        reported_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        missing_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        overdue_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        cohort_truncated:
+          type: boolean
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowConditionCoverageInstance'
+    OperationWorkflowConditionCoverageInstance:
+      type: object
+      additionalProperties: false
+      description: Coverage for one ongoing workflow. Conditions are ordered by declaring step then condition ID. Exact
+        totals include preview omissions; workflows are ordered by stable identity.
+      required:
+      - subject
+      - state
+      - expected_condition_count
+      - reported_condition_count
+      - missing_condition_count
+      - overdue_condition_count
+      - conditions_truncated
+      - conditions
+      properties:
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: Operator only; omitted in customer projections.
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+        state:
+          $ref: '#/components/schemas/OperationWorkflowState'
+        expected_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        reported_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        missing_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        overdue_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        conditions_truncated:
+          type: boolean
+        conditions:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowConditionCoverageEntry'
+    OperationWorkflowConditionCoverageEntry:
+      type: object
+      additionalProperties: false
+      description: One condition expected in the current state. Match the declaring workflow step and exact condition
+        ID and description within the current contract and latest explicit contexts. Evidence keeps the source report
+        pinned age budget and decision identity. Reported includes any application result and may have no freshness
+        budget; overdue is evidence past its budget. Missing has no evidence. This grants no authorization or verification.
+      required:
+      - step
+      - milestone
+      - definition
+      - status
+      properties:
+        step:
+          type: string
+          minLength: 1
+          maxLength: 63
+        milestone:
+          type: string
+          minLength: 1
+          maxLength: 63
+        definition:
+          $ref: '#/components/schemas/OperationBusinessConditionDefinition'
+        status:
+          type: string
+          enum:
+          - reported
+          - missing
+          - overdue
+        evidence:
+          $ref: '#/components/schemas/OperationWorkflowDecisionOutcomeEvidence'
 
   responses:
     OperationConflict:

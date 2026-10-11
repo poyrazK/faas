@@ -314,3 +314,5 @@ export type { OperationWorkflowConditionRefreshOwnerGroup } from './customer-ope
 export type { OperationWorkflowConditionRefreshPriority } from './customer-operations.js';
 
 export type { OperationWorkflowConditionRefreshProgress, OperationWorkflowConditionRefreshProgressCount, OperationWorkflowConditionRefreshProgressInstance, OperationWorkflowConditionRefreshProgressChange } from './customer-operations.js';
+
+export type { OperationWorkflowConditionCoverage, OperationWorkflowConditionCoverageInstance, OperationWorkflowConditionCoverageEntry } from './customer-operations.js';

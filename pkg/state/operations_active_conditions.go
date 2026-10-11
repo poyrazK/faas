@@ -10,48 +10,9 @@ import (
 // Select snapshots before extracting conditions: explicit omission cannot resurrect an old result.
 // Reasons are one context; each selected path group is another. Contract changes reset all contexts.
 func workflowActiveConditionEvidence(instance workflowPerformanceInstance) (map[workflowConditionOutcomeKey]api.OperationWorkflowDecisionOutcomeEvidence, string) {
-	contexts := map[string]api.OperationWorkflowDecisionOutcomeEvidence{}
-	declarations := map[string][]api.OperationBusinessConditionDefinition{}
-	version := 0
-	for _, observation := range workflowDecisionOutcomeReports(instance) {
-		h := observation.History
-		currentVersion := effectiveWorkflowContractVersion(h.ContractVersion)
-		if currentVersion != version {
-			contexts = map[string]api.OperationWorkflowDecisionOutcomeEvidence{}
-			version = currentVersion
-			declarations = map[string][]api.OperationBusinessConditionDefinition{}
-		}
-		fact := api.OperationWorkflowDecisionOutcomeEvidence{ReportID: h.ID, OperationID: h.OperationID, Revision: h.Revision, FromState: h.FromState, State: h.State, OccurredAt: h.OccurredAt}
-		if h.ChangeReason != nil {
-			decision := api.CloneOperationBusinessDecision(h.ChangeReason.Decision)
-			value := fact
-			value.Decision = &decision
-			value.MilestoneID = h.ChangeReason.MilestoneID
-			contexts["reason"] = value
-			declarations["reason"] = observation.ConditionDefinitions[value.MilestoneID]
-		}
-		// A reported path snapshot replaces its groups, including paths without a decision fact.
-		if len(h.SelectedPaths) != 0 {
-			for context := range contexts {
-				if context != "reason" {
-					delete(contexts, context)
-					delete(declarations, context)
-				}
-			}
-			for _, path := range h.SelectedPaths {
-				if path.DecisionMilestoneID == "" {
-					continue
-				}
-				value := fact
-				value.MilestoneID = path.DecisionMilestoneID
-				value.Decision = &api.OperationBusinessDecision{Workflow: h.Workflow, InstanceID: h.InstanceID, Code: path.DecisionCode, Description: path.DecisionDescription, RuleID: path.DecisionRuleID, RuleVersion: path.DecisionRuleVersion, Conditions: append([]api.OperationBusinessConditionResult(nil), path.DecisionConditions...)}
-				contexts["path:"+path.GroupID] = value
-				declarations["path:"+path.GroupID] = observation.ConditionDefinitions[value.MilestoneID]
-			}
-		}
-		if len(contexts) > api.OperationWorkflowActiveConditionContextsMax {
-			return nil, "limit"
-		}
+	contexts, declarations, version, status := workflowActiveConditionContexts(instance)
+	if status != "" {
+		return nil, status
 	}
 	out := map[workflowConditionOutcomeKey]api.OperationWorkflowDecisionOutcomeEvidence{}
 	if version != effectiveWorkflowContractVersion(instance.Current.ContractVersion) {
@@ -215,4 +176,51 @@ func workflowActiveConditionContribution(instance workflowPerformanceInstance, g
 		return instance.Bottlenecks.BlockedSeconds, &fact
 	}
 	return instance.Bottlenecks.StateSeconds, &fact
+}
+
+func workflowActiveConditionContexts(instance workflowPerformanceInstance) (map[string]api.OperationWorkflowDecisionOutcomeEvidence, map[string][]api.OperationBusinessConditionDefinition, int, string) {
+	contexts := map[string]api.OperationWorkflowDecisionOutcomeEvidence{}
+	declarations := map[string][]api.OperationBusinessConditionDefinition{}
+	version := 0
+	for _, observation := range workflowDecisionOutcomeReports(instance) {
+		h := observation.History
+		currentVersion := effectiveWorkflowContractVersion(h.ContractVersion)
+		if currentVersion != version {
+			contexts = map[string]api.OperationWorkflowDecisionOutcomeEvidence{}
+			version = currentVersion
+			declarations = map[string][]api.OperationBusinessConditionDefinition{}
+		}
+		fact := api.OperationWorkflowDecisionOutcomeEvidence{ReportID: h.ID, OperationID: h.OperationID, Revision: h.Revision, FromState: h.FromState, State: h.State, OccurredAt: h.OccurredAt}
+		if h.ChangeReason != nil {
+			decision := api.CloneOperationBusinessDecision(h.ChangeReason.Decision)
+			value := fact
+			value.Decision = &decision
+			value.MilestoneID = h.ChangeReason.MilestoneID
+			contexts["reason"] = value
+			declarations["reason"] = observation.ConditionDefinitions[value.MilestoneID]
+		}
+		// A reported path snapshot replaces its groups, including paths without a decision fact.
+		if len(h.SelectedPaths) != 0 {
+			for context := range contexts {
+				if context != "reason" {
+					delete(contexts, context)
+					delete(declarations, context)
+				}
+			}
+			for _, path := range h.SelectedPaths {
+				if path.DecisionMilestoneID == "" {
+					continue
+				}
+				value := fact
+				value.MilestoneID = path.DecisionMilestoneID
+				value.Decision = &api.OperationBusinessDecision{Workflow: h.Workflow, InstanceID: h.InstanceID, Code: path.DecisionCode, Description: path.DecisionDescription, RuleID: path.DecisionRuleID, RuleVersion: path.DecisionRuleVersion, Conditions: append([]api.OperationBusinessConditionResult(nil), path.DecisionConditions...)}
+				contexts["path:"+path.GroupID] = value
+				declarations["path:"+path.GroupID] = observation.ConditionDefinitions[value.MilestoneID]
+			}
+		}
+		if len(contexts) > api.OperationWorkflowActiveConditionContextsMax {
+			return nil, nil, version, "limit"
+		}
+	}
+	return contexts, declarations, version, ""
 }

@@ -100,6 +100,13 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		for _, state := range states {
 			stateSet[state] = true
 		}
+		for _, condition := range conditions {
+			for _, state := range condition.ExpectedStates {
+				if !stateSet[state] {
+					return fmt.Errorf("condition expectation references an undeclared workflow state")
+				}
+			}
+		}
 		terminalStates := append([]string(nil), spec.WorkflowSteps[i].TerminalStates...)
 		if len(terminalStates) > api.OperationWorkflowStatesMax {
 			return fmt.Errorf("operation workflow terminal state list exceeds its limit")

@@ -17681,7 +17681,7 @@ ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT sqlc.arg(window_lim
 
 -- name: SummarizeCustomerOperationWorkflowPerformance :many
 WITH candidates AS (
- SELECT s.*, config.terminal, config.sla_configured, config.sla_budget_seconds, config.sla_warning_percent,
+ SELECT s.*, config.terminal, config.sla_configured, config.sla_budget_seconds, config.sla_warning_percent, config.condition_steps,
  jsonb_build_object('workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
  'report_id',r.id,'operation_id',o.id,'revision',s.revision,'contract_version',r.contract_version,
  'terminal',config.terminal,'stale_after_seconds',config.stale_after_seconds,'occurred_at',r.occurred_at,'updated_at',s.updated_at,
@@ -17695,7 +17695,7 @@ WITH candidates AS (
  JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=s.account_id AND d.app_id=s.app_id AND d.scope=s.scope
  JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
  CROSS JOIN LATERAL (
-  SELECT COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
+  SELECT COALESCE(jsonb_agg(step ORDER BY step->>'step'),'[]'::jsonb) AS condition_steps, COALESCE(bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? s.state),false) AS terminal,
   COALESCE(MAX((step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds,
   COALESCE(MAX((step->'state_sla_budget_seconds'->>s.state)::bigint),0::bigint) AS sla_budget_seconds,
   COALESCE(MAX((step->'state_sla_warning_percent'->>s.state)::bigint),0::bigint) AS sla_warning_percent,
@@ -17717,7 +17717,7 @@ WITH candidates AS (
 )
 SELECT jsonb_build_object('current',s.current_state,'tenant',s.platform_tenant_id,
  'subject',jsonb_build_object('type',s.subject_type,'id',s.subject_id),'cohort_total',s.cohort_total,
- 'observations',history.items,'verifications',verifications.items,'sla_configured',s.sla_configured,'current_sla_budget_seconds',s.sla_budget_seconds,'current_sla_warning_percent',s.sla_warning_percent)::jsonb AS instance
+ 'current_condition_steps',s.condition_steps,'observations',history.items,'verifications',verifications.items,'sla_configured',s.sla_configured,'current_sla_budget_seconds',s.sla_budget_seconds,'current_sla_warning_percent',s.sla_warning_percent)::jsonb AS instance
 FROM selected s
 CROSS JOIN LATERAL (
  SELECT COALESCE(jsonb_agg(h.observation),'[]'::jsonb) AS items FROM (
@@ -17726,6 +17726,11 @@ SELECT jsonb_build_object('history',jsonb_build_object(
  'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
  'blockers',r.blockers,'selected_paths',r.selected_paths,'change_reason',r.change_reason,
  'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'condition_steps',COALESCE((SELECT jsonb_object_agg(m.id::text,step->>'step')
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ JOIN customer_operation_milestones m ON m.operation_id=r.operation_id AND m.name=step->>'milestone'
+ WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version
+ AND (m.id::text=r.change_reason->>'milestone_id' OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.selected_paths) paths(path) WHERE path->>'decision_milestone_id'=m.id::text))), '{}'::jsonb),
  'condition_definitions',COALESCE((SELECT jsonb_object_agg(m.id::text,COALESCE(step->'decision_conditions','[]'::jsonb))
  FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
  JOIN customer_operation_milestones m ON m.operation_id=r.operation_id AND m.name=step->>'milestone'

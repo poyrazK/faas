@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
+    from ..models.operation_workflow_condition_coverage import OperationWorkflowConditionCoverage
     from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
     from ..models.operation_workflow_condition_refresh_progress import OperationWorkflowConditionRefreshProgress
     from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
@@ -40,6 +41,14 @@ class OperationWorkflowPerformanceSummary:
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
    """
+    condition_coverage: OperationWorkflowConditionCoverage | Unset = UNSET
+    """Reporting coverage for current states in the bounded ongoing sample. Expectations come only from the latest
+    reporting Operation's immutable definition, not a global registry or every Operation in the workflow. Missing
+    means no matching evidence in latest explicit contexts, not a failed check or proof it was never reported
+    historically. Full continuous retained history is required. Conflicting results and over-limit evidence are
+    excluded. Reported includes overdue, so expected equals reported plus missing and overdue is a subset of
+    reported. Counts precede the per-workflow preview cap. No expectations is unconfigured coverage, not
+    completeness."""
     refresh_progress: OperationWorkflowConditionRefreshProgress | Unset = UNSET
     """Report freshness progress reconstructed at baseline_token evaluation time using publication visibility in
     current retained completed and ongoing cohorts. This is not a stored baseline cohort, a total historical
@@ -80,6 +89,10 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = self.ongoing.to_dict()
 
+        condition_coverage: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.condition_coverage, Unset):
+            condition_coverage = self.condition_coverage.to_dict()
+
         refresh_progress: dict[str, Any] | Unset = UNSET
         if not isinstance(self.refresh_progress, Unset):
             refresh_progress = self.refresh_progress.to_dict()
@@ -108,6 +121,8 @@ class OperationWorkflowPerformanceSummary:
                 "ongoing": ongoing,
             }
         )
+        if condition_coverage is not UNSET:
+            field_dict["condition_coverage"] = condition_coverage
         if refresh_progress is not UNSET:
             field_dict["refresh_progress"] = refresh_progress
         if active_conditions is not UNSET:
@@ -122,6 +137,7 @@ class OperationWorkflowPerformanceSummary:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
+        from ..models.operation_workflow_condition_coverage import OperationWorkflowConditionCoverage
         from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
         from ..models.operation_workflow_condition_refresh_progress import OperationWorkflowConditionRefreshProgress
         from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
@@ -139,6 +155,13 @@ class OperationWorkflowPerformanceSummary:
         completed = OperationWorkflowPerformanceCohort.from_dict(d.pop("completed"))
 
         ongoing = OperationWorkflowPerformanceCohort.from_dict(d.pop("ongoing"))
+
+        _condition_coverage = d.pop("condition_coverage", UNSET)
+        condition_coverage: OperationWorkflowConditionCoverage | Unset
+        if isinstance(_condition_coverage, Unset):
+            condition_coverage = UNSET
+        else:
+            condition_coverage = OperationWorkflowConditionCoverage.from_dict(_condition_coverage)
 
         _refresh_progress = d.pop("refresh_progress", UNSET)
         refresh_progress: OperationWorkflowConditionRefreshProgress | Unset
@@ -175,6 +198,7 @@ class OperationWorkflowPerformanceSummary:
             cohort_limit=cohort_limit,
             completed=completed,
             ongoing=ongoing,
+            condition_coverage=condition_coverage,
             refresh_progress=refresh_progress,
             active_conditions=active_conditions,
             condition_outcomes=condition_outcomes,

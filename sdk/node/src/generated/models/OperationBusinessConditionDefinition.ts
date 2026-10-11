@@ -7,6 +7,10 @@
  */
 export type OperationBusinessConditionDefinition = {
   /**
+   * Optional states where this workflow step is expected to report the condition. Names must belong to its declared workflow states. Omission declares no expectation; this never gates transitions or evaluates business truth.
+   */
+  expected_states?: Array<string>;
+  /**
    * Optional public team or actor responsible for refreshing this condition report. UTF-8 byte bound; no controls or surrounding whitespace. Omission is unassigned.
    */
   refresh_owner?: string;

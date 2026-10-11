@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -20,6 +20,10 @@ class OperationBusinessConditionDefinition:
     id: str
     description: str
     """Public UTF-8 explanation without control characters; byte bound."""
+    expected_states: list[str] | Unset = UNSET
+    """Optional states where this workflow step is expected to report the condition. Names must belong to its
+    declared workflow states. Omission declares no expectation; this never gates transitions or evaluates business
+    truth."""
     refresh_owner: str | Unset = UNSET
     """Optional public team or actor responsible for refreshing this condition report. UTF-8 byte bound; no
     controls or surrounding whitespace. Omission is unassigned."""
@@ -35,6 +39,10 @@ class OperationBusinessConditionDefinition:
 
         description = self.description
 
+        expected_states: list[str] | Unset = UNSET
+        if not isinstance(self.expected_states, Unset):
+            expected_states = self.expected_states
+
         refresh_owner = self.refresh_owner
 
         refresh_instructions = self.refresh_instructions
@@ -49,6 +57,8 @@ class OperationBusinessConditionDefinition:
                 "description": description,
             }
         )
+        if expected_states is not UNSET:
+            field_dict["expected_states"] = expected_states
         if refresh_owner is not UNSET:
             field_dict["refresh_owner"] = refresh_owner
         if refresh_instructions is not UNSET:
@@ -65,6 +75,8 @@ class OperationBusinessConditionDefinition:
 
         description = d.pop("description")
 
+        expected_states = cast(list[str], d.pop("expected_states", UNSET))
+
         refresh_owner = d.pop("refresh_owner", UNSET)
 
         refresh_instructions = d.pop("refresh_instructions", UNSET)
@@ -74,6 +86,7 @@ class OperationBusinessConditionDefinition:
         operation_business_condition_definition = cls(
             id=id,
             description=description,
+            expected_states=expected_states,
             refresh_owner=refresh_owner,
             refresh_instructions=refresh_instructions,
             evidence_max_age_seconds=evidence_max_age_seconds,

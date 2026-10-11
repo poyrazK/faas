@@ -1,3 +1,4 @@
+import type { OperationBusinessConditionDefinition } from './customer-operation-decisions.js';
 export interface OperationWorkflowPolicyRequirement { milestone: string; rule_id: string; rule_version: string; code: string }
 export interface OperationWorkflowPlannedDecision { milestone: string; decision: import('./customer-operation-decisions.js').OperationBusinessDecision }
 import { OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_SUBJECT_ID_BYTES } from './operation-contract.js';
@@ -457,7 +458,7 @@ export interface OperationWorkflowBlockerDuration { contract_version: number; op
 export interface OperationWorkflowVerificationDuration { owner: string; observed_seconds: number; resolution_count: number; pending_count: number; unknown_start_count: number }
 
 export interface OperationWorkflowPerformanceOptions { baselineToken?: string; appID: string; scope: string; workflow: string }
-export interface OperationWorkflowPerformanceSummary { refresh_progress?: OperationWorkflowConditionRefreshProgress; active_conditions?: OperationWorkflowActiveConditionSummary; condition_outcomes?: OperationWorkflowConditionOutcomeSummary; decision_outcomes?: OperationWorkflowDecisionOutcomeSummary; cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
+export interface OperationWorkflowPerformanceSummary { condition_coverage?: OperationWorkflowConditionCoverage; refresh_progress?: OperationWorkflowConditionRefreshProgress; active_conditions?: OperationWorkflowActiveConditionSummary; condition_outcomes?: OperationWorkflowConditionOutcomeSummary; decision_outcomes?: OperationWorkflowDecisionOutcomeSummary; cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
 export interface OperationWorkflowDurationDistribution { workflow_count: number; total_seconds: number; p50_seconds: number; p95_seconds: number }
 export interface OperationWorkflowPerformanceCoverageReason { reason: string; workflow_count: number }
 export interface OperationWorkflowPerformanceCohort { sla_configured_workflow_count: number; sla_evaluated_workflow_count: number; sla_breached_workflow_count: number; sla_unknown_workflow_count: number; matching_workflow_count: number; sampled_workflow_count: number; complete_history_workflow_count: number; excluded_incomplete_workflow_count: number; cohort_truncated: boolean; exclusions: OperationWorkflowPerformanceCoverageReason[]; state_time: OperationWorkflowDurationDistribution; blocked_time: OperationWorkflowDurationDistribution; verification_wait: OperationWorkflowDurationDistribution; states: OperationWorkflowStatePerformance[]; blockers: OperationWorkflowBlockerPerformance[]; verification_owners: OperationWorkflowVerificationPerformance[]; states_truncated: boolean; blockers_truncated: boolean; verification_owners_truncated: boolean }
@@ -513,3 +514,18 @@ export interface OperationWorkflowConditionRefreshProgress { baseline_at: string
 export interface OperationWorkflowConditionRefreshProgressCount { status: 'refreshed'|'still_overdue'|'unreported'|'contract_changed'|'budget_removed'; condition_count: number }
 export interface OperationWorkflowConditionRefreshProgressInstance { platform_tenant_id?: string; subject: OperationSubject; state: OperationWorkflowState; baseline_overdue_condition_count: number; newer_report_condition_count: number; statuses: OperationWorkflowConditionRefreshProgressCount[]; changes_truncated: boolean; changes: OperationWorkflowConditionRefreshProgressChange[] }
 export interface OperationWorkflowConditionRefreshProgressChange { status: 'refreshed'|'still_overdue'|'unreported'|'contract_changed'|'budget_removed'; newer_report: boolean; before: OperationWorkflowDecisionOutcomeEvidence; after?: OperationWorkflowDecisionOutcomeEvidence; explanation: string }
+
+export interface OperationWorkflowConditionCoverage {
+ matching_workflow_count: number; sampled_workflow_count: number; cohort_truncated: boolean; compared_workflow_count: number; no_expectations_workflow_count: number;
+ excluded_incomplete_workflow_count: number; excluded_ambiguous_workflow_count: number; excluded_condition_evidence_workflow_count: number;
+ expected_condition_count: number; reported_condition_count: number; missing_condition_count: number; overdue_condition_count: number;
+ items: OperationWorkflowConditionCoverageInstance[];
+}
+export interface OperationWorkflowConditionCoverageInstance {
+ platform_tenant_id?: string; subject: OperationSubject; state: OperationWorkflowState;
+ expected_condition_count: number; reported_condition_count: number; missing_condition_count: number; overdue_condition_count: number;
+ conditions_truncated: boolean; conditions: OperationWorkflowConditionCoverageEntry[];
+}
+export interface OperationWorkflowConditionCoverageEntry {
+ step: string; milestone: string; definition: OperationBusinessConditionDefinition; status: 'reported'|'missing'|'overdue'; evidence?: OperationWorkflowDecisionOutcomeEvidence;
+}

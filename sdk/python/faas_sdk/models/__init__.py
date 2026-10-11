@@ -2077,6 +2077,10 @@ from .operation_workflow_condition_change_source import OperationWorkflowConditi
 from .operation_workflow_condition_change_status import OperationWorkflowConditionChangeStatus
 from .operation_workflow_condition_comparison import OperationWorkflowConditionComparison
 from .operation_workflow_condition_comparison_status import OperationWorkflowConditionComparisonStatus
+from .operation_workflow_condition_coverage import OperationWorkflowConditionCoverage
+from .operation_workflow_condition_coverage_entry import OperationWorkflowConditionCoverageEntry
+from .operation_workflow_condition_coverage_entry_status import OperationWorkflowConditionCoverageEntryStatus
+from .operation_workflow_condition_coverage_instance import OperationWorkflowConditionCoverageInstance
 from .operation_workflow_condition_evidence import OperationWorkflowConditionEvidence
 from .operation_workflow_condition_freshness import OperationWorkflowConditionFreshness
 from .operation_workflow_condition_freshness_status import OperationWorkflowConditionFreshnessStatus
@@ -5573,6 +5577,10 @@ __all__ = (
     "OperationWorkflowConditionChangeStatus",
     "OperationWorkflowConditionComparison",
     "OperationWorkflowConditionComparisonStatus",
+    "OperationWorkflowConditionCoverage",
+    "OperationWorkflowConditionCoverageEntry",
+    "OperationWorkflowConditionCoverageEntryStatus",
+    "OperationWorkflowConditionCoverageInstance",
     "OperationWorkflowConditionEvidence",
     "OperationWorkflowConditionFreshness",
     "OperationWorkflowConditionFreshnessStatus",

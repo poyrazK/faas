@@ -1094,6 +1094,9 @@ export type { OperationWorkflowBottlenecks } from './models/OperationWorkflowBot
 export type { OperationWorkflowChangeReason } from './models/OperationWorkflowChangeReason.js';
 export type { OperationWorkflowConditionChange } from './models/OperationWorkflowConditionChange.js';
 export type { OperationWorkflowConditionComparison } from './models/OperationWorkflowConditionComparison.js';
+export type { OperationWorkflowConditionCoverage } from './models/OperationWorkflowConditionCoverage.js';
+export type { OperationWorkflowConditionCoverageEntry } from './models/OperationWorkflowConditionCoverageEntry.js';
+export type { OperationWorkflowConditionCoverageInstance } from './models/OperationWorkflowConditionCoverageInstance.js';
 export type { OperationWorkflowConditionEvidence } from './models/OperationWorkflowConditionEvidence.js';
 export type { OperationWorkflowConditionFreshness } from './models/OperationWorkflowConditionFreshness.js';
 export type { OperationWorkflowConditionOutcomeGroup } from './models/OperationWorkflowConditionOutcomeGroup.js';

@@ -8,6 +8,7 @@ import (
 )
 
 type workflowBottleneckObservation struct {
+	ConditionSteps       map[string]string                                     `json:"condition_steps,omitempty"`
 	ConditionDefinitions map[string][]api.OperationBusinessConditionDefinition `json:"condition_definitions,omitempty"`
 	SLAWarningPercent    int64                                                 `json:"sla_warning_percent"`
 	SLABudgetSeconds     int64                                                 `json:"sla_budget_seconds"`
@@ -288,7 +289,7 @@ func (m *MemStore) workflowBottleneckHistoryAtLocked(account, tenant, app, scope
 				}
 			}
 		}
-		observations = append(observations, workflowBottleneckObservation{ConditionDefinitions: workflowReportConditionDefinitions(data.definitions[op.DefinitionID].Spec.WorkflowSteps, data.milestones[h.OperationID], h), History: h, Terminal: terminal, SLABudgetSeconds: slaBudget, SLAWarningPercent: slaWarning})
+		observations = append(observations, workflowBottleneckObservation{ConditionSteps: workflowReportConditionSteps(data.definitions[op.DefinitionID].Spec.WorkflowSteps, data.milestones[h.OperationID], h), ConditionDefinitions: workflowReportConditionDefinitions(data.definitions[op.DefinitionID].Spec.WorkflowSteps, data.milestones[h.OperationID], h), History: h, Terminal: terminal, SLABudgetSeconds: slaBudget, SLAWarningPercent: slaWarning})
 	}
 	return observations
 }

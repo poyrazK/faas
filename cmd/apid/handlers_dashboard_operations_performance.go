@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.ConditionCoverageInstances = workflowConditionCoverageLinks(data.ListURL, opts, summary.ConditionCoverage)
 		data.BaselineToken = opts.BaselineToken
 		data.CompareRefreshURL, data.RefreshProgressInstances = workflowRefreshProgressLinks(data.SummaryURL, data.ListURL, opts, summary)
 		data.RefreshAgeURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_age"})
@@ -199,4 +200,16 @@ func workflowRefreshProgressLinks(path, listPath string, opts api.OperationWorkf
 		}
 	}
 	return path + "?" + q.Encode(), views
+}
+
+func workflowConditionCoverageLinks(listPath string, opts api.OperationWorkflowPerformanceOptions, coverage *api.OperationWorkflowConditionCoverage) []dashboard.WorkflowConditionCoverageLink {
+	views := []dashboard.WorkflowConditionCoverageLink{}
+	if coverage == nil {
+		return views
+	}
+	for _, item := range coverage.Items {
+		history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+		views = append(views, dashboard.WorkflowConditionCoverageLink{OperationWorkflowConditionCoverageInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+	}
+	return views
 }

@@ -83,7 +83,13 @@
       </section>{{else}}<p>No complete-history instances contributed to this group in the selected cohort.</p>{{end}}
       <p class="muted">Ranked by observed duration, with stable identity ties. Contributions include historical intervals; current blockers and owners can differ from those that produced this group. Links to workflow history show its current retained view.</p>
     </section>{{end}}
-    {{if .Data.Summary}}
+    {{if .Data.Summary}}        expected_states:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          description: Optional states where this workflow step is expected to report the condition. Names must belong to its declared workflow states. Omission declares no expectation; this never gates transitions or evaluates business truth.
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+
     <p>Evaluated at <time>{{.Data.EvaluatedAt}}</time>. The latest {{.Data.Summary.CohortLimit}} retained instances in each cohort are considered. All durations below are seconds.</p>
     <section class="card"><h2>Track condition refresh progress</h2><p><a href="{{.Data.CompareRefreshURL}}">Use this snapshot to compare future reports →</a></p><p>Bookmark the comparison link to check later. It compares retained report history in the current completed and ongoing samples; it does not preserve the original cohort or prove business verification.</p></section>
 {{with .Data.Summary.RefreshProgress}}<section class="card"><h2>Condition refresh progress</h2><p>Baseline <time>{{.BaselineAt}}</time> · evaluated <time>{{.EvaluatedAt}}</time>.</p><p>{{.SampledWorkflowCount}} currently sampled · {{.ComparedWorkflowCount}} compared · {{.NoBaselineWorkflowCount}} without a retained baseline · {{.NoOverdueBaselineWorkflowCount}} with no overdue baseline conditions · {{.ExcludedIncompleteWorkflowCount}} incomplete histories · {{.ExcludedAmbiguousWorkflowCount}} conflicting snapshots · {{.ExcludedConditionEvidenceWorkflowCount}} evidence limits.</p><p>{{range .Statuses}}<code>{{.Status}}</code>: {{.ConditionCount}} {{end}} · {{.NewerReportConditionCount}} conditions received newer reports.</p><p>Refreshed means newer reporting within a pinned age budget. New reports can already be overdue. Unreported identities, changed contracts, removed budgets and terminal workflows do not prove business resolution. Missing workflows outside today's retained sample are not counted as cleared.</p>

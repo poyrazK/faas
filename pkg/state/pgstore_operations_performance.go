@@ -37,6 +37,7 @@ func (s *PgStore) summarizeWorkflowPerformance(ctx context.Context, account, ten
 	if !operator {
 		hideRuleOverlapTenants(&out)
 		hideRefreshProgressTenants(out.RefreshProgress)
+		hideConditionCoverageTenants(out.ConditionCoverage)
 	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)
 	return out, nil
