@@ -62,8 +62,9 @@ The opt-in [retirement workflow](durable-entity-retirement.md) can release an
 active slot and reduce its byte charge after verified cleanup, while preserving
 required recovery bytes and a permanent identity fence. There is no automatic
 entity-reservation release. The opt-in migration workflow
-inventories historical entities and verifies reservation coverage. At most 64
-distinct entity reservations exist per scope.
+inventories historical entities and verifies reservation coverage. Legacy scopes allow at most 64
+distinct active reservations. The opt-in [sharded registry](durable-entity-registry.md)
+raises the bound to 1,024, subject to hash-shard distribution and the same byte cap.
 Existing reservations continue admitting attempts when the tenant byte cap is
 lowered; new/increased reservations and grant issuance must fit the tighter cap.
 

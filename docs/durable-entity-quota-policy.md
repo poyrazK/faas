@@ -4,7 +4,10 @@ The opt-in policy workflow previews and applies reviewed increases for one
 account/app/immutable environment/tenant scope. It never decreases limits,
 removes caps, deletes state or releases reservations. Limits retain the existing
 hard ceilings (32 connections, 256 grants/minute, 10,000 invocations/minute,
-64 MiB per entity, 1 GiB per scope, and 64 entity reservations).
+64 MiB per entity and 1 GiB per scope). Legacy scopes allow 64 active reservations;
+the separate [registry migration](durable-entity-registry.md) raises that upper
+bound to 1,024 with per-shard limits. Policy changes preserve registry references
+and permanent retirement charges.
 
 ## Rollout order
 

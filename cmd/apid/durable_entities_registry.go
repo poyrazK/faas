@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -27,7 +28,7 @@ func (s *server) inspectEntityRegistry(w http.ResponseWriter, r *http.Request, a
 	defer cancel()
 	page, err := s.durableEntityTenantQuotas.ListRegistry(ctx, id, cursor)
 	if err != nil {
-		writeQuotaMigrationProblem(w, err)
+		writeEntityRegistryProblem(w, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -51,14 +52,30 @@ func (s *server) enableEntityRegistry(w http.ResponseWriter, r *http.Request, ac
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := s.durableEntityTenantQuotas.EnableRegistry(ctx, id, request.OperationID, request.Revision, actor); err != nil {
-		writeQuotaMigrationProblem(w, err)
+		writeEntityRegistryProblem(w, err)
 		return
 	}
 	status, err := s.durableEntityTenantQuotas.RegistryStatus(ctx, id)
 	if err != nil {
-		writeQuotaMigrationProblem(w, err)
+		writeEntityRegistryProblem(w, err)
 		return
 	}
 	s.audit.Emit(ctx, "durable_entity.registry_enabled", &acct.ID, map[string]any{"app_id": id.AppID, "environment_id": id.EnvironmentID, "platform_tenant_id": id.TenantID, "operation_id": request.OperationID})
 	writeJSON(w, 200, status)
+}
+
+func writeEntityRegistryProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, durableentity.ErrConflict) || errors.Is(err, durableentity.ErrRequestConflict) {
+		api.WriteProblem(w, api.NewProblem(409, "durable_entity_registry_stale", "Registry changed", "restart listing or inspect registry status and replay the exact migration request"))
+		return
+	}
+	if errors.Is(err, durableentity.ErrBusy) || errors.Is(err, durableentity.ErrInventoryPending) {
+		api.WriteProblem(w, api.NewProblem(409, "durable_entity_registry_blocked", "Registry migration blocked", "drain connections, complete accounting migration and resolve pending retirements"))
+		return
+	}
+	if errors.Is(err, durableentity.ErrNotFound) {
+		api.WriteProblem(w, api.NewProblem(404, "durable_entity_registry_not_found", "Registry not found", "this scope has no quota ledger"))
+		return
+	}
+	writeEntityTenantQuotaProblem(w, err)
 }

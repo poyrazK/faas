@@ -91,13 +91,15 @@ After entity cleanup reaches `complete`, one quota CAS removes its active
 reservation and commits a permanent audit/fencing receipt, replacing the full
 cap charge with exact authenticated recovery bytes. `released_bytes` reports
 the difference. Namespace/key cannot be reused. New work needs a new identity.
-Scope inspection reports `retired_entities` and `recovery_bytes`; the 64 active
+Scope inspection reports `retired_entities` and `recovery_bytes`; the active
 entity limit excludes completed retirements. Migration skips tombstones and
 cannot recreate full reservations. Pending tracked retirements block migration
 replacement and policy changes.
 
-There are at most 256 permanent retirement receipts per quota scope. The workflow
-fails closed at that bound instead of evicting fences or resetting history. The
+Legacy scopes allow at most 256 permanent retirement receipts. The opt-in
+[sharded registry](durable-entity-registry.md) raises the upper bound to 4,096,
+subject to hash-shard distribution. The workflow fails closed at these bounds
+instead of evicting fences or resetting history. The
 existing 32-policy-receipt bound and other quota ceilings remain unchanged.
 
 ## Failure and retention contract

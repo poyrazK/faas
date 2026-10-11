@@ -68,6 +68,13 @@ func TestDurableEntitySocketRegistryAuthorizationMigrationAndListing(t *testing.
 	if r = e.do(t, "GET", path+selectors, nil, headers); r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &page) != nil || !page.Enabled || page.ActiveCapacity != 1024 {
 		t.Fatal(r.Code, r.Body.String())
 	}
+	changed := map[string]any{"operation_id": uuid.NewString(), "expected_revision": page.Revision}
+	if r = e.do(t, "POST", path+"/enable"+selectors, changed, nil); r.Code != 409 {
+		t.Fatal("changed migration identity", r.Code, r.Body.String())
+	}
+	if r = e.do(t, "GET", path+selectors+"&cursor=invalid", nil, headers); r.Code != 409 {
+		t.Fatal("invalid cursor", r.Code, r.Body.String())
+	}
 	e.s.durableEntityRegistryEnabled = false
 	if r = e.do(t, "GET", path+selectors, nil, nil); r.Code != 503 {
 		t.Fatal("disabled", r.Code)

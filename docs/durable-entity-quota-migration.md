@@ -35,7 +35,9 @@ or IDs. Follow `next_cursor` until empty, retaining the same scope.
 **`page_fits` describes one page, not the whole scope.** Under quiescence, sum
 `additional_bytes` and `new_reservations` across distinct pages, and add the
 initial `current_reserved_bytes`/`current_reservations`. Compare the totals with
-`limits.retained_bytes` and the hard 64-entity reservation ceiling. A changed
+`limits.retained_bytes` and the 64-active-reservation legacy ceiling. Scopes upgraded
+to the [sharded registry](durable-entity-registry.md) have an upper bound of 1,024,
+with 64 reservations per hash shard; the page plan also checks shard shortfalls. A changed
 configuration or active writer invalidates that planning observation. The apply
 path independently checks every page against current budgets.
 
