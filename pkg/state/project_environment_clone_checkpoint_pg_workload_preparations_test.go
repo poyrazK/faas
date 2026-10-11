@@ -86,3 +86,28 @@ func TestCheckpointPgWorkloadPreparationsRejectChangedOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckpointPgEmptyWorkloadProjection(t *testing.T) {
+	op, views, activation, publication := checkpointPgBindingGraphFixture(t)
+	activation.Plan.Bindings, publication.Plan.Secrets = nil, nil
+	publication.Plan.ActivationPlanSHA256 = cloneCheckpointSHA(activation.Plan)
+	publication.PlanSHA256 = cloneCheckpointSHA(publication.Plan)
+	preparations, err := checkpointPgWorkloadPreparations(op, activation, publication)
+	if err != nil || preparations == nil || len(preparations) != 0 {
+		t.Fatal("empty projection", err)
+	}
+	if _, err = checkpointPgBindingGraph(op, views, activation, publication, preparations); !errors.Is(err, ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatal("empty projection erased captured bindings", err)
+	}
+	for i := range views {
+		views[i].Postgres = nil
+		views[i].Hash, err = cloneBindingDefinitionsHash(views[i].ProjectEnvironmentCloneBindingDefinitions)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	graph, err := checkpointPgBindingGraph(op, views, activation, publication, preparations)
+	if err != nil || len(graph.Bindings) != 0 || graph.SHA256 != cloneCheckpointSHA(graph) {
+		t.Fatal("genuine empty graph", err)
+	}
+}

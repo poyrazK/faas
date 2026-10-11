@@ -9523,3 +9523,29 @@ ordered protocol. Operational borrowers, environment/deployment metadata
 retirement, published release withdrawal and whole-stage terminal compensation
 remain separate work. Public full-stage admission remains gated and live provider
 qualification remains deferred at the user's request.
+
+### Zero-binding PostgreSQL withdrawal transition
+
+Owned object-only stages can now activate, publish and withdraw an empty
+PostgreSQL binding roster without inventing a configuration change. Reservation
+and static activation replay authenticate the original frozen workload catalogue;
+an empty activation journal cannot erase non-empty captured bindings. The original activation/publication journals
+still authenticate the exact empty binding and secret roster. Withdrawal records
+the original ownership digest, publication digest and timestamp atomically, with
+an unchanged configuration manifest. A publication with managed envelopes still
+requires an actual secret-table transition; an empty publication must preserve all
+eleven original table hashes. The original ownership receipt is never rewritten.
+
+Owned replay requires the withdrawal receipt even when current rows still equal
+the original manifest. Missing evidence cannot be reconstructed from equality.
+Receipt-write failure rolls back publication withdrawal; changed configuration
+blocks the transition. Legacy stages without original ownership do not acquire a
+backfilled receipt. Object withdrawal authenticates and pins this empty PostgreSQL
+predecessor in the same order as a non-empty predecessor, including keyless worker
+handoff and replay after object envelopes have been removed.
+
+This closes the zero-binding PostgreSQL publication gap identified above.
+Operational borrower retirement, environment/deployment metadata retirement,
+published release withdrawal and whole-stage terminal compensation remain separate
+work. Public full-stage admission remains gated; live provider qualification stays
+deferred at the user's request.

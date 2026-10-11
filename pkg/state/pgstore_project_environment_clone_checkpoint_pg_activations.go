@@ -16,7 +16,7 @@ var _ ProjectEnvironmentCloneCheckpointPgActivationStore = (*PgStore)(nil)
 
 func checkpointPgActivationFromSQL(r sqlc.ProjectEnvironmentCloneCheckpointPgActivation, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneCheckpointPgActivation, error) {
 	in := ProjectEnvironmentCloneCheckpointPgActivation{State: r.State, RequestedAt: r.RequestedAt.Time.UTC(), ObservationSHA256: r.ObservationSha256.String}
-	if json.Unmarshal(r.Plan, &in.Plan) != nil || pgUUIDString(r.OperationID) != op.ID || in.Plan.OperationID != op.ID || in.Plan.AccountID != op.AccountID || in.Plan.ProjectID != op.ProjectID || in.Plan.Scope != op.TargetEnvironment || in.Plan.SourceRevisionHash != op.SourceRevisionHash || len(in.Plan.Bindings) == 0 || len(in.Plan.Bindings) > api.PostgresCheckpointCredentialsPerAccountMax {
+	if json.Unmarshal(r.Plan, &in.Plan) != nil || pgUUIDString(r.OperationID) != op.ID || in.Plan.OperationID != op.ID || in.Plan.AccountID != op.AccountID || in.Plan.ProjectID != op.ProjectID || in.Plan.Scope != op.TargetEnvironment || in.Plan.SourceRevisionHash != op.SourceRevisionHash || len(in.Plan.Bindings) > api.PostgresCheckpointCredentialsPerAccountMax {
 		return in, ErrConflict
 	}
 	if in.State == "active" && (json.Unmarshal(r.Observation, &in.Observation) != nil || validateCheckpointPgActivationObservation(in, in.Observation, in.Observation.HealthyThrough) != nil) {
@@ -29,7 +29,26 @@ func readCheckpointPgActivationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 	if err != nil {
 		return ProjectEnvironmentCloneCheckpointPgActivation{}, mapErr(err)
 	}
-	return checkpointPgActivationFromSQL(row, op)
+	in, err := checkpointPgActivationFromSQL(row, op)
+	if err != nil || len(in.Plan.Bindings) != 0 {
+		return in, err
+	}
+	// An empty journal is authority only for an originally empty frozen roster.
+	// Check it here as well as at reservation: withdrawal uses static replay.
+	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
+	if err != nil {
+		return in, err
+	}
+	views, err := cloneBindingViews(records)
+	if err != nil {
+		return in, err
+	}
+	for _, view := range views {
+		if len(view.Postgres) != 0 {
+			return in, ErrConflict
+		}
+	}
+	return in, nil
 }
 func checkpointPgActivationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, proofs []ProjectEnvironmentCloneCheckpointPgConnectionProof, attached, publishedOwned bool) (ProjectEnvironmentCloneCheckpointPgActivationPlan, error) {
 	out := ProjectEnvironmentCloneCheckpointPgActivationPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, Scope: op.TargetEnvironment, SourceRevisionHash: op.SourceRevisionHash}
@@ -48,7 +67,7 @@ func checkpointPgActivationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 		}
 	}
 	sort.Strings(ids)
-	if len(ids) == 0 || len(ids) > api.PostgresCheckpointCredentialsPerAccountMax || proofs != nil && len(proofs) != len(ids) {
+	if len(ids) > api.PostgresCheckpointCredentialsPerAccountMax || proofs != nil && len(proofs) != len(ids) {
 		return out, ErrConflict
 	}
 	byID := map[string]ProjectEnvironmentCloneCheckpointPgConnectionProof{}

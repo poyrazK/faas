@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -225,5 +226,201 @@ func TestPGClonePostgresSecretWithdrawalRejectsChangedReceipt(t *testing.T) {
 				t.Fatal("changed evidence granted replay", fault, err)
 			}
 		})
+	}
+}
+
+// An object-only stage still publishes the empty PostgreSQL activation journal.
+// Build that journal through production coordinators rather than fabricating it.
+func checkpointEmptyPgPublicationFixture(t *testing.T) (*cloneCoordinatorFixture, *checkpointObjectVerificationTestStore) {
+	t.Helper()
+	f, store, objects := checkpointObjectVerificationFixture(t, func(f *cloneCoordinatorFixture, _ state.ObjectBucket) {
+		if _, err := f.pool.Exec(t.Context(), "DELETE FROM app_secrets WHERE app_id IN(SELECT id FROM apps WHERE project_id=$1) AND scope='production' AND managed_postgres_binding_id IS NOT NULL", f.lease.Operation.ProjectID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.pool.Exec(t.Context(), "DELETE FROM managed_postgres_bindings WHERE app_id IN(SELECT id FROM apps WHERE project_id=$1) AND scope='production'", f.lease.Operation.ProjectID); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var err error
+	f.lease, err = f.srv.verifyCheckpointObjects(t.Context(), f.lease, objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointObjectValueIdentity(t)
+	f.lease, _, err = f.srv.prepareCheckpointObjectCredentialValues(t.Context(), f.lease, objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.lease, _, err = f.srv.publishCheckpointObjects(t.Context(), f.lease, objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := &checkpointPostgresRestoreTestDriver{checkpointReleaseTestDriver: objects.checkpointReleaseTestDriver}
+	isolation := &checkpointIsolationTestDriver{checkpointPostgresRestoreTestDriver: restore, f: f}
+	verification := &checkpointVerificationTestDriver{checkpointIsolationTestDriver: isolation}
+	runtime := &checkpointRuntimeTestDriver{checkpointVerificationTestDriver: verification}
+	credentials := &checkpointCredentialTestDriver{checkpointRuntimeTestDriver: runtime, credentials: make(map[string]state.ProjectEnvironmentCloneCheckpointPostgresCredentialObservation)}
+	connections := &checkpointPgConnectionTestDriver{checkpointCredentialTestDriver: credentials, endpoints: make(map[string]state.ProjectEnvironmentCloneCheckpointPgEndpointObservation)}
+	activation := &checkpointPgActivationTestDriver{checkpointPgConnectionTestDriver: connections}
+	f.lease, err = f.srv.activateCheckpointPgCredentials(t.Context(), f.lease, activation)
+	if err != nil {
+		t.Fatal("empty activation", err)
+	}
+	f.lease, err = f.srv.publishCheckpointPgBindings(t.Context(), f.lease, activation)
+	if err != nil {
+		t.Fatal("empty publication", err)
+	}
+	inputs, err := store.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+	if err != nil || inputs.Publication == nil || len(inputs.Publication.Plan.Secrets) != 0 {
+		t.Fatal("fixture was not empty", err)
+	}
+	return f, store
+}
+
+func TestPGClonePostgresSecretWithdrawalEmptyPublication(t *testing.T) {
+	for _, fault := range []string{"none", "write", "changed", "missing", "legacy"} {
+		t.Run(fault, func(t *testing.T) {
+			f, s := checkpointEmptyPgPublicationFixture(t)
+			opID := pgtype.UUID{Bytes: uuid.MustParse(f.lease.Operation.ID), Valid: true}
+			var original sqlc.ProjectEnvironmentCloneConfigurationOwnership
+			var err error
+			if fault != "legacy" {
+				checkpointPgWithdrawalOwnershipFixture(t, f)
+				original, err = sqlc.New().ReadCloneConfigurationOwnership(t.Context(), f.pool, opID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			compensateCheckpointObjectFixture(t, f)
+			if fault == "write" {
+				if _, err = f.pool.Exec(t.Context(), `CREATE FUNCTION reject_empty_withdrawal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected receipt failure' USING ERRCODE='40001'; END $$; CREATE TRIGGER reject_empty_withdrawal BEFORE INSERT ON project_environment_clone_postgres_secret_withdrawals FOR EACH ROW EXECUTE FUNCTION reject_empty_withdrawal();`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fault == "changed" {
+				if _, err = f.pool.Exec(t.Context(), "UPDATE app_secrets SET ciphertext='changed' WHERE app_id=$1 AND scope=$2 AND key='TOKEN'", f.apps[0].ID, f.lease.Operation.TargetEnvironment); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease)
+			if fault == "write" || fault == "changed" {
+				if err == nil || (fault == "changed" && !errors.Is(err, state.ErrConflict)) {
+					t.Fatal("unsafe empty withdrawal", err)
+				}
+				var status string
+				if err = f.pool.QueryRow(t.Context(), "SELECT state FROM project_environment_clone_checkpoint_pg_publications WHERE operation_id=$1", f.lease.Operation.ID).Scan(&status); err != nil || status != "published" {
+					t.Fatal("partial withdrawal", status, err)
+				}
+				if _, err = sqlc.New().ReadClonePostgresSecretWithdrawal(t.Context(), f.pool, opID); err == nil {
+					t.Fatal("partial receipt")
+				}
+				if fault == "changed" {
+					return
+				}
+				if _, err = f.pool.Exec(t.Context(), "DROP TRIGGER reject_empty_withdrawal ON project_environment_clone_postgres_secret_withdrawals; DROP FUNCTION reject_empty_withdrawal()"); err != nil {
+					t.Fatal(err)
+				}
+				err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease)
+			}
+			if err != nil {
+				t.Fatal("empty withdrawal", err)
+			}
+			if fault == "legacy" {
+				if _, err = sqlc.New().ReadClonePostgresSecretWithdrawal(t.Context(), f.pool, opID); err == nil {
+					t.Fatal("legacy receipt backfilled")
+				}
+				return
+			}
+			receipt, err := sqlc.New().ReadClonePostgresSecretWithdrawal(t.Context(), f.pool, opID)
+			if err != nil || receipt.ManifestSha256 != original.ManifestSha256 {
+				t.Fatal("empty transition changed manifest", err)
+			}
+			owner, err := sqlc.New().ReadCloneConfigurationOwnership(t.Context(), f.pool, opID)
+			if err != nil || !reflect.DeepEqual(original, owner) {
+				t.Fatal("original ownership changed", err)
+			}
+			if fault == "missing" {
+				if _, err = f.pool.Exec(t.Context(), "DELETE FROM project_environment_clone_postgres_secret_withdrawals WHERE operation_id=$1", f.lease.Operation.ID); err != nil {
+					t.Fatal(err)
+				}
+				if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+					t.Fatal("missing empty receipt accepted", err)
+				}
+				if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+					t.Fatal("object withdrawal accepted missing predecessor", err)
+				}
+				return
+			}
+			setSecretRecipient, mfaIdentities, hostHMACKey = nil, nil, nil
+			reclaimCommonCheckpointWorker(t, f)
+			if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+				t.Fatal("object-only chain", err)
+			}
+			if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); err != nil {
+				t.Fatal("keyless empty replay", err)
+			}
+			replay, err := sqlc.New().ReadClonePostgresSecretWithdrawal(t.Context(), f.pool, opID)
+			if err != nil || !reflect.DeepEqual(receipt, replay) {
+				t.Fatal("receipt rewritten", err)
+			}
+		})
+	}
+}
+
+func TestPGClonePostgresSecretWithdrawalRejectsInventedEmptyRoster(t *testing.T) {
+	f, s, d, _ := checkpointPgPublicationFixture(t)
+	var err error
+	f.lease, err = f.srv.publishCheckpointPgBindings(t.Context(), f.lease, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointPgWithdrawalOwnershipFixture(t, f)
+	in, err := s.ProjectEnvironmentCloneCheckpointPgActivationForLease(t.Context(), f.lease)
+	if err != nil || len(in.Plan.Bindings) == 0 {
+		t.Fatal("fixture has no bindings", err)
+	}
+	in.Plan.Bindings = nil
+	in.Observation.PlanSHA256 = state.ProjectEnvironmentCloneCheckpointPgActivationPlanSHA256(in.Plan)
+	in.Observation.AllowedBindingsSHA256 = state.ProjectEnvironmentCloneCheckpointPgActivationBindingsSHA256(in.Plan)
+	digestObservation := in.Observation
+	digestObservation.HealthyThrough = time.Time{}
+	observationSHA := cloneCheckpointDigest(digestObservation)
+	rawPlan, err := json.Marshal(in.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawObservation, err := json.Marshal(in.Observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pool.Exec(t.Context(), "UPDATE project_environment_clone_checkpoint_pg_activations SET plan=$2,observation=$3,observation_sha256=$4 WHERE operation_id=$1", f.lease.Operation.ID, rawPlan, rawObservation, observationSHA); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the forged publication internally consistent with the forged activation.
+	var rawPublication []byte
+	if err = f.pool.QueryRow(t.Context(), "SELECT plan FROM project_environment_clone_checkpoint_pg_publications WHERE operation_id=$1", f.lease.Operation.ID).Scan(&rawPublication); err != nil {
+		t.Fatal(err)
+	}
+	var publication state.ProjectEnvironmentCloneCheckpointPgPublicationPlan
+	if err = json.Unmarshal(rawPublication, &publication); err != nil {
+		t.Fatal(err)
+	}
+	publication.Secrets = nil
+	publication.ActivationPlanSHA256 = in.Observation.PlanSHA256
+	publication.ActivationObservationSHA256 = observationSHA
+	rawPublication, err = json.Marshal(publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pool.Exec(t.Context(), "UPDATE project_environment_clone_checkpoint_pg_publications SET plan=$2,plan_sha256=$3 WHERE operation_id=$1", f.lease.Operation.ID, rawPublication, cloneCheckpointDigest(publication)); err != nil {
+		t.Fatal(err)
+	}
+	compensateCheckpointObjectFixture(t, f)
+	if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("invented empty roster accepted", err)
+	}
+	var status string
+	if err = f.pool.QueryRow(t.Context(), "SELECT state FROM project_environment_clone_checkpoint_pg_publications WHERE operation_id=$1", f.lease.Operation.ID).Scan(&status); err != nil || status != "published" {
+		t.Fatal("forged withdrawal committed", status, err)
 	}
 }

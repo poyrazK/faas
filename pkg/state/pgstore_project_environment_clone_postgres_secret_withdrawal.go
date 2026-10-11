@@ -95,6 +95,13 @@ func clonePostgresSecretWithdrawalManifestTx(ctx context.Context, tx pgx.Tx, op 
 	q := sqlc.New()
 	row, err := q.ReadClonePostgresSecretWithdrawal(ctx, tx, mustPgUUID(op.ID))
 	if errors.Is(mapErr(err), ErrNotFound) {
+		publication, publicationErr := q.ReadCloneCheckpointPgPublication(ctx, tx, mustPgUUID(op.ID))
+		if publicationErr == nil && publication.State == "withdrawn" {
+			return nil, ErrConflict
+		}
+		if publicationErr != nil && !errors.Is(mapErr(publicationErr), ErrNotFound) {
+			return nil, mapErr(publicationErr)
+		}
 		return original, nil
 	}
 	if err != nil {
@@ -109,14 +116,15 @@ func clonePostgresSecretWithdrawalManifestTx(ctx context.Context, tx pgx.Tx, op 
 			return nil, ErrConflict
 		}
 	}
-	if reflect.DeepEqual(original, manifest) {
-		return nil, ErrConflict
-	}
 	publication, err := readCheckpointPgPublicationTx(ctx, tx, op)
 	if err != nil {
 		return nil, checkpointPgCompensationDependencyError(err)
 	}
-	if publication.State != "withdrawn" || publication.PlanSHA256 != row.PublicationPlanSha256 || len(publication.Plan.Secrets) == 0 {
+	if publication.State != "withdrawn" || publication.PlanSHA256 != row.PublicationPlanSha256 {
+		return nil, ErrConflict
+	}
+	changed := !reflect.DeepEqual(original, manifest)
+	if changed != (len(publication.Plan.Secrets) != 0) {
 		return nil, ErrConflict
 	}
 	stored, err := q.ReadCloneCheckpointPgPublication(ctx, tx, mustPgUUID(op.ID))

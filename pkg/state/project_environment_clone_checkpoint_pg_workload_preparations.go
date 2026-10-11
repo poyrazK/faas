@@ -13,7 +13,7 @@ func checkpointPgWorkloadPreparations(op ProjectEnvironmentCloneOperation, activ
 	if activation.State != "active" || publication.State != "published" || publication.Plan.OperationID != op.ID ||
 		activation.Plan.OperationID != op.ID || activation.Plan.AccountID != op.AccountID || activation.Plan.ProjectID != op.ProjectID || activation.Plan.Scope != op.TargetEnvironment || activation.Plan.SourceRevisionHash != op.SourceRevisionHash ||
 		publication.PlanSHA256 != cloneCheckpointSHA(publication.Plan) || publication.Plan.ActivationPlanSHA256 != cloneCheckpointSHA(activation.Plan) ||
-		publication.Plan.ActivationObservationSHA256 != activation.ObservationSHA256 || len(activation.Plan.Bindings) == 0 || len(publication.Plan.Secrets) != len(activation.Plan.Bindings) {
+		publication.Plan.ActivationObservationSHA256 != activation.ObservationSHA256 || len(publication.Plan.Secrets) != len(activation.Plan.Bindings) {
 		return nil, ErrProjectEnvironmentCloneManagedValueProof
 	}
 	result := make(map[string]ProjectEnvironmentClonePostgresBindingPreparation, len(activation.Plan.Bindings))
