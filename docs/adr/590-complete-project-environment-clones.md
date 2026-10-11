@@ -10112,3 +10112,22 @@ changed physical leases and generations, revocation and daemon reconstruction.
 Launch and cleanup behavior is unchanged. Dedicated native KVM qualification,
 native producer closure and proof-backed release remain pending. No live provider
 qualification was performed; public full-stage admission remains gated.
+
+
+### Pinned qualification process incarnation observations
+
+Qualification recovery can now require the exact previously observed native
+instance, generation, kernel boot, PID and start time in addition to the full
+original execution frame and configured node. A prepared generation becoming an
+authorized process changes that identity and cannot silently satisfy the earlier
+pin. Foreign or changed identities and canceled reads return no partial evidence.
+Revocation remains observable for the same incarnation without implying exit or
+resource removal. Portable tests exercise these transitions and mismatches.
+
+Ordinary wake deployment and wake IDs still arrive through correlation metadata;
+these fields are not an authenticated original dispatch capability. A separate
+scheduler-to-vmmd protocol must carry and durably bind original dispatch ownership
+before ordinary native preparation. This observation API does not introduce that
+protocol, change launch behavior or authorize closure or release. Native KVM and
+live provider qualification remain unperformed; public full-stage admission stays
+gated.

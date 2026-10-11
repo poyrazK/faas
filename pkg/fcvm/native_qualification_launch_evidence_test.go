@@ -4,7 +4,9 @@
 package fcvm
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -104,5 +106,65 @@ func TestNativeQualificationLaunchEvidenceManagerNode(t *testing.T) {
 	}
 	if out, err := m.ObserveEnvironmentQualificationLaunch(ctx, frame); err == nil || out != (NativeQualificationLaunchEvidence{}) {
 		t.Fatal("changed physical lease accepted")
+	}
+}
+
+func TestNativeQualificationLaunchEvidencePinnedIncarnation(t *testing.T) {
+	m, v, frame, _, ctx := nativeQualificationManagerFixture(t)
+	j := v.nativeRecovery.journal.qualifications(frame.NodeID)
+	claimed, err := j.claim(ctx, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = j.owner.prepare(nativeQualificationContext(ctx, claimed), qualificationLease(frame.InstanceID)); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := m.ObserveEnvironmentQualificationLaunch(ctx, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, err := j.owner.read(frame.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical.Authorized, physical.PID, physical.StartTime = true, 42, 101
+	if err = j.owner.write(physical); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := m.ObserveEnvironmentQualificationLaunchGeneration(ctx, frame, prepared.Native.Identity); !errors.Is(err, state.ErrConflict) || out != (NativeQualificationLaunchEvidence{}) {
+		t.Fatal("prepared identity borrowed live incarnation", err)
+	}
+	live, err := m.ObserveEnvironmentQualificationLaunch(ctx, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := m.ObserveEnvironmentQualificationLaunchGeneration(ctx, frame, live.Native.Identity); err != nil || out != live {
+		t.Fatal("exact incarnation rejected", err)
+	}
+	for _, change := range []func(*NativeLaunchIdentity){
+		func(x *NativeLaunchIdentity) { x.InstanceID = uuid.NewString() },
+		func(x *NativeLaunchIdentity) { x.Generation = uuid.NewString() },
+		func(x *NativeLaunchIdentity) { x.KernelBootID = uuid.NewString() },
+		func(x *NativeLaunchIdentity) { x.PID++ },
+		func(x *NativeLaunchIdentity) { x.StartTime++ },
+		func(x *NativeLaunchIdentity) { x.PID = 1 },
+	} {
+		expected := live.Native.Identity
+		change(&expected)
+		if out, err := m.ObserveEnvironmentQualificationLaunchGeneration(ctx, frame, expected); err == nil || out != (NativeQualificationLaunchEvidence{}) {
+			t.Fatal("foreign incarnation accepted")
+		}
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if out, err := m.ObserveEnvironmentQualificationLaunchGeneration(canceled, frame, live.Native.Identity); err == nil || out != (NativeQualificationLaunchEvidence{}) {
+		t.Fatal("canceled observation accepted")
+	}
+	if _, err = j.revoke(ctx, frame); err != nil {
+		t.Fatal(err)
+	}
+	out, err := m.ObserveEnvironmentQualificationLaunchGeneration(ctx, frame, live.Native.Identity)
+	if err != nil || !out.RequestRevoked || !out.Native.Revoked || out.Native.ExitConfirmed || out.Native.ResourcesRemoved {
+		t.Fatal("revocation changed incarnation or inferred closure", err)
 	}
 }

@@ -35,6 +35,24 @@ func (m *Manager) ObserveEnvironmentQualificationLaunch(ctx context.Context, fra
 	return out, nil
 }
 
+// ObserveEnvironmentQualificationLaunchGeneration requires both the original
+// request and the exact previously observed native incarnation. A prepared
+// generation gaining a PID changes its identity and must be observed explicitly.
+// This read grants no authority to act on the returned evidence.
+func (m *Manager) ObserveEnvironmentQualificationLaunchGeneration(ctx context.Context, frame state.EnvironmentQualificationExecution, expected NativeLaunchIdentity) (NativeQualificationLaunchEvidence, error) {
+	if !validPinnedNativeLaunchIdentity(expected) || expected.InstanceID != frame.InstanceID {
+		return NativeQualificationLaunchEvidence{}, fmt.Errorf("native qualification evidence: invalid pinned identity: %w", state.ErrInvalidArgument)
+	}
+	observed, err := m.ObserveEnvironmentQualificationLaunch(ctx, frame)
+	if err != nil {
+		return NativeQualificationLaunchEvidence{}, err
+	}
+	if observed.Native.Identity != expected {
+		return NativeQualificationLaunchEvidence{}, fmt.Errorf("native qualification evidence: pinned incarnation changed: %w", state.ErrConflict)
+	}
+	return observed, nil
+}
+
 func (j *nativeQualificationJournal) observeLaunchBinding(ctx context.Context, frame state.EnvironmentQualificationExecution) (out NativeQualificationLaunchEvidence, err error) {
 	incomingLock, err := j.lock(ctx, frame.InstanceID)
 	if err != nil {
