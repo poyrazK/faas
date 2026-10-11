@@ -4320,16 +4320,34 @@ Diagnose a run belonging to the selected automation
 | `--name <NAME>` | automation name | required |
 | `--run <UUID>` | workflow run UUID | required |
 
-### automations health
+### automations history
 
-Show bounded run reliability and failed-step metrics
+Inspect retained recovery automation history
 
-`gregale automations health --app <SLUG> --name <NAME> [--created-after <RFC3339>] [--created-before <RFC3339>]`
+`gregale automations history --app <SLUG> [--workflow <NAME>] [--run <UUID>] [--policy-version <N>] [--created-after <RFC3339>] [--created-before <RFC3339>] [--after <CURSOR>] [--limit <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
-| `--name <NAME>` | automation name | required |
+| `--workflow <NAME>` | native workflow filter |  |
+| `--run <UUID>` | native run filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--created-after <RFC3339>` | inclusive start |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+| `--after <CURSOR>` | next page cursor |  |
+| `--limit <N>` | page size (default 25, max 100) |  |
+
+### automations health
+
+Inspect app recovery health or named automation run reliability
+
+`gregale automations health [--stall-after-seconds <SECONDS>] --app <SLUG> [--name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--stall-after-seconds <SECONDS>` | app recovery evaluation threshold (default 300) |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name |  |
 | `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
 | `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
 
@@ -4362,16 +4380,148 @@ Save selected retained automation routing actions for review
 | `--idempotency-key <KEY>` | stable batch key | required |
 | `--out <PATH>` | new event plan file | required |
 
+### automations recovery-health
+
+Inspect recovery execution attention and explicit action hints
+
+`gregale automations recovery-health --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+### automations recovery-policy
+
+Inspect, preview or update recovery policy
+
+`gregale automations recovery-policy --app <SLUG> [--file <PATH>] [--preview] [--queue] [--control <pause|resume>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | policy JSON with expected_version |  |
+| `--preview` | preview --file without changing policy |  |
+| `--queue` | inspect automatic retry queue |  |
+| `--control <pause|resume>` | control automatic execution |  |
+| `--reason <TEXT>` | operator control reason |  |
+
+### automations recovery-policy-reviews
+
+Inspect policy decisions and export prepared plans
+
+`gregale automations recovery-policy-reviews --app <SLUG> [--review <UUID>] [--plan-out <PATH>] [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | retained review |  |
+| `--plan-out <PATH>` | export selected prepared plan |  |
+| `--after <UUID>` | review pagination cursor |  |
+| `--limit <N>` | page limit |  |
+
+### automations recovery-response-plan
+
+Save reviewed cancellation and retry actions
+
+`gregale automations recovery-response-plan --app <SLUG> --job <UUID> --key <KEY> --reason <TEXT> --plan-out <PATH> [--cancel-position <N>] [--retry-position <N>] [--rate <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--key <KEY>` | stable response key | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--plan-out <PATH>` | new saved plan | required |
+| `--cancel-position <N>` | item to cancel (repeatable) |  |
+| `--retry-position <N>` | saved failed item to retry (repeatable) |  |
+| `--rate <N>` | retry admission rate |  |
+
+### automations recovery-response-preview
+
+Recheck saved actions without applying
+
+`gregale automations recovery-response-preview --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+### automations recovery-response-apply
+
+Apply saved actions with durable receipts
+
+`gregale automations recovery-response-apply --plan <PATH> --yes`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+| `--yes` | confirm reviewed actions | required |
+
+### automations recovery-response-status
+
+Reconcile retained action receipts and execution outcomes
+
+`gregale automations recovery-response-status --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+### automations recovery-cancel-preview
+
+Review or cancel one admitted recovery generation
+
+`gregale automations recovery-cancel-preview --app <SLUG> --job <UUID> --position <N> --resume-count <N> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--position <N>` | frozen item position | required |
+| `--resume-count <N>` | reviewed admitted generation | required |
+| `--reason <TEXT>` | operator reason | required |
+
+### automations recovery-cancel
+
+Review or cancel one admitted recovery generation
+
+`gregale automations recovery-cancel --app <SLUG> --job <UUID> --position <N> --resume-count <N> --reason <TEXT> --yes`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--position <N>` | frozen item position | required |
+| `--resume-count <N>` | reviewed admitted generation | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--yes` | confirm exact generation cancellation | required |
+
+### automations recovery-retry-plan
+
+Review saved workflow recovery failures and save an explicit retry plan
+
+`gregale automations recovery-retry-plan --app <SLUG> --job <UUID> [--position <N>] [--plan-out <PATH>] [--key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | parent recovery job | required |
+| `--position <N>` | reviewed parent item position (repeatable) |  |
+| `--plan-out <PATH>` | new reviewed retry plan file |  |
+| `--key <KEY>` | stable idempotency key for the retry plan |  |
+
 ### automations recovery-start
 
 Submit a reviewed automation run plan as a durable server job
 
-`gregale automations recovery-start --plan <PATH> [--rate <N>] [--reason <TEXT>]`
+`gregale automations recovery-start --plan <PATH> [--rate <N>] [--execution-deadline <DURATION>] [--execution-stall <DURATION>] [--reason <TEXT>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--plan <PATH>` | reviewed run plan | required |
 | `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--execution-deadline <DURATION>` | advisory execution deadline (zero disables) |  |
+| `--execution-stall <DURATION>` | no-progress warning threshold (default 15m) |  |
 | `--reason <TEXT>` | optional operator reason |  |
 
 ### automations event-recovery-start
@@ -11849,232 +11999,3 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
-
-`gregale automations recovery-retry-plan --app SLUG --job UUID` previews saved native recovery failures. Save an explicit selection with repeatable `--position N`, `--key KEY`, and `--plan-out PATH`, then submit with `gregale automations recovery-start --plan PATH`. Only saved failed outcomes matching the current retained run's resume count qualify. Retry plans carry parent job/item lineage and cannot use local `recovery-plan` execution.
-
-Native workflow recovery execution monitoring accepts advisory durations:
-
-```sh
-gregale automations recovery-start --plan retry.json --rate 2 \
-  --execution-deadline 1h --execution-stall 15m
-```
-
-The deadline starts when each resume is admitted; zero disables it. The stall threshold defaults to 15 minutes without observable progress. Nonzero durations must be whole seconds between one minute and seven days. Capacity and scheduled waits suppress stalled alerts but still count toward an explicit deadline. Health reports link affected runs and diagnostics. The first stalled or overdue generation captures one `event_recovery.execution_attention` notification per job. Detection does not cancel or retry execution.
-
-```sh
-gregale automations recovery-health --app billing
-gregale automations recovery-cancel-preview --app billing --job JOB --position 1 --resume-count 1 --reason 'provider incident'
-gregale automations recovery-cancel --app billing --job JOB --position 1 --resume-count 1 --reason 'provider incident' --yes
-gregale events recovery-history JOB
-```
-
-Cancellation checks the reviewed item and admitted generation again under the run lock. Ineligible or changed targets return exit code 5 without cancellation. Preview does not write history. A successful action records its actor, reason and target; repeating it does not duplicate that audit entry. Use the health view's diagnostics before cancelling: cancellation cannot undo external effects or ensure that a remote handler already executing stopped.
-
-`automations recovery-response-plan --app SLUG --job UUID --key KEY --reason TEXT --plan-out PATH --cancel-position N --retry-position N` saves explicit reviewed actions. Either action flag may be repeated or omitted; at least one action is required. `--rate N` controls retry admission rate. Files are created exclusively with mode 0600.
-
-`automations recovery-response-preview --plan PATH` rechecks saved targets without applying. `recovery-response-apply --plan PATH --yes` applies original saved requests with durable IDs and can resume after interruption. `recovery-response-status --plan PATH` only reads receipts and execution results. JSON output includes per-action request IDs, child job IDs, durability, final or unresolved status, errors and an unresolved count. Exit code 5 means some actions remain unresolved; terminal execution failures are reported as failed outcomes. Refusal receipts are immutable; review a new plan/key to change a decision.
-
-`automations recovery-policy --app SLUG` inspects the current recovery policy and its version. Add `--file PATH` to replace the policy using a JSON `SetWorkflowRecoveryPolicyRequest` with `expected_version` and full `policy` settings. Configuration supports explicit workflow filters, saved failure and attention triggers, failure statuses, absolute resume limits, preparation cooldowns and hourly action budgets. `preview` prepares plans only; opt-in `automatic_retry` requires explicit saved failure filters and execution limits, as described below.
-
-`automations recovery-policy-reviews --app SLUG [--after UUID] [--limit 1..100]` lists immutable decisions. `--review UUID` reads one review. Add `--plan-out PATH` to export its prepared response plan using private exclusive creation. Suppressed reviews have no plan to export. Inspection and export perform reads only; use the response preview/apply/status commands for execution and reconciliation.
-
-### Review policy-generated recovery plans
-
-Record an operator decision on a retained prepared plan:
-
-```sh
-gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --decision approved --reason "Provider recovered; retry reviewed"
-gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --decision dismissed --reason "Incident resolved externally"
-gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --status
-```
-
-Use one operation per command. Decisions require a prepared plan and a reason.
-The first decision is immutable; repeating the same decision and reason returns
-its original actor and timestamp. A different decision or reason conflicts.
-Approval records review only. Preview and explicitly apply the exported plan
-using the existing recovery-response commands. Dismissal retains the original
-plan, target deduplication and preparation budget evidence; manual apply remains
-possible. Decisions share the parent recovery job's retention.
-
-`--status` checks live generations and terminal targets without changing the plan.
-It reports ready, stale, unknown, partially_applied, applied or no_plan, with
-per-action reasons. Durable action receipts take precedence over live changes.
-Applied means cancellation succeeded or a retry child was created; inspect retry
-execution with `recovery-response-status`. Capacity waits remain eligible retries.
-Review disposition is separate from freshness: approved plans can become stale.
-
-### Recovery review-ready notifications
-
-Subscribe an enabled app webhook to `automation.recovery_review_ready` (an empty
-filter also receives it). Schedd captures one logical event per prepared plan,
-including existing retained plans that still need review. The payload includes the
-app, recovery job, frozen run IDs and generations, trigger, action, review/status
-links, and CLI inspection/export commands. Review inspection shows capture status,
-reason, receiver count and event ID; use webhook deliveries for HTTP outcomes.
-
-Capture freezes the recipient list. No matching receivers produces `no_receivers`;
-adding a webhook later does not replay old reviews. Capture is durable across
-restarts, and failed HTTP deliveries reuse the existing retry/backoff machinery.
-Receivers should deduplicate by payload `event_id`, since a lost acknowledgement
-can result in another HTTP request for the same event.
-
-Approval or dismissal, application, stale targets, and pruned reviews suppress
-pending transmissions. Unknown freshness or temporary check errors retain work for
-retry. Suppressed deliveries appear as dead with a suppression reason; retrying
-manually still checks the review. An already started request cannot be recalled.
-Approval and applying actions remain separate explicit operations.
-
-
-Recovery review status also reports `outcome` and `complete` separately from
-application `status`. An applied retry can still be pending or running. Each
-action includes its workflow run, exact execution generation, retry child and
-items link, and proof source and timestamp when final. Saved terminal retry
-results prove success, failure or cancellation. Terminal skipped admission is a
-failed action; cancelled admission is cancelled. Missing or superseded execution
-evidence stays unknown. All actions must be final before the plan is complete;
-mixed success and cancellation reports `completed`, and any failure reports
-`failed`.
-
-Subscribe an enabled app webhook to `automation.recovery_review_finished` to
-receive one durable completion event per prepared plan. It carries the frozen
-final status, proof for every action, app and parent job identifiers, review and
-status links, and a CLI status command. Inspect `completion_notification` on the
-review for the captured result, event ID and receiver list. A capture without
-receivers is retained and does not replay to later subscriptions. Later review
-decisions or workflow retries cannot change the captured result. Retention follows
-the parent recovery job. Check the webhook delivery ledger for HTTP attempts and
-acknowledgement; deduplicate deliveries by `event_id`.
-
-
-### Bounded automatic recovery retries
-
-Opt in with `mode: "automatic_retry"` using the existing versioned recovery-policy
-configuration command. This mode requires `saved_failure` as its only trigger,
-explicit workflow names and failure statuses, `hourly_execution_budget` (1..100),
-and `pause_after_failures` (1..10). Preview remains the default and cancellation
-remains manual.
-
-```json
-{
-  "expected_version": 0,
-  "policy": {
-    "enabled": true,
-    "mode": "automatic_retry",
-    "workflow_names": ["paid"],
-    "triggers": ["saved_failure"],
-    "failure_statuses": ["failed", "dead"],
-    "max_resume_count": 3,
-    "cooldown_seconds": 300,
-    "hourly_action_budget": 10,
-    "hourly_execution_budget": 3,
-    "pause_after_failures": 2,
-    "rate_per_second": 1,
-    "reason": "bounded incident recovery"
-  }
-}
-```
-
-```bash
-gregale automations recovery-policy --app consumer --file automatic-policy.json
-gregale automations recovery-policy --app consumer
-gregale automations recovery-policy-reviews --app consumer
-```
-
-Automatic retries use the same exact-target, keyed child recovery path as manual
-application. One automatic retry per app must reach a proven final result before
-another starts. Unknown evidence defers progress. The hourly execution budget
-counts child creation separately from the preparation budget, and spent execution
-budget and cooldown survive policy updates. Inspect `automatic_execution` on each
-review for its pending, applied or suppressed actions, child IDs and saved results.
-Manual application is recognized and does not consume the automatic budget.
-
-After the configured consecutive proven failure threshold, the policy reports
-`status: "paused"` and `automatic_execution` contains the failure count, pause
-time and reason. Both preparation and automatic execution stop. Subscribe an app
-webhook to `automation.recovery_policy_paused` for a durable notification carrying
-the policy version and inspection link. Receivers deduplicate by `event_id`; the
-webhook ledger records delivery attempts. Existing `automation.recovery_review_finished`
-notifications report completed plan results. Automatic plans do not send a
-review-ready notification.
-
-To resume while retaining queued retries, use `recovery-policy --control resume`
-with an operator reason, as described below. A full policy replacement with the
-observed `expected_version` also clears the pause and failure streak, but
-suppresses older pending automatic intents.
-Disabling or replacing the policy suppresses older pending automatic intents;
-already created child jobs use the existing recovery controls. Only newly prepared
-plans under the current enabled version execute automatically. Older preview or
-superseded plans remain available for manual review and application. Cancellation
-is never automatic.
-
-#### Automatic recovery operator controls
-
-`gregale automations recovery-policy --app SLUG --queue` reads queued retries, unresolved applied children, remaining budget and cooldown. Queue entries include the retained review and policy version; `--json` returns the full snapshot. A truncated list contains the first 100 entries; inspect retained reviews for additional targets.
-
-`gregale automations recovery-policy --app SLUG --control pause|resume --reason TEXT` reads current policy state and sends a fenced operational control. Pause retains prepared retries and lets committed children continue. Resume clears the failure streak and pause without changing the policy version, preparation limits or spent execution budget. Controls require an enabled automatic retry policy. Use one of `--queue`, `--control`, or `--file` per command. A concurrent control, policy replacement or unseen failure pause returns conflict; inspect the policy before repeating.
-
-#### Suppress one pending automatic retry
-
-`gregale automations recovery-suppress --app SLUG --review REVIEW_ID --action ACTION_ID --policy-version VERSION --reason TEXT` suppresses one pending current-version automatic retry. Obtain these identifiers from `recovery-policy --queue`. The immutable suppression receipt is visible through `recovery-policy-reviews`; repeating the same reason returns that receipt. Applied retries are refused and keep their children and charges. Manual recovery remains available.
-
-Queue and review output also shows a captured `automation.recovery_queue_blocked` notification receipt when fresh inspection confirms unavailable evidence. This event is captured once per action, freezes current recipients, and uses the existing webhook delivery ledger. A historical capture does not release an unresolved child's execution slot.
-
-The automatic recovery queue (`gregale automations recovery-policy --app APP --queue`) shows preparation age and the last committed execution-worker evaluation. It also shows age and start time of the current observed wait. Reads do not refresh these observations; paused policies retain historical reasons, and unevaluated intents show “not recorded.” JSON exposes `queued_at`, `queued_age_seconds`, optional `waiting_age_seconds`, and `action.last_evaluation`.
-
-Preview a full recovery policy replacement with `gregale automations recovery-policy --app APP --file POLICY.json --preview`. The file retains its explicit `expected_version`; stale previews conflict. This read-only operation shows suppressed pending intents, retained execution slots, proposed budget/cooldown effects and bounded recent target eligibility. It never submits the policy update. Apply separately by omitting `--preview`, using the same file and deploy write access. Truncation flags and observation time describe the snapshot's limits.
-
-App recovery automation health: `gregale automations health --app APP
-[--stall-after-seconds SECONDS] [--json]`. The default evaluation threshold is
-300 seconds (range 1–86400). This read-only view includes paused, blocked,
-stalled and incomplete-sample reasons. Add `--name NAME` to use named automation
-run statistics and their existing time-window filters instead.
-
-Recovery health alerts are opt-in via `health_alerts` in the full
-`automations recovery-policy --app APP --file POLICY.json` replacement. Preview
-first with `--preview`. Set explicit `enabled`, `stall_after_seconds` and
-`alert_after_seconds`; both durations are 1–86400 seconds. Subscribe webhooks to
-`automation.recovery_health_alert` and `automation.recovery_health_recovered`
-for paired, deduplicated incident notifications. `automations health --app APP`
-shows saved monitor settings and the latest incident capture receipts.
-
-### `automations history`
-
-`gregale automations history --app APP [--workflow NAME] [--run UUID] [--policy-version N] [--created-after RFC3339] [--created-before RFC3339] [--limit N] [--after CURSOR] [--json]`
-
-Inspect retained recovery evidence in descending time order. The default page has 25 entries (maximum 100), covering seven days (maximum 30 days). Continue with the returned cursor and unchanged filters. JSON exports one page. Durable policy, worker transition and incident events retain 30 days, capped at 10,000 per app, and are marked durable in output. JSON includes frozen policy configurations and episode associations. Cursors fix the time window and durable sequence ceiling. Latest observations remain mutable; retention can remove events. Recording is prospective, with no historical backfill.
-
-#### `gregale automations report`
-
-`gregale automations report --app APP [--since 7d] [--workflow NAME]
-[--policy-version VERSION] [--created-after RFC3339] [--created-before RFC3339]`
-
-Read-only recovery effectiveness report, with observed outcomes, distinct-action
-blockers, policy/workflow groups, matched retry-to-recorded-result timing and
-history evidence links. Use global `--json` for export. The default window is
-seven days, maximum 30 days. `--since` cannot accompany `--created-after`.
-A bounded consistent snapshot scans at most 10000 newest retained entries and
-flags truncation. Missing results are window coverage facts, not live child state;
-prospective capture, retention limits and small samples are always disclosed.
-
-#### `gregale automations recovery-policy-evaluate`
-
-`gregale automations recovery-policy-evaluate --app APP --file POLICY.json
-[--since 7d] [--workflow NAME] [--created-after RFC3339]
-[--created-before RFC3339]`
-
-Compare current and proposed settings against retained recovery reviews and
-policy-independent workflow failure evidence.
-The file contains `expected_version` and `policy`; stale versions are rejected.
-Global `--json` exports assessments, evidence identifiers and coverage notes.
-Seven-day default, 30-day maximum; `--since` cannot accompany `--created-after`.
-No state changes occur. Preparation replay assumes empty window-start state;
-ambiguous historical status filters are unknown. Recorded applications can prove
-execution pressure, not admission availability. Review, candidate and application
-samples have independent truncation flags. See ADR-1023 for coverage and assumptions.
-
-`automations recovery-policy-evaluate` also compares policy settings against
-prospectively captured workflow failures outside active policy filters. Failure
-coverage is explicitly partial; inventory-only candidates include stable failure
-evidence IDs and show unknown eligibility where historical retry checks are missing.
-
-Recovery policy evaluation includes separately timed `later_eligibility` checks for unreviewed failures. A bounded background observer runs even without a recovery policy and checks retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and become stale after 15 minutes. These observations do not change historical preparation totals or authorize retries. See [ADR-1026](adr/1026-workflow-failure-eligibility-observer.md).

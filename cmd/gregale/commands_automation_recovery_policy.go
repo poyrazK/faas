@@ -8,14 +8,13 @@ import (
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
 	"io"
-	"os"
 	"strings"
 	"time"
 )
 
 func readWorkflowRecoveryPolicyFile(path string) (api.SetWorkflowRecoveryPolicyRequest, error) {
 	var req api.SetWorkflowRecoveryPolicyRequest
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return req, err
 	}

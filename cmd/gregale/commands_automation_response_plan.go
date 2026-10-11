@@ -93,7 +93,7 @@ func saveAutomationResponsePlan(path string, p automationResponsePlan) error {
 }
 func readAutomationResponsePlan(path string) (automationResponsePlan, error) {
 	var p automationResponsePlan
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return p, err
 	}

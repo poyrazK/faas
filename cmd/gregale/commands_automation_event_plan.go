@@ -200,7 +200,7 @@ func cmdAutomationsEventRecoveryPlan(args []string) int {
 
 func readAutomationEventPlan(path string) (automationEventPlan, error) {
 	var p automationEventPlan
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return p, fmt.Errorf("open event plan: %w", err)
 	}

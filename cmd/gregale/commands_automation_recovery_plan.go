@@ -89,7 +89,7 @@ func writeAutomationRecoveryPlanFile(path string, p automationRecoveryPlan) erro
 
 func readAutomationRecoveryPlan(path string) (automationRecoveryPlan, error) {
 	var p automationRecoveryPlan
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return p, fmt.Errorf("open plan: %w", err)
 	}
@@ -122,7 +122,7 @@ func persistRecoveryRecord(f *os.File, value any) error {
 	if err := f.Sync(); err != nil {
 		return fmt.Errorf("sync recovery file: %w", err)
 	}
-	dir, err := os.Open(filepath.Dir(f.Name()))
+	dir, err := openCustomerDirectoryForSync(filepath.Dir(f.Name()))
 	if err != nil {
 		return fmt.Errorf("open recovery directory: %w", err)
 	}
