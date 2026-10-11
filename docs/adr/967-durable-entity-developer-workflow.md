@@ -1,6 +1,6 @@
 # ADR-967: Durable entity developer workflow
 
-Status: Implemented in source; CI and native acceptance pending.
+Status: Implemented; focused developer-workflow CI passed. Native acceptance pending.
 
 ## Decision
 
@@ -26,3 +26,6 @@ Author SDK behavioral tests, an out-of-checkout packed starter install/typecheck
 suite, and Go artifact/CLI tests. A focused Node CI workflow runs the new suites;
 existing changed-package CI covers Go. Local test/build execution is deferred per
 user instruction. Feature gates and native KVM/GCS acceptance requirements remain.
+
+Focused CI evidence and native acceptance boundaries are recorded in the
+[release qualification report](../durable-entity-release-qualification.md).

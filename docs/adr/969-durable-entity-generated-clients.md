@@ -1,6 +1,6 @@
 # ADR-969: Durable entity generated clients
 
-Status: Implemented in source; CI validation pending.
+Status: Implemented; focused developer-workflow CI passed. Native acceptance pending.
 
 ## Decision
 
@@ -27,3 +27,6 @@ result decoding, stable replay identity and observation; compile-only assertions
 verify inferred payload/result types. Go tests reject unsafe or unprepared client
 artifacts. Local tests/builds remain deferred per user instruction. Generation and
 formatting are permitted source maintenance; production gates remain unchanged.
+
+Focused CI evidence and native acceptance boundaries are recorded in the
+[release qualification report](../durable-entity-release-qualification.md).

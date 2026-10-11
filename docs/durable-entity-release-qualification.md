@@ -20,6 +20,30 @@ These checks establish development and presentation behavior, not native durabil
 Record the workflow URL, tested commit SHA, job results and any skipped coverage
 in the release evidence. A later source change requires fresh CI evidence.
 
+## Recorded developer-workflow qualification
+
+[CI run 38122189681](https://github.com/poyrazK/faas/actions/runs/38122189681)
+passed both jobs for source commit
+`d864945b1f51e2999a9192501ffda123337ef177`.
+
+| Check | Result |
+|---|---|
+| Generated protocol contract drift | Passed |
+| Node SDK/test compilation and SDK package build | Passed on Node 22.10.0 |
+| SDK workflow and visibility behavior | 8 tests passed, zero failures |
+| Packed SDK installation outside checkout | Passed |
+| Starter type assertions, client generation/drift and source-only generation | Passed |
+| Starter HTTP, replay, fault, checkpoint, alarm and validator cases | 6 nested tests passed through the packed-starter suite |
+| Storage, ownership/replay, declared artifacts and visibility | All tests passed with race detection in the three durableentity packages |
+| Focused CLI source guards, inspection/watch and Markdown reference | Passed with race detection |
+
+The initial CI attempt exposed a widened protocol literal in an existing handler
+test; preserving the `1 | 2` tuple fixed compilation, and the complete replacement
+run passed. No local tests, builds or native acceptance were run. This evidence
+covers the focused workflow, not every repository CI gate. Native KVM/GCS cases
+below remain unverified. Later documentation-only commits do not change the
+qualified source; later code or workflow changes need a fresh successful run.
+
 ## Acceptance environment
 
 The acceptance agent should use the dedicated Gregale internal node and private
@@ -61,6 +85,6 @@ Generated clients target checked Node JavaScript; browser clients, WebSockets an
 hibernation remain outside this release. Alarms and delivery use bounded retry
 contracts; HTTP delivery is not an exactly-once side-effect guarantee.
 
-This work does not authorize opening a PR, merging or enabling production gates
-under the existing no-PR instruction. After acceptance evidence is available, the
-owner can review the concrete source and qualification report for release.
+Record native acceptance evidence before enabling the production preview. Review
+the concrete source, immutable deployment bindings and qualification report together
+when deciding whether to release.

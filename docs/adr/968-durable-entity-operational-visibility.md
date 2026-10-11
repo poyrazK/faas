@@ -1,6 +1,6 @@
 # ADR-968: Durable entity operational visibility
 
-Status: Implemented in source; CI validation pending.
+Status: Implemented; focused developer-workflow CI passed. Native acceptance pending.
 
 ## Decision
 
@@ -27,3 +27,6 @@ Author Go classification, CLI routing/watch/error tests and Node diagnostic test
 The focused developer workflow runs Node coverage; changed-package CI covers Go.
 Local tests/builds are deferred per user instruction. Documentation generation and
 formatting are permitted source maintenance. Production gates remain unchanged.
+
+Focused CI evidence and native acceptance boundaries are recorded in the
+[release qualification report](../durable-entity-release-qualification.md).
