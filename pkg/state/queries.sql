@@ -16028,3 +16028,23 @@ WHERE id=sqlc.arg(operation_id)::uuid AND account_id=sqlc.arg(account_id)::uuid 
 
 -- name: LockCloneCheckpointSchedulerAdmission :exec
 SELECT lock_clone_checkpoint_scheduler_admission();
+
+-- No instance state label proves native closure. Any remaining original row or
+-- unresolved immutable execution frame blocks accepting a retirement receipt.
+-- name: CloneCheckpointWorkloadSchedulerClosed :one
+WITH retirement AS (
+ SELECT * FROM project_environment_clone_checkpoint_workload_retirements WHERE operation_id=sqlc.arg(operation_id)::uuid AND state IN ('requested','retired')
+)
+SELECT EXISTS(SELECT 1 FROM retirement) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,instances i LEFT JOIN deployments d ON d.id=i.deployment_id
+ WHERE d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',i.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,environment_qualification_executions e
+ LEFT JOIN deployments d ON d.id::text=e.frame->>'deployment_id'
+ WHERE e.retired_at IS NULL AND (
+ (coalesce(r.plan->>'EnvironmentID','')<>'' AND r.plan->>'EnvironmentID'=e.frame->>'environment_id') OR
+ d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AS closed;
+
+-- name: LockEnvironmentQualificationCleanupWriters :exec
+SELECT lock_environment_qualification_cleanup_writers();

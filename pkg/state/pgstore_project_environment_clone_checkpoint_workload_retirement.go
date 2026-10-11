@@ -151,7 +151,21 @@ func readCheckpointWorkloadRetirementTx(ctx context.Context, tx pgx.Tx, op Proje
 	if err == nil && !reflect.DeepEqual(in.Plan, p) {
 		err = ErrConflict
 	}
+	if err == nil && in.State == "retired" {
+		err = checkpointWorkloadSchedulerClosedTx(ctx, tx, op.ID)
+	}
 	return in, err
+}
+
+func checkpointWorkloadSchedulerClosedTx(ctx context.Context, tx pgx.Tx, operationID string) error {
+	closed, err := sqlc.New().CloneCheckpointWorkloadSchedulerClosed(ctx, tx, mustPgUUID(operationID))
+	if err != nil {
+		return mapErr(err)
+	}
+	if !closed.Valid || !closed.Bool {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *PgStore) ReserveProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx context.Context, l ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
@@ -223,11 +237,18 @@ func (s *PgStore) ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx c
 }
 func (s *PgStore) FinishProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx context.Context, l ProjectEnvironmentCloneLease, o ProjectEnvironmentCloneCheckpointWorkloadRetirementObservation) error {
 	return s.checkpointSourceCompensationTx(ctx, l, func(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) error {
+		// Hold all admission/dispatch writer fences through receipt acceptance.
+		if err := sqlc.New().LockCloneCheckpointSchedulerAdmission(ctx, tx); err != nil {
+			return mapErr(err)
+		}
 		in, err := readCheckpointWorkloadRetirementTx(ctx, tx, op)
 		if err != nil {
 			return err
 		}
 		if err = validateCheckpointWorkloadRetirementObservation(in, o); err != nil {
+			return err
+		}
+		if err = checkpointWorkloadSchedulerClosedTx(ctx, tx, op.ID); err != nil {
 			return err
 		}
 		if in.State == "retired" {

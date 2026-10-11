@@ -225,6 +225,9 @@ type Querier interface {
 	CloneCheckpointPostgresCredentialPublished(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointSourceCompensationHasHolds(ctx context.Context, db DBTX, cloneOperationID pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
+	// No instance state label proves native closure. Any remaining original row or
+	// unresolved immutable execution frame blocks accepting a retirement receipt.
+	CloneCheckpointWorkloadSchedulerClosed(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
 	CloneConfigurationCleanupHasBorrowers(ctx context.Context, db DBTX, arg CloneConfigurationCleanupHasBorrowersParams) (pgtype.Bool, error)
 	CloneConfigurationOwnershipScopeIsForeign(ctx context.Context, db DBTX, arg CloneConfigurationOwnershipScopeIsForeignParams) (pgtype.Bool, error)
 	CloneDeploymentCleanupHasLiveTarget(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
@@ -1682,6 +1685,7 @@ type Querier interface {
 	LockEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg LockEnvironmentGitSourcePollParams) (pgtype.UUID, error)
 	LockEnvironmentInvocationCleanup(ctx context.Context, db DBTX, arg LockEnvironmentInvocationCleanupParams) (pgtype.UUID, error)
 	LockEnvironmentQualificationAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error)
+	LockEnvironmentQualificationCleanupWriters(ctx context.Context, db DBTX) error
 	LockEnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error)
 	LockEnvironmentQualificationNode(ctx context.Context, db DBTX, arg LockEnvironmentQualificationNodeParams) error
 	LockEnvironmentQualificationRuntimeInstance(ctx context.Context, db DBTX, id pgtype.UUID) (Instance, error)

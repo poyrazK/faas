@@ -9799,3 +9799,31 @@ already issued native RPC, prove absence of existing processes, cgroups, network
 routes or publication, or qualify the native owner adapter. Independent native
 observation and runtime request closure remain required before metadata cleanup.
 Public full-stage admission and live provider qualification remain gated.
+
+### Qualification dispatch closure before workload retirement
+
+The original retirement claim now also fences qualification execution writers.
+An instance admitted before that claim cannot subsequently mark its immutable
+qualification execution as dispatched. The guard covers both original target
+UUIDs and execution frames in the originally owned environment; retirement with
+the existing cleanup capability remains available. New execution admission and
+first dispatch require READ COMMITTED isolation, so a prior transaction snapshot
+cannot hide a committed fence. Execution retention also rejects TRUNCATE. Qualification cleanup reserves
+instance writer intent before updating its execution frame, matching the clone
+fence lock order and allowing concurrent cleanup and claim transactions to finish
+without a lock cycle. Native I/O remains outside these bounded state transactions.
+
+Workload retirement accepts native observation only while all three writer
+fences are held and the original scheduler inventory is closed. Any remaining
+original instance row, regardless of its state, or unretired original
+qualification execution blocks the receipt. Execution frames survive missing
+instance/request metadata and still block acceptance. Reads and replay of a
+retired workload journal recheck this closure before supplying downstream cleanup
+authority. Unrelated execution records do not authorize or block this clone.
+
+Tests reconstruct original execution frames and controlled receipts to verify
+storage fencing, unknown dispatch outcomes, cleanup capabilities, orphaned
+frames and queued dispatch writers. They do not run native VMs or qualify the
+host adapter. An issued native RPC still requires original host retirement;
+ordinary wake and migration RPC closure and complete physical resource
+observation remain gaps. Public full-stage admission remains gated.
