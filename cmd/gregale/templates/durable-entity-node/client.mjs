@@ -12,3 +12,7 @@ import {sessionContract as contract2} from "./contracts.mjs";
 /** @param {Omit<import('@gregale/sdk-node').DurableEntityHandleScope, 'namespace'>} scope */
 function factory2(scope) { if (contract2.namespace !== "sessions") throw new TypeError('client namespace differs from declaration'); return durableEntityClient(contract2, scope); }
 export {factory2 as session};
+import {roomContract as contract3} from "./contracts.mjs";
+/** @param {Omit<import('@gregale/sdk-node').DurableEntityHandleScope, 'namespace'>} scope */
+function factory3(scope) { if (contract3.namespace !== "rooms") throw new TypeError('client namespace differs from declaration'); return durableEntityClient(contract3, scope); }
+export {factory3 as room};

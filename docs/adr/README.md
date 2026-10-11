@@ -782,3 +782,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-967: Durable entity developer workflow](967-durable-entity-developer-workflow.md)
 - [ADR-968: Durable entity operational visibility](968-durable-entity-operational-visibility.md)
 - [ADR-969: Durable entity generated clients](969-durable-entity-generated-clients.md)
+- [ADR-970: Reconnectable durable entity sessions](970-reconnectable-durable-entity-sessions.md)

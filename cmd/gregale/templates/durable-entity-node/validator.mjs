@@ -1,11 +1,11 @@
 // Pure isolated validator: no imports from the SDK, credentials or server code.
-import {counterState, reservationState, sessionState} from './state.mjs';
+import {counterState, reservationState, sessionState, roomState} from './state.mjs';
 
 export default function validateRestore(input) {
   let valid = false;
   try {
     const candidate = input?.candidate;
-    const decode = new Map([['counters', counterState], ['reservations', reservationState], ['sessions', sessionState]]).get(input?.entity?.namespace);
+    const decode = new Map([['counters', counterState], ['reservations', reservationState], ['sessions', sessionState], ['rooms', roomState]]).get(input?.entity?.namespace);
     if (input?.protocol_version === 1 && input?.event === 'validate_restore' && decode
       && candidate?.schema_version === 1 && Object.keys(candidate).length === 2 && Object.hasOwn(candidate, 'data')) {
       decode(candidate.data); valid = true;

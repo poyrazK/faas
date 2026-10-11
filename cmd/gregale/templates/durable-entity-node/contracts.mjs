@@ -1,3 +1,4 @@
+import {decodeDurableSessionCommand} from '@gregale/sdk-node/durable-entities/session';
 // Caller-only contracts: no handlers, registry, server or simulator imports.
 import {defineDurableEntityClientContract} from '@gregale/sdk-node/durable-entities/client';
 import {counterState, reservationState, sessionState, record} from './state.mjs';
@@ -21,4 +22,13 @@ export const sessionContract = defineDurableEntityClientContract({namespace: 'se
     if (Object.keys(input).length !== 2 || input.action !== 'start' || typeof input.at !== 'string' || !Number.isFinite(Date.parse(input.at))) throw new TypeError('provide an explicit alarm deadline');
     return {action: /** @type {'start'} */ (input.action), at: input.at};
   }, decodeResult: sessionState,
+});
+
+export const roomContract = defineDurableEntityClientContract({namespace: 'rooms',
+  decodePayload: decodeDurableSessionCommand,
+  decodeResult(value) {
+    const result=record(value);
+    if (typeof result.session_id !== 'string' || !Number.isSafeInteger(result.sequence) || typeof result.closed !== 'boolean' || (result.value !== null && typeof result.value !== 'number')) throw new TypeError('invalid session result');
+    return {session_id:result.session_id,sequence:/** @type {number} */ (result.sequence),closed:result.closed,value:/** @type {number|null} */ (result.value)};
+  },
 });

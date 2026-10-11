@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -61,6 +62,7 @@ type server struct {
 	guestTracingEnabled                      bool // ADR-934 broker on (FAAS_GUEST_TRACING_ENABLED=1)
 	durableEntities                          *durableentity.Manager
 	durableEntityOwner                       string
+	durableEntitySockets                     *entitysocket.Hub
 	durableEntityApps                        map[string]bool
 	durableEntityAlarmsEnabled               bool
 	durableEntityHealthEnabled               bool
@@ -2875,6 +2877,7 @@ func (s *server) handler() http.Handler {
 	// they're the customer-facing event surface; the existing
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/connect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.connectDurableEntity))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeDurableEntity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/inspect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectDurableEntity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDurableEntityBackups))))

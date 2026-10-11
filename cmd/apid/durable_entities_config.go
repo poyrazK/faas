@@ -9,12 +9,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) configureDurableEntities(ctx context.Context, getenv func(string) string) error {
+	s.durableEntitySockets = nil
+	sockets := getenv("FAAS_DURABLE_ENTITY_SOCKETS_ENABLED") == "1"
+	if sockets && getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
+		return errors.New("entity sockets require durable entities")
+	}
 	artifacts, artifactErr := validatorbundle.OpenArtifacts(getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -128,6 +134,9 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 		if err := engine.CheckBackups(probeCtx); err != nil {
 			return errors.New("durable entity backups require private listing and deletion")
 		}
+	}
+	if sockets {
+		s.durableEntitySockets = entitysocket.New()
 	}
 	s.durableEntityRestoreValidationEnabled = getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") == "1"
 	s.durableEntityBackupsEnabled = backups

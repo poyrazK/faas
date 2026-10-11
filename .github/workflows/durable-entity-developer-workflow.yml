@@ -7,7 +7,9 @@ on:
       - 'cmd/gregale/durable_entity_project*'
       - 'cmd/gregale/commands*.go'
       - 'cmd/gregale/templates/embed.go'
-      - 'pkg/durableentity/project/**'
+      - 'pkg/durableentity/**'
+      - 'cmd/apid/durable_entities*'
+      - 'cmd/apid/server.go'
       - 'scripts/gen-durable-entity-contract.py'
       - '.github/workflows/durable-entity-developer-workflow.yml'
   push:
@@ -15,7 +17,9 @@ on:
     paths:
       - 'sdk/node/**'
       - 'cmd/gregale/templates/durable-entity-node/**'
-      - 'pkg/durableentity/project/**'
+      - 'pkg/durableentity/**'
+      - 'cmd/apid/durable_entities*'
+      - 'cmd/apid/server.go'
       - '.github/workflows/durable-entity-developer-workflow.yml'
   workflow_dispatch:
 permissions:
@@ -38,7 +42,7 @@ jobs:
         working-directory: sdk/node
       - run: npm run test:build
         working-directory: sdk/node
-      - run: node --test dist-test/test/durable-entity-workflow.test.js dist-test/test/durable-entity-visibility.test.js
+      - run: node --test dist-test/test/durable-entity-workflow.test.js dist-test/test/durable-entity-visibility.test.js dist-test/test/durable-entity-session.test.js
         working-directory: sdk/node
       - run: npm run build
         working-directory: sdk/node
@@ -58,6 +62,9 @@ jobs:
           python3 scripts/gen-durable-entity-contract.py
           git diff --exit-code
       - name: Verify declared project artifacts and metadata diagnostics
-        run: go test -race ./pkg/durableentity ./pkg/durableentity/project ./pkg/durableentity/visibility
+        run: go test -race ./pkg/durableentity ./pkg/durableentity/project ./pkg/durableentity/visibility ./pkg/durableentity/socket
       - name: Verify CLI workflow, read-only inspection and generated reference
         run: go test -race ./cmd/gregale -run 'Test(DurableEntity|Entity|MarkdownReferenceFresh)' -count=1
+
+      - name: Verify authenticated entity sockets and admission changes
+        run: go test -race ./cmd/apid -run 'TestDurableEntitySocket' -count=1

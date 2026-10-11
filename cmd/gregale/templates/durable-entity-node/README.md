@@ -143,3 +143,8 @@ request ID and original payload and retry that identical call after an uncertain
 response. Generated clients never create a new request ID or automatically repeat
 an invocation. Existing SDK transport retry settings still apply. `retry()` remains
 an explicit fenced alarm/outbox recovery operation, distinct from invocation replay.
+
+The `rooms` namespace demonstrates durable session identities and ordered counter
+messages. See [reconnectable sessions](../../../../docs/durable-entity-sessions.md)
+for frame preparation, acknowledgement checks, authenticated socket routing and
+preview limits. This is separate from the scheduled automation `sessions` example.

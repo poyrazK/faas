@@ -54,3 +54,16 @@ test('local HTTP workflow injects faults, replays and restores only into an empt
   assert.equal((await fetch(second+'/checkpoint', {method: 'POST', body: saved})).status, 200);
   assert.equal((await (await fetch(second+'/inspect?namespace=counters&key=a')).json()).version, 1);
 });
+
+test('room session frames replay after checkpoint restart and validate isolated restore candidates', async () => {
+  const sim=new DurableEntitySimulator(registry);
+  const id='11111111-1111-4111-8111-111111111111';
+  await sim.invoke({namespace:'rooms',key:'document:1',requestId:`session/${id}/open`,payload:{kind:'open',session_id:id}});
+  const frame={namespace:'rooms',key:'document:1',requestId:`session/${id}/message/1`,payload:{kind:'message',session_id:id,sequence:1,payload:2}};
+  await sim.invoke(frame);
+  const restored=new DurableEntitySimulator(registry);restored.restore(sim.checkpoint());assert.equal((await restored.invoke(frame)).replayed,true);
+  const candidate=restored.inspect('rooms','document:1').data;
+  assert.equal(validateRestore({protocol_version:1,event:'validate_restore',entity:{namespace:'rooms'},candidate}).valid,true);
+  candidate.data.sessions[0].sequence=-1;
+  assert.equal(validateRestore({protocol_version:1,event:'validate_restore',entity:{namespace:'rooms'},candidate}).valid,false);
+});

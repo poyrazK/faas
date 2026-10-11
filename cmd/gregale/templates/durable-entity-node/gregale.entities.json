@@ -31,6 +31,16 @@
         "module": "contracts.mjs",
         "export": "sessionContract"
       }
+    },
+    {
+      "namespace": "rooms",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "room",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "roomContract"
+      }
     }
   ],
   "restore_validator": "gregale.validator.json"

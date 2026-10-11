@@ -2644,3 +2644,12 @@ See [visibility semantics and CLI watch](../../docs/durable-entity-visibility.md
 infer payload/result types; clients validate before transport and preserve explicit
 request IDs. The Node starter generates namespace-bound factories from declared
 contract exports. See its [generated client guide](../../cmd/gregale/templates/durable-entity-node/README.md#generated-typed-clients).
+
+### Reconnectable entity sessions
+
+`@gregale/sdk-node/durable-entities/session` exports `defineDurableSessionEntity`,
+`durableSessionFrame` and `decodeDurableSessionAcknowledgement`. The helper retains
+session identity, sequence and closed tombstones with application state. Save each
+pending frame before transport and replay its identical bytes after disconnect.
+See the [session guide](../../docs/durable-entity-sessions.md) for the separately
+gated owner-authenticated WebSocket endpoint and its limits.

@@ -24,3 +24,15 @@ export function sessionState(value) {
   return {status: /** @type {'idle' | 'waiting' | 'done'} */ (state.status), steps: /** @type {number} */ (state.steps)};
 }
 export {record};
+/** @param {unknown} value */
+export function roomState(value) {
+  const state = record(value);
+  if (Object.keys(state).length !== 2 || !Array.isArray(state.sessions) || state.sessions.length > 32) throw new TypeError('invalid room state');
+  const ids = new Set();
+  const sessions = state.sessions.map(value => {
+    const item = record(value);
+    if (Object.keys(item).length !== 3 || typeof item.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(item.id) || ids.has(item.id) || !Number.isSafeInteger(item.sequence) || /** @type {number} */ (item.sequence) < 0 || typeof item.closed !== 'boolean') throw new TypeError('invalid room session');
+    ids.add(item.id); return {id:item.id,sequence:/** @type {number} */ (item.sequence),closed:item.closed};
+  });
+  return {application:counterState(state.application),sessions};
+}

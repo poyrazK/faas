@@ -318,3 +318,5 @@ export { defineDurableEntity, createDurableEntityRegistry, type DurableEntityDef
 export { summarizeDurableEntity, observeDurableEntity, type DurableEntityObservation, type DurableEntityFinding } from './durable-entity-visibility.js';
 
 export { defineDurableEntityClientContract, durableEntityClient, type DurableEntityClientContract } from './durable-entity-client.js';
+
+export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement, defineDurableSessionEntity, durableSessionFrame, durableSessionRequestID, decodeDurableSessionCommand, DURABLE_ENTITY_MAX_SESSIONS, type DurableSessionCommand, type DurableSessionFrame, type DurableSessionState } from './durable-entity-session.js';

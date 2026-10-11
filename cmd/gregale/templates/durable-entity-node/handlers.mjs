@@ -1,3 +1,4 @@
+import {defineDurableSessionEntity} from '@gregale/sdk-node/durable-entities/session';
 import {defineDurableEntity} from '@gregale/sdk-node/durable-entities/runtime';
 import {counterState, reservationState, sessionState} from './state.mjs';
 import {counterContract, reservationContract, sessionContract} from './contracts.mjs';
@@ -41,4 +42,11 @@ export const session = defineDurableEntity({
     const next = sessionState({status: 'waiting', steps: call.state.steps + 1});
     return call.transition(next, next).scheduleAlarm(call.payload.at);
   },
+});
+
+// Ordered, reconnectable application sessions; sockets are only a transport.
+export const room = defineDurableSessionEntity({namespace: 'rooms',
+  initialState: () => ({count: 0}), decodeState: counterState,
+  decodePayload(value) {if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError('integer delta required');return value;},
+  handle({state, payload}) {const next=counterState({count:state.count+payload});return {state:next,result:next.count};},
 });

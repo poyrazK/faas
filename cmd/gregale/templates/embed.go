@@ -86,8 +86,8 @@ var Names = []string{
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
 	"durable-entity-node": {
-		".gitignore":     "node_modules/\n.env\n.env.*\nlocal-checkpoint.json\n",
-		".gregaleignore": "/dev.mjs\n/tools/\n/test/\n/tsconfig.json\n/local-checkpoint.json\n/.env\n/.env.*\n",
+		".gitignore":     "node_modules/\n.env\n.env.*\nlocal-checkpoint.json\n.session-frame.json\n",
+		".gregaleignore": "/dev.mjs\n/tools/\n/test/\n/tsconfig.json\n/local-checkpoint.json\n/.session-frame.json\n/.env\n/.env.*\n",
 	},
 	"data-api-starter": {
 		".gitignore":     "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
