@@ -2428,6 +2428,36 @@ func readResumeCapabilities(conn net.Conn) error {
 	return nil
 }
 
+// Optional guest timing trailer after the capability byte (guest/init
+// resume_timing.go): marker, version, four uint16 BE milliseconds.
+const (
+	resumeTimingMarker  = 'T'
+	resumeTimingVersion = 1
+	resumeTimingWait    = 50 * time.Millisecond
+)
+
+// resumeGuestTiming splits the guest's share of ack_ms.
+type resumeGuestTiming struct {
+	ReadMs, KernelMs, ReseedMs, AfterRestoreMs uint16
+}
+
+// readResumeGuestTiming reads the trailer a current guest writes with its ack.
+// Older guests close without one; any short or unknown trailer is ignored and
+// never fails the restore.
+func readResumeGuestTiming(conn net.Conn) (resumeGuestTiming, bool) {
+	_ = conn.SetReadDeadline(time.Now().Add(resumeTimingWait))
+	var b [10]byte
+	if _, err := io.ReadFull(conn, b[:]); err != nil || b[0] != resumeTimingMarker || b[1] != resumeTimingVersion {
+		return resumeGuestTiming{}, false
+	}
+	return resumeGuestTiming{
+		ReadMs:         binary.BigEndian.Uint16(b[2:4]),
+		KernelMs:       binary.BigEndian.Uint16(b[4:6]),
+		ReseedMs:       binary.BigEndian.Uint16(b[6:8]),
+		AfterRestoreMs: binary.BigEndian.Uint16(b[8:10]),
+	}, true
+}
+
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
 // It shares the resume listener's CONNECT handshake and is consumed by the
 // guest extension bridge (guest/init/listen_resume_linux.go).
@@ -2689,12 +2719,18 @@ func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, 
 			return err
 		}
 	}
+	ackMs := time.Since(sent).Milliseconds()
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
-	slog.Default().Info("resume hook timing", "instance", l.Instance,
+	attrs := []any{"instance", l.Instance,
 		"connect_ms", connected.Sub(started).Milliseconds(),
 		"write_ms", sent.Sub(connected).Milliseconds(),
-		"ack_ms", time.Since(sent).Milliseconds(), "attempts", attempts)
+		"ack_ms", ackMs, "attempts", attempts}
+	if guest, ok := readResumeGuestTiming(conn); ok {
+		attrs = append(attrs, "guest_read_ms", guest.ReadMs, "guest_kernel_ms", guest.KernelMs,
+			"guest_reseed_ms", guest.ReseedMs, "guest_after_restore_ms", guest.AfterRestoreMs)
+	}
+	slog.Default().Info("resume hook timing", attrs...)
 	return nil
 }
 

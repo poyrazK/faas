@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
@@ -242,6 +243,7 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 
 func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = f.Close() }()
+	accepted := time.Now()
 
 	var hdr [8]byte
 	if _, err := io.ReadFull(f, hdr[:]); err != nil {
@@ -319,6 +321,8 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		entropy = decoded
 	}
 
+	timing := resumeTiming{read: time.Since(accepted)}
+	stage := time.Now()
 	if err := runResumeHookFn(req.HostTimeUnixNano, entropy); err != nil {
 		// Keep ACK=1 as the generic NACK for malformed/unknown failures, but
 		// preserve the failing stage on the wire for vmmd diagnostics. Every
@@ -346,12 +350,14 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// without a refactor that breaks the test fixture.
 	// ADR-687: the kernel is reseeded; now every registered workload process
 	// must reseed its userspace generators before the instance can serve.
+	timing.kernel, stage = time.Since(stage), time.Now()
 	if err := reseedRestoredWorkloads(); err != nil {
 		log.Error("vsock resume: userspace reseed failed", "err", err)
 		resumeDiag(fmt.Sprintf("resume: userspace reseed err=%v", err))
 		_, _ = f.Write([]byte{VsockResumeAckUserspaceReseed})
 		return
 	}
+	timing.reseed, stage = time.Since(stage), time.Now()
 	resumeGuestProfiles()
 	SetResumeTraceparent(req.Traceparent)
 	// The userspace reseed above runs first, so an application
@@ -363,9 +369,13 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 			return
 		}
 	}
+	timing.afterRestore = time.Since(stage)
 	ackFrame := []byte{VsockResumeAckOK}
 	if restoreReseedContractHolds() {
 		ackFrame = append(ackFrame, VsockResumeCapUserspaceReseed)
+		// The trailer only follows the capability byte, which current hosts
+		// read; a guest without the capability is refused before it.
+		ackFrame = timing.appendTrailer(ackFrame)
 	}
 	_, _ = f.Write(ackFrame)
 	if warmBuilderEnabled.Load() {

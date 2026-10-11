@@ -61,8 +61,12 @@ func TestResumeAckWaitsForUserspaceReseed(t *testing.T) {
 				t.Fatalf("ack = %d, want %d", frame[0], tc.wantAck)
 			}
 			wantCap := tc.wantAck == VsockResumeAckOK
-			if gotCap := len(frame) == 2 && frame[1] == VsockResumeCapUserspaceReseed; gotCap != wantCap {
+			if gotCap := len(frame) >= 2 && frame[1] == VsockResumeCapUserspaceReseed; gotCap != wantCap {
 				t.Fatalf("ack frame %v: reseed capability = %v, want %v", frame, gotCap, wantCap)
+			}
+			// An OK ack carries the timing trailer after the capability byte.
+			if wantCap && (len(frame) != 12 || frame[2] != VsockResumeTimingMarker || frame[3] != VsockResumeTimingVersion) {
+				t.Fatalf("ack frame %v: want capability then a 10-byte timing trailer", frame)
 			}
 		})
 	}
