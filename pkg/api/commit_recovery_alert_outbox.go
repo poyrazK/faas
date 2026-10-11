@@ -179,3 +179,26 @@ func (t *commitRecoveryIncidentTracker) canOpen() bool {
 	}
 	return true
 }
+
+// AcknowledgeCommitRecoveryAlerts validates a historical checkpoint queue and
+// removes exact acknowledgements without polling or restoring live confirmation.
+// The input is unchanged, including on validation failure.
+func AcknowledgeCommitRecoveryAlerts(status CommitRecoveryStatusResult, acks []CommitRecoveryAlertAcknowledgement) (CommitRecoveryStatusResult, error) {
+	if status.Monitoring == nil || status.Monitoring.AlertOutbox == nil {
+		return status, ErrValidation("checkpoint has no durable alert outbox")
+	}
+	saved := status.Monitoring.AlertOutbox
+	if err := validateAlertOutbox(*saved, status); err != nil {
+		return status, err
+	}
+	staged := &commitRecoveryIncidentTracker{durable: true, session: saved.Session, sequence: saved.Sequence, pending: append([]CommitRecoveryBlockerTransition{}, saved.Pending...)}
+	if err := staged.acknowledge(acks); err != nil {
+		return status, err
+	}
+	monitoring := *status.Monitoring
+	outbox := *saved
+	outbox.Pending = staged.pending
+	monitoring.AlertOutbox = &outbox
+	status.Monitoring = &monitoring
+	return status, nil
+}

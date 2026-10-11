@@ -457,3 +457,8 @@ type CommitRecoveryBlockerTransition = api.CommitRecoveryBlockerTransition
 
 type CommitRecoveryAlertOutbox = api.CommitRecoveryAlertOutbox
 type CommitRecoveryAlertAcknowledgement = api.CommitRecoveryAlertAcknowledgement
+
+// AcknowledgeCommitRecoveryAlerts removes exact pending alerts without live reads.
+func AcknowledgeCommitRecoveryAlerts(status CommitRecoveryStatusResult, acks []CommitRecoveryAlertAcknowledgement) (CommitRecoveryStatusResult, error) {
+	return api.AcknowledgeCommitRecoveryAlerts(status, acks)
+}

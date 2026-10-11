@@ -1678,3 +1678,26 @@ Printing or writing an alert is not acknowledgement from the consumer. After pro
 The CLI saves each snapshot before emitting alerts, including final-check transitions, and re-emits unacknowledged pending entries once per resumed invocation. This is at-least-once delivery of checkpointed notifications, not exactly-once processing; deduplicate by incident ID and sequence, and apply only transitions newer than the last sequence processed for that incident. Partial acknowledgements can replay an older transition after a newer one was processed. Resume the latest snapshot of a single checkpoint stream; SDK callers must serialize checkpoint ownership and writes. Notifications that were never checkpointed have no durability guarantee. Consumer acknowledgements are explicit; stderr success does not remove pending alerts.
 
 The queue is bounded at 1,024 slots, including a reserved closing transition for every active incident. If a new opening cannot reserve both slots, monitoring stops with `alert_queue_full` and retains queued notifications and the sampled status. Acknowledge pending work and resume. No queued transition is evicted. Notification sequences are bounded to the exact integer range shared by the SDKs. Invalid saved state/acknowledgements are rejected and do not overwrite the CLI checkpoint. Non-durable watches retain the previous per-pass behavior. Delivery mutations, receipt budgets and ordinary watch completion are unchanged.
+
+### Manage saved alerts without restarting a watch
+
+These commands work locally without login or delivery polling:
+
+```sh
+gregale commit recovery-alerts --checkpoint watch.json
+gregale commit recovery-alerts --checkpoint watch.json --replay
+gregale commit recovery-alerts --checkpoint watch.json --ack-alerts processed.json
+```
+
+Inspection returns the historical outbox, `pending_count`, `reserved_closing_slots`,
+`remaining_slots`, and `capacity`. Replay writes pending transitions in sequence
+order as JSON lines on stdout, preserving IDs and timestamps. Printing never
+acknowledges an alert. Deduplicate downstream by `incident_id` and `sequence`.
+The acknowledgement file is an array of exact pairs, for example
+`[{"incident_id":"<saved-incident-id>","sequence":1}]`. The entire batch is
+validated before any entries are removed; repeated previously removed pairs in
+the same stream are safe. Acknowledgements atomically update only the pending
+queue. Active reservations and saved evidence remain historical and unchanged.
+All operations hold checkpoint ownership and fail while another watch owns it.
+Local validation checks saved queue/selection consistency, not fresh delivery
+state or independent correspondence with an original reviewed plan.
