@@ -1327,7 +1327,8 @@ data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter insta
 
 .PHONY: data-api-staging-check data-api-staging-canary
 data-api-staging-check: ## Staging canary harness contracts without provider calls
-	@node --test tests/data-api/staging/canary.test.mjs
+	@npm run build --prefix sdk/data
+	@node --test tests/data-api/staging/*.test.mjs
 
 data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
 	@bash scripts/ci/run-data-api-staging-canary.sh

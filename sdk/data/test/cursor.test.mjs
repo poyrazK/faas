@@ -40,3 +40,18 @@ test('rejects malformed cursors before mutating the query', async () => {
   assert.equal(c.url().searchParams.get('limit'), null)
   assert.equal(c.url().searchParams.get('or'), null)
 })
+test('before reverses every sort and null partition and preserves filters', async () => {
+  const c = client()
+  await cursorPage(c.db.from('notes').select('id,body').eq('subject', 'alice'), { order, size: 2, before: ['x', 3] })
+  assert.equal(c.url().searchParams.get('order'), 'body.asc.nullslast,id.desc.nullsfirst')
+  assert.equal(c.url().searchParams.get('subject'), 'eq.alice')
+  assert.equal(c.url().searchParams.get('or'), '(or(body.gt."x",body.is.null),and(body.eq."x",id.lt.3))')
+})
+test('conflicting or invalid backward cursors leave query unchanged', async () => {
+  const c = client(), q = c.db.from('notes').select()
+  assert.throws(() => cursorPage(q, { order, size: 2, before: ['x', 1], after: ['x', 2] }), /either/)
+  assert.throws(() => cursorPage(q, { order, size: 2, before: ['x', null] }))
+  await q
+  assert.equal(c.url().searchParams.get('order'), null)
+  assert.equal(c.url().searchParams.get('or'), null)
+})

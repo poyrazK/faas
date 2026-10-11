@@ -9696,7 +9696,7 @@ gregale data-api install --restore
 
 Run a disposable local Data API with test identities
 
-`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
+`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--approval <FILE>] [--accepted-contracts <FILE>] [--replay <FILE>] [--scenario <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9710,6 +9710,8 @@ Run a disposable local Data API with test identities
 | `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
 | `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |
 | `--check-breaking` | reject breaking changes; requires an existing baseline |  |
+| `--approval <FILE>` | reviewed compatibility approvals; requires --baseline and --check-breaking |  |
+| `--accepted-contracts <FILE>` | project-relative reviewed runtime contract policy |  |
 | `--replay <FILE>` | replay saved requests relative to the project (requires --once) |  |
 | `--scenario <NAME>` | select one named scenario (requires --replay) |  |
 
@@ -9754,13 +9756,16 @@ Generate types in an owner-authenticated app task
 
 Compare the current schema with a saved JSON baseline
 
-`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--timeout <DURATION>] [<name>]`
+`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--check-compatible] [--approval <FILE>] [--accept-contract <FILE>] [--timeout <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--baseline <FILE>` | JSON snapshot exported with types --snapshot | required |
 | `--current <FILE>` | compare a saved current contract offline; omit the app name |  |
-| `--check` | fail on breaking contract changes |  |
+| `--check` | fail on unapproved breaking contract changes |  |
+| `--check-compatible` | fail on unapproved breaking changes (alias of --check) |  |
+| `--approval <FILE>` | reviewed changes bound to both contract fingerprints |  |
+| `--accept-contract <FILE>` | write an owner runtime policy; requires zero breaking changes |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
 Examples:

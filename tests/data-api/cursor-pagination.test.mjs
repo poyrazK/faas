@@ -76,6 +76,20 @@ test('cursor pagination respects composite order, nulls, changing data and RLS',
       ids.push(...page.data.map(row=>row.id)); after=cursorFrom(page.data.at(-1),order)
     }
     assert.deepEqual(ids,expected.data.map(row=>row.id))
+    const reversed = []
+    let before
+    // The final visible row bounds a backward walk; include it separately.
+    reversed.push(expected.data.at(-1).id)
+    before = cursorFrom(expected.data.at(-1), order)
+    for (let i = 0; i < 6; i++) {
+      const page = await cursorPage(alice.from('orders').select('id,rank'), { order, size: 2, before })
+      assert.equal(page.error, null)
+      if (!page.data.length) break
+      reversed.push(...page.data.map(row => row.id))
+      before = cursorFrom(page.data.at(-1), order)
+    }
+    assert.deepEqual(reversed, expected.data.map(row => row.id).reverse())
+
   }
   const textOrder=[{column:'label'},{column:'id',unique:true}]
   const first=await cursorPage(alice.from('orders').select('id,label'),{order:textOrder,size:1})
@@ -89,4 +103,9 @@ test('cursor pagination respects composite order, nulls, changing data and RLS',
   assert.equal(continued.error,null); assert.deepEqual(continued.data.map(row=>row.id),[3,7,4,5])
   const other=await cursorPage(bob.from('orders').select('id,rank'),{order,size:10,after})
   assert.equal(other.error,null); assert.deepEqual(other.data,[])
+  const previous = await cursorPage(alice.from('orders').select('id,rank'), { order, size: 10, before: after })
+  assert.equal(previous.error, null); assert.deepEqual(previous.data.map(row => row.id), [1,6])
+  // Alice's cursor cannot expand Bob's RLS visibility in either direction.
+  const isolated = await cursorPage(bob.from('orders').select('id,rank'), { order, size: 10, before: cursorFrom({ rank: null, id: 5 }, order) })
+  assert.equal(isolated.error, null); assert.deepEqual(isolated.data.map(row => row.id), [1])
 })

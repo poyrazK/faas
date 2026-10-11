@@ -16,6 +16,7 @@ import { verifyIdempotency } from './idempotency.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
 import { command } from './staging/canary.mjs'
+import { verifyRuntimeContractGuard, verifyAcceptedContractRollout } from './contract-guard.mjs'
 
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_STARTER_DIR)
 const runtime = process.env.DATA_API_RUNTIME_DIR ? pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/') : new URL('../../cmd/gregale/templates/data-api/', import.meta.url)
@@ -187,6 +188,9 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   assert.equal((await fetch(url + '/__gregale/schema')).status, 401)
   const serving = await (await fetch(url + '/__gregale/schema', { headers: contractHeaders })).json()
   assert.equal(serving.fingerprint, fingerprint(servingSnapshot))
+  await verifyRuntimeContractGuard({ url, token: userA.token, subject: userA.subject, owner, expectedFingerprint: serving.fingerprint })
+  // The old contract predates the additive slow_notes view; both versions share one engine.
+  await verifyAcceptedContractRollout({ createServer, config, verify: tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready, olderFingerprint: fingerprint(snapshot), userA, userB, owner })
   // Grants change the exported contract, but cannot update the captured runtime.
   await owner.query(`REVOKE EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) FROM "${role}"`)
   try {
@@ -212,7 +216,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   if (origins) {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
     try {
-      await verifyBrowserCORS({ origins, url, token: userA.token, expired, subject: userA.subject, gateway, expectedID: fixtures.rows.find(row => row.subject === userA.subject).id })
+      await verifyBrowserCORS({ origins, url, token: userA.token, expired, subject: userA.subject, gateway, expectedID: fixtures.rows.find(row => row.subject === userA.subject).id, expectedSchemaFingerprint: serving.fingerprint })
     } finally { await owner.query('DELETE FROM api.notes WHERE id = ANY($1::integer[])', [fixtures.rows.map(row => row.id)]) }
   }
   let sessionToken = expired

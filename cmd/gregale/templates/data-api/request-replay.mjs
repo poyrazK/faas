@@ -38,6 +38,10 @@ export async function replayRequest(request, { url, identities, signal, variable
     const path = substitute(request.path, variables, true)
     const target = new URL(path, url)
     if (target.origin !== new URL(url).origin || !target.pathname.startsWith('/rest/v1/') || target.hash || target.username || target.password) throw new VariableFailure('Resolved request must use the local /rest/v1/ API.')
+    if ('expectedSchemaFingerprint' in request) {
+      if (typeof request.expectedSchemaFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(request.expectedSchemaFingerprint)) throw new VariableFailure('Invalid expected schema fingerprint.')
+      target.pathname = `/__gregale/contract/${request.expectedSchemaFingerprint}${target.pathname}`
+    }
     const expected = 'json' in request.expect ? substitute(request.expect.json, variables) : undefined
     const body = 'body' in request ? substitute(request.body, variables) : undefined
     // Resolve inputs before clearing names, allowing a step to recapture a variable.
