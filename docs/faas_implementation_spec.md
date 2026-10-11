@@ -2563,3 +2563,50 @@ age deadlines, reporting Operation links and workflow history. Customer
 projections omit tenant identifiers. API schemas and Go, Node and Python SDKs
 expose the optional comparison; execution and verification remain application
 responsibilities.
+
+
+### New and existing missing-report gaps
+
+Saved-baseline performance summaries also expose `new_missing_progress`,
+explaining every current missing expectation in comparable ongoing workflows.
+The existing `missing_progress` continues to follow baseline missing gaps;
+these views overlap and their totals must not be added. They share one
+comparison eligibility helper, publication visibility, immutable baseline
+Operation definition lookup and full expectation/evidence limits before previews.
+No additional SQL, persistence or migration is introduced. Comparisons use
+today's retained latest-100 completed and latest-100 ongoing sample, not original
+saved cohort membership. Unknown baselines are explicitly counted and never
+invented as newly introduced gaps; workflows outside the sample are not resolved.
+
+Current terminal workflows produce no active missing gaps. A terminal baseline
+has no active expectations: a later ongoing run's missing declarations count as
+`new_expectation`, not lost evidence. Responses expose `baseline_terminal`,
+baseline report/state, current state and a state-change flag. Coverage partitions
+samples into compared workflows with current gaps, no current active gaps after
+comparison, no baseline and existing incomplete/conflicting/over-limit or
+unavailable-definition exclusions. No-current-gap counts apply only after valid
+comparison, not to excluded or unknown workflows.
+
+For each current missing condition, step and condition ID locate a baseline
+candidate. Classification precedence is: `contract_changed` (no cross-contract
+Before), `new_expectation` (absent or inactive baseline expectation),
+`expectation_changed` (different milestone or full pinned declaration including
+vocabulary, expected states, age budget, owner or guidance), `report_lost`
+(identical active expectation with prior evidence), and `still_missing`
+(identical expectation missing before and now). Changed current states alone do
+not create a new expectation if the same declaration was active at both times.
+Previous pass, fail, unknown and overdue reports all qualify as prior evidence;
+report-age expiry never removes a report and cannot alone create report loss.
+Classification describes reporting coverage, not business verification success,
+failure, causation or severity.
+
+Before optionally includes the pinned baseline expectation and prior result,
+report timestamp, reporting Operation and baseline-evaluated freshness. After
+always contains the current missing declaration with no evidence. Status counts
+cover all current gaps before the canonical first-16 current step/condition ID
+preview and an explicit truncation flag. Workflows appear in stable identity
+order; customer projections omit tenant identifiers. The dashboard adds a new
+and existing gaps card to the saved comparison view with coverage, before/after
+expectations, guidance, prior reporting Operation, baseline/current pin links and
+workflow history. API schemas and Go, Node and Python SDKs expose the projection.
+Execution and business decisions remain application-owned.

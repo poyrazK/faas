@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.NewMissingProgressInstances = workflowNewMissingProgressLinks(data.ListURL, opts, summary.NewMissingProgress)
 		data.MissingProgressInstances = workflowMissingProgressLinks(data.ListURL, opts, summary.MissingProgress)
 		data.MissingConditionGroups = workflowMissingConditionLinks(data.SummaryURL, opts, summary)
 		data.ConditionCoverageInstances = workflowConditionCoverageLinks(data.ListURL, opts, summary.ConditionCoverage)
@@ -236,6 +237,18 @@ func workflowMissingProgressLinks(listPath string, opts api.OperationWorkflowPer
 	for _, item := range progress.Items {
 		history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
 		views = append(views, dashboard.WorkflowMissingProgressLink{OperationWorkflowMissingConditionProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+	}
+	return views
+}
+
+func workflowNewMissingProgressLinks(listPath string, opts api.OperationWorkflowPerformanceOptions, progress *api.OperationWorkflowNewMissingConditionProgress) []dashboard.WorkflowNewMissingProgressLink {
+	views := []dashboard.WorkflowNewMissingProgressLink{}
+	if progress == nil {
+		return views
+	}
+	for _, item := range progress.Items {
+		history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+		views = append(views, dashboard.WorkflowNewMissingProgressLink{OperationWorkflowNewMissingConditionProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
 	}
 	return views
 }

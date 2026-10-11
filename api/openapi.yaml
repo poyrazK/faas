@@ -39227,6 +39227,7 @@ components:
       additionalProperties: false
       required: [cohort_token, evaluated_at, workflow, cohort_limit, completed, ongoing]
       properties:
+        new_missing_progress: {$ref: '#/components/schemas/OperationWorkflowNewMissingConditionProgress'}
         missing_progress: {$ref: '#/components/schemas/OperationWorkflowMissingConditionProgress'}
         condition_coverage: {$ref: '#/components/schemas/OperationWorkflowConditionCoverage'}
         refresh_progress: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgress'}
@@ -72822,6 +72823,170 @@ components:
           - expectation_changed
           - not_expected
           - contract_changed
+        before:
+          $ref: '#/components/schemas/OperationWorkflowConditionCoverageEntry'
+        after:
+          $ref: '#/components/schemas/OperationWorkflowConditionCoverageEntry'
+        explanation:
+          type: string
+
+    OperationWorkflowNewMissingConditionProgress:
+      type: object
+      additionalProperties: false
+      description: Optional baseline_token comparison explaining current missing reports relative to retained baseline
+        expectations in today's completed and ongoing sample. Current terminal workflows produce no active gaps. Publication
+        visibility, retained immutable baseline definitions, continuous baseline report history, conflict and evidence
+        limits match missing_progress. Workflows with no retained baseline are not invented as new gaps, and unavailable
+        definitions are excluded. This is not original cohort membership or total historical backlog. All current missing
+        status counts precede preview caps; missing evidence is not failed verification.
+      required:
+      - baseline_at
+      - evaluated_at
+      - sampled_workflow_count
+      - compared_workflow_count
+      - no_baseline_workflow_count
+      - no_current_missing_workflow_count
+      - excluded_incomplete_workflow_count
+      - excluded_ambiguous_workflow_count
+      - excluded_condition_evidence_workflow_count
+      - excluded_definition_workflow_count
+      - statuses
+      - items
+      properties:
+        baseline_at:
+          type: string
+          format: date-time
+        evaluated_at:
+          type: string
+          format: date-time
+        sampled_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        compared_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        no_baseline_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        no_current_missing_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_incomplete_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_ambiguous_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_condition_evidence_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        excluded_definition_workflow_count:
+          type: integer
+          format: int64
+          minimum: 0
+        statuses:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNewMissingConditionProgressCount'
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNewMissingConditionProgressInstance'
+    OperationWorkflowNewMissingConditionProgressCount:
+      type: object
+      additionalProperties: false
+      description: Exact count of current missing conditions by comparison category before previews. Still_missing is
+        an existing gap, while report_lost requires the identical baseline expectation and prior evidence. New or changed
+        expectations and contract changes are distinct.
+      required:
+      - status
+      - condition_count
+      properties:
+        status:
+          type: string
+          enum: &id001
+          - report_lost
+          - new_expectation
+          - still_missing
+          - expectation_changed
+          - contract_changed
+        condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+    OperationWorkflowNewMissingConditionProgressInstance:
+      type: object
+      additionalProperties: false
+      description: One current ongoing workflow with missing reports and a comparable retained baseline, ordered by
+        stable workflow identity. Baseline_report identifies the pinned baseline definition source. A terminal baseline
+        has no active expectations; newly active current gaps are new_expectation rather than reporting loss. Conditions
+        use canonical current step and condition ID order. Customer projections omit tenant identifiers.
+      required:
+      - subject
+      - baseline_report
+      - baseline_terminal
+      - state
+      - state_changed
+      - current_missing_condition_count
+      - statuses
+      - changes_truncated
+      - changes
+      properties:
+        platform_tenant_id:
+          type: string
+          format: uuid
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+        baseline_report:
+          $ref: '#/components/schemas/OperationWorkflowStateHistoryEntry'
+        baseline_terminal:
+          type: boolean
+        state:
+          $ref: '#/components/schemas/OperationWorkflowState'
+        state_changed:
+          type: boolean
+        current_missing_condition_count:
+          type: integer
+          format: int64
+          minimum: 0
+        statuses:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNewMissingConditionProgressCount'
+        changes_truncated:
+          type: boolean
+        changes:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNewMissingConditionProgressChange'
+    OperationWorkflowNewMissingConditionProgressChange:
+      type: object
+      additionalProperties: false
+      description: After is a current missing expectation without evidence. Before optionally includes prior pinned
+        declaration and evidence with result and baseline freshness. Same step and condition ID locate candidates; report_lost
+        requires identical milestone and full declaration including expected states, budget and guidance plus prior
+        evidence. Age expiry never removes reports. Changed declarations are expectation_changed; absent or previously
+        inactive terminal expectations are new_expectation. Contract changes omit Before and never compare facts across
+        contracts.
+      required:
+      - status
+      - after
+      - explanation
+      properties:
+        status:
+          type: string
+          enum: *id001
         before:
           $ref: '#/components/schemas/OperationWorkflowConditionCoverageEntry'
         after:

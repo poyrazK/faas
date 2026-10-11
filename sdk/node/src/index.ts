@@ -320,3 +320,5 @@ export type { OperationWorkflowConditionCoverage, OperationWorkflowConditionCove
 export type { OperationWorkflowMissingConditionGroup } from './customer-operations.js';
 
 export type { OperationWorkflowMissingConditionProgress, OperationWorkflowMissingConditionProgressCount, OperationWorkflowMissingConditionProgressInstance, OperationWorkflowMissingConditionProgressChange } from './customer-operations.js';
+
+export type { OperationWorkflowNewMissingConditionProgress, OperationWorkflowNewMissingConditionProgressCount, OperationWorkflowNewMissingConditionProgressInstance, OperationWorkflowNewMissingConditionProgressChange } from './customer-operations.js';

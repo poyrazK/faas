@@ -82,32 +82,21 @@ func workflowMissingConditionProgress(instances []workflowPerformanceInstance, d
 		return operationAttentionKey(a.Tenant, a.Subject, a.Current.Workflow, a.Current.InstanceID) < operationAttentionKey(b.Tenant, b.Subject, b.Current.Workflow, b.Current.InstanceID)
 	})
 	for _, instance := range ordered {
-		if !workflowRefreshProgressHistoryReadable(instance, at) {
+		baseline, before, after, status := workflowMissingProgressComparison(instance, definitions, baselineAt, at)
+		switch status {
+		case "incomplete":
 			out.ExcludedIncompleteWorkflowCount++
 			continue
-		}
-		baseline, found := workflowRefreshProgressBaselineInstance(instance, baselineAt)
-		if !found {
+		case "no_baseline":
 			out.NoBaselineWorkflowCount++
 			continue
-		}
-		if !calculateWorkflowBottlenecks(baseline.Observations, &baseline.Current, nil, baselineAt, false).HistoryComplete {
-			out.ExcludedIncompleteWorkflowCount++
-			continue
-		}
-		steps, found := definitions[baseline.Current.OperationID]
-		if !found {
+		case "definition":
 			out.ExcludedDefinitionWorkflowCount++
 			continue
-		}
-		baseline.CurrentConditionSteps = workflowConditionSteps(steps, baseline.Current.Workflow, baseline.Current.ContractVersion)
-		before, beforeStatus := workflowMissingProgressEntries(baseline, baselineAt)
-		after, afterStatus := workflowMissingProgressEntries(instance, at)
-		if beforeStatus == "limit" || afterStatus == "limit" {
+		case "limit":
 			out.ExcludedConditionEvidenceWorkflowCount++
 			continue
-		}
-		if beforeStatus == "ambiguous" || afterStatus == "ambiguous" {
+		case "ambiguous":
 			out.ExcludedAmbiguousWorkflowCount++
 			continue
 		}
@@ -162,4 +151,32 @@ func hideMissingProgressTenants(progress *api.OperationWorkflowMissingConditionP
 		item.PlatformTenantID = ""
 		item.State.PlatformTenantID = ""
 	}
+}
+
+// Both progress views use publication visibility, retained definitions and full evidence before preview caps.
+func workflowMissingProgressComparison(instance workflowPerformanceInstance, definitions map[string][]api.OperationWorkflowSpec, baselineAt, at time.Time) (workflowPerformanceInstance, []api.OperationWorkflowConditionCoverageEntry, []api.OperationWorkflowConditionCoverageEntry, string) {
+	if !workflowRefreshProgressHistoryReadable(instance, at) {
+		return workflowPerformanceInstance{}, nil, nil, "incomplete"
+	}
+	baseline, found := workflowRefreshProgressBaselineInstance(instance, baselineAt)
+	if !found {
+		return baseline, nil, nil, "no_baseline"
+	}
+	if !calculateWorkflowBottlenecks(baseline.Observations, &baseline.Current, nil, baselineAt, false).HistoryComplete {
+		return baseline, nil, nil, "incomplete"
+	}
+	steps, found := definitions[baseline.Current.OperationID]
+	if !found {
+		return baseline, nil, nil, "definition"
+	}
+	baseline.CurrentConditionSteps = workflowConditionSteps(steps, baseline.Current.Workflow, baseline.Current.ContractVersion)
+	before, beforeStatus := workflowMissingProgressEntries(baseline, baselineAt)
+	after, afterStatus := workflowMissingProgressEntries(instance, at)
+	if beforeStatus == "limit" || afterStatus == "limit" {
+		return baseline, nil, nil, "limit"
+	}
+	if beforeStatus == "ambiguous" || afterStatus == "ambiguous" {
+		return baseline, nil, nil, "ambiguous"
+	}
+	return baseline, before, after, ""
 }

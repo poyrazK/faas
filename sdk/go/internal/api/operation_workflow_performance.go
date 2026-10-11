@@ -10,18 +10,19 @@ type OperationWorkflowPerformanceOptions struct {
 
 // OperationWorkflowPerformanceSummary compares complete retained histories by cohort.
 type OperationWorkflowPerformanceSummary struct {
-	MissingProgress   *OperationWorkflowMissingConditionProgress `json:"missing_progress,omitempty"`
-	ConditionCoverage *OperationWorkflowConditionCoverage        `json:"condition_coverage,omitempty"`
-	RefreshProgress   *OperationWorkflowConditionRefreshProgress `json:"refresh_progress,omitempty"`
-	ActiveConditions  *OperationWorkflowActiveConditionSummary   `json:"active_conditions,omitempty"`
-	ConditionOutcomes *OperationWorkflowConditionOutcomeSummary  `json:"condition_outcomes,omitempty"`
-	DecisionOutcomes  *OperationWorkflowDecisionOutcomeSummary   `json:"decision_outcomes,omitempty"`
-	CohortToken       string                                     `json:"cohort_token"`
-	EvaluatedAt       time.Time                                  `json:"evaluated_at"`
-	Workflow          string                                     `json:"workflow"`
-	CohortLimit       int                                        `json:"cohort_limit"`
-	Completed         OperationWorkflowPerformanceCohort         `json:"completed"`
-	Ongoing           OperationWorkflowPerformanceCohort         `json:"ongoing"`
+	NewMissingProgress *OperationWorkflowNewMissingConditionProgress `json:"new_missing_progress,omitempty"`
+	MissingProgress    *OperationWorkflowMissingConditionProgress    `json:"missing_progress,omitempty"`
+	ConditionCoverage  *OperationWorkflowConditionCoverage           `json:"condition_coverage,omitempty"`
+	RefreshProgress    *OperationWorkflowConditionRefreshProgress    `json:"refresh_progress,omitempty"`
+	ActiveConditions   *OperationWorkflowActiveConditionSummary      `json:"active_conditions,omitempty"`
+	ConditionOutcomes  *OperationWorkflowConditionOutcomeSummary     `json:"condition_outcomes,omitempty"`
+	DecisionOutcomes   *OperationWorkflowDecisionOutcomeSummary      `json:"decision_outcomes,omitempty"`
+	CohortToken        string                                        `json:"cohort_token"`
+	EvaluatedAt        time.Time                                     `json:"evaluated_at"`
+	Workflow           string                                        `json:"workflow"`
+	CohortLimit        int                                           `json:"cohort_limit"`
+	Completed          OperationWorkflowPerformanceCohort            `json:"completed"`
+	Ongoing            OperationWorkflowPerformanceCohort            `json:"ongoing"`
 }
 
 type OperationWorkflowDurationDistribution struct {
