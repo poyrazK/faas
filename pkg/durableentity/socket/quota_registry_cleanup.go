@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
-var ErrRegistryCleanupPending = errors.New("durable registry cleanup holds quota writes")
+var ErrRegistryCleanupPending = errors.New("durable registry cleanup blocks this mutation")
 
 type RegistryCleanup struct {
 	OperationID    string    `json:"operation_id"`

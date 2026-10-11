@@ -50,7 +50,7 @@ func writeEntityTenantQuotaProblem(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, entitysocket.ErrRegistryCleanupPending) {
-		api.WriteProblem(w, api.NewProblem(503, "durable_entity_registry_cleanup_pending", "Registry cleanup pending", "scope admission is held until registry cleanup completes"))
+		api.WriteProblem(w, api.NewProblem(503, "durable_entity_registry_cleanup_pending", "Registry cleanup pending", "this operation is blocked until registry cleanup completes"))
 		return
 	}
 	if errors.Is(err, entitysocket.ErrPolicyMismatch) {
