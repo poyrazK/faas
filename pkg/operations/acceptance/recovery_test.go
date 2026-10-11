@@ -2,6 +2,7 @@ package acceptance_test
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -25,7 +26,17 @@ func testOperationRecovery(t *testing.T, s operationLifecycleStore) {
 	if err := s.FailInvocation(ctx, inv.ID, "lost response", time.Second, 10, state.WithClaimAttempt(inv.Attempts)); err != nil {
 		t.Fatal(err)
 	}
-	recovery := api.OperationRecoveryRequest{RecoveryID: "reconcile-1", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "checked export storage and provider ledger; no output or external effect exists"}
+	reader := s.(state.OperationRecoveryInspectionStore)
+	before, _ := s.OperationByID(ctx, acct.ID, "", op.ID)
+	preview, err := reader.PreviewOperationRecovery(ctx, acct.ID, op.ID, api.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"})
+	if err != nil || !preview.Eligible || !preview.EvidenceRequired || !preview.StartsNewExecution || !preview.ClearsArtifactReferences || preview.Inspection.ExecutionKind != "http" || preview.Inspection.Attempt != inv.Attempts || len(preview.ReopenedSteps) != 0 || len(preview.ReusedSteps) != 0 {
+		t.Fatalf("HTTP recovery preview=%+v %v", preview, err)
+	}
+	after, _ := s.OperationByID(ctx, acct.ID, "", op.ID)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("HTTP preview changed work, quota or delivery")
+	}
+	recovery := api.OperationRecoveryRequest{RecoveryID: "reconcile-1", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "checked export storage and provider ledger; no output or external effect exists", ExpectedInspectionRevision: preview.Inspection.InspectionRevision}
 	if _, err := s.RecoverOperation(ctx, acct.ID, bob.ID, op.ID, recovery); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-customer recovery allowed: %v", err)
 	}

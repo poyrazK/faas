@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -136,7 +138,11 @@ func (h HTTPHooks) AuthorizeChannel(ctx context.Context, event Event) (bool, err
 		return false, nil
 	}
 	event.CallbackPath = "/realtime/authorize-channel"
-	event.Permission = "read"
+	if event.ActivityScope != "" {
+		event.Permission = "read_activity"
+	} else {
+		event.Permission = "read"
+	}
 	response, err := h.deliver(ctx, event)
 	if err != nil {
 		return false, err
@@ -549,8 +555,9 @@ func timeOrZero(value *time.Time) time.Time {
 }
 
 type messageRequest struct {
-	DataBase64 string `json:"data_base64"`
-	Binary     bool   `json:"binary"`
+	DataBase64       string `json:"data_base64"`
+	Binary           bool   `json:"binary"`
+	RetainedSequence int64  `json:"retained_sequence,omitempty"`
 }
 
 type closeRequest struct {
@@ -704,6 +711,30 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "principals:send" && r.Method == http.MethodPost {
+		var request api.ManagedRealtimePrincipalMessageRequest
+		if err := decodeJSONSized(r, &request, 16<<10); err != nil || api.ValidateRealtimePrincipal(request.Principal) != nil {
+			http.Error(w, "invalid principal message request", http.StatusBadRequest)
+			return
+		}
+		data, err := base64.StdEncoding.DecodeString(request.DataBase64)
+		if err != nil || len(data) > api.RealtimePrincipalMessageMaxBytes {
+			http.Error(w, "invalid principal message payload", http.StatusBadRequest)
+			return
+		}
+		var status PrincipalSendStatus
+		if request.Delivery == api.ManagedRealtimeDeliveryRetained {
+			status, err = m.WakePrincipalInbox(parts[0], request.Principal)
+		} else {
+			status, err = m.SendToPrincipal(r.Context(), parts[0], request.Principal, request.MessageID, request.RequestReceipt, Message{Data: data, Binary: request.Binary})
+		}
+		if err != nil {
+			writeOperationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "channels" && strings.HasSuffix(parts[2], ":publish") && r.Method == http.MethodPost {
 		channel := strings.TrimSuffix(parts[2], ":publish")
 		var request messageRequest
@@ -716,12 +747,37 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		queued, err := m.Publish(r.Context(), parts[0], channel, message)
+		if request.RetainedSequence < 0 {
+			http.Error(w, "invalid retained sequence", http.StatusBadRequest)
+			return
+		}
+		var status PublishStatus
+		if request.RetainedSequence > 0 {
+			status, err = m.PublishRetainedWithStatus(r.Context(), parts[0], channel, message, request.RetainedSequence)
+		} else {
+			status, err = m.PublishWithStatus(r.Context(), parts[0], channel, message)
+		}
 		if err != nil {
 			writeOperationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]int{"queued": queued})
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "channels" && strings.HasSuffix(parts[2], ":ephemeral") && r.Method == http.MethodPost {
+		channel := strings.TrimSuffix(parts[2], ":ephemeral")
+		var request struct {
+			Frame EphemeralFrame `json:"frame"`
+		}
+		if err := decodeJSON(r, &request); err != nil || !ValidateEphemeralFrame(request.Frame) {
+			http.Error(w, "invalid ephemeral event", http.StatusBadRequest)
+			return
+		}
+		if err := m.BroadcastEphemeral(r.Context(), parts[0], channel, request.Frame); err != nil {
+			writeOperationError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	http.NotFound(w, r)
@@ -802,6 +858,26 @@ func (m *Manager) handleConnectionRoute(w http.ResponseWriter, r *http.Request, 
 	http.NotFound(w, r)
 }
 
+func decodeJSONSized(r *http.Request, target any, limit int64) error {
+	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > limit {
+		return fmt.Errorf("JSON request exceeds size limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected a single JSON value")
+	}
+	return nil
+}
+
 func decodeJSON(r *http.Request, target any) error {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
 	decoder.DisallowUnknownFields()
@@ -819,6 +895,12 @@ func writeOperationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrEndpointNotFound):
 		status = http.StatusNotFound
+	case errors.Is(err, ErrInvalidPrincipal):
+		status = http.StatusBadRequest
+	case errors.Is(err, ErrInvalidDirectMessageID):
+		status = http.StatusBadRequest
+	case errors.Is(err, ErrDirectMessageReceiptsUnavailable):
+		status = http.StatusServiceUnavailable
 	case errors.Is(err, ErrConnectionNotFound):
 		status = http.StatusGone
 	case errors.Is(err, ErrConnectionClosed):

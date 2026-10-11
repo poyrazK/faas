@@ -44,12 +44,36 @@ import (
 // customers see the same diagnostic they'd get from cURL.
 func cmdCronsRuns(args []string) int {
 	fs := newFlagSet("crons-runs", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose a task and browse its run history")
+	app := fs.String("app", "", "app slug for interactive task selection")
 	before := fs.String("before", "", "pagination cursor (last id of the prior page)")
 	limit := fs.Int("limit", 10, "max rows (1..100; server caps at 100)")
 	runID := fs.String("run", "", "show full details and captured output for one command run")
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "interactive")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if *interactive {
+		invalid := len(pos) != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive history flags", fmt.Errorf("use crons runs --interactive with optional --app; choose the task and run in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use crons runs ID with explicit flags for scripts"))
+		}
+		slug, err := resolveReadAppTarget(*app)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdCronsRunsInteractive(slug)
+	}
+	if logsFlagWasSet(fs, "app") {
+		return printErr("Invalid app flag", fmt.Errorf("--app requires --interactive; otherwise supply a task ID"))
 	}
 	if len(pos) != 1 {
 		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
@@ -106,37 +130,52 @@ func cmdCronsOccurrences(args []string) int {
 	fs := newFlagSet("crons-occurrences", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor (last occurrence id of the prior page)")
 	limit := fs.Int("limit", 50, "max occurrence decisions (1..200)")
-	flags, pos := splitArgsForFlags(args)
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]\n")
+	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
+		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--cursor C] [--all] [--limit N]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
-		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N] (1 <= N <= 200)\n")
+		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--cursor C] [--all] [--limit N] (1 <= N <= 200)\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]\n")
+		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--cursor C] [--all] [--limit N]\n")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	page, err := client.ListCronScheduleOccurrences(context.Background(), id, *limit, *before)
+	var page api.ListScheduleOccurrencesResponse
+	first := true
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.ScheduleOccurrenceResponse, string, error) {
+		current, err := client.ListCronScheduleOccurrences(ctx, id, *limit, cursor)
+		if first {
+			page = current
+			first = false
+		}
+		return current.Occurrences, current.NextBefore, err
+	})
+	page.Occurrences, page.NextBefore = items, next
 	if err != nil {
 		return printErr("Could not list cron occurrences", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(page))
+		return jsonOut(writeJSON(struct {
+			api.ListScheduleOccurrencesResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{page, next}))
 	}
 	renderScheduleOccurrences(osStdout, page.Occurrences)
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale crons occurrences %s --before %s\n", id, page.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale crons occurrences %s --cursor %s\n", id, page.NextBefore)
 	}
 	return 0
 }

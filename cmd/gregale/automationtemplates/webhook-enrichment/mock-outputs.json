@@ -1,0 +1,9 @@
+{
+  "lookup": {
+    "name": "Sample customer",
+    "tier": "standard"
+  },
+  "enrich": {
+    "recorded": true
+  }
+}

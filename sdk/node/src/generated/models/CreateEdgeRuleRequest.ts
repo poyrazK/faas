@@ -12,6 +12,7 @@ import type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -19,6 +20,7 @@ import type { EdgeRuleRewriteAction } from './EdgeRuleRewriteAction.js';
 import type { EdgeRuleRouteAction } from './EdgeRuleRouteAction.js';
 import type { EdgeRuleThrottleAction } from './EdgeRuleThrottleAction.js';
 import type { EdgeRuleValidateAction } from './EdgeRuleValidateAction.js';
+import type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
 /**
  * Body shape for POST /v1/apps/{slug}/edge-rules.
  */
@@ -32,7 +34,7 @@ export type CreateEdgeRuleRequest = {
   match_headers?: Record<string, string>;
   priority?: number;
   enabled?: boolean;
-  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async';
+  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf';
   /**
    * Top-level source of truth for kind=validate (ADR-128).
    * Omitted == 'block' (the SQL-side default).
@@ -42,6 +44,23 @@ export type CreateEdgeRuleRequest = {
   /**
    * Kind-tagged action body — shape depends on `kind`.
    */
-  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
+  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction);
+  /**
+   * Optional operator-facing name for the new rule.
+   */
+  name?: string;
+  /**
+   * Optional operator-facing notes for the new rule.
+   */
+  description?: string;
+  /**
+   * Optional time after which the gateway stops applying the new rule.
+   */
+  expires_at?: string;
+  match?: EdgeRuleMatchExpr;
+  /**
+   * Start the rule enforced (default) or in log mode, where it is only matched and counted.
+   */
+  mode?: 'enforce' | 'log';
 };
 

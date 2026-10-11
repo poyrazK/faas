@@ -10,6 +10,10 @@ from ..models.event_receipt_recipient_response_execution_unavailable import (
     EventReceiptRecipientResponseExecutionUnavailable,
     check_event_receipt_recipient_response_execution_unavailable,
 )
+from ..models.event_receipt_recipient_response_origin import (
+    EventReceiptRecipientResponseOrigin,
+    check_event_receipt_recipient_response_origin,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -25,8 +29,8 @@ T = TypeVar("T", bound="EventReceiptRecipientResponse")
 
 @_attrs_define
 class EventReceiptRecipientResponse:
-    """One captured recipient with independent routing, original execution or cancellation evidence, and retained generic
-    replay recovery.
+    """One captured or backfilled recipient with independent routing, original execution or cancellation evidence, and
+    retained generic replay recovery.
 
     """
 
@@ -38,6 +42,12 @@ class EventReceiptRecipientResponse:
     recovery_actions: list[EventReceiptRecoveryAction]
     """Applicable selective recovery requests; empty when no action is currently eligible. Authorization and state
     are checked again on POST."""
+    origin: EventReceiptRecipientResponseOrigin | Unset = UNSET
+    """Captured at acceptance or added by a historical backfill."""
+    backfill_job_id: UUID | Unset = UNSET
+    """Originating backfill job while its metadata is retained."""
+    backfill_job_url: str | Unset = UNSET
+    """Account-authenticated backfill job inspection while the job and current target are available."""
     workflow_name: str | Unset = UNSET
     """Published workflow captured as an event recipient."""
     workflow_run_id: UUID | Unset = UNSET
@@ -74,6 +84,16 @@ class EventReceiptRecipientResponse:
         for recovery_actions_item_data in self.recovery_actions:
             recovery_actions_item = recovery_actions_item_data.to_dict()
             recovery_actions.append(recovery_actions_item)
+
+        origin: str | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin
+
+        backfill_job_id: str | Unset = UNSET
+        if not isinstance(self.backfill_job_id, Unset):
+            backfill_job_id = str(self.backfill_job_id)
+
+        backfill_job_url = self.backfill_job_url
 
         workflow_name = self.workflow_name
 
@@ -115,6 +135,12 @@ class EventReceiptRecipientResponse:
                 "recovery_actions": recovery_actions,
             }
         )
+        if origin is not UNSET:
+            field_dict["origin"] = origin
+        if backfill_job_id is not UNSET:
+            field_dict["backfill_job_id"] = backfill_job_id
+        if backfill_job_url is not UNSET:
+            field_dict["backfill_job_url"] = backfill_job_url
         if workflow_name is not UNSET:
             field_dict["workflow_name"] = workflow_name
         if workflow_run_id is not UNSET:
@@ -159,6 +185,22 @@ class EventReceiptRecipientResponse:
             recovery_actions_item = EventReceiptRecoveryAction.from_dict(recovery_actions_item_data)
 
             recovery_actions.append(recovery_actions_item)
+
+        _origin = d.pop("origin", UNSET)
+        origin: EventReceiptRecipientResponseOrigin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = check_event_receipt_recipient_response_origin(_origin)
+
+        _backfill_job_id = d.pop("backfill_job_id", UNSET)
+        backfill_job_id: UUID | Unset
+        if isinstance(_backfill_job_id, Unset):
+            backfill_job_id = UNSET
+        else:
+            backfill_job_id = UUID(_backfill_job_id)
+
+        backfill_job_url = d.pop("backfill_job_url", UNSET)
 
         workflow_name = d.pop("workflow_name", UNSET)
 
@@ -210,6 +252,9 @@ class EventReceiptRecipientResponse:
             app_id=app_id,
             routing=routing,
             recovery_actions=recovery_actions,
+            origin=origin,
+            backfill_job_id=backfill_job_id,
+            backfill_job_url=backfill_job_url,
             workflow_name=workflow_name,
             workflow_run_id=workflow_run_id,
             workflow_run_status=workflow_run_status,

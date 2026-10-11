@@ -128,6 +128,9 @@ func (m *MemStore) markCheckedRollbackReadyLocked(ctx context.Context, d Deploym
 	if !rollbackPairValid(r, d, m.deployments[r.CurrentDeploymentID], m.rollbackRowsLocked(r)) {
 		return ErrCheckedRollbackChanged
 	}
+	if _, err := m.checkDeploymentDependenciesLocked(d.ID, time.Now().UTC(), false); err != nil {
+		return err
+	}
 	d.Status = DeployLive
 	if r.Service {
 		now := time.Now().UTC()

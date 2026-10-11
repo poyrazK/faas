@@ -32,8 +32,9 @@ CREATE INDEX IF NOT EXISTS route_monitor_incidents_history_idx ON route_monitor_
 CREATE UNIQUE INDEX IF NOT EXISTS route_monitor_incidents_one_open_idx ON route_monitor_incidents(app_id) WHERE status = 'open';
 ALTER TABLE route_monitors DROP CONSTRAINT IF EXISTS route_monitors_active_incident_fk;
 ALTER TABLE route_monitors ADD CONSTRAINT route_monitors_active_incident_fk FOREIGN KEY (active_incident_id) REFERENCES route_monitor_incidents(id) ON DELETE SET NULL;
+-- Keep later route event types valid while this migration is replayed over retained outbox rows.
 ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
-ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed', 'routes.health.blocked', 'routes.health.resumed', 'routes.health.aborted', 'routes.monitor.violated', 'routes.monitor.recovered'));
+ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed', 'routes.health.blocked', 'routes.health.resumed', 'routes.health.aborted', 'routes.monitor.violated', 'routes.monitor.escalated', 'routes.monitor.recovered', 'workflow.finished'));
 -- App-only event filters use the existing route-event scope guard.
 -- +goose Down
 -- Preserve saved incident evidence and pending delivery intent.

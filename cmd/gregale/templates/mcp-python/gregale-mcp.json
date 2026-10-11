@@ -7,24 +7,33 @@
   "allowed_origins": [],
   "auth": {
     "mode": "open",
-    "tool_scopes": { "greet": [], "add": [], "stream_demo": [], "build_report": [] },
+    "tool_scopes": {
+      "greet": [],
+      "add": [],
+      "stream_demo": [],
+      "build_report": []
+    },
     "resource_scopes": {
       "greeting://welcome": [],
       "customer://records/{recordId}": [],
       "task://tasks/{taskId}": []
     },
-    "prompt_scopes": { "summarize": [] }
+    "prompt_scopes": {
+      "summarize": []
+    }
   },
   "tasks": {
     "enabled": false,
     "database_url_env": "DATABASE_URL",
     "owner_key_env": "MCP_TASK_OWNER_KEY",
-    "owner_key_id": "initial",
-    "payload_encryption_version": 1,
-    "previous_owner_keys": [],
     "namespace_env": "FAAS_APP_ID",
     "ttl_seconds": 86400,
     "poll_interval_ms": 2000,
+    "max_outstanding": 1000,
+    "max_outstanding_per_owner": 100,
+    "owner_key_id": "initial",
+    "payload_encryption_version": 1,
+    "previous_owner_keys": [],
     "worker_concurrency": 1
   }
 }

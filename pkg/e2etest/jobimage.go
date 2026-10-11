@@ -50,6 +50,16 @@ func jobFixtureBinary() ([]byte, error) {
 // JobImage is a real scratch-style OCI image containing /job-fixture. Unlike
 // HelloImage, it includes an executable that exits, sleeps, or allocates RAM.
 func JobImage(repo string) (fakeImage, string) {
+	return nativeFixtureImage(repo, []string{"/job-fixture", "success"})
+}
+
+// CustomerWorkflowImage serves real HTTP actions and obtains workload identity
+// from guest-init. It shares the native fixture executable with the Job image.
+func CustomerWorkflowImage(repo string) (fakeImage, string) {
+	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-workflow"})
+}
+
+func nativeFixtureImage(repo string, command []string) (fakeImage, string) {
 	binary, err := jobFixtureBinary()
 	if err != nil {
 		panic(err)
@@ -79,7 +89,7 @@ func JobImage(repo string) (fakeImage, string) {
 	config := map[string]any{
 		"architecture": runtime.GOARCH,
 		"os":           "linux",
-		"config":       map[string]any{"Cmd": []string{"/job-fixture", "success"}, "Env": []string{}, "WorkingDir": "/"},
+		"config":       map[string]any{"Cmd": command, "Env": []string{}, "WorkingDir": "/"},
 		"rootfs":       map[string]any{"type": "layers", "diff_ids": []string{"sha256:" + hex.EncodeToString(diffSum[:])}},
 	}
 	configBytes, _ := json.Marshal(config)

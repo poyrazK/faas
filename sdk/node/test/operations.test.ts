@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GregaleOperationClient, OperationHTTPError, type Operation } from '../src/customer-operations.js';
 import { GregaleOperations } from '../src/operations-runtime.js';
+import { customerOperationRequestFromHeaders, withCustomerOperationTransaction } from '../src/customer-operation-transactions.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const invocation = '22222222-2222-4222-8222-222222222222';
@@ -57,6 +58,72 @@ test('runtime report refreshes workload identity and carries the current executi
   assert.equal(runtime.context(), undefined);
   await assert.rejects(runtime.progress({ stage: 'generating', completed: 0, total: 1 }), /requires an operation/);
   assert.throws(() => runtime.runRequest({ ...context, 'X-Gregale-Operation-Capability': 'forged' }, () => {}), /Invalid operation/);
+});
+
+test('transaction callback retains the runtime progress context and releases it afterwards', async () => {
+  const runtime = new GregaleOperations({ apiURL: 'https://api.gregale.test', identityEndpoint: 'http://127.0.0.1/identity', fetch: async (url, init) => {
+    if (new URL(String(url)).hostname === '127.0.0.1') return Response.json({access_token: 'workload'});
+    assert.equal(new Headers(init?.headers).get('X-Gregale-Operation-Capability'), 'a'.repeat(64));
+    return Response.json({...snapshot, state: 'running'});
+  }});
+  let released = false;
+  const pool = {connect: async () => ({query: async () => ({rows: []}), release: () => {released = true;}})};
+  const request = {headers: {
+    'X-Gregale-Customer-Operation-Id': id, 'X-Faas-Invocation-Id': invocation,
+    'X-Gregale-Operation-Attempt': '1', 'X-Gregale-Operation-Capability': 'a'.repeat(64),
+    'X-Gregale-Customer-Operation-Transaction-Version': '1', 'X-Gregale-Customer-Operation-Result-Max-Bytes': '65536',
+    'X-Faas-Tenant-Id': definition, 'X-Faas-App-Id': definition, 'X-Faas-Platform-Tenant-Id': definition,
+  }, method: 'POST', path: '/exports', body: Buffer.from('{}')};
+  const result = await runtime.transaction(request, pool, async () => {
+    assert.equal(runtime.context()?.id, id);
+    await runtime.progress({stage: 'generating', completed: 1, total: 1});
+    return {file: 'committed.csv'};
+  });
+  assert.deepEqual(result, {body: '{"file":"committed.csv"}', replayed: false});
+  assert.equal(released, true); assert.equal(runtime.context(), undefined);
+});
+
+test('workflow transition outbox links same-transaction milestone evidence', async () => {
+  const input = customerOperationRequestFromHeaders({
+    'X-Gregale-Customer-Operation-Transaction-Version': '1',
+    'X-Gregale-Customer-Operation-Milestone-Version': '1',
+    'X-Gregale-Customer-Operation-Result-Max-Bytes': '65536',
+    'X-Gregale-Customer-Operation-Id': id,
+    'X-Gregale-Operation-Attempt': '1', 'X-Gregale-Operation-Capability': 'a'.repeat(64),
+    'X-Faas-Invocation-Id': invocation, 'X-Faas-Tenant-Id': definition,
+    'X-Faas-App-Id': definition, 'X-Faas-Platform-Tenant-Id': definition,
+  }, 'POST', '/orders/fulfill', Buffer.from('{}'));
+  const statements: { sql: string; values?: unknown[] }[] = [];
+  const pool = {connect: async () => ({
+    query: async (sql: string, values?: unknown[]) => {
+      statements.push({sql, values});
+      if (sql.startsWith('INSERT INTO public.gregale_customer_operation_workflow_state_counters')) return {rows: [{revision: 1}]};
+      if (sql.includes('SELECT last_state,last_blockers,last_blockers_revision')) return {rows: [{
+        last_state: null, last_blockers: [], last_blockers_revision: 0,
+        last_deadline_at: '', last_deadline_revision: 0,
+        last_outcome_code: '', last_outcome_description: '', last_outcome_revision: 0,
+        last_dependencies: [], last_dependencies_revision: 0,
+      }]};
+      if (sql.startsWith('UPDATE public.gregale_customer_operation_workflow_state_counters SET last_state')) return {rows: [{revision: 1}]};
+      return {rows: []};
+    },
+    release: () => {},
+  })};
+  let validatedEvidence: unknown;
+  let validatedMilestones: unknown;
+  await withCustomerOperationTransaction(pool, input, async tx => {
+    tx.workflowTransition('order-lifecycle', 'run-1', 'pending', 'fulfilled');
+    tx.milestone('paid', {workflow_run_id: 'run-1'});
+    return {state: 'fulfilled'};
+  }, async () => {}, async (reports, milestones) => {
+    validatedEvidence = reports[0]?.evidence_milestones;
+    validatedMilestones = milestones;
+  });
+  const outbox = statements.find(statement => statement.sql.startsWith('INSERT INTO public.gregale_customer_operation_workflow_states'));
+  assert.ok(outbox);
+  assert.deepEqual(JSON.parse(String(outbox.values?.[8])), validatedEvidence);
+  assert.equal((validatedEvidence as {name: string}[])[0]?.name, 'paid');
+  assert.equal((validatedMilestones as {id: string}[])[0]?.id, (validatedEvidence as {id: string}[])[0]?.id);
 });
 
 test('stream refreshes credentials and resumes with the last applied durable cursor', async () => {
@@ -147,4 +214,45 @@ test('default browser fetch retains its global receiver for customer requests', 
     const client = new GregaleOperationClient({apiURL: 'https://api.example.com', credential: () => 'tenant'});
     assert.deepEqual(await client.list({appID: id, scope: 'default'}), {operations: []});
   } finally { globalThis.fetch = original; }
+});
+
+
+// ADR-714: business references stay opaque, paired and scoped by tenant credentials.
+test('business reference lookup encodes exact IDs and rejects partial or oversized selectors', async () => {
+  let calls = 0;
+  const subject = {type: 'order', id: 'ord/42?&é😀'};
+  const client = new GregaleOperationClient({apiURL: 'https://api.example.com', credential: () => 'tenant', fetch: async (input, init) => {
+    calls++;
+    const url = new URL(String(input));
+    assert.equal(url.searchParams.get('subject_type'), subject.type);
+    assert.equal(url.searchParams.get('subject_id'), subject.id);
+    assert.equal(url.searchParams.get('scope'), 'default');
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer tenant');
+    return Response.json({operations: [{id, subject, state: 'succeeded'}]});
+  }});
+  const options = {appID: id, scope: 'default', subjectType: subject.type, subjectID: subject.id};
+  const page = await client.list(options);
+  assert.deepEqual(page.operations[0]?.subject, subject);
+  for (const invalid of [{subjectType: undefined}, {subjectID: undefined}, {subjectID: ''}, {subjectType: 'Order'}, {subjectID: 'é'.repeat(129)}, {subjectID: 'a\n'}, {subjectID: '\uD800'}]) {
+    assert.throws(() => client.list({...options, ...invalid}), /paired business reference/);
+  }
+  assert.equal(calls, 1);
+});
+
+test('customer milestone feeds retain exact references and refresh scoped credentials', async () => {
+  const paths: URL[] = []; let tokens=0;
+  const workflowStep = {workflow:'order-lifecycle',title:'Order lifecycle',step:'paid',label:'Payment authorized',milestone:'paid',position:2};
+  const client=new GregaleOperationClient({apiURL:'https://api.gregale.test',credential:()=>`tenant-${++tokens}`,fetch:async (url,init)=>{
+    paths.push(new URL(String(url)));
+    assert.equal(new Headers(init?.headers).get('Authorization'),`Bearer tenant-${tokens}`);
+    return Response.json({milestones:[{id,operation_id:id,name:'paid',payload:{},occurred_at:'2026-10-07T12:00:00Z',created_at:'2026-10-07T12:00:01Z',sequence:1,workflow_steps:[workflowStep]}],next_cursor:'opaque'});
+  }});
+  await client.milestones(id,{limit:2,cursor:'next+/='});
+  const page=await client.businessMilestones({appID:definition,scope:'staging',subjectType:'order',subjectID:'ord/42&é'});
+  assert.deepEqual(page.milestones[0]?.workflow_steps?.[0],workflowStep);
+  assert.equal(tokens,2);assert.equal(paths[0]?.pathname,`/v1/platform-tenant-self/customer-operations/${id}/milestones`);
+  assert.equal(paths[0]?.searchParams.get('cursor'),'next+/=');assert.equal(paths[1]?.searchParams.get('subject_id'),'ord/42&é');
+  assert.equal(paths[1]?.searchParams.get('app_id'),definition);assert.equal(paths[1]?.searchParams.get('tenant_id'),null);
+  assert.throws(()=>client.businessMilestones({appID:definition,scope:'staging',subjectType:'order',subjectID:''}));
+  assert.throws(()=>client.milestones(id,{limit:101}));
 });

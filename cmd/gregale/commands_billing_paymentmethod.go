@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 func cmdBillingPaymentMethod(args []string) int {
@@ -58,7 +56,7 @@ func cmdBillingPaymentMethod(args []string) int {
 			_, _ = fmt.Fprintf(os.Stderr, "Open this URL to add one:\n  %s\n", resp.URL)
 			if !*printOnly && !*noOpen {
 				_, _ = fmt.Fprintf(osStdout, "Opening %s\n", resp.URL)
-				if err := browser.Open(resp.URL); err != nil {
+				if err := openBrowser(resp.URL); err != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "  (could not open browser: %v)\n", err)
 				}
 			}
@@ -90,7 +88,7 @@ func cmdBillingPaymentMethod(args []string) int {
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", resp.URL)
-	if err := browser.Open(resp.URL); err != nil {
+	if err := openBrowser(resp.URL); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", resp.URL)
 		return 0

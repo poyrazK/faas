@@ -10,6 +10,7 @@ package deploydiff
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -151,6 +152,39 @@ func TestRenderText_OtherSettingsSection(t *testing.T) {
 	got := renderTo(t, d)
 	if !strings.Contains(got, "Other settings:") {
 		t.Errorf("missing Other settings: section in:\n%s", got)
+	}
+}
+
+// Production-us hunt #9: `gregale deploy --dry-run` printed a
+// deployment.workflows addition with %v — pointer addresses and the step
+// input as a byte array. Composite values render as compact JSON.
+func TestRenderText_CompositeValueRendersAsJSON(t *testing.T) {
+	type step struct {
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input,omitempty"`
+	}
+	type workflow struct {
+		Name  string `json:"name"`
+		Steps []step `json:"steps"`
+		Retry *int   `json:"retry,omitempty"`
+	}
+	retries := 2
+	d := Diff{
+		Slug: "api",
+		Changes: []Change{
+			{Field: "deployment.workflows", Kind: ChangeAdd, After: asAnyLit([]workflow{{
+				Name: "h9_flow", Retry: &retries,
+				Steps: []step{{Name: "second", Input: json.RawMessage(`{"order":"{{input.order}}"}`)}},
+			}})},
+		},
+	}
+	got := renderTo(t, d)
+	want := `deployment.workflows + [{"name":"h9_flow","steps":[{"name":"second","input":{"order":"{{input.order}}"}}],"retry":2}]`
+	if !strings.Contains(got, want) {
+		t.Fatalf("composite value not rendered as JSON:\n%s\nwant substring:\n%s", got, want)
+	}
+	if strings.Contains(got, "0x") || strings.Contains(got, "[123 34") {
+		t.Fatalf("composite value leaked Go internals:\n%s", got)
 	}
 }
 

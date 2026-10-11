@@ -287,6 +287,7 @@ type Trigger struct {
 	// one-box posture: Tick reads ListAllApps (the synthetic
 	// default-local-only fleet).
 	ownerNodeID string
+	ownsApp     func(state.App) bool
 
 	// per-app ring buffer of per-app request deltas. Pre-allocated
 	// in New(); Touch is called on every Tick with the new scrape.
@@ -380,6 +381,21 @@ func (t *Trigger) WithOwnerNodeID(nodeID string) {
 	t.ownerNodeID = nodeID
 }
 
+// WithAppOwnership installs the scheduler's app-ownership rule. An
+// owner-less (control-plane) schedd lists every app, but on a multi-node
+// fleet the compute schedds own their shards; acting on those apps as well
+// duplicates their scale-up decisions (production-us hunt #5, H5-33).
+func (t *Trigger) WithAppOwnership(owns func(state.App) bool) {
+	if t == nil {
+		return
+	}
+	t.ownsApp = owns
+}
+
+func (t *Trigger) manages(app state.App) bool {
+	return t.ownsApp == nil || t.ownsApp(app)
+}
+
 // admit requests a bounded batch. Production's sched.Engine implements the
 // BurstEngine fast path; small adapters and existing tests intentionally fall
 // back to the original one-at-a-time call. The engine remains the authority on
@@ -454,6 +470,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return fmt.Errorf("scaleup: list apps: %w", err)
 	}
 	for _, app := range apps {
+		// A parked or suspended app is not scaled: the reaper parks whatever
+		// a scale-up admits for it (H5-54).
+		if !t.manages(app) || (app.Status != "" && app.Status != state.AppActive) {
+			continue
+		}
 		// Resolve this trigger's two axes (ADR-194). A target declared in
 		// scaling.targets wins; the legacy integer column is the fallback
 		// for that axis alone, so an app that declares only `cpu` keeps

@@ -203,7 +203,7 @@ func (h *Handler) buildSnapshotBootLayer(ctx context.Context, app state.App, dep
 		if app.Type == state.AppTypeFunction || app.Runtime != "" {
 			return h.buildFunctionLayer(ctx, app, dep, acct)
 		}
-		return h.buildLocalOCIAppLayer(ctx, app, dep, acct)
+		return h.buildLocalOCIAppLayer(ctx, app, &dep, acct)
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
@@ -215,7 +215,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := h.replicateLayer(ctx, dep.RootfsKey); err != nil {
 		return imageRecoveryError(err)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	var stages state.StageState

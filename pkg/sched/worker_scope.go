@@ -27,6 +27,42 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 	return e.reconcileWorkerScopes(ctx, appID, scope, &desired, trigger)
 }
 
+// WakeWorkerApp handles an explicit wake (`gregale wake`) of a worker app.
+// EnsureWake refuses workers as at-capacity because requests never start
+// them, so the durable wake request retried forever and a parked worker (a
+// manual park, or ADR-079 liveness exhaustion) had no way back: restart needs
+// an active app and the singleton reconciler skips parked apps (H8-23). Like
+// a wake of a parked request app, it reactivates the app, then lets the
+// worker reconciler admit the deployment's worker under the API's wake id.
+// It reports handled=false for every non-worker app. A lookup error comes back
+// with handled=false: the caller falls through to the regular wake path, which
+// reads the app again and reports the failure.
+func (e *Engine) WakeWorkerApp(ctx context.Context, appID string) (bool, error) {
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return false, fmt.Errorf("sched: load app for worker wake: %w", err)
+	}
+	if !e.ownsApp(app) {
+		return false, nil
+	}
+	if instanceModeForApp(app) != string(state.InstanceModeWorker) && app.WorkloadClass != state.WorkloadClassWorker {
+		return false, nil
+	}
+	switch app.Status {
+	case state.AppActive:
+	case state.AppEvictedCold:
+		if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
+			return true, fmt.Errorf("sched: wake worker app %s: reactivate: %w", appID, err)
+		}
+	default:
+		return true, nil
+	}
+	if err := e.ReconcileWorkerPools(ctx, appID, TriggerAppWake); err != nil {
+		return true, fmt.Errorf("sched: wake worker app %s: %w", appID, err)
+	}
+	return true, nil
+}
+
 type workerScopePlan struct {
 	scope     string
 	app       state.App
@@ -113,6 +149,12 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
 			}
+			// A background stop already owns this worker. Leaving it out of
+			// the plan means it is neither kept nor stopped twice, while the
+			// account cap still counts it until teardown commits.
+			if e.workerStopping(ins.ID) {
+				continue
+			}
 			planFor(scope).workers = append(planFor(scope).workers, ins)
 		}
 	}
@@ -126,6 +168,10 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, scope, len(plan.workers), override)
 			if err != nil {
 				return fmt.Errorf("worker demand for %s: %w", scope, err)
+			}
+			if override == nil {
+				key := workerPoolKey{appID: app.ID, scope: scope, deploymentID: plan.target}
+				plan.desired = e.workerScaleIn.stabilize(key, plan.targetWorkers(), plan.desired, e.now())
 			}
 			if policy := plan.app.ScalingPolicy; policy != nil && (policy.ScaleOutCooldownS > 0 || policy.ScaleInCooldownS > 0) {
 				history, err := e.store.WorkerPoolHistory(ctx, app.ID, plan.target)
@@ -194,9 +240,19 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			e.ops.ObserveScaleUp(app.ID, "no_signal")
 		}
 	}()
+	// Workers are kept in this order, so the tail is stopped first: settled
+	// before booting, busy before idle, then oldest first.
+	now := e.now()
+	busy := make(map[string]int, len(plan.workers))
+	for _, ins := range plan.workers {
+		busy[ins.ID] = e.workerBusyRank(ins, now)
+	}
 	sort.SliceStable(plan.workers, func(i, j int) bool {
 		left, right := workerStatePreference(plan.workers[i]), workerStatePreference(plan.workers[j])
 		if left != right {
+			return left < right
+		}
+		if left, right := busy[plan.workers[i].ID], busy[plan.workers[j].ID]; left != right {
 			return left < right
 		}
 		if plan.workers[i].StartedAt.Equal(plan.workers[j].StartedAt) {
@@ -211,7 +267,7 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			kept++
 			continue
 		}
-		stopErr = errors.Join(stopErr, e.stopManagedWorker(ctx, ins.ID, e.workerStopOptions(app)))
+		stopErr = errors.Join(stopErr, e.beginWorkerStop(ctx, ins, e.workerStopOptions(app)))
 	}
 	if stopErr != nil {
 		return stopErr
@@ -247,16 +303,22 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	return nil
 }
 
-func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history state.WorkerPoolHistory, now time.Time) {
-	if policy == nil {
-		return
-	}
+// targetWorkers counts the live generation's workers that hold a slot.
+func (p *workerScopePlan) targetWorkers() int {
 	current := 0
 	for _, ins := range p.workers {
 		if ins.DeploymentID == p.target && state.State(ins.State).CountsForConcurrency() {
 			current++
 		}
 	}
+	return current
+}
+
+func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history state.WorkerPoolHistory, now time.Time) {
+	if policy == nil {
+		return
+	}
+	current := p.targetWorkers()
 	// A cold environment or a new generation must not inherit a neighbor's
 	// cooldown. Retained rows preserve admission/termination history even
 	// after a recent replica has gone away.

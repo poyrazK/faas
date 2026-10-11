@@ -15,7 +15,7 @@ class PlatformTenantPublishEventResponse:
     """Durable acceptance receipt for a tenant-scoped published event."""
 
     id: UUID
-    """Canonical event id scoped by tenant"""
+    """Canonical event id scoped by tenant, app, and source."""
     client_event_id: str
     """Caller-chosen event identifier."""
     accepted_at: datetime.datetime

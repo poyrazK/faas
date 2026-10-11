@@ -57,6 +57,8 @@ if TYPE_CHECKING:
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
     from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
+    from ..models.dev_patch_preview import DevPatchPreview
+    from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
     from ..models.log_excerpt import LogExcerpt
     from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
@@ -87,6 +89,8 @@ class DeploymentResponse:
     created_at: datetime.datetime
     worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
     promotion_hold: DeploymentPromotionHold | Unset = UNSET
+    durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
+    """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
     rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
@@ -95,6 +99,10 @@ class DeploymentResponse:
     failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
     promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
    """
+    dev_patch: DevPatchPreview | Unset = UNSET
+    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
+    been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
+    measurement only; the normal developer build always runs."""
     revision: int | Unset = UNSET
     """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
     API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
@@ -296,10 +304,17 @@ class DeploymentResponse:
         promotion_hold: dict[str, Any] | Unset = UNSET
         if not isinstance(self.promotion_hold, Unset):
             promotion_hold = self.promotion_hold.to_dict()
+        durable_entity_validator: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.durable_entity_validator, Unset):
+            durable_entity_validator = self.durable_entity_validator.to_dict()
 
         stage_state: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stage_state, Unset):
             stage_state = self.stage_state.to_dict()
+
+        dev_patch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dev_patch, Unset):
+            dev_patch = self.dev_patch.to_dict()
 
         revision = self.revision
 
@@ -606,8 +621,12 @@ class DeploymentResponse:
             field_dict["worker_drain"] = worker_drain
         if promotion_hold is not UNSET:
             field_dict["promotion_hold"] = promotion_hold
+        if durable_entity_validator is not UNSET:
+            field_dict["durable_entity_validator"] = durable_entity_validator
         if stage_state is not UNSET:
             field_dict["stage_state"] = stage_state
+        if dev_patch is not UNSET:
+            field_dict["dev_patch"] = dev_patch
         if revision is not UNSET:
             field_dict["revision"] = revision
         if build_id is not UNSET:
@@ -730,6 +749,8 @@ class DeploymentResponse:
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
+        from ..models.dev_patch_preview import DevPatchPreview
+        from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
         from ..models.log_excerpt import LogExcerpt
         from ..models.rollback_operation import RollbackOperation
         from ..models.scan_result import ScanResult
@@ -758,6 +779,12 @@ class DeploymentResponse:
         worker_drain = UNSET if isinstance(_worker_drain, Unset) else DeploymentWorkerDrainStatus.from_dict(_worker_drain)
         _promotion_hold = d.pop("promotion_hold", UNSET)
         promotion_hold = UNSET if isinstance(_promotion_hold, Unset) else DeploymentPromotionHold.from_dict(_promotion_hold)
+        _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
+        durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
+        if isinstance(_durable_entity_validator, Unset):
+            durable_entity_validator = UNSET
+        else:
+            durable_entity_validator = DurableEntityValidatorDeploymentInfo.from_dict(_durable_entity_validator)
 
         _stage_state = d.pop("stage_state", UNSET)
         stage_state: DeploymentResponseStageState | Unset
@@ -765,6 +792,13 @@ class DeploymentResponse:
             stage_state = UNSET
         else:
             stage_state = DeploymentResponseStageState.from_dict(_stage_state)
+
+        _dev_patch = d.pop("dev_patch", UNSET)
+        dev_patch: DevPatchPreview | Unset
+        if isinstance(_dev_patch, Unset):
+            dev_patch = UNSET
+        else:
+            dev_patch = DevPatchPreview.from_dict(_dev_patch)
 
         revision = d.pop("revision", UNSET)
 
@@ -1305,7 +1339,9 @@ class DeploymentResponse:
             created_at=created_at,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,
+            durable_entity_validator=durable_entity_validator,
             stage_state=stage_state,
+            dev_patch=dev_patch,
             revision=revision,
             build_id=build_id,
             build_cache_status=build_cache_status,

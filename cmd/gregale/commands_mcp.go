@@ -47,7 +47,16 @@ func cmdMCP(args []string) int {
 		return cmdMCPResourceWatch(args[1:])
 	case "complete":
 		return cmdMCPComplete(args[1:])
-	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
+	case "doctor":
+		for i, arg := range args[1:] {
+			if arg == "--hosting" {
+				flags := append([]string{}, args[1:i+1]...)
+				flags = append(flags, args[i+2:]...)
+				return cmdMCPTasksReport(flags, true)
+			}
+		}
+		return cmdMCPRemote("doctor", args[1:])
+	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
@@ -58,6 +67,7 @@ func cmdMCPInit(args []string) int {
 	fs := newFlagSet("mcp-init", flag.ContinueOnError)
 	dir := fs.String("path", "", "empty destination directory")
 	runtime := fs.String("runtime", "node", "starter language (node, go or python)")
+	fs.StringVar(runtime, "language", "node", "starter language alias (node, go or python)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -65,7 +75,7 @@ func cmdMCPInit(args []string) int {
 		return printErr("MCP init", errors.New("--path is required and positional arguments are not accepted"))
 	}
 	if *runtime != "node" && *runtime != "go" && *runtime != "python" {
-		return printErr("MCP init", errors.New("--runtime must be node, go or python"))
+		return printErr("MCP init", errors.New("--language must be node, go, or python (--runtime is an alias)"))
 	}
 	return cmdInit([]string{"--template", "mcp-" + *runtime, "--path", *dir})
 }
@@ -315,11 +325,20 @@ func cmdMCPRemote(command string, args []string) int {
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	taskID := fs.String("task-id", "", "opaque task ID (task-get or task-cancel)")
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
+	// `mcp tools <slug>` addresses the app the way the other leaves do
+	// (production-us hunt #5, H5-3).
+	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || *timeout <= 0 {
-		return printErr("Invalid MCP flags", errors.New("unexpected positional arguments or nonpositive timeout"))
+	if fs.NArg() != 0 {
+		return printErr("Invalid MCP flags", fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	if *timeout <= 0 {
+		return printErr("Invalid MCP flags", errors.New("--timeout must be positive"))
+	}
+	if err := mergeLeadingSlug(app, slug); err != nil {
+		return printErr("Invalid MCP flags", err)
 	}
 	if *interactive && *inputResponsesFile != "" {
 		return printErr("Invalid MCP input flags", errors.New("choose either --interactive or --input-responses-file"))
@@ -337,7 +356,7 @@ func cmdMCPRemote(command string, args []string) int {
 	if (command == "task-get" || command == "task-wait" || command == "task-cancel") && (*taskID == "" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("modern task-get, task-wait and task-cancel require --task-id"))
 	}
-	if *interactive && !mcpInputIsTerminal(osStdin) {
+	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
 	}
 	responses := map[string]mcphosting.InputResponse(nil)
@@ -545,7 +564,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 
 type mcpDeployOptions struct {
 	path, slug, profile, tokenEnv, secretsFile string
-	releasePolicy                              string
+	releasePolicy, idempotencyKey              string
 	mcpTaskMigrationOverride                   bool
 	timeout                                    int
 }
@@ -561,6 +580,10 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.releasePolicy, "release-policy", "", "role-specific catalog baselines to verify before promotion")
 	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
+	// A failed submission's recovery hint tells the user to retry with this
+	// flag; without it the documented retry was an unknown-flag error
+	// (hunt #9 H9-63).
+	fs.StringVar(&o.idempotencyKey, "idempotency-key", "", "retry identity printed by a failed submission")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -643,8 +666,12 @@ func validateMCPDeploySecretsFile(path string) error {
 	return nil
 }
 
-func mcpDeployArgs(o mcpDeployOptions, dir string, includeSecrets bool) []string {
+func mcpDeployArgs(o mcpDeployOptions, dir string, secretsRequested ...bool) []string {
+	includeSecrets := len(secretsRequested) == 0 || secretsRequested[0]
 	args := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
+	if o.idempotencyKey != "" {
+		args = append(args, "--idempotency-key", o.idempotencyKey)
+	}
 	if o.mcpTaskMigrationOverride {
 		args = append(args, "--mcp-task-migration-override")
 	}
@@ -690,4 +717,12 @@ func quietMCPDeploy(ctx context.Context, args []string, execution deployExecutio
 	osStdout = io.Discard
 	defer func() { osStdout = old }()
 	return cmdDeployTarballToExisting(ctx, args, false, execution)
+}
+
+func quietMCPDeployContext(ctx context.Context, args []string, executions ...deployExecution) int {
+	var execution deployExecution
+	if len(executions) > 0 {
+		execution = executions[0]
+	}
+	return quietMCPDeploy(ctx, args, execution)
 }

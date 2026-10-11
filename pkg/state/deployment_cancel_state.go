@@ -57,3 +57,18 @@ func finalizeCancelledDeploymentState(d *Deployment, at time.Time, reason Cancel
 	d.StageState = encoded
 	return nil
 }
+
+// abortedCanaryCandidate reports a canary candidate whose rollout was aborted
+// before it ever completed. It served only its canary steps and failed them,
+// so it is never an implicit rollback target: on production-us `gregale
+// rollback` and the release summary pointed at a candidate just aborted for
+// 96% 5xx (hunt #7, H5-62). A release that once completed, or a rollback
+// whose re-prime failed verification, stays eligible.
+func abortedCanaryCandidate(d Deployment) bool {
+	return d.CanaryTotalSteps > 0 && d.RolloutState == "aborted" && d.RolloutCompletedAt == nil
+}
+
+// AbortedCanaryCandidate exports abortedCanaryCandidate for schedd, which
+// retires such a candidate's instances instead of letting them hold a
+// serving slot until the idle timeout.
+func AbortedCanaryCandidate(d Deployment) bool { return abortedCanaryCandidate(d) }

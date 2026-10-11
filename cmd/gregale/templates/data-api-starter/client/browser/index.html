@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gregale notes browser example</title>
+<h1>Read your notes</h1>
+<form id="session">
+<p><label>Data API URL <input name="url" type="url" required></label></p>
+<p><label>Application subject <input name="subject" required></label></p>
+<p><label>Application access token <input name="token" type="password" autocomplete="off" required></label></p>
+<button>Read notes</button>
+</form>
+<pre id="result" aria-live="polite"></pre>
+<script type="module" src="./client.js"></script></html>

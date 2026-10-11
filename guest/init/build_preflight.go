@@ -23,6 +23,17 @@ import (
 // first Node build on each node failed in ~10 s as "timeout: build exited 124".
 const builderHTTPSPreflightBudget = 15 * time.Second
 
+// builderHTTPSPreflightAttempts and builderHTTPSPreflightRetryDelay retry a
+// preflight whose request failed in transport. The first Node build after a
+// compute rollout still failed on 6 of 8 production rollouts with a 15 s
+// connect timeout to nodejs.org, while a build started two seconds later on
+// the same node reached the network (production-us hunt #5, H5-53). A fresh
+// attempt after the first one times out covers that window; an endpoint that
+// answers with an unhealthy status is not retried.
+const builderHTTPSPreflightAttempts = 3
+
+var builderHTTPSPreflightRetryDelay = 2 * time.Second
+
 // builderNetworkError marks a failed builder network preflight. It is an
 // infrastructure failure of the builder's network path, not a build that ran
 // out of time, so it must not be recorded as exit 124 / FailureTimeout.
@@ -31,19 +42,44 @@ type builderNetworkError struct{ err error }
 func (e builderNetworkError) Error() string { return e.err.Error() }
 func (e builderNetworkError) Unwrap() error { return e.err }
 
-// builderHTTPSPreflight GETs url once within builderHTTPSPreflightBudget and
-// reports an error unless healthy accepts the response status. The request is
-// bounded by its context only; there is no shorter client timeout.
+// builderHTTPSPreflight GETs url within builderHTTPSPreflightBudget per
+// attempt and reports an error unless healthy accepts the response status.
+// Each request is bounded by its context only; there is no shorter client
+// timeout. A transport failure is retried up to builderHTTPSPreflightAttempts.
 func builderHTTPSPreflight(parent context.Context, name, url string, healthy func(status int) bool) error {
+	var err error
+	for attempt := 1; attempt <= builderHTTPSPreflightAttempts; attempt++ {
+		var transport bool
+		transport, err = builderHTTPSPreflightOnce(parent, url, healthy)
+		if err == nil || !transport || parent.Err() != nil {
+			break
+		}
+		if attempt < builderHTTPSPreflightAttempts {
+			select {
+			case <-time.After(builderHTTPSPreflightRetryDelay):
+			case <-parent.Done():
+			}
+		}
+	}
+	if err != nil {
+		return builderNetworkError{fmt.Errorf("%s HTTPS preflight: %w", name, err)}
+	}
+	return nil
+}
+
+// builderHTTPSPreflightOnce runs one preflight request. transport reports a
+// failure before any response arrived.
+func builderHTTPSPreflightOnce(parent context.Context, url string, healthy func(status int) bool) (transport bool, err error) {
 	ctx, cancel := context.WithTimeout(parent, builderHTTPSPreflightBudget)
 	defer cancel()
-	err := func() error {
+	err = func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return err
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			transport = true
 			return err
 		}
 		defer func() { _ = resp.Body.Close() }()
@@ -53,10 +89,7 @@ func builderHTTPSPreflight(parent context.Context, name, url string, healthy fun
 		}
 		return nil
 	}()
-	if err != nil {
-		return builderNetworkError{fmt.Errorf("%s HTTPS preflight: %w", name, err)}
-	}
-	return nil
+	return transport, err
 }
 
 // buildExitStatus maps a build attempt's error to the exit code and failure

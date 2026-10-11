@@ -12,6 +12,7 @@
     "vmmd"
   ],
   "best_effort": [
-    "imaged"
+    "imaged",
+    "profiled"
   ]
 }

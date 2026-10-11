@@ -63,7 +63,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|run|runs|occurrences|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs <list|add|info|update|rm|next|run|runs|occurrences|wait|cancel|tasks|attempts|retry|replay-failed|artifact-url|logs|registry> [args]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -77,12 +77,16 @@ func cmdJobs(args []string) int {
 		return cmdJobsUpdate(args[1:])
 	case subRm:
 		return cmdJobsRm(args[1:])
+	case "next":
+		return cmdJobsNext(args[1:])
 	case "run":
 		return cmdJobsRun(args[1:])
 	case subRuns:
 		return cmdJobsRuns(args[1:])
 	case "occurrences":
 		return cmdJobsOccurrences(args[1:])
+	case "wait":
+		return cmdJobsWait(args[1:])
 	case "cancel":
 		return cmdJobsCancel(args[1:])
 	case "tasks":
@@ -113,7 +117,8 @@ func cmdJobs(args []string) int {
 func cmdJobsList(args []string) int {
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
-	offset := fs.Int("offset", 0, "page offset")
+	offset := fs.Int("offset", 0, "starting page offset")
+	all := fs.Bool("all", false, "walk every page using --limit and --offset")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -127,18 +132,30 @@ func cmdJobsList(args []string) int {
 		}
 	})
 	if limitProvided && (*limit < 1 || *limit > 200) {
-		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N]   (--limit must be between 1 and 200)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N] [--all]   (--limit must be between 1 and 200)", "jobs")
 		return 1
 	}
 	if *offset < 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N]   (--offset must be >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N] [--all]   (--offset must be >= 0)", "jobs")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.ListJobs(context.Background(), *limit, *offset)
+	var out api.ListJobsResponse
+	first := true
+	items, next, err := collectOffsetPages(context.Background(), *offset, *all, func(ctx context.Context, offset int) ([]api.JobResponse, int, error) {
+		page, err := client.ListJobs(ctx, *limit, offset)
+		if first {
+			out = page
+			first = false
+		} else {
+			out.Total = page.Total
+		}
+		return page.Jobs, page.NextOffset, err
+	})
+	out.Jobs, out.NextOffset = items, next
 	if err != nil {
 		return printErr("Request failed", err)
 	}
@@ -146,6 +163,9 @@ func cmdJobsList(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	renderJobsTable(osStdout, out.Jobs)
+	if out.NextOffset >= 0 && out.NextOffset > out.Offset {
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs list --offset %d\n", out.NextOffset)
+	}
 	return 0
 }
 
@@ -157,6 +177,9 @@ func cmdJobsList(args []string) int {
 // defaults + clamps every numeric field; passing 0 lets the plan
 // default win.
 func cmdJobsAdd(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsAddInteractive()
+	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
@@ -237,6 +260,9 @@ func cmdJobsAdd(args []string) int {
 // posture as `gregale apps info`).
 func cmdJobsInfo(args []string) int {
 	if len(args) != 1 {
+		return cmdJobsInfoWaitArgs(args)
+	}
+	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs info <name>", "jobs")
 		return 1
 	}
@@ -264,6 +290,9 @@ func cmdJobsInfo(args []string) int {
 // `--pause` / `--resume` pair is mutually exclusive and maps to
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsUpdateInteractive()
+	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
 	command := fs.String("command", "", "new comma-separated entrypoint")
@@ -405,6 +434,9 @@ func cmdJobsUpdate(args []string) int {
 // enforces the soft-delete guard via the soft_delete_job_if_no_live
 // _instances stored function (migrations/00576).
 func cmdJobsRm(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRmInteractive()
+	}
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs rm <name>", "jobs")
 		return 1
@@ -431,6 +463,9 @@ func cmdJobsRm(args []string) int {
 // the plan cap before the store call. Plan caps: Hobby=100,
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRunInteractive()
+	}
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	tasks := fs.Int("tasks", 0, "number of tasks to fan out (or use --input)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
@@ -549,34 +584,53 @@ func cmdJobsRun(args []string) int {
 // cmdJobsRuns implements `gregale jobs runs <name>`. Returns a
 // page of runs newest-first. Server clamps limit to [1,200].
 func cmdJobsRuns(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs runs <name>", "jobs")
+	fs := newFlagSet("jobs-runs", flag.ContinueOnError)
+	limit := fs.Int("limit", 50, "page size (1..200)")
+	offset := fs.Int("offset", 0, "starting page offset")
+	all := fs.Bool("all", false, "walk every page using --limit and --offset")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	if fs.NArg() != 1 || *offset < 0 || validateCLILimit("limit", *limit, 200) != nil {
+		PrintUsage(os.Stderr, "usage: gregale jobs runs <name> [--limit N] [--offset N] [--all] (1 <= N <= 200, offset >= 0)", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.ListJobRuns(context.Background(), args[0])
+	items, next, err := collectOffsetPages(context.Background(), *offset, *all, func(ctx context.Context, offset int) ([]api.JobRunResponse, int, error) {
+		page, err := client.ListJobRunsPage(ctx, name, *limit, offset)
+		return page.Runs, page.NextOffset, err
+	})
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeNDJSON(out.Runs))
+		return jsonOut(writeNDJSON(items))
 	}
-	renderJobRunsTable(osStdout, out.Runs)
+	renderJobRunsTable(osStdout, items)
+	if next >= 0 && next > *offset {
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs runs %s --offset %d\n", name, next)
+	}
 	return 0
 }
 
 func cmdJobsOccurrences(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsOccurrencesInteractive()
+	}
 	fs := newFlagSet("jobs-occurrences", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "number of occurrence decisions to return (1..200)")
 	before := fs.String("before", "", "occurrence id cursor from the previous page")
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs occurrences <name> [--limit N] [--before ID]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs occurrences <name> [--limit N] [--cursor ID] [--all]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -588,16 +642,29 @@ func cmdJobsOccurrences(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	page, err := client.ListJobScheduleOccurrences(context.Background(), name, *limit, *before)
+	var page api.ListScheduleOccurrencesResponse
+	first := true
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.ScheduleOccurrenceResponse, string, error) {
+		current, err := client.ListJobScheduleOccurrences(ctx, name, *limit, cursor)
+		if first {
+			page = current
+			first = false
+		}
+		return current.Occurrences, current.NextBefore, err
+	})
+	page.Occurrences, page.NextBefore = items, next
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSONSingle(page))
+		return jsonOut(writeJSONSingle(struct {
+			api.ListScheduleOccurrencesResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{page, next}))
 	}
 	renderScheduleOccurrences(osStdout, page.Occurrences)
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs occurrences %s --before %s\n", name, page.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs occurrences %s --cursor %s\n", name, page.NextBefore)
 	}
 	return 0
 }
@@ -608,6 +675,9 @@ func cmdJobsOccurrences(args []string) int {
 // tasks: the server SIGTERMs via vmmd; the guest's job supervisor
 // handles the 30s grace window before SIGKILL.
 func cmdJobsCancel(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsCancelInteractive()
+	}
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id>", "jobs")
 		return 1
@@ -635,6 +705,9 @@ func cmdJobsCancel(args []string) int {
 // Returns a page of tasks 0..N-1 (zero-based). LeaseToken is OMITTED
 // from the wire (internal dispatch primitive).
 func cmdJobsTasks(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsTasksInteractive()
+	}
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale jobs tasks <name> <run-id>", "jobs")
 		return 1
@@ -661,6 +734,9 @@ func cmdJobsTasks(args []string) int {
 // cmdJobsAttempts returns retained terminal outcomes, including earlier
 // attempts whose task projection was subsequently retried.
 func cmdJobsAttempts(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsAttemptsInteractive()
+	}
 	if len(args) != 3 || !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs attempts <name> <run-id> <task-index>", "jobs")
 		return 1
@@ -695,6 +771,9 @@ func cmdJobsAttempts(args []string) int {
 
 // cmdJobsReplayFailed creates a linked run containing unsuccessful inputs.
 func cmdJobsReplayFailed(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsReplayFailedInteractive()
+	}
 	if len(args) != 2 || !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed <name> <run-id>", "jobs")
 		return 1
@@ -717,6 +796,9 @@ func cmdJobsReplayFailed(args []string) int {
 // cmdJobsArtifactURL verifies a managed result and returns its short-lived
 // signed GET URL together with the expected size and SHA-256.
 func cmdJobsArtifactURL(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsArtifactURLInteractive()
+	}
 	if len(args) != 4 || !jobRunIDPattern.MatchString(args[1]) || args[3] == "" {
 		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>", "jobs")
 		return 1
@@ -747,6 +829,9 @@ func cmdJobsArtifactURL(args []string) int {
 // The server enforces the task state and retry budget; this command only
 // validates the stable positional shape before making the request.
 func cmdJobsRetry(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRetryInteractive()
+	}
 	if len(args) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>", "jobs")
 		return 1
@@ -782,6 +867,11 @@ func cmdJobsRetry(args []string) int {
 // more. Empty LogContent with Truncated=false means the task
 // never produced output (common for OOM-killed tasks).
 func cmdJobsLogs(args []string) int {
+	for _, arg := range args {
+		if arg == "--interactive" || arg == "-interactive" || strings.HasPrefix(arg, "--interactive=") || strings.HasPrefix(arg, "-interactive=") {
+			return cmdJobsLogsInteractiveArgs(args)
+		}
+	}
 	positionals, maxBytes, maxBytesSet, ok := parseJobsLogsArgs(args)
 	if !ok || len(positionals) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index> [--max-bytes N]", "jobs")
@@ -810,13 +900,17 @@ func cmdJobsLogs(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(logs))
 	}
+	return renderJobTaskLogs(logs)
+}
+
+func renderJobTaskLogs(logs api.JobTaskLogResponse) int {
 	if logs.LogContent == "" && !logs.Truncated {
-		_, _ = fmt.Fprintf(os.Stdout, "(task %s produced no output)\n", logs.TaskStatus)
+		_, _ = fmt.Fprintf(osStdout, "(task %s produced no output)\n", logs.TaskStatus)
 		return 0
 	}
-	_, _ = fmt.Fprint(os.Stdout, logs.LogContent)
+	_, _ = fmt.Fprint(osStdout, logs.LogContent)
 	if logs.Truncated {
-		_, _ = fmt.Fprintln(os.Stdout, "...[truncated]")
+		_, _ = fmt.Fprintln(osStdout, "...[truncated]")
 	}
 	return 0
 }

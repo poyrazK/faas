@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -86,7 +87,7 @@ func pgLockCanaryRouteSnapshot(ctx context.Context, tx pgx.Tx, deploymentID stri
 	return pgRoutePolicySnapshot(ctx, tx, owner.AccountID, owner.AppID, true)
 }
 
-func pgCheckCanaryRouteGate(ctx context.Context, tx pgx.Tx, snapshot RoutePolicySnapshot, deployment Deployment, params CanaryAdvanceParams) error {
+func pgCheckCanaryRouteGate(ctx context.Context, tx pgx.Tx, snapshot RoutePolicySnapshot, deployment Deployment, params CanaryAdvanceParams, at time.Time) error {
 	gate, err := pgCanaryRouteGate(ctx, tx, snapshot.Account.ID, snapshot.App.ID)
 	if err != nil {
 		return err
@@ -124,6 +125,14 @@ func pgCheckCanaryRouteGate(ctx context.Context, tx pgx.Tx, snapshot RoutePolicy
 			return fmt.Errorf("queue canary route evidence: %w", err)
 		}
 		decision.CheckQueued = true
+	}
+	if err := pgLifecycleGate(ctx, tx, snapshot, deployment, &decision, at, saved, params.RouteCheckFingerprint); err != nil {
+		return err
+	}
+	if decision.Status == "blocked" && routeRemovalProductionScope(deployment.Scope) {
+		if err := pgRecordBlockedLifecycle(ctx, tx, snapshot.App.ID, deployment.ID, decision); err != nil {
+			return err
+		}
 	}
 	return requireCanaryRouteGate(gate, decision, params.RouteGateDecision)
 }

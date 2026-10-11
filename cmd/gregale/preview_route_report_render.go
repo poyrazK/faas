@@ -32,6 +32,17 @@ func renderPreviewRouteReport(w io.Writer, report previewRouteReport, markdown b
 	}
 	_, _ = fmt.Fprintf(w, "; changed routes: %d; unknown routes: %d\n", report.PolicyDrift.ChangedRoutes, report.PolicyDrift.UnknownRoutes)
 	_, _ = fmt.Fprintln(w)
+	if report.RouteRemovalGate != nil {
+		if markdown {
+			_, _ = fmt.Fprint(w, "### Route removal gate\n\n```text\n")
+		}
+		renderRouteRemovalGate(w, *report.RouteRemovalGate)
+		if markdown {
+			_, _ = fmt.Fprint(w, "```\n\n")
+		} else {
+			_, _ = fmt.Fprintln(w)
+		}
+	}
 	if markdown {
 		_, _ = fmt.Fprintln(w, "| Route | Contract | Current policy kinds | Policy drift | Matching test profiles | Observed p95 delta |")
 		_, _ = fmt.Fprintln(w, "|---|---|---|---|---|---|")
@@ -49,6 +60,11 @@ func renderPreviewRouteReport(w io.Writer, report previewRouteReport, markdown b
 		for _, b := range route.Breaks {
 			_, _ = fmt.Fprintf(w, "- %s: %s %s %s\n", previewReportText(previewReportRouteKey(route.Method, route.Path)),
 				b.Kind, previewReportText(b.Status), previewReportText(b.PathInSchema))
+		}
+		for _, unknown := range route.Unknowns {
+			_, _ = fmt.Fprintf(w, "- %s: unknown response schema %s %s %s\n",
+				previewReportText(previewReportRouteKey(route.Method, route.Path)), unknown.Code,
+				previewReportText(unknown.Status), previewReportText(unknown.PathInSchema))
 		}
 		for _, action := range route.NextActions {
 			_, _ = fmt.Fprintf(w, "- %s: %s\n", previewReportText(previewReportRouteKey(route.Method, route.Path)), previewReportText(action))
@@ -78,6 +94,9 @@ func renderPreviewReportRoute(w io.Writer, route previewReportRoute, markdown bo
 	contract := route.Change
 	if len(route.Breaks) > 0 {
 		contract += fmt.Sprintf(" (%d breaks)", len(route.Breaks))
+	}
+	if len(route.Unknowns) > 0 {
+		contract += fmt.Sprintf(" (%d unknown schema changes)", len(route.Unknowns))
 	}
 	if route.RequestCompatibility != nil {
 		contract += "; requests: " + route.RequestCompatibility.Status

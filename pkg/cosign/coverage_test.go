@@ -2,11 +2,6 @@
 // the focused unit files (cosign_test.go, verify_test.go,
 // generate_test.go) deliberately don't touch. Targets:
 //
-//   - TrustListFromDir (verify.go:267) — 0.0% → covered. The
-//     per-app trust list is the load-bearing surface for the
-//     require_signed deploy-time gate; the existing verify_test.go
-//     covers the directory shape (TrustedPublishersFromDir, single
-//     app), but the per-app map keyed by app_id was untested.
 //   - SigKeyFor (signer.go:76) — 0.0% → covered. Trivial concat
 //     helper, but the wire shape ("sigs/" + layerKey + ".sig") is
 //     load-bearing — schedd and imaged derive the sig key from
@@ -28,7 +23,6 @@
 //   - NewLocalSigner / NewLocalVerifier — pin nil-storage path.
 //   - VerifyImageSignature — pin nil puller, empty ref, FetchSignature
 //     non-missing-error wrapping.
-//   - TrustedPublishersFromDir — pin empty-dir path.
 
 package cosign
 
@@ -66,125 +60,6 @@ func TestSigKeyFor_WireShape(t *testing.T) {
 		if got := SigKeyFor(c.layerKey); got != c.want {
 			t.Errorf("SigKeyFor(%q) = %q, want %q", c.layerKey, got, c.want)
 		}
-	}
-}
-
-// --- TrustListFromDir (verify.go:267) --------------------------------
-
-// trustWriteAppPEM writes a per-app trust file at the apid-side
-// filename shape: <uuid>--<signer>.pem. Returns the app_id used.
-func trustWriteAppPEM(t *testing.T, dir, appID, signer string) {
-	t.Helper()
-	_, pubPEM, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-	name := appID + "--" + signer + ".pem"
-	if err := os.WriteFile(filepath.Join(dir, name), pubPEM, 0o444); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
-func TestTrustListFromDir_Happy(t *testing.T) {
-	dir := t.TempDir()
-	appA := "11111111-1111-1111-1111-111111111111"
-	appB := "22222222-2222-2222-2222-222222222222"
-	trustWriteAppPEM(t, dir, appA, "ci-bot")
-	trustWriteAppPEM(t, dir, appA, "manual")
-	trustWriteAppPEM(t, dir, appB, "ci-bot")
-	// Junk file the loader should skip (missing the -- separator).
-	if err := os.WriteFile(filepath.Join(dir, "junk.pem"), []byte("ignored"), 0o444); err != nil {
-		t.Fatalf("write junk: %v", err)
-	}
-	// Bad uuid in filename — should be silently skipped.
-	if err := os.WriteFile(filepath.Join(dir, "not-a-uuid--ci.pem"), []byte("ignored"), 0o444); err != nil {
-		t.Fatalf("write bad uuid: %v", err)
-	}
-	// Bad signer (uppercase) — should be silently skipped (DNS-1123
-	// label pattern is lower-case only).
-	if err := os.WriteFile(filepath.Join(dir, appA+"--BadName.pem"), []byte("ignored"), 0o444); err != nil {
-		t.Fatalf("write bad signer: %v", err)
-	}
-
-	got, err := TrustListFromDir(dir)
-	if err != nil {
-		t.Fatalf("TrustListFromDir: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d apps, want 2 (A and B); got=%v", len(got), got)
-	}
-	// Per-app deterministic alphabetical sort.
-	if names := publisherNames(got[appA]); !equalStrings(names, []string{"ci-bot", "manual"}) {
-		t.Errorf("app A publishers = %v, want [ci-bot manual]", names)
-	}
-	if names := publisherNames(got[appB]); !equalStrings(names, []string{"ci-bot"}) {
-		t.Errorf("app B publishers = %v, want [ci-bot]", names)
-	}
-}
-
-func TestTrustListFromDir_Missing(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "absent")
-	got, err := TrustListFromDir(missing)
-	if err != nil {
-		t.Errorf("err = %v, want nil (missing dir is non-fatal)", err)
-	}
-	if got != nil {
-		t.Errorf("got = %v, want nil", got)
-	}
-}
-
-func TestTrustListFromDir_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	got, err := TrustListFromDir(dir)
-	if err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("got = %v, want empty map", got)
-	}
-}
-
-func TestTrustListFromDir_EmptyPath(t *testing.T) {
-	if _, err := TrustListFromDir(""); err == nil {
-		t.Error("empty dir: want error")
-	}
-}
-
-func TestTrustListFromDir_BadPermsPropagate(t *testing.T) {
-	// A .pem with bad perms must surface the loader's
-	// ErrInsecurePubKeyPerms (loadPublicKey error chain is
-	// observed by TrustListFromDir — it does NOT swallow).
-	dir := t.TempDir()
-	appID := "33333333-3333-3333-3333-333333333333"
-	_, pubPEM, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-	bad := filepath.Join(dir, appID+"--ci-bot.pem")
-	if err := os.WriteFile(bad, pubPEM, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, err = TrustListFromDir(dir)
-	if !errors.Is(err, ErrInsecurePubKeyPerms) {
-		t.Errorf("err = %v, want ErrInsecurePubKeyPerms", err)
-	}
-}
-
-func TestTrustListFromDir_ReadDirOtherError(t *testing.T) {
-	// ReadDir on a path that IS a file (not a directory) → not
-	// ErrNotExist → wrapped error returned. Pins the "non-missing
-	// path error" branch at verify.go:271-277.
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "iam-a-file")
-	if err := os.WriteFile(filePath, []byte("hello"), 0o444); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-	_, err := TrustListFromDir(filePath)
-	if err == nil {
-		t.Fatal("err = nil, want error (path is a file, not a dir)")
-	}
-	if !strings.Contains(err.Error(), "read trusted-publishers dir") {
-		t.Errorf("err = %v, want 'read trusted-publishers dir' prefix", err)
 	}
 }
 
@@ -966,77 +841,4 @@ func TestHexByte_DigitMap(t *testing.T) {
 	}
 }
 
-// --- TrustedPublishersFromDir (verify.go:98) edge cases --------------
-
-func TestTrustedPublishersFromDir_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	got, err := TrustedPublishersFromDir(dir)
-	if err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("got = %v, want empty slice", got)
-	}
-}
-
-func TestTrustedPublishersFromDir_EmptyPath(t *testing.T) {
-	if _, err := TrustedPublishersFromDir(""); err == nil {
-		t.Error("empty path: want error")
-	}
-}
-
-func TestTrustedPublishersFromDir_ReadDirOtherError(t *testing.T) {
-	// Path is a file, not a directory → not ErrNotExist → wrapped
-	// error returned. Pins the non-missing path branch.
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "file")
-	if err := os.WriteFile(filePath, []byte("x"), 0o444); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, err := TrustedPublishersFromDir(filePath)
-	if err == nil {
-		t.Fatal("err = nil, want error")
-	}
-	if !strings.Contains(err.Error(), "read trusted-publishers dir") {
-		t.Errorf("err = %v, want 'read trusted-publishers dir' prefix", err)
-	}
-}
-
-func TestTrustedPublishersFromDir_BadPubKeyFile(t *testing.T) {
-	// A .pem that fails LoadPublicKeyFile for a non-perm reason
-	// (malformed PEM bytes) must surface the wrapped error from
-	// the loader.
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ci-bot.pem"), []byte("not pem"), 0o444); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, err := TrustedPublishersFromDir(dir)
-	if err == nil {
-		t.Fatal("err = nil, want error")
-	}
-	if !strings.Contains(err.Error(), "load trusted publisher") {
-		t.Errorf("err = %v, want 'load trusted publisher' fragment", err)
-	}
-}
-
 // --- helpers ---------------------------------------------------------
-
-func publisherNames(ps []TrustedPublisher) []string {
-	out := make([]string, 0, len(ps))
-	for _, p := range ps {
-		out = append(out, p.Name)
-	}
-	return out
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}

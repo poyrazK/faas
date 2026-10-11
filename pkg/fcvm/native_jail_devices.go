@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/jailsetup"
@@ -142,13 +144,15 @@ func (j *nativeHostHelperJournal) requireDeviceNamespacesRemoved(ctx context.Con
 		return err
 	}
 	for _, record := range records {
-		if record.JailDevice == nil {
+		scope := nativeSnapshotNamespaceScope(record)
+		if scope == nil {
 			continue
 		}
-		if !record.Launch.ResourcesRemoved || !record.JailDevice.InputsClosed || j.owner.jailDevices == nil {
+		inputsClosed := record.JailDevice != nil && record.JailDevice.InputsClosed || record.SnapshotOutput != nil && record.SnapshotOutput.InputsClosed
+		if !record.Launch.ResourcesRemoved || !inputsClosed || j.owner.jailDevices == nil {
 			return errors.New("native jail device cleanup: original producer has no descriptor retirement proof")
 		}
-		if err := j.owner.jailDevices.NamespaceRemoved(ctx, record.JailDevice.Scope); err != nil {
+		if err := j.owner.jailDevices.NamespaceRemoved(ctx, *scope); err != nil {
 			return err
 		}
 	}
@@ -181,7 +185,9 @@ func (v *JailerVMM) bindNativeJailDevices(ctx context.Context, expected nativeLa
 	command.Stdout, command.Stderr = &output, &output
 	j := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups, startTime: r.startTime, purpose: nativeHostHelperJailDevices, deviceRoot: root}
 	if err := j.run(ctx, expected, command, v.nativeCleanupBudget()); err != nil {
-		return timings, err
+		// The trusted setup helper emits bounded syscall/protocol diagnostics,
+		// not guest output or runtime secrets. Preserve the original cause.
+		return timings, fmt.Errorf("native jail device setup: original helper failed: %w (%s)", err, strings.TrimSpace(string(output.Bytes())))
 	}
 	return timings, j.confirmDeviceReceipt(ctx, expected, output.Bytes())
 }

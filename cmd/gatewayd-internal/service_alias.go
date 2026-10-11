@@ -33,6 +33,15 @@ func newServiceAliasAllowed(store state.Store) gateway.ServiceAliasAllowed {
 				return true, nil
 			}
 		}
+		if qualificationAliases, ok := store.(state.EnvironmentQualificationServiceAliasStore); ok {
+			allowed, err := qualificationAliases.EnvironmentQualificationServiceAliasAllowed(ctx, caller.ID, service)
+			if err != nil {
+				return false, fmt.Errorf("check scoped qualification service alias: %w", err)
+			}
+			if allowed {
+				return true, nil
+			}
+		}
 		return false, nil
 	}
 }

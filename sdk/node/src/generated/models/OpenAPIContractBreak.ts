@@ -9,7 +9,7 @@ export type OpenAPIContractBreak = {
   path: string;
   method: 'get' | 'put' | 'post' | 'delete' | 'options' | 'head' | 'patch' | 'trace';
   status?: string;
-  kind: 'type_change' | 'field_removed' | 'required_added' | 'nullability_change';
+  kind: 'type_change' | 'field_removed' | 'required_added' | 'required_removed' | 'nullability_change';
   path_in_schema?: string;
   before?: any;
   after?: any;

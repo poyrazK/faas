@@ -181,6 +181,7 @@
     - role: gatewayd_internal_service
     - role: builderd_service
     - role: compute_only_service
+    - role: profiled_service
     - role: log_archive
     - role: optional_credentials
     - role: role_convergence

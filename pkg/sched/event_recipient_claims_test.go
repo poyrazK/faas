@@ -10,19 +10,35 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+type recipientRoutingTestStore interface {
+	state.Store
+	state.EventSubscriptionStore
+	state.PublishedEventWorkStore
+	state.PublishedEventRecipientProgressStore
+	state.PublishedEventRecipientWorkStore
+	state.PublishedEventRecipientAdmissionStore
+	state.EventFanoutReplayStore
+	state.EventFanoutAttemptHistoryStore
+	state.EventReceiptStore
+	state.EventWorkflowStore
+	state.EventWorkflowRecipientAdmissionStore
+	state.WorkflowStore
+}
+
 type recipientRouteFaultStore struct {
-	*state.MemStore
+	recipientRoutingTestStore
 	failures       map[string]error
 	loseCompletion bool
 	claimApps      map[string]string
 }
 
-func (s *recipientRouteFaultStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time) (*state.PublishedEventRecipientWork, error) {
-	work, err := s.MemStore.ClaimDuePublishedEventRecipient(ctx, now)
+func (s *recipientRouteFaultStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time, includeWorkflows ...bool) (*state.PublishedEventRecipientWork, error) {
+	work, err := s.recipientRoutingTestStore.ClaimDuePublishedEventRecipient(ctx, now, includeWorkflows...)
 	if err == nil {
 		if s.claimApps == nil {
 			s.claimApps = map[string]string{}
@@ -36,7 +52,7 @@ func (s *recipientRouteFaultStore) AdmitPublishedEventRecipient(ctx context.Cont
 	if err := s.failures[s.claimApps[claim.SubscriptionID]]; err != nil {
 		return state.PublishedEventRoutingResult{}, &state.EventRecipientAdmissionError{FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true, Err: err}
 	}
-	result, err := s.MemStore.AdmitPublishedEventRecipient(ctx, claim)
+	result, err := s.recipientRoutingTestStore.AdmitPublishedEventRecipient(ctx, claim)
 	if err == nil && s.loseCompletion && result.Progress.State == state.PublishedEventRecipientEnqueued {
 		s.loseCompletion = false
 		return result, errors.New("lost routing acknowledgement after commit")
@@ -48,7 +64,7 @@ func (s *recipientRouteFaultStore) EnqueueInvocation(ctx context.Context, invoca
 	if err := s.failures[invocation.AppID]; err != nil {
 		return state.Invocation{}, err
 	}
-	return s.MemStore.EnqueueInvocation(ctx, invocation)
+	return s.recipientRoutingTestStore.EnqueueInvocation(ctx, invocation)
 }
 
 func (s *recipientRouteFaultStore) FinishPublishedEventRecipient(ctx context.Context, work *state.PublishedEventRecipientWork, progress state.PublishedEventRecipientProgress, next time.Time) error {
@@ -56,14 +72,30 @@ func (s *recipientRouteFaultStore) FinishPublishedEventRecipient(ctx context.Con
 		s.loseCompletion = false
 		return errors.New("lost routing acknowledgement after enqueue")
 	}
-	return s.MemStore.FinishPublishedEventRecipient(ctx, work, progress, next)
+	return s.recipientRoutingTestStore.FinishPublishedEventRecipient(ctx, work, progress, next)
 }
 
 // ADR-606: A successful consumer, a backoff-delayed consumer, and a failed consumer
 // share one event. Selective replay must not inherit the sibling's backoff.
 func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			var store recipientRoutingTestStore = state.NewMemStore()
+			restart := func() recipientRoutingTestStore { return store }
+			if backend == "postgres" {
+				pool := pgtest.OpenMigrated(t)
+				store = state.NewPgStore(pool)
+				restart = func() recipientRoutingTestStore { return state.NewPgStore(pool) }
+			}
+			testEventRecipientRoutingSelectiveRecovery(t, store, restart)
+		})
+	}
+}
+
+// adr: 647 — qualify the constructor default against both routing stores.
+func testEventRecipientRoutingSelectiveRecovery(t *testing.T, backing recipientRoutingTestStore, restart func() recipientRoutingTestStore) {
 	ctx := context.Background()
-	store := &recipientRouteFaultStore{MemStore: state.NewMemStore(), failures: map[string]error{}}
+	store := &recipientRouteFaultStore{recipientRoutingTestStore: backing, failures: map[string]error{}}
 	account, err := store.CreateAccount(ctx, "recipient-routing@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +103,8 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 	accountID := mustCanonicalEventAccountID(t, account.ID)
 	apps := make([]state.App, 0, 3)
 	subscriptions := make([]state.EventSubscription, 0, 3)
-	for _, slug := range []string{"billing", "analytics", "email"} {
-		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: slug, Status: state.AppActive})
+	for _, slug := range []string{"billing-consumer", "analytics-consumer", "email-consumer"} {
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: slug, Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,10 +129,15 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 	}
 	store.failures[apps[1].ID] = errors.New("temporary analytics queue outage")
 	store.failures[apps[2].ID] = state.ErrNotFound
-	loop := (&Loop{engine: &Engine{store: store}, now: func() time.Time { return now }}).WithEventRecipientClaims(true)
+	loop := NewLoop(nil, &Engine{store: store}, nil)
+	loop.now = func() time.Time { return now }
 	// Acceptance and routing use real clock values, so claim strictly after publish.
 	now = time.Now().UTC().Add(time.Millisecond)
 	loop.runEventFanoutSweep(ctx)
+	receipt, err := store.EventReceipt(ctx, accountID, "orders", envelope.ID, state.EventReceiptCursor{}, 100)
+	if err != nil || !receipt.RecipientClaims || receipt.RoutingSettledAt != nil || receipt.RoutingSummary["enqueued"] != 1 || receipt.RoutingSummary["pending"] != 1 || receipt.RoutingSummary["failed"] != 1 {
+		t.Fatalf("independent default receipt = %+v, %v", receipt, err)
+	}
 	for i, app := range apps {
 		invocations, err := store.ListInvocationsForApp(ctx, app.ID)
 		want := 0
@@ -121,7 +158,9 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = time.Now().UTC().Add(time.Millisecond)
-	loop = &Loop{engine: &Engine{store: store}, now: func() time.Time { return now }}
+	store.recipientRoutingTestStore = restart()
+	loop = NewLoop(nil, &Engine{store: store}, nil).WithEventRecipientClaims(false)
+	loop.now = func() time.Time { return now }
 	loop.runEventFanoutSweep(ctx)
 	for _, index := range []int{0, 2} {
 		invocations, err := store.ListInvocationsForApp(ctx, apps[index].ID)
@@ -139,7 +178,15 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 	// The worker enqueued successfully but lost its checkpoint. Lease expiry
 	// and a new scheduler must recover without enqueueing a second invocation.
 	now = now.Add(state.PublishedEventLease + time.Second)
-	loop = &Loop{engine: &Engine{store: store}, now: func() time.Time { return now }}
+	store.recipientRoutingTestStore = restart()
+	loop = NewLoop(nil, &Engine{store: store}, nil).WithEventRecipientClaims(false)
+	loop.now = func() time.Time { return now }
+	loop.runEventFanoutSweep(ctx)
+	// A duplicate publication after recovery keeps the original receipt and
+	// deterministic delivery identities, including the deleted subscription.
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
 	loop.runEventFanoutSweep(ctx)
 	for _, app := range apps {
 		rows, err := store.ListInvocationsForApp(ctx, app.ID)
@@ -147,13 +194,17 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 			t.Fatalf("%s after lost checkpoint = %d, %v", app.Slug, len(rows), err)
 		}
 	}
+	receipt, err = store.EventReceipt(ctx, accountID, "orders", envelope.ID, state.EventReceiptCursor{}, 100)
+	if err != nil || receipt.RoutingSettledAt == nil || receipt.RoutingSummary["enqueued"] != 3 {
+		t.Fatalf("recovered receipt = %+v, %v", receipt, err)
+	}
 }
 
 // ADR-606: replay receives a fresh bounded retry budget, while history keeps
 // counting attempts across generations and successful siblings stay settled.
 func TestEventRecipientRoutingReplayRenewsExhaustedBudget(t *testing.T) {
 	ctx := context.Background()
-	store := &recipientRouteFaultStore{MemStore: state.NewMemStore(), failures: map[string]error{}}
+	store := &recipientRouteFaultStore{recipientRoutingTestStore: state.NewMemStore(), failures: map[string]error{}}
 	account, err := store.CreateAccount(ctx, "exhausted-recipient@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)

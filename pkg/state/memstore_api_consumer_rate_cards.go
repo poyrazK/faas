@@ -8,32 +8,49 @@ import (
 	"github.com/google/uuid"
 )
 
-func (m *MemStore) CreateAPIConsumerRateCard(_ context.Context, accountID, appID, currency string, price int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
-	currency = normalizeAPIConsumerRateCardCurrency(currency)
-	effectiveFrom = effectiveFrom.UTC()
-	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", accountID, appID, currency, price, effectiveFrom); err != nil {
+func (m *MemStore) CreateAPIConsumerRateCard(ctx context.Context, accountID, appID, currency string, price int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
+	return m.CreateAPIConsumerRateCardVersion(ctx, APIConsumerRateCardInput{
+		AccountID: accountID, AppID: appID, Currency: currency, PriceMillicentsPerUnit: price, EffectiveFrom: effectiveFrom,
+	})
+}
+
+func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APIConsumerRateCardInput) (APIConsumerRateCard, error) {
+	in, err := normalizeAPIConsumerRateCardInput(in)
+	if err != nil {
 		return APIConsumerRateCard{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if in.PlanID != "" {
+		plan, ok := m.apiConsumerPlans[in.PlanID]
+		if !ok || plan.AccountID != in.AccountID || plan.AppID != in.AppID {
+			return APIConsumerRateCard{}, ErrNotFound
+		}
+	}
 	for _, card := range m.apiConsumerRateCards {
-		if card.AppID == appID && card.EffectiveFrom.Equal(effectiveFrom) {
+		if card.AppID == in.AppID && card.PlanID == in.PlanID && card.EffectiveFrom.Equal(in.EffectiveFrom) {
 			return APIConsumerRateCard{}, ErrConflict
 		}
 	}
-	now := time.Now().UTC()
 	card := APIConsumerRateCard{
 		ID:                     uuid.NewString(),
-		AccountID:              accountID,
-		AppID:                  appID,
-		Currency:               currency,
+		AccountID:              in.AccountID,
+		AppID:                  in.AppID,
+		Currency:               in.Currency,
 		Unit:                   APIConsumerRateCardUnitRequest,
-		PriceMillicentsPerUnit: price,
-		EffectiveFrom:          effectiveFrom,
-		CreatedAt:              now,
+		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit,
+		IncludedUnitsPerMonth:  in.IncludedUnitsPerMonth,
+		Tiers:                  in.Tiers,
+		RouteWeights:           in.RouteWeights,
+		PlanID:                 in.PlanID,
+		EffectiveFrom:          in.EffectiveFrom,
+		CreatedAt:              time.Now().UTC(),
 	}
 	m.apiConsumerRateCards[card.ID] = card
-	return card, nil
+	out := card
+	out.Tiers = cloneRateCardTiers(card.Tiers)
+	out.RouteWeights = cloneRouteWeights(card.RouteWeights)
+	return out, nil
 }
 
 func (m *MemStore) ListAPIConsumerRateCardsForApp(_ context.Context, accountID, appID string) ([]APIConsumerRateCard, error) {
@@ -45,6 +62,8 @@ func (m *MemStore) ListAPIConsumerRateCardsForApp(_ context.Context, accountID, 
 	var out []APIConsumerRateCard
 	for _, card := range m.apiConsumerRateCards {
 		if card.AccountID == accountID && card.AppID == appID {
+			card.Tiers = cloneRateCardTiers(card.Tiers)
+			card.RouteWeights = cloneRouteWeights(card.RouteWeights)
 			out = append(out, card)
 		}
 	}
@@ -67,5 +86,7 @@ func (m *MemStore) GetAPIConsumerRateCardByID(_ context.Context, accountID, card
 	if !ok || card.AccountID != accountID {
 		return APIConsumerRateCard{}, ErrNotFound
 	}
+	card.Tiers = cloneRateCardTiers(card.Tiers)
+	card.RouteWeights = cloneRouteWeights(card.RouteWeights)
 	return card, nil
 }

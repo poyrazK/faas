@@ -37,6 +37,8 @@ class UpdateAppWebhookRequest:
     target_url: str | Unset = UNSET
     webhook_secret: str | Unset = UNSET
     event_filter: list[UpdateAppWebhookRequestEventFilterItem] | Unset = UNSET
+    """Replacement event selection; an empty array restores standard platform events. Include app.health.changed to
+    opt into health notifications."""
     retry_policy: UpdateAppWebhookRequestRetryPolicy | Unset = UNSET
     delivery_format: UpdateAppWebhookRequestDeliveryFormat | Unset = UNSET
     """Wire envelope for future deliveries; existing delivery rows are unchanged."""

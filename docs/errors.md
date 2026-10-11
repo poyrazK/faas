@@ -19,6 +19,9 @@ the caller supplies an occurrence URI.
 | `auth_rate_limited` (429) | Too many failed authentication attempts came from this address | Wait for `Retry-After`, then retry with valid credentials. |
 | `unauthorized` (401) | The dashboard session or API credential is missing or expired | Sign in again or refresh the API credential, then retry. |
 | `oauth_provider_unavailable` (503) | A third-party sign-in or GitHub connection provider is unavailable on this Gregale installation | Use another sign-in method if available, retry later, or contact support to enable the provider. |
+| `event_publish_batch_too_large` (413) | Batch publication exceeds its 1 MiB body limit; no items accepted | Reduce the batch size, preserving each event's source and id. |
+| `event_publish_not_attempted` (batch item) | The request budget ended before this item was attempted | Retry the item with its original identity and content. |
+| `event_storage_capacity_exhausted` (429 or batch item) | A new event exceeds retained storage count or bytes | Use the supplied limit/observed diagnostics; retry after pruning or a plan upgrade. |
 | `event_stream_unavailable` (SSE) | Gregale could not open the account event stream | Reconnect in a moment; if it persists, check Gregale status. |
 | `bad_request` (400) | A dashboard action is malformed or incomplete | Return to the form, check the requested fields, and retry. |
 | `transport_error` (503, CLI) | The CLI could not reach Gregale's API | Check connectivity and the configured API URL, then retry. |

@@ -153,7 +153,9 @@ type EnqueueParams struct {
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
-	OperationDefinitions      []api.OperationDefinitionSpec
+	OperationDefinitions []api.OperationDefinitionSpec
+	// Caller must check every immutable definition's execution kind against
+	// one current preview policy snapshot before granting this batch.
 	OperationAdmissionEnabled bool
 	DeliveryID                string
 	// RetryOf preserves the original deployment and copies its input settings.
@@ -164,9 +166,16 @@ type EnqueueParams struct {
 	SourceBuildID string // original build's immutable source object, for retries
 	AppID         string
 	Kind          state.DeploymentKind
-	SourcePath    string
-	SourceBytes   int64
-	SourceRoot    string
+	// ImageRef selects OCI materialization instead of a source build. Only
+	// trusted project callers set it after static workload admission.
+	ImageHealthcheck    *api.ComposeHealthcheck
+	ImageRef            string
+	ImagePort           int
+	ImageCommand        []string
+	FullRootfsAllowAuto bool
+	SourcePath          string
+	SourceBytes         int64
+	SourceRoot          string
 	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
 	// It is captured in the deployment's immutable inferred profile.
 	DockerfilePath string
@@ -247,8 +256,8 @@ type EnqueueParams struct {
 }
 
 // EnqueueResult is the durable artifact the caller writes back to
-// the client. Both DeploymentID and BuildID are always non-empty on
-// success; the caller can shape them however the wire contract
+// the client. BuildID is empty for image deployments, which do not need
+// builderd; the caller can shape them however the wire contract
 // needs (REST JSON, gRPC response, reposcan response body).
 type EnqueueResult struct {
 	DeploymentID string
@@ -372,6 +381,9 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 		}
 		p.ReleaseCommand = resolved.Command
 		p.ReleaseCommandShell = resolved.CommandShell
+	}
+	if p.ImageRef != "" {
+		return enqueueProjectImage(ctx, store, notif, p)
 	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {

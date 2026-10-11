@@ -260,7 +260,8 @@ func TestSchemaBreakReason_AllKinds(t *testing.T) {
 	}{
 		{openapidiff.SchemaKindTypeChange, "schema type changed"},
 		{openapidiff.SchemaKindFieldRemoved, "schema field removed"},
-		{openapidiff.SchemaKindRequiredAdded, "schema field required"},
+		{openapidiff.SchemaKindRequiredAdded, "response contract now guarantees the field"},
+		{openapidiff.SchemaKindRequiredRemoved, "response contract no longer guarantees the field"},
 		{openapidiff.SchemaKindNullabilityChange, "schema nullability changed"},
 		// Default branch (any other kind, including zero-value).
 		{openapidiff.SchemaKind("unknown_kind"), "schema changed"},

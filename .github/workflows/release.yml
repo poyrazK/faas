@@ -39,8 +39,23 @@ permissions:
   packages: read
 
 jobs:
+  # Release gate: the complete mega-tier suite (ci.yml) must pass on the
+  # tagged commit before anything is built, signed or published. Pull
+  # requests only run the light tier (ci-light.yml), so this is where e2e,
+  # the full migration history and the cross-package suites gate a release.
+  full-ci:
+    name: Full CI (release gate)
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+      id-token: write
+
   resolve-action-pin:
     name: Resolve deploy Action pin
+    needs: [full-ci]
     runs-on: ubuntu-22.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -477,6 +492,7 @@ jobs:
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle
+    needs: [full-ci]
     runs-on: ubuntu-22.04
     # The builder-base publisher is a separate workflow and can use most of
     # its 25-minute budget before the immutable tag is available. Leave room
@@ -522,9 +538,8 @@ jobs:
             "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
           echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
           chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
-          # Syft is released as a pinned binary because v1.49.0 requires
-          # Go >= 1.26.3 while the repository's Go toolchain remains pinned
-          # to the 1.25 line for the application and CI vulnerability gate.
+          # Use Syft's checksum-pinned release binary to avoid compiling its
+          # dependency tree in every release job.
           curl -fsSL -o "$RUNNER_TEMP/release-tools/syft.tar.gz" \
             "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
           echo "${SYFT_SHA256}  $RUNNER_TEMP/release-tools/syft.tar.gz" | sha256sum -c -
@@ -563,6 +578,7 @@ jobs:
             images/Dockerfile.lock \
             guest/init \
             pkg/api \
+            pkg/profileproto \
             pkg/reqbudget \
             pkg/sourcecontext \
             pkg/statefuldenylist \
@@ -671,8 +687,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          # Runtime base images contain only their Dockerfile layers and the
-          # shared rootfs skeleton. Runtime control-plane code is shipped in
+          # Runtime base images contain their Dockerfile layers, the shared
+          # rootfs skeleton and the profiling bootstraps. Runtime control-plane
+          # code is shipped in
           # this signed daemon bundle, so a change under pkg/imaged,
           # pkg/builderd, or guest/runners must not force a release to wait for
           # eight byte-identical images to be republished. Select the newest
@@ -687,6 +704,7 @@ jobs:
             images/runner-go124.Dockerfile \
             images/runner-go124-alpine.Dockerfile \
             images/rootfs-skel \
+            guest/profiling \
             images/Dockerfile.lock \
             scripts/ci/install-grype.sh \
             scripts/ci/update-grype-db.sh \

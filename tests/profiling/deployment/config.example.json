@@ -1,0 +1,12 @@
+{
+  "api_url": "https://api.example.invalid",
+  "runtime": "go124",
+  "duration_seconds": 120,
+  "settle_seconds": 15,
+  "fixtures": {
+    "baseline": {"slug": "profile-acceptance", "deployment_id": "BASELINE_UUID", "url": "https://baseline.example.invalid"},
+    "regression": {"slug": "profile-acceptance", "deployment_id": "REGRESSION_UUID", "url": "https://regression.example.invalid"},
+    "label_loss": {"slug": "profile-acceptance", "deployment_id": "LABEL_LOSS_UUID", "url": "https://label-loss.example.invalid"},
+    "sparse": {"slug": "profile-acceptance", "deployment_id": "SPARSE_UUID", "url": "https://sparse.example.invalid"}
+  }
+}

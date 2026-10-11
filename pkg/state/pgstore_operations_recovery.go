@@ -19,6 +19,17 @@ func (s *PgStore) RecoverOperation(ctx context.Context, accountID, tenantID, ope
 	if err != nil {
 		return Operation{}, err
 	}
+	if replay, err := s.replayOperationRecovery(ctx, snapshot, req); err != nil {
+		return Operation{}, err
+	} else if replay {
+		return s.OperationByID(ctx, accountID, tenantID, operationID)
+	}
+	if snapshot.WorkflowRunID != "" {
+		return s.recoverOperationWorkflow(ctx, snapshot, req)
+	}
+	if snapshot.JobRunID != "" {
+		return s.recoverOperationJob(ctx, snapshot, req)
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return Operation{}, err
@@ -62,6 +73,9 @@ func (s *PgStore) RecoverOperation(ctx context.Context, accountID, tenantID, ope
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, err
 	}
+	if err := checkOperationInspectionRevisionTx(ctx, tx, op, req.ExpectedInspectionRevision); err != nil {
+		return Operation{}, err
+	}
 	if req.Resolution == "safe_to_retry" {
 		if !limits.Operations.Allowed {
 			return Operation{}, NewOperationLimitError("plan_admission", 0, 1)
@@ -76,6 +90,7 @@ func (s *PgStore) RecoverOperation(ctx context.Context, accountID, tenantID, ope
 			return Operation{}, ErrPlatformTenantSuspended
 		}
 	}
+	receiptExpiry := op.ExpiresAt
 	inv, event, err := prepareOperationRecovery(&op, original, def, limits, req, now)
 	if err != nil {
 		return Operation{}, err
@@ -96,8 +111,9 @@ func (s *PgStore) RecoverOperation(ctx context.Context, accountID, tenantID, ope
 			return Operation{}, err
 		}
 	}
+	decision, _ := json.Marshal(newOperationRecoveryDecision(op, req, fingerprint, now, receiptExpiry))
 	raw, _ := json.Marshal(req)
-	if err := q.InsertCustomerOperationRecovery(ctx, tx, sqlc.InsertCustomerOperationRecoveryParams{OperationID: id, RecoveryID: req.RecoveryID, Fingerprint: fingerprint, Request: raw, Now: pgtype.Timestamptz{Time: now, Valid: true}}); err != nil {
+	if err := q.InsertCustomerOperationRecovery(ctx, tx, sqlc.InsertCustomerOperationRecoveryParams{OperationID: id, RecoveryID: req.RecoveryID, Fingerprint: fingerprint, Request: raw, Decision: decision, Now: pgtype.Timestamptz{Time: now, Valid: true}}); err != nil {
 		return Operation{}, err
 	}
 	if err := operationSaveTx(ctx, tx, op, event); err != nil {

@@ -34,10 +34,10 @@ func TestRecoveryCodeBurnedBody_ThreeBranches(t *testing.T) {
 		wantSubject string
 		wantPhrase  string
 	}{
-		{"one-of-many", 7, "Recovery code used on your faas account", "7 recovery codes remaining"},
-		{"warning at 2 left", 2, "Recovery code used on your faas account", "You have 2 recovery codes left"},
-		{"critical at 1 left", 1, "Recovery code used on your faas account", "second-to-last code"},
-		{"zero left", 0, "Recovery code used on your faas account", "NO codes left"},
+		{"one-of-many", 7, "Recovery code used on your Gregale account", "7 recovery codes remaining"},
+		{"warning at 2 left", 2, "Recovery code used on your Gregale account", "You have 2 recovery codes left"},
+		{"critical at 1 left", 1, "Recovery code used on your Gregale account", "second-to-last code"},
+		{"zero left", 0, "Recovery code used on your Gregale account", "NO codes left"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestMFADisableEmailRequestedBody_IncludesConfirmURL(t *testing.T) {
 	requested := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	url := "https://api.example.com/v1/account/mfa/disable-email/confirm?token=deadbeef"
 	subject, body := MFADisableEmailRequestedBody("alice@example.com", url, requested)
-	if subject != "Confirm MFA disable on your faas account (24h wait)" {
+	if subject != "Confirm MFA disable on your Gregale account (24h wait)" {
 		t.Errorf("subject = %q", subject)
 	}
 	if !strings.Contains(body, url) {

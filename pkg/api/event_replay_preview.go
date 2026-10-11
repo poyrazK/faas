@@ -33,13 +33,15 @@ func (o EventReplayPreviewOptions) Validate() error {
 }
 
 type EventReplayPreviewMatch struct {
-	EventID           string    `json:"event_id"`
-	EventSource       string    `json:"event_source"`
-	EventType         string    `json:"event_type"`
-	SchemaVersion     string    `json:"schema_version,omitempty"`
-	AcceptedAt        time.Time `json:"accepted_at"`
-	OriginalRecipient string    `json:"original_recipient"` // captured, not_captured, unknown
-	ReceiptURL        string    `json:"receipt_url"`
+	DeliveryExpired    bool       `json:"delivery_expired"`
+	DeliveryDeadlineAt *time.Time `json:"delivery_deadline_at,omitempty"`
+	EventID            string     `json:"event_id"`
+	EventSource        string     `json:"event_source"`
+	EventType          string     `json:"event_type"`
+	SchemaVersion      string     `json:"schema_version,omitempty"`
+	AcceptedAt         time.Time  `json:"accepted_at"`
+	OriginalRecipient  string     `json:"original_recipient"` // captured, not_captured, unknown
+	ReceiptURL         string     `json:"receipt_url"`
 }
 
 type EventReplayPreviewRetention struct {
@@ -49,22 +51,24 @@ type EventReplayPreviewRetention struct {
 }
 
 type EventReplayPreviewResponse struct {
-	AppSlug              string                      `json:"app_slug"`
-	Subscription         EventSubscriptionResponse   `json:"subscription"`
-	SubscriptionRevision string                      `json:"subscription_revision"`
-	From                 time.Time                   `json:"from"`
-	Until                time.Time                   `json:"until"`
-	CutoffAt             time.Time                   `json:"cutoff_at"`
-	ObservedAt           time.Time                   `json:"observed_at"`
-	Coverage             string                      `json:"coverage"`
-	Retention            EventReplayPreviewRetention `json:"retention"`
-	ScannedCount         int                         `json:"scanned_count"`
-	MatchedCount         int                         `json:"matched_count"`
-	FilterMismatchCount  int                         `json:"filter_mismatch_count"`
-	PatternMismatchCount int                         `json:"pattern_mismatch_count"`
-	AlreadyCapturedCount int                         `json:"already_captured_count"`
-	Matches              []EventReplayPreviewMatch   `json:"matches"`
-	NextAfter            string                      `json:"next_after,omitempty"`
+	SchemaVersionMismatchCount int                         `json:"schema_version_mismatch_count"`
+	AppSlug                    string                      `json:"app_slug"`
+	Subscription               EventSubscriptionResponse   `json:"subscription"`
+	SubscriptionRevision       string                      `json:"subscription_revision"`
+	From                       time.Time                   `json:"from"`
+	Until                      time.Time                   `json:"until"`
+	CutoffAt                   time.Time                   `json:"cutoff_at"`
+	ObservedAt                 time.Time                   `json:"observed_at"`
+	Coverage                   string                      `json:"coverage"`
+	Retention                  EventReplayPreviewRetention `json:"retention"`
+	ScannedCount               int                         `json:"scanned_count"`
+	MatchedCount               int                         `json:"matched_count"`
+	FilterMismatchCount        int                         `json:"filter_mismatch_count"`
+	PatternMismatchCount       int                         `json:"pattern_mismatch_count"`
+	ExpiredCount               int                         `json:"expired_count"`
+	AlreadyCapturedCount       int                         `json:"already_captured_count"`
+	Matches                    []EventReplayPreviewMatch   `json:"matches"`
+	NextAfter                  string                      `json:"next_after,omitempty"`
 }
 
 // PreviewEventReplay is a read-only preview for one current ordinary application

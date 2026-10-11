@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.event_preview_subscription import EventPreviewSubscription
 
@@ -31,6 +33,8 @@ class PreviewEventResponse:
     non_matches: list[EventPreviewSubscription]
     truncated: bool
     """True when either sample omits additional candidates."""
+    schema_version_mismatch_count: int | Unset = UNSET
+    """Candidates excluded by schema version selection."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = self.event_id
@@ -59,6 +63,8 @@ class PreviewEventResponse:
 
         truncated = self.truncated
 
+        schema_version_mismatch_count = self.schema_version_mismatch_count
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -75,6 +81,8 @@ class PreviewEventResponse:
                 "truncated": truncated,
             }
         )
+        if schema_version_mismatch_count is not UNSET:
+            field_dict["schema_version_mismatch_count"] = schema_version_mismatch_count
 
         return field_dict
 
@@ -113,6 +121,8 @@ class PreviewEventResponse:
 
         truncated = d.pop("truncated")
 
+        schema_version_mismatch_count = d.pop("schema_version_mismatch_count", UNSET)
+
         preview_event_response = cls(
             event_id=event_id,
             source=source,
@@ -124,6 +134,7 @@ class PreviewEventResponse:
             matches=matches,
             non_matches=non_matches,
             truncated=truncated,
+            schema_version_mismatch_count=schema_version_mismatch_count,
         )
 
         return preview_event_response

@@ -150,7 +150,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.
-		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 16, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
+		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, DeveloperLeaseMaxHours: 24, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 16, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
 			// Issue #559: Free = 4 — enough listener concurrency for
 			// small demo bursts while MaxConcurrency remains one VM.
 			ConcurrencyPerVMBound: 4,
@@ -200,8 +200,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// (route|rewrite|redirect|headers|cors) but jwt/ip stay
 			// plan-gated to Hobby+. The limits surface reflects only
 			// what the create handler will accept (5 rules total).
-			EdgeRulesPerApp: 5, EdgeRulesJWTAllowed: false, EdgeRulesIPAllowed: false, EdgeRulesGeoPerApp: 1, EdgeRulesThrottlePerApp: 1, EdgeRulesCachePerApp: 0,
-			EdgeRulesRetryPerApp: 0, EdgeRulesCircuitBreakerPerApp: 0, EgressCircuitBreakersPerApp: 0,
+			EdgeRulesPerApp: 5, EdgeRuleEventsWindowHours: 24, EdgeRuleListsPerAccount: 0, EdgeRuleListMaxItems: 0, EdgeRulesJWTAllowed: false, EdgeRulesIPAllowed: false, EdgeRulesGeoPerApp: 1, EdgeRulesThrottlePerApp: 1, EdgeRulesCachePerApp: 0,
+			EdgeRulesRetryPerApp: 0, EdgeRulesCircuitBreakerPerApp: 0, EgressCircuitBreakersPerApp: 0, EdgeRulesWAFPerApp: 0,
 			// issue #975 #4 / Mega-Foundation #979-b — Free is the abuse-floor tier;
 			// the abstraction is the upsell. PR-B (#979-c) wires the writer.
 			CorsPresetsPerAccount: 0, CorsPresetsPerApp: 0, CorsPresetMaxOrigins: 0, CorsPresetMaxAllowMethods: 0, CorsPresetMaxNameLength: 64,
@@ -306,7 +306,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124: Free keeps cancel + clear-obsolete; reorder
 			// stays plan-gated (Free=false).
 			QueueControlsAllowed: false, MaxQueuedDeploysPerApp: 2, MaxCancelOpsPerHour: 0, MaxReorderOpsPerHour: 0},
-		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 64, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
+		PlanHobby: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60}, Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, DeveloperLeaseMaxHours: 72, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 64, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
 			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7 * 24 * 60 * 60, EventRetentionSeconds: 24 * 60 * 60, IdempotencyRetentionSeconds: 30 * 24 * 60 * 60, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256},
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
@@ -367,8 +367,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// AND the jwt|ip kinds. The plan-kind gate surface
 			// (EdgeRulesJWTAllowed / EdgeRulesIPAllowed) feeds the
 			// 402 response in handlers_edge_rules.go for Free.
-			EdgeRulesPerApp: 25, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 5, EdgeRulesThrottlePerApp: 5, EdgeRulesCachePerApp: 1,
-			EdgeRulesRetryPerApp: 3, EdgeRulesCircuitBreakerPerApp: 3, EgressCircuitBreakersPerApp: 3,
+			EdgeRulesPerApp: 25, EdgeRuleEventsWindowHours: 72, EdgeRuleListsPerAccount: 5, EdgeRuleListMaxItems: 100, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 5, EdgeRulesThrottlePerApp: 5, EdgeRulesCachePerApp: 1,
+			EdgeRulesRetryPerApp: 3, EdgeRulesCircuitBreakerPerApp: 3, EgressCircuitBreakersPerApp: 3, EdgeRulesWAFPerApp: 0,
 			// issue #975 #4 / Mega-Foundation #979-b — Hobby is the entry paid tier.
 			CorsPresetsPerAccount: 10, CorsPresetsPerApp: 5, CorsPresetMaxOrigins: 25, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
 			// ADR-099 (#879): tenant surfaces — Hobby is the entry
@@ -474,7 +474,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
-		PlanPro: {Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, ServiceTCPSessionsPerAccount: 256, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
+		PlanPro: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180}, Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, DeveloperLeaseMaxHours: 168, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, ServiceTCPSessionsPerAccount: 256, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
 			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 30 * 24 * 60 * 60, EventRetentionSeconds: 7 * 24 * 60 * 60, IdempotencyRetentionSeconds: 90 * 24 * 60 * 60, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024},
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
@@ -527,8 +527,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-089 (planned): edge rules — Pro unlocks 100 rules
 			// AND jwt|ip. Same surface as Hobby; the gate only
 			// flips the Free arm of the kind-switch.
-			EdgeRulesPerApp: 100, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 25, EdgeRulesThrottlePerApp: 25, EdgeRulesCachePerApp: 5,
-			EdgeRulesRetryPerApp: 10, EdgeRulesCircuitBreakerPerApp: 10, EgressCircuitBreakersPerApp: 10,
+			EdgeRulesPerApp: 100, EdgeRuleEventsWindowHours: 168, EdgeRuleListsPerAccount: 20, EdgeRuleListMaxItems: 1000, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 25, EdgeRulesThrottlePerApp: 25, EdgeRulesCachePerApp: 5,
+			EdgeRulesRetryPerApp: 10, EdgeRulesCircuitBreakerPerApp: 10, EgressCircuitBreakersPerApp: 10, EdgeRulesWAFPerApp: 5,
 			// issue #975 #4 / Mega-Foundation #979-b — Pro is the typical SaaS tier.
 			CorsPresetsPerAccount: 50, CorsPresetsPerApp: 15, CorsPresetMaxOrigins: 100, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
 			// ADR-099 (#879): tenant surfaces — Pro gets 5 surfaces
@@ -635,7 +635,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
-		PlanScale: {Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, ServiceTCPSessionsPerAccount: 1024, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
+		PlanScale: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600}, Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, DeveloperLeaseMaxHours: 336, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, ServiceTCPSessionsPerAccount: 1024, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
 			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 90 * 24 * 60 * 60, EventRetentionSeconds: 30 * 24 * 60 * 60, IdempotencyRetentionSeconds: 180 * 24 * 60 * 60, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096},
 			// Issue #559: Scale = 80 (matches Cloud Run's
@@ -692,8 +692,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// (5× Pro) AND jwt|ip. The 500 cap is the practical upper
 			// bound the LRU + per-host matcher budget tolerates before
 			// per-host invalidation becomes load-bearing.
-			EdgeRulesPerApp: 500, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 100, EdgeRulesThrottlePerApp: 100, EdgeRulesCachePerApp: 20,
-			EdgeRulesRetryPerApp: 25, EdgeRulesCircuitBreakerPerApp: 25, EgressCircuitBreakersPerApp: 50,
+			EdgeRulesPerApp: 500, EdgeRuleEventsWindowHours: 168, EdgeRuleListsPerAccount: 100, EdgeRuleListMaxItems: 10000, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 100, EdgeRulesThrottlePerApp: 100, EdgeRulesCachePerApp: 20,
+			EdgeRulesRetryPerApp: 25, EdgeRulesCircuitBreakerPerApp: 25, EgressCircuitBreakersPerApp: 50, EdgeRulesWAFPerApp: 20,
 			// issue #975 #4 / Mega-Foundation #979-b — Scale is the large-fleet tier.
 			CorsPresetsPerAccount: 250, CorsPresetsPerApp: 50, CorsPresetMaxOrigins: 500, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
 			// ADR-099 (#879): tenant surfaces — Scale gets 25 surfaces
@@ -982,6 +982,7 @@ func TestPlansAreMonotonic(t *testing.T) {
 			{"ServiceTCPSessionsPerAccount", lo.ServiceTCPSessionsPerAccount, hi.ServiceTCPSessionsPerAccount},
 			{"CronLimitPerApp", lo.CronLimitPerApp, hi.CronLimitPerApp},
 			{"CronLimitPerAccount", lo.CronLimitPerAccount, hi.CronLimitPerAccount},
+			{"EdgeRulesWAFPerApp", lo.EdgeRulesWAFPerApp, hi.EdgeRulesWAFPerApp},
 			// Issue #475: per-account reserved-tier cap must be
 			// monotonic across plans (Free 0 < Hobby 1 < Pro 2 < Scale 4).
 			// apid's updateApp path reads this directly.
@@ -1173,6 +1174,20 @@ func TestBillableRAMMBWithSidecars(t *testing.T) {
 				t.Errorf("BillableRAMMBWithSidecars(%d, %v) = %d, want %d", c.planRAM, c.sidecarMBs, got, c.want)
 			}
 		})
+	}
+}
+
+// A full snapshot charges the resident guest plus the whole memory file in
+// the jail tmpfs; the fence must cover both for every plan.
+func TestSnapshotMemoryMaxCoversResidentGuestAndMemoryFile(t *testing.T) {
+	for _, ramMB := range []int{128, 256, 512, 1024} {
+		got := SnapshotMemoryMaxMB(ramMB)
+		if want := 2*ramMB + PerVMOverheadMB + SnapshotVMOverheadMB; got != want {
+			t.Errorf("SnapshotMemoryMaxMB(%d) = %d, want %d", ramMB, got, want)
+		}
+		if got < BillableRAMMB(ramMB)+ramMB {
+			t.Errorf("SnapshotMemoryMaxMB(%d) = %d cannot hold the guest and its memory file", ramMB, got)
+		}
 	}
 }
 

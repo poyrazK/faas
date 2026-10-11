@@ -268,7 +268,15 @@ func decodeCustomerOperationReceipt(raw []byte, value any) error {
 		if err := reader.Decode(&field); err != nil {
 			return fmt.Errorf("read receipt value: %w", err)
 		}
-		if name == "input" {
+		switch name {
+		case "request":
+			// Validate a control request at the same depth as its HTTP body;
+			// wrapping a typed recovery result in a local receipt adds no limit.
+			if _, err := operations.CanonicalJSON(field); err != nil {
+				return fmt.Errorf("invalid receipt request: %w", err)
+			}
+			field = json.RawMessage(`null`)
+		case "input":
 			field = json.RawMessage(`null`)
 		}
 		metadata[name] = field

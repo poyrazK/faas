@@ -150,6 +150,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/gatewayd_public_service/files", skip: only("gatewayd-public")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
+	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -165,6 +166,7 @@ func ansibleRoleSkips() map[string]bool {
 		"gatewayd-internal": true,
 		"s3-gatewayd":       true,
 		"realtimed":         true,
+		"profiled":          true,
 	}
 }
 

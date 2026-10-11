@@ -378,12 +378,16 @@ func cmdTriggersDelete(args []string) int {
 	usage := "usage: gregale triggers delete <id> [--quiet]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	pos := fs.Args()
 	if len(pos) != 1 {
 		return triggerUsageError(usage, "expected one trigger ID")
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
 	}
 	if !*quiet {
 		_, _ = fmt.Fprintf(osStderr, "About to delete trigger %s.\n", pos[0])

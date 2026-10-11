@@ -126,8 +126,9 @@ type ObservedDatabase struct {
 	Status         ProviderStatus
 	ComputeState   ComputeState
 	Spec           Spec
-	// RestoreLineage comes from the provider's actual target metadata, never
-	// from echoing a RestoreRequest. A missing observation cannot qualify an
+	// RestoreLineage comes from the provider's actual target metadata or an
+	// independently verified mapping to its historical position, never from
+	// echoing a RestoreRequest. A missing observation cannot qualify an
 	// isolated stage database. SourceResourceID must identify the exact source
 	// (for example a Neon branch), not a mutable default selector.
 	RestoreLineage *RestoreLineage
@@ -208,6 +209,14 @@ type RestoreRequest struct {
 	IdempotencyKey   string
 }
 
+// RestoreInspector verifies an existing target against its pinned source and
+// point. Providers whose metadata expresses historical positions instead of
+// timestamps can resolve that mapping independently. This inspection must not
+// create a resource or substitute a mutable source selector.
+type RestoreInspector interface {
+	InspectRestore(context.Context, string, RestoreRequest) (ObservedDatabase, error)
+}
+
 type DeleteResult struct {
 	Done bool
 }
@@ -232,6 +241,8 @@ const (
 	CredentialReadWrite CredentialAccess = "read_write"
 	CredentialReadOnly  CredentialAccess = "read_only"
 	CredentialMigration CredentialAccess = "migration"
+	// Data API logins receive only api-schema DML, without owner memberships.
+	CredentialDataAPI CredentialAccess = "data_api"
 )
 
 type EndpointRole string
@@ -619,7 +630,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
+		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
 			return ErrInvalid
 		}
 	}
@@ -636,7 +647,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
+	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -698,6 +709,12 @@ type CredentialPrivilegeProber interface {
 // disposable resources. Advertising read_only requires this live evidence.
 type ReadOnlyCredentialProber interface {
 	ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error)
+}
+
+// DataAPICredentialProber verifies schema isolation, RLS, recovery and retirement
+// on a disposable resource before the backend can advertise data_api bindings.
+type DataAPICredentialProber interface {
+	ProbeDataAPICredentials(context.Context, string) (DataAPICredentialEvidence, error)
 }
 
 // RestoreCredentialIsolationProber verifies that the source login cannot

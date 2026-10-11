@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 )
 
@@ -28,9 +29,11 @@ var ErrServiceTCPTargetUnavailable = errors.New("service target is not accepting
 
 // ServiceTCPTarget is the routing identity of one private service address.
 type ServiceTCPTarget struct {
-	AppID     string
-	AccountID string
-	Plan      api.Plan
+	AppID             string
+	AccountID         string
+	Plan              api.Plan
+	ScenarioTestRunID string
+	ScenarioWorkload  string
 	// TCPPorts are the target's declared TCP listeners; nothing else is
 	// reachable through its service address.
 	TCPPorts []int
@@ -67,6 +70,7 @@ type ServiceTCPProxyConfig struct {
 	WakeTimeout        time.Duration
 	Metrics            *tcpmetrics.Metrics
 	Log                *slog.Logger
+	ResolveChaos       ServiceTCPChaosResolver
 }
 
 // ServiceTCPProxy accepts DNATed guest connections and forwards them to the
@@ -75,6 +79,7 @@ type ServiceTCPProxy struct {
 	cfg      ServiceTCPProxyConfig
 	slots    chan struct{}
 	accounts *serviceTCPAccountSessions
+	chaos    serviceTCPChaosController
 }
 
 // NewServiceTCPProxy validates the wiring; a missing seam is a startup error
@@ -99,6 +104,10 @@ func NewServiceTCPProxy(cfg ServiceTCPProxyConfig) (*ServiceTCPProxy, error) {
 		cfg:      cfg,
 		slots:    make(chan struct{}, cfg.MaxSessions),
 		accounts: &serviceTCPAccountSessions{current: make(map[string]int)},
+		chaos: serviceTCPChaosController{
+			groups: make(map[serviceTCPChaosKey]*serviceTCPChaosGroup), resolve: cfg.ResolveChaos,
+			observe: cfg.Services.observeChaosMatch,
+		},
 	}, nil
 }
 
@@ -212,6 +221,27 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 	deploymentID, err := p.releaseDeployment(ctx, callerAppID, callerDeploymentID, target.AppID)
 	if err != nil {
 		return "", "release", err
+	}
+	conn, cleanup, err := p.chaosConn(ctx, conn, callerAppID, target, int(dst.Port()))
+	if err != nil {
+		return "", "chaos_unavailable", err
+	}
+	defer cleanup()
+	if impaired, ok := conn.(*chaos.TCPConn); ok {
+		if rule, active := impaired.ConnectionFault(); active {
+			switch rule.Kind {
+			case chaos.KindTCPConnectRefused:
+				impaired.ResetNow()
+				return "error", "", chaos.ErrTCPConnectRefused
+			case chaos.KindTCPConnectTimeout:
+				waitErr := impaired.WaitForConnectTimeout()
+				impaired.ResetNow()
+				if waitErr != nil && !errors.Is(waitErr, chaos.ErrTCPConnectTimeout) {
+					return "error", "", waitErr
+				}
+				return "error", "", chaos.ErrTCPConnectTimeout
+			}
+		}
 	}
 	return p.forward(ctx, conn, target, deploymentID, int(dst.Port()))
 }

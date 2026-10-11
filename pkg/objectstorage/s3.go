@@ -158,7 +158,9 @@ func (p *S3) ListObjectsV2(ctx context.Context, bucket string, request ObjectLis
 	if cursor != "" {
 		in.ContinuationToken = aws.String(cursor)
 	}
-	out, err := p.client.ListObjectsV2(ctx, in)
+	// The caller meters each attempt before dispatch. SDK retries would spend
+	// additional provider requests without another admission/reservation.
+	out, err := p.client.ListObjectsV2(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return ObjectPage{}, normalize(err)
 	}
@@ -374,6 +376,9 @@ func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) 
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	if r.VersionID != "" {
+		return SignedRequest{}, ErrInvalid
+	}
 	return p.presign(ctx, bucket, r, ObjectWriteConditions{}, "")
 }
 
@@ -389,6 +394,11 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 }
 
 func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string, encryption *ResolvedObjectEncryption) (SignedRequest, error) {
+	var err error
+	conditions, err = signWriteConditions(r, conditions)
+	if err != nil {
+		return SignedRequest{}, err
+	}
 	if r.Encryption != nil || r.Protection != nil {
 		return SignedRequest{}, ErrUnsupported // Owned selections are consumed by the branded broker.
 	}
@@ -702,7 +712,7 @@ func (p *S3) ListMultipartParts(ctx context.Context, bucket string, r MultipartL
 	out, err := p.client.ListParts(ctx, &s3.ListPartsInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
 		PartNumberMarker: aws.String(strconv.FormatInt(int64(r.PartNumberMarker), 10)), MaxParts: aws.Int32(r.Limit),
-	})
+	}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return MultipartPartsPage{}, normalize(err)
 	}

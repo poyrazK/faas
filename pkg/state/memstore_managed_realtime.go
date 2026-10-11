@@ -154,9 +154,81 @@ func (m *MemStore) DeleteManagedRealtimeEndpoint(_ context.Context, id string) e
 		return ErrNotFound
 	}
 	delete(m.managedRealtimeEndpoints, id)
+	delete(m.realtimeNotificationTimeline, id)
+	for key := range m.managedRealtimeSchedules {
+		if key.endpointID == id {
+			delete(m.managedRealtimeSchedules, key)
+			delete(m.managedRealtimeScheduleHistory, key)
+		}
+	}
+	for key := range m.managedRealtimeReducers {
+		if key.endpointID == id {
+			delete(m.managedRealtimeReducers, key)
+		}
+	}
+	for key := range m.managedRealtimeEventSchemas {
+		if key.endpointID == id {
+			delete(m.managedRealtimeEventSchemas, key)
+		}
+	}
+	for key := range m.managedRealtimeBatches {
+		if key.endpointID == id {
+			delete(m.managedRealtimeBatches, key)
+		}
+	}
+	for key := range m.managedRealtimeSnapshots {
+		if key.endpointID == id {
+			delete(m.managedRealtimeSnapshots, key)
+		}
+	}
 	for key := range m.managedRealtimeHistory {
 		if key.endpointID == id {
 			delete(m.managedRealtimeHistory, key)
+		}
+	}
+	for key := range m.managedRealtimePushPreferences {
+		if key.endpointID == id {
+			delete(m.managedRealtimePushPreferences, key)
+		}
+	}
+	for key := range m.managedRealtimePushProviders {
+		if key.endpointID == id {
+			delete(m.managedRealtimePushProviders, key)
+		}
+	}
+	for key := range m.managedRealtimePushDevices {
+		if key.endpointID == id {
+			delete(m.managedRealtimePushDevices, key)
+		}
+	}
+	for key, job := range m.managedRealtimePushDeliveries {
+		if job.EndpointID == id {
+			delete(m.managedRealtimePushDeliveries, key)
+		}
+	}
+	for key := range m.managedRealtimeReadProgress {
+		if key.endpointID == id {
+			delete(m.managedRealtimeReadProgress, key)
+		}
+	}
+	for key := range m.managedRealtimeInboxFallbacks {
+		if key.endpointID == id {
+			m.deleteNotificationFallbackLocked(key)
+		}
+	}
+	for key := range m.managedRealtimeInboxStreams {
+		if key.endpointID == id {
+			delete(m.managedRealtimeInboxStreams, key)
+		}
+	}
+	for key := range m.managedRealtimeInboxCursors {
+		if key.endpointID == id {
+			delete(m.managedRealtimeInboxCursors, key)
+		}
+	}
+	for key := range m.managedRealtimeDirectReceipts {
+		if key.endpointID == id {
+			delete(m.managedRealtimeDirectReceipts, key)
 		}
 	}
 	delete(m.realtimeChannelRouteOverflow, id)

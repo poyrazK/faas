@@ -80,6 +80,13 @@ SELECT count(*) FILTER(WHERE compute_complete)::bigint AS compute_minutes,
 FROM financial_sampling_windows
 WHERE minute >= sqlc.arg(period_start)::timestamptz AND minute < sqlc.arg(period_end)::timestamptz;
 
+-- name: FinancialCompletedComputeMinutes :many
+SELECT minute
+FROM financial_sampling_windows
+WHERE minute >= sqlc.arg(period_start)::timestamptz AND minute < sqlc.arg(period_end)::timestamptz
+  AND compute_complete
+ORDER BY minute;
+
 -- name: FinancialUsageAggregate :many
 SELECT price_version, plan, meter, unit, attribution, sum(quantity)::bigint AS quantity, count(*)::bigint AS source_count
 FROM financial_usage_evidence

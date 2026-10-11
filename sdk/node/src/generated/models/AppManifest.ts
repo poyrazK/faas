@@ -6,13 +6,18 @@ import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
+import type { ProfilingConfig } from './ProfilingConfig.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
  * App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure).
  */
 export type AppManifest = {
+  profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
   entrypoint: Array<string>;
   env?: Record<string, string>;
   /**
@@ -21,6 +26,10 @@ export type AppManifest = {
   env_secrets?: Record<string, string>;
   working_dir?: string | null;
   port?: number | null;
+  /**
+   * Scheme for canonical service binding URLs. Omitted manifests retain the legacy HTTP behavior.
+   */
+  service_binding_transport?: ServiceBindingTransport;
   /**
    * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery (ADR-165, ADR-176).
    */

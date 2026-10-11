@@ -112,6 +112,7 @@ def notify_resource_updated(uri):
     RESOURCE_UPDATE_ADAPTER.publish(uri)
 SUMMARY_STYLES = ("brief", "technical", "executive")
 SAMPLE_RECORD_IDS = ("example-1", "example-2", "example-3")
+SAMPLE_RECORD_OWNERS = {"example-1":"demo-caller-a","example-2":"demo-caller-b","example-3":"demo-caller-a"}
 
 TOOLS = [
     {
@@ -638,7 +639,7 @@ def read_resource(request_id, params, authenticator, granted_scopes, task_runtim
         return 200, rpc_response(request_id, {"contents": [content]})
     prefix = "customer://records/"
     record_id = uri[len(prefix):] if uri.startswith(prefix) else ""
-    if not record_id or any(character in record_id for character in "/?#"):
+    if record_id not in SAMPLE_RECORD_OWNERS or (authenticator.mode!="open" and getattr(granted_scopes,"subject","")!=SAMPLE_RECORD_OWNERS.get(record_id)):
         return 404, rpc_error(request_id, -32002, "resource not found")
     content = {
         "uri": uri,
@@ -763,6 +764,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 getattr(self.server, "task_runtime", None) is not None,
                 self.server.app_config.get("auth", {}),
             )
+            health["ok"] = health["ready"]
             health["instance_id"] = os.environ.get("FAAS_INSTANCE_ID", "").strip()
             self.send_json(200 if health["ready"] else 503, {key: value for key, value in health.items() if key != "ready"})
             return
@@ -1367,7 +1369,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def reject_origin(self):
-        if self.headers.get("Origin") is not None:
+        origins=self.headers.get_all("Origin",[])
+        if origins and (len(origins)!=1 or origins[0] not in self.server.app_config.get("allowed_origins",[])):
             self.send_json(403, {"error": "origin_not_allowed"})
             return True
         return False
@@ -1412,6 +1415,28 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def load_config(path):
+    with open(path,"r",encoding="utf-8") as source:
+        config=json.load(source,parse_constant=reject_json_constant)
+    if not isinstance(config,dict) or type(config.get("version")) is not int or config["version"]!=1 or config.get("transport")!="streamable-http" or config.get("mode")!="stateless":
+        raise AuthConfigurationError("expected one object with a supported MCP hosting profile")
+    endpoint=config.get("endpoint")
+    if not isinstance(endpoint,str) or not re.fullmatch(r"/(?:[A-Za-z0-9._~-]+/?)*",endpoint) or endpoint=="/healthz" or "//" in endpoint or any(part in {".",".."} for part in endpoint.split("/")):
+        raise AuthConfigurationError("invalid MCP endpoint")
+    origins=config.get("allowed_origins",[])
+    if not isinstance(origins,list):raise AuthConfigurationError("invalid allowed origins")
+    for origin in origins:
+        try:
+            parsed=urlsplit(origin)
+            _=parsed.port
+            if not isinstance(origin,str) or any(ch.isspace() for ch in origin) or parsed.scheme not in {"http","https"} or not parsed.hostname or parsed.username or parsed.path or parsed.query or parsed.fragment or parsed.netloc.endswith(":"):
+                raise ValueError()
+        except (ValueError,TypeError):
+            raise AuthConfigurationError("invalid allowed origin") from None
+    Authenticator(config)
+    return config
+
+
 def main():
     host = os.environ.get("MCP_BIND_ADDRESS")
     if not host:
@@ -1419,8 +1444,7 @@ def main():
     task_runtime = None
     try:
         config_path = os.environ.get("MCP_CONFIG_PATH", "gregale-mcp.json")
-        with open(config_path, "r", encoding="utf-8") as config_file:
-            app_config = json.load(config_file, parse_constant=reject_json_constant)
+        app_config = load_config(config_path)
         if (
             not isinstance(app_config, dict)
             or isinstance(app_config.get("version"), bool)

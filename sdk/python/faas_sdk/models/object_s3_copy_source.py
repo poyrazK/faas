@@ -17,7 +17,7 @@ class ObjectS3CopySource:
 
     source_bucket_id: UUID
     prefix: str
-    """Literal allowed source key prefix"""
+    """Literal allowed source key prefix, bounded to 1024 UTF-8 bytes."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

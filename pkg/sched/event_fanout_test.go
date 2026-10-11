@@ -397,7 +397,7 @@ func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
 	if err := mem.DeleteEventSubscription(ctx, subscription.ID, accountID, app.ID); err != nil {
 		t.Fatal(err)
 	}
-	loop := &Loop{engine: &Engine{store: legacyEventReceiptStore{Store: mem, mem: mem}}}
+	loop := NewLoop(nil, &Engine{store: legacyEventReceiptStore{Store: mem, mem: mem}}, nil)
 	loop.runEventFanoutSweep(ctx)
 	invocations, err := mem.ListInvocationsForApp(ctx, app.ID)
 	if err != nil {

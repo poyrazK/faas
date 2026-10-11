@@ -22,6 +22,10 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 		return Instance{}, err
 	}
+	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)
+	if err != nil {
+		return Instance{}, err
+	}
 	address, _ := netip.ParseAddr(p.HostIP) // validated before opening the transaction
 	row, err := sqlc.New().PublishOwnedInstanceRuntime(ctx, tx, sqlc.PublishOwnedInstanceRuntimeParams{
 		InstanceID: mustPgUUID(p.InstanceID), AppID: mustPgUUID(p.AppID), DeploymentID: mustPgUUID(p.Fence.DeploymentID),
@@ -40,6 +44,11 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	}
 	if p.Inputs != nil && p.targetState() == string(StateRunning) {
 		if err := recordInstanceRuntimeConfigReceipt(ctx, tx, p.InstanceID, p.WakeID, *p.Inputs); err != nil {
+			return Instance{}, err
+		}
+	}
+	if acceptance != nil {
+		if err := insertRuntimeUpgradeAcceptanceDB(ctx, tx, *acceptance); err != nil {
 			return Instance{}, err
 		}
 	}

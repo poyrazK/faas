@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListVersionsResult xmlns="http://doc.s3.amazonaws.com/2006-03-01">
+  <Name>physical</Name>
+  <Prefix>qualification/versioned/%E4%B8%96%E7%95%8C+%2B%25.txt</Prefix>
+  <Marker/>
+  <GenerationMarker/>
+  <VersionIdMarker/>
+  <KeyMarker/>
+  <MaxKeys>10</MaxKeys>
+  <IsTruncated>false</IsTruncated>
+  <Encoding-Type>url</Encoding-Type>
+  <Version>
+    <Key>qualification/versioned/%E4%B8%96%E7%95%8C+%2B%25.txt</Key>
+    <Generation>1791390110617942</Generation>
+    <MetaGeneration>1</MetaGeneration>
+    <VersionId>1791390110617942</VersionId>
+    <IsLatest>false</IsLatest>
+    <LastModified>2026-10-07T16:21:50.622Z</LastModified>
+    <DeletedTime>2026-10-07T16:21:51.190Z</DeletedTime>
+    <ETag>"e97a0a854f6cd14a87f03dc278e40ddd"</ETag>
+    <Size>21</Size>
+  </Version>
+  <Version>
+    <Key>qualification/versioned/%E4%B8%96%E7%95%8C+%2B%25.txt</Key>
+    <Generation>1791390111175567</Generation>
+    <MetaGeneration>1</MetaGeneration>
+    <VersionId>1791390111175567</VersionId>
+    <IsLatest>true</IsLatest>
+    <LastModified>2026-10-07T16:21:51.190Z</LastModified>
+    <DeletedTime/>
+    <ETag>"baf6182fa539efc8d608c5d1f862b5fd"</ETag>
+    <Size>29</Size>
+  </Version>
+</ListVersionsResult>

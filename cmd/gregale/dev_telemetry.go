@@ -20,6 +20,7 @@ import (
 // closed stage vocabulary stays an implementation detail.
 const (
 	devPhaseSync        = "sync"
+	devPhasePatch       = "patch"
 	devPhaseCache       = "cache"
 	devPhaseBuild       = "build"
 	devPhaseBoot        = "boot"
@@ -31,6 +32,7 @@ const (
 
 var devPhaseOrder = []string{
 	devPhaseSync,
+	devPhasePatch,
 	devPhaseCache,
 	devPhaseBuild,
 	devPhaseBoot,
@@ -59,6 +61,9 @@ type devSyncReceipt struct {
 	WithinSLO     bool                     `json:"within_slo"`
 	Phases        []devPhaseTiming         `json:"phases"`
 	Postgres      *api.DevPostgresResponse `json:"postgres,omitempty"`
+	// DevPatch reports whether this sync could have been applied as a live
+	// source patch (ADR-740 phase 1, measurement only).
+	DevPatch *api.DevPatchPreview `json:"dev_patch,omitempty"`
 }
 
 type devPhaseTracker struct {
@@ -69,6 +74,7 @@ type devPhaseTracker struct {
 	timings        map[string]devPhaseTiming
 	routeStartedAt time.Time
 	postgres       *api.DevPostgresResponse
+	devPatch       *api.DevPatchPreview
 }
 
 func newDevPhaseTracker() *devPhaseTracker {
@@ -91,6 +97,11 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		copy := *t.postgres
 		postgres = &copy
 	}
+	var devPatch *api.DevPatchPreview
+	if t.devPatch != nil {
+		preview := *t.devPatch
+		devPatch = &preview
+	}
 	t.mu.Unlock()
 	editToLive := time.Since(startedAt)
 	if editToLive < 0 {
@@ -106,6 +117,7 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		WithinSLO:     editToLive <= devEditToLiveTarget,
 		Phases:        timings,
 		Postgres:      postgres,
+		DevPatch:      devPatch,
 	}
 }
 
@@ -126,6 +138,17 @@ func reportDevSyncReceipt(parent context.Context, client *api.Client, project, w
 		Phases: phases,
 	})
 	return err
+}
+
+// setDevPatch records the server's live-patch preview for this sync.
+func (t *devPhaseTracker) setDevPatch(preview *api.DevPatchPreview) {
+	if t == nil || preview == nil {
+		return
+	}
+	t.mu.Lock()
+	recorded := *preview
+	t.devPatch = &recorded
+	t.mu.Unlock()
 }
 
 func (t *devPhaseTracker) setPostgres(postgres *api.DevPostgresResponse) {
@@ -189,6 +212,26 @@ func (t *devPhaseTracker) completeWithReason(phase string, duration time.Duratio
 		t.routeStartedAt = time.Now()
 	}
 	t.mu.Unlock()
+}
+
+// patchDelivered records an ADR-740 live patch reaching the running
+// environment. The duration is edit-to-patch on the CLI's own clock, from the
+// start of this sync to when it observed the instance acknowledgement, so it
+// compares directly with edit-to-live and is immune to server clock skew.
+func (t *devPhaseTracker) patchDelivered(status api.DevPatchStatusResponse, observedAt time.Time) time.Duration {
+	if t == nil || status.AppliedAt == nil {
+		return 0
+	}
+	t.mu.Lock()
+	startedAt := t.startedAt
+	t.mu.Unlock()
+	duration := observedAt.Sub(startedAt)
+	if status.State == api.DevPatchStateFailed {
+		t.completeWithReason(devPhasePatch, duration, status.ErrorCode)
+		return duration
+	}
+	t.complete(devPhasePatch, duration)
+	return duration
 }
 
 func (t *devPhaseTracker) sourceSync(duration time.Duration, err error) {

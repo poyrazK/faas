@@ -38,6 +38,7 @@ var (
 )
 
 type mcpConfig struct {
+	AllowedOrigins        []string        `json:"allowed_origins"`
 	Version               int             `json:"version"`
 	Endpoint              string          `json:"endpoint"`
 	Transport             string          `json:"transport"`
@@ -121,6 +122,15 @@ func loadMCPConfig() (mcpConfig, error) {
 	for _, part := range strings.Split(config.Endpoint, "/") {
 		if part == "." || part == ".." {
 			return mcpConfig{}, errors.New("invalid MCP endpoint")
+		}
+	}
+	if config.Endpoint == "/healthz" {
+		return mcpConfig{}, errors.New("MCP endpoint collides with health route")
+	}
+	for _, origin := range config.AllowedOrigins {
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.HasSuffix(parsed.Host, ":") {
+			return mcpConfig{}, errors.New("invalid MCP allowed origin")
 		}
 	}
 	config.CatalogExpectedSHA256 = strings.ToLower(strings.TrimSpace(os.Getenv("MCP_CATALOG_EXPECTED_SHA256")))

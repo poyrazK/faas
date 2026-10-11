@@ -73,7 +73,7 @@ func TestRuntimeCatalogMatchesResourceTemplateVariables(t *testing.T) {
 func TestRuntimeCatalogContractFingerprintIsStableAndRevisioned(t *testing.T) {
 	left := newMCPCatalog()
 	right := newMCPCatalog()
-	first, err := left.contractFingerprint()
+	first, _, err := left.contractFingerprint()
 	if err != nil || first != 0 {
 		t.Fatalf("initial fingerprint revision=%d err=%v", first, err)
 	}

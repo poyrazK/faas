@@ -210,8 +210,8 @@ func TestPreviewShowRejectsProductionAppBeforeDeploymentLookup(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
-	if code := cmdPreviewShow([]string{"web"}); code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
+	if code := cmdPreviewShow([]string{"web"}); code != 4 {
+		t.Fatalf("exit = %d, want 4", code)
 	}
 }
 

@@ -71,6 +71,9 @@ func (s *PgStore) SetBindingReleasePolicy(ctx context.Context, accountID, appID,
 }
 
 func pgAuthorizeBindingRelease(ctx context.Context, tx pgx.Tx) error {
+	if err := pgAuthorizeRouteRemoval(ctx, tx); err != nil {
+		return err
+	}
 	fences := bindingReleaseFences(ctx)
 	if len(fences) == 0 {
 		return nil

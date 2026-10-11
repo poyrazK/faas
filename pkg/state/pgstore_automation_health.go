@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -16,13 +17,20 @@ func (s *PgStore) GetWorkflowAutomationHealth(ctx context.Context, appID, name s
 	if appID == "" || name == "" || after.After(before) || before.Sub(after) > api.WorkflowAutomationHealthMaxRange {
 		return WorkflowAutomationHealth{}, ErrWorkflowInvalidCreatedRange
 	}
+	ctx, cancel := context.WithTimeout(ctx, api.WorkflowAutomationHealthReadTimeout)
+	defer cancel()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return WorkflowAutomationHealth{}, fmt.Errorf("pgstore: begin automation health snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	params := sqlc.GetWorkflowAutomationHealthSummaryParams{
 		AppID: mustPgUUID(appID), WorkflowName: name,
 		CreatedAfter:  pgtype.Timestamptz{Time: after, Valid: true},
 		CreatedBefore: pgtype.Timestamptz{Time: before, Valid: true},
 	}
 	q := sqlc.New()
-	row, err := q.GetWorkflowAutomationHealthSummary(ctx, s.pool, params)
+	row, err := q.GetWorkflowAutomationHealthSummary(ctx, tx, params)
 	if err != nil {
 		return WorkflowAutomationHealth{}, fmt.Errorf("pgstore: summarize automation health: %w", err)
 	}
@@ -35,30 +43,33 @@ func (s *PgStore) GetWorkflowAutomationHealth(ctx context.Context, appID, name s
 	health.StatusCounts[WorkflowRunStatusFailed] = row.FailedRuns
 	health.StatusCounts[WorkflowRunStatusDead] = row.DeadRuns
 	health.CompletedRunCount = row.SucceededRuns + row.FailedRuns + row.DeadRuns
-	if err := s.pool.QueryRow(ctx, `
-		SELECT
-			count(*) FILTER (WHERE status IN ('running', 'awaiting_event') OR (status = 'pending' AND started_at IS NOT NULL)),
-			count(*) FILTER (WHERE status = 'pending' AND started_at IS NULL)
-		FROM workflow_runs
-		WHERE app_id = $1 AND workflow_name = $2
-	`, mustPgUUID(appID), name).Scan(&health.ActiveRunCount, &health.QueuedRunCount); err != nil {
-		return WorkflowAutomationHealth{}, fmt.Errorf("pgstore: count automation queue: %w", err)
+	queue, err := q.GetWorkflowAutomationQueueHealth(ctx, tx, sqlc.GetWorkflowAutomationQueueHealthParams{
+		AppID: params.AppID, WorkflowName: name, StaleMs: int64(WorkflowRunStaleAfter / time.Millisecond),
+		AppLimit: api.WorkflowDispatchMaxPerApp, TenantLimit: api.WorkflowDispatchMaxPerTenant,
+	})
+	if err != nil {
+		return WorkflowAutomationHealth{}, fmt.Errorf("pgstore: diagnose automation queue: %w", err)
 	}
+	health.ActiveRunCount, health.QueuedRunCount = queue.ActiveRunCount, queue.QueuedRunCount
+	health.Queue = automationQueueHealthFromSQLC(queue)
 	if row.DurationSamples > 0 {
 		p50, p95 := row.P50DurationMs, row.P95DurationMs
 		health.P50DurationMS, health.P95DurationMS = &p50, &p95
 	}
-	if err := s.loadAutomationHealthRecentRuns(ctx, q, params, &health); err != nil {
+	if err := s.loadAutomationHealthRecentRuns(ctx, tx, q, params, &health); err != nil {
 		return WorkflowAutomationHealth{}, err
 	}
-	if err := s.loadAutomationHealthFailedSteps(ctx, q, params, &health); err != nil {
+	if err := s.loadAutomationHealthFailedSteps(ctx, tx, q, params, &health); err != nil {
 		return WorkflowAutomationHealth{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return WorkflowAutomationHealth{}, fmt.Errorf("pgstore: finish automation health snapshot: %w", err)
 	}
 	return health, nil
 }
 
-func (s *PgStore) loadAutomationHealthRecentRuns(ctx context.Context, q *sqlc.Queries, params sqlc.GetWorkflowAutomationHealthSummaryParams, health *WorkflowAutomationHealth) error {
-	rows, err := q.ListWorkflowAutomationHealthRecentRuns(ctx, s.pool, sqlc.ListWorkflowAutomationHealthRecentRunsParams(params))
+func (s *PgStore) loadAutomationHealthRecentRuns(ctx context.Context, db sqlc.DBTX, q *sqlc.Queries, params sqlc.GetWorkflowAutomationHealthSummaryParams, health *WorkflowAutomationHealth) error {
+	rows, err := q.ListWorkflowAutomationHealthRecentRuns(ctx, db, sqlc.ListWorkflowAutomationHealthRecentRunsParams(params))
 	if err != nil {
 		return fmt.Errorf("pgstore: load automation health recent runs: %w", err)
 	}
@@ -80,8 +91,8 @@ func (s *PgStore) loadAutomationHealthRecentRuns(ctx context.Context, q *sqlc.Qu
 	return nil
 }
 
-func (s *PgStore) loadAutomationHealthFailedSteps(ctx context.Context, q *sqlc.Queries, params sqlc.GetWorkflowAutomationHealthSummaryParams, health *WorkflowAutomationHealth) error {
-	rows, err := q.ListWorkflowAutomationHealthFailedSteps(ctx, s.pool, sqlc.ListWorkflowAutomationHealthFailedStepsParams{
+func (s *PgStore) loadAutomationHealthFailedSteps(ctx context.Context, db sqlc.DBTX, q *sqlc.Queries, params sqlc.GetWorkflowAutomationHealthSummaryParams, health *WorkflowAutomationHealth) error {
+	rows, err := q.ListWorkflowAutomationHealthFailedSteps(ctx, db, sqlc.ListWorkflowAutomationHealthFailedStepsParams{
 		AppID: params.AppID, WorkflowName: params.WorkflowName, CreatedAfter: params.CreatedAfter,
 		CreatedBefore: params.CreatedBefore, MaxSteps: api.WorkflowAutomationHealthMaxFailureSteps,
 	})
@@ -94,4 +105,20 @@ func (s *PgStore) loadAutomationHealthFailedSteps(ctx context.Context, q *sqlc.Q
 		})
 	}
 	return nil
+}
+
+func automationQueueHealthFromSQLC(row sqlc.GetWorkflowAutomationQueueHealthRow) *api.AutomationQueueHealth {
+	result := emptyAutomationQueueHealth(row.ObservedAt.Time)
+	result.WaitingRunCount, result.DueRunCount, result.StaleRunCount = row.WaitingRunCount, row.DueRunCount, row.StaleRunCount
+	result.OldestDueAgeSeconds = row.OldestDueAgeSeconds
+	result.AppRunningCount = row.AppRunningCount
+	result.AppAtCapacity = row.AppRunningCount >= int64(result.AppDispatchLimit)
+	result.ReasonCounts[api.AutomationQueueReady] = row.Ready
+	result.ReasonCounts[api.AutomationQueueScheduled] = row.Scheduled
+	result.ReasonCounts[api.AutomationQueueRetryBackoff] = row.RetryBackoff
+	result.ReasonCounts[api.AutomationQueueParkedWait] = row.ParkedWait
+	result.ReasonCounts[api.AutomationQueueAppCapacity] = row.AppCapacity
+	result.ReasonCounts[api.AutomationQueueTenantCapacity] = row.TenantCapacity
+	result.ReasonCounts[api.AutomationQueueWorkflowCapacity] = row.WorkflowCapacity
+	return result
 }

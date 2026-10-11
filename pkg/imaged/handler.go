@@ -93,11 +93,12 @@ type LayerBuilder interface {
 // advances a deployment row through the build pipeline until a snapshot row
 // exists, at which point schedd picks it up on the next reaper tick.
 type Handler struct {
-	store   state.Store
-	notif   Notifier
-	oci     oci.Puller
-	builder LayerBuilder
-	log     *slog.Logger
+	validatorArtifactCheck func(context.Context, string, string) error
+	store                  state.Store
+	notif                  Notifier
+	oci                    oci.Puller
+	builder                LayerBuilder
+	log                    *slog.Logger
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -108,6 +109,7 @@ type Handler struct {
 	// hostingVerificationNow permits deterministic recovery/restart tests.
 	// Nil uses the process clock; the persisted deadline remains authoritative.
 	hostingVerificationNow func() time.Time
+	dependencyGateNow      func() time.Time
 	// githubSourceRefVerifier is queried immediately before a source-ref branch
 	// deployment switches traffic. Nil fails closed for branch-backed rows.
 	githubSourceRefVerifier GitHubSourceRefVerifier
@@ -125,29 +127,6 @@ type Handler struct {
 	// jobMaterializationLeaseOverride lets tests exercise lease renewal on a
 	// short clock. Production uses the package's conservative default lease.
 	jobMaterializationLeaseOverride time.Duration
-
-	// trustedPublishersDir is the directory holding the per-app
-	// cosign trusted-publisher PEM files (issue #472 / ADR-054).
-	// Read once at daemon startup (via cosign.TrustedPublishersFromDir)
-	// and refreshed on pg_notify('trusted_signer_changed') via
-	// HandleNotification. Empty means "verify disabled" — the
-	// apps.require_signed=false default. Wired from cmd/imaged via
-	// WithTrustedPublishersDir; env var FAAS_TRUSTED_PUBLISHERS_DIR
-	// sets it at deploy time.
-	trustedPublishersDir string
-	// trustedPublishersMu guards the cache below. Read-mostly on the
-	// hot path (every signed deploy reads once); refreshes are
-	// rare (operator onboards a publisher). A sync.RWMutex keeps
-	// the verify path lock-free for the read side.
-	//
-	// The cache is keyed by app.ID so the verify path can filter
-	// by app at call time without re-reading the dir. Empty value
-	// for an app means "no publishers for this app" (the
-	// fail-closed case). Missing key means "we haven't loaded this
-	// app yet" — first deploy pays the dir-load cost.
-	trustedPublishersMu      sync.RWMutex
-	trustedPublishersCache   map[string][]cosign.TrustedPublisher
-	trustedPublishersCacheOK bool
 
 	// guestInitPath is the absolute path to the static guest-init binary
 	// injected as /sbin/init in every per-app ext4 (spec §4.8). Wired from
@@ -318,89 +297,36 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 // WithFunctionRunnerNode22 returns the handler with the node22 runner binary
 // path set. Wired from cmd/imaged when the function runner has been compiled
 // (Makefile target `guest-runners`).
-// WithTrustedPublishersDir configures the directory holding the
-// per-app cosign trusted-publisher PEM files (issue #472 / ADR-054).
-// Wired from cmd/imaged when FAAS_TRUSTED_PUBLISHERS_DIR is set.
-// Empty dir (the default) disables signature verification — the
-// apps.require_signed=false default keeps the open-deploy posture.
-// On set, the handler immediately loads the dir into the in-memory
-// cache so the first signed deploy doesn't pay a cold-load cost.
-func (h *Handler) WithTrustedPublishersDir(dir string) *Handler {
-	h.trustedPublishersDir = dir
-	if dir != "" {
-		if err := h.refreshTrustedPublishers(); err != nil {
-			// Fail loud at startup — a misconfigured trust dir
-			// is the canonical "operator typo" footgun. The
-			// error is returned to the cmd/imaged wiring code,
-			// which logs it and continues with an empty cache
-			// (signed deploys will fail at verify time, not
-			// silently). Logged rather than fatal because the
-			// open-deploy posture (require_signed=false on
-			// every app) means the daemon stays useful.
-			h.log.Warn("trusted-publishers dir load failed at startup",
-				"dir", dir, "err", err)
-		}
-	}
-	return h
-}
+// errTrustedPublishersUnavailable wraps a failure to read an app's trusted
+// publishers. It is not a verdict on the image: the deploy fails as a
+// transient verify error and the live-image sweep skips the app instead of
+// quarantining it.
+var errTrustedPublishersUnavailable = errors.New("imaged: trusted publishers unavailable")
 
-// refreshTrustedPublishers re-reads the trust dir into the
-// in-memory cache. Triggered at startup (WithTrustedPublishersDir)
-// and on pg_notify('trusted_signer_changed'). Holds the write lock
-// for the duration of the disk read — the read is O(files) of
-// small PEM blobs (~250 bytes each), so the critical section is
-// microseconds.
-//
-// The cache is keyed by app.ID; the dir filename is
-// `<app_id>--<name>.pem`. The apid-side LISTEN goroutine is the
-// sole producer (it walks app_trusted_signers on every
-// trusted_signer_changed notify); see
-// cmd/apid/trusted_publisher_writer.go. The on-disk mirror is the
-// imaged-side read surface, the DB row is the apid-side write
-// surface. Without this refresh after a notify the verify path
-// would either fail open (stale cache) or fail closed (no entry
-// for the just-onboarded publisher).
-func (h *Handler) refreshTrustedPublishers() error {
-	if h.trustedPublishersDir == "" {
-		h.trustedPublishersMu.Lock()
-		h.trustedPublishersCache = nil
-		h.trustedPublishersCacheOK = false
-		h.trustedPublishersMu.Unlock()
-		return nil
+// trustedPublishers reads the app's trusted publishers from
+// app_trusted_signers on every verify (ADR-058 amendment, hunt #9 H9-51).
+// apid writes that table on the control plane while imaged runs on compute
+// nodes, so the on-disk mirror this replaced never reached imaged and every
+// require_signed deploy failed. A key that does not parse fails the check
+// closed rather than being skipped, so a corrupt row cannot silently shrink
+// the trust set.
+func (h *Handler) trustedPublishers(ctx context.Context, appID string) ([]cosign.TrustedPublisher, error) {
+	if h == nil || h.store == nil {
+		return nil, fmt.Errorf("%w: no store", errTrustedPublishersUnavailable)
 	}
-	byApp, err := cosign.TrustListFromDir(h.trustedPublishersDir)
+	rows, err := h.store.ListAppTrustedSignersForApp(ctx, appID)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("%w: %w", errTrustedPublishersUnavailable, err)
 	}
-	h.trustedPublishersMu.Lock()
-	h.trustedPublishersCache = byApp
-	h.trustedPublishersCacheOK = true
-	h.trustedPublishersMu.Unlock()
-	total := 0
-	for _, v := range byApp {
-		total += len(v)
+	pubs := make([]cosign.TrustedPublisher, 0, len(rows))
+	for _, row := range rows {
+		key, err := cosign.ParsePublicKeyDER(row.CosignPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("%w: signer %q: %w", errTrustedPublishersUnavailable, row.SignerName, err)
+		}
+		pubs = append(pubs, cosign.TrustedPublisher{Name: row.SignerName, PublicKey: key})
 	}
-	h.log.Info("trusted-publishers cache refreshed", "dir", h.trustedPublishersDir, "apps", len(byApp), "keys", total)
-	return nil
-}
-
-// snapshotTrustedPublishers returns the per-app trust list under
-// the read lock. Returns nil when the cache is empty or the daemon
-// is configured without a trust dir. Cheap to call on every signed
-// deploy (single read-lock + map lookup).
-func (h *Handler) snapshotTrustedPublishers(appID string) []cosign.TrustedPublisher {
-	h.trustedPublishersMu.RLock()
-	defer h.trustedPublishersMu.RUnlock()
-	if !h.trustedPublishersCacheOK || h.trustedPublishersCache == nil {
-		return nil
-	}
-	pubs, ok := h.trustedPublishersCache[appID]
-	if !ok {
-		return nil
-	}
-	out := make([]cosign.TrustedPublisher, len(pubs))
-	copy(out, pubs)
-	return out
+	return pubs, nil
 }
 
 // checkImageSignature performs a non-mutating provenance check against the
@@ -408,7 +334,10 @@ func (h *Handler) snapshotTrustedPublishers(appID string) []cosign.TrustedPublis
 // signer-revocation reconciler; callers decide whether a failure should fail
 // a deployment or quarantine an already-live app.
 func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref string) (string, error) {
-	pubs := h.snapshotTrustedPublishers(app.ID)
+	pubs, err := h.trustedPublishers(ctx, app.ID)
+	if err != nil {
+		return "", err
+	}
 	if len(pubs) == 0 {
 		// Defence-in-depth: apid's pre-flight already gated this
 		// case, but if imaged is called outside the apid pipeline
@@ -450,6 +379,8 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 	case errors.Is(err, cosign.ErrSignatureInvalid):
 		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_invalid: no trusted publisher matched")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
+	case errors.Is(err, errTrustedPublishersUnavailable):
+		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: trusted publisher list unavailable")
 	default:
 		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: registry error")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
@@ -507,7 +438,13 @@ func (h *Handler) emitSignatureAudit(ctx context.Context, kind string, app state
 		}
 		// "apid" preserves the existing events.actor attribution: apid
 		// remains the audit writer even though imaged owns the observation.
-		outboxID, enqueueErr := outbox.EnqueueAuditEvent(ctx, "apid", kind, &app.ID, data, dedupeKey)
+		// The subject is the owning account, which the audit log is
+		// queried by (hunt #9 H9-53); the app ID is in data.
+		subject := &app.AccountID
+		if app.AccountID == "" {
+			subject = nil
+		}
+		outboxID, enqueueErr := outbox.EnqueueAuditEvent(ctx, "apid", kind, subject, data, dedupeKey)
 		if enqueueErr == nil {
 			base.OutboxID = outboxID
 			payload, marshalErr := json.Marshal(base)
@@ -1546,16 +1483,10 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 		}
 		return h.MaterializeJob(ctx, p.JobID)
 	case "trusted_signer_changed":
-		// Issue #472 / ADR-054: apid emits this on every CRUD op on
-		// app_trusted_signers. We refresh the in-memory cache so a
-		// freshly-onboarded publisher takes effect on the next
-		// deploy without an imaged restart. The refresh is cheap
-		// (file IO of ~250 bytes per PEM, max 16 files per Scale
-		// plan) so we do it inline rather than punting to a
-		// goroutine.
-		if err := h.refreshTrustedPublishers(); err != nil {
-			return fmt.Errorf("refresh trusted publishers: %w", err)
-		}
+		// Issue #472 / ADR-058: apid emits this on every CRUD op on
+		// app_trusted_signers. Every verify reads the table, so there is
+		// no cache to refresh; Loop.HandleNotification revalidates live
+		// signed images after this returns.
 		return nil
 	case "audit_event":
 		// audit_event is an imaged → apid handoff. New producers
@@ -1593,7 +1524,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+	if err := h.deleteUnretainedJobArtifact(ctx, be, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1605,7 +1536,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 			if foundJobID, valid := jobArtifactJobID(key); !valid || foundJobID != jobID {
 				continue
 			}
-			if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 				return err
 			}
 		}
@@ -1636,7 +1567,7 @@ func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keep
 		if !valid || foundJobID != jobID || key == keepKey {
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s: %w", key, err))
 		}
 	}
@@ -1684,7 +1615,7 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s artifact delete: %w", jobID, err))
 		}
 	}
@@ -1906,7 +1837,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	}
 	// Runtime bases are staged on demand so a fresh bare-metal node can
 	// become ready without building every supported runtime at startup.
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 
@@ -2246,6 +2177,9 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 	ref = selectedRef
+	// Every subsequent read, including the full-rootfs fallback, uses the
+	// selected immutable child. The durable row retains the signed source.
+	dep.ImageDigest = selectedRef
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -2280,6 +2214,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
+	manifest = imageEntrypointForCmdOverride(manifest, imageCfg, dep)
 	// PR-B (issue #460 / ADR-053): layer the deployment's six persisted
 	// override columns onto the OCI-derived manifest before validation. The
 	// helper is a pure function; an error here means a jsonb column failed
@@ -2304,7 +2239,8 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
-	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
+	requiresImageHealthcheck := manifest.Healthcheck != nil && len(manifest.Healthcheck.Test) > 0 && manifest.Healthcheck.Test[0] != "NONE"
+	if dep.Kind == state.DeploymentKindImage && (requiresImageHealthcheck || (isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0)) {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
 		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
@@ -2312,13 +2248,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// first-boot readiness probe targets the wrong guest port.
 		profile, marshalErr := json.Marshal(frameworkprofile.Profile{
 			Version: frameworkprofile.Version, Framework: "unknown", Port: manifest.Port,
+			ImageHealthcheckRequired: requiresImageHealthcheck,
 		})
 		if marshalErr != nil {
 			return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
 		}
 		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, profile); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime port")
-			return fmt.Errorf("imaged: persist OCI runtime port: %w", err)
+			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime contract")
+			return fmt.Errorf("imaged: persist OCI runtime contract: %w", err)
 		}
 	}
 
@@ -2939,12 +2876,29 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
 	}
+	var pinnedRelease *state.RuntimeRelease
 	if h.runtimeBaseStagingEnabled {
+		release, pinErr := h.prepareFunctionRuntimeRelease(ctx, app, dep, runtime, appsKey)
+		if pinErr != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, pinErr, "pin function runtime")
+			return fmt.Errorf("imaged: pin function runtime: %w", pinErr)
+		}
+		pinnedRelease = release
+		if release != nil {
+			if err := h.replicateRuntimeRelease(ctx, *release); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "replicate function runtime")
+				return err
+			}
+		}
 		// Production source builds consume builderd's dependency-complete
 		// OCI export. Re-applying dep.SourcePath here would silently throw
 		// away Railpack's installed dependencies and, for Go, leave the
 		// runner looking for /app/handler while Railpack emits /app/server.
-		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifact(ctx, runtime, dep.RootfsPath)
+		recordedRef := ""
+		if pinnedRelease != nil {
+			recordedRef = pinnedRelease.SourceRef
+		}
+		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifactForRef(ctx, runtime, dep.RootfsPath, recordedRef)
 		if artifactErr != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, artifactErr, "select function build artifact")
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
@@ -2955,6 +2909,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
+		target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, runtime)
+		if err != nil {
+			return err
+		}
+		if target != nil {
+			return errors.New("runtime update requires immutable base staging")
+		}
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
@@ -2976,6 +2937,12 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
+	}
+	if pinnedRelease != nil {
+		if err := h.store.(state.RuntimeReleaseStore).BindDeploymentRuntimeRelease(ctx, dep.ID, appsKey, pinnedRelease.ID); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "bind function runtime")
+			return fmt.Errorf("imaged: bind function runtime: %w", err)
+		}
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "replicate app layer")
@@ -3311,7 +3278,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// so validate again at the sole snapshot-row writer rather than relying
 		// only on schedd's pre-capture check. Zero is retained for legacy writers
 		// that did not report mem_bytes.
+		//
+		// The guest's RAM includes explicitly allocated companion RAM, as vmmd
+		// boots it (fcvm.wakeGuestMemoryMiB); production-us rc.251 rejected
+		// every companion deployment's snapshot against the app RAM alone.
 		expectedMemBytes := int64(app.RAMMB) << 20
+		if snapshot.MemBytes > 0 && app.RAMMB > 0 {
+			sidecarMBs, err := h.store.DeploymentSidecarRAMs(ctx, snapshot.DeploymentID)
+			if err != nil {
+				return fmt.Errorf("imaged: snapshot companion RAM for %s: %w", snapshot.DeploymentID, err)
+			}
+			expectedMemBytes = int64(api.BillableRAMMBWithSidecars(app.RAMMB, sidecarMBs)-api.PerVMOverheadMB) << 20
+		}
 		if snapshot.MemBytes > 0 && app.RAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
 			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationRejectedRAM)
 			if state.IsSnapshotCaptureKey(snapshot.StorageKey) {
@@ -3461,6 +3439,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+		return gateErr
+	}
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3484,11 +3465,16 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// the deployment becomes routable. The gate is dark-launched by default;
 	// when enabled, a production breaking change is a normal deployment
 	// failure with a stable error code and an audit record.
-	if contractErr := h.checkAPIContract(ctx, dep); contractErr != nil {
+	contractCtx, contractErr := h.checkAPIContractContext(ctx, dep)
+	if contractErr != nil {
 		var gateErr *openapidiff.GateError
 		code := api.CodeCapacity
 		if errors.As(contractErr, &gateErr) {
-			code = api.CodeAPIContractBreakingChange
+			if len(gateErr.Diff.Breaks) > 0 {
+				code = api.CodeAPIContractBreakingChange
+			} else if len(gateErr.Diff.Unknowns) > 0 {
+				code = api.CodeAPIContractComparisonIncomplete
+			}
 		}
 		detail := contractErr.Error()
 		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
@@ -3503,6 +3489,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
+
+	ctx = contractCtx
 
 	// Remember the current same-scope deployment. After the candidate passes
 	// smoke, MarkDeploymentLive atomically supersedes this row; only then may
@@ -3538,8 +3526,13 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
 
+	if h.validatorArtifactCheck != nil {
+		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
+			return fmt.Errorf("imaged: validator artifact preflight: %w", err)
+		}
+	}
 	var promoteErr error
-	if !checkedRollback && dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindImage) && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3564,9 +3557,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		recovering = hold != nil
 	}
 	if recovering {
-		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview))
-	} else if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview) {
-		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
+		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
+	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
+		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
@@ -3592,6 +3585,29 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 	if promoteErr != nil {
+		var routeRemovalBlocker *state.RouteRemovalBlockedError
+		if errors.As(promoteErr, &routeRemovalBlocker) {
+			_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeRouteRemovalRequired, routeRemovalBlocker.Error())
+			if markErr != nil {
+				return fmt.Errorf("imaged: record route removal blocker: %w", markErr)
+			}
+			if h.audit != nil {
+				h.audit.Emit(ctx, "deployment.route_removal_blocked", &app.AccountID, map[string]any{"app_id": app.ID, "deployment_id": dep.ID, "detail": routeRemovalBlocker.Reason})
+			}
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+			return fmt.Errorf("imaged: route removal policy: %w", promoteErr)
+		}
+		var dependencyBlocker *state.DependencyGateError
+		if errors.As(promoteErr, &dependencyBlocker) {
+			// Refresh the durable blocker after a dependency changed during
+			// smoke, before finalizing the failed or deferred activation.
+			if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+				return gateErr
+			}
+		}
+		if stop, gateErr := h.handleProjectDependencyBlocker(ctx, dep, promoteErr); stop {
+			return gateErr
+		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
@@ -3869,13 +3885,13 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
 				return err
 			}
-		} else if err := h.buildLocalOCIAppLayer(ctx, app, dep, acct); err != nil {
+		} else if err := h.buildLocalOCIAppLayer(ctx, app, &dep, acct); err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
@@ -4923,4 +4939,28 @@ func (h *Handler) buildFullRootfsLayer(
 		"plan", string(acct.Plan),
 	)
 	return nil
+}
+
+// WithValidatorArtifactCheck installs immutable artifact readiness before live publication.
+func (h *Handler) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Handler {
+	h.validatorArtifactCheck = check
+	return h
+}
+
+func (h *Handler) deleteUnretainedJobArtifact(ctx context.Context, be storage.StorageBackend, key string) error {
+	pins, ok := h.store.(state.OperationJobImageRetentionStore)
+	if !ok {
+		if _, native := h.store.(state.JobOperationStore); native {
+			return fmt.Errorf("job operation image retention unavailable")
+		}
+		return be.Delete(ctx, key)
+	}
+	retained, err := pins.OperationJobImageRetained(ctx, key)
+	if err != nil {
+		return err
+	}
+	if retained {
+		return nil
+	}
+	return be.Delete(ctx, key)
 }

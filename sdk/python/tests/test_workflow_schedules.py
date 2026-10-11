@@ -32,3 +32,16 @@ def test_schedule_inspection_preserves_runtime_blocker():
         "unavailable_reason": "runtime_disabled",
         "schedules": [],
     }
+
+
+def test_catch_up_trigger_preserves_policy_window_and_input():
+    wire = {
+        "type": "schedule",
+        "schedule": "0 7 * * *",
+        "catch_up": "latest",
+        "catch_up_window": "2h",
+        "input": {"report": "daily"},
+    }
+    assert WorkflowTriggerSpec.from_dict(wire).to_dict() == wire
+    with pytest.raises(TypeError):
+        WorkflowTriggerSpec.from_dict({**wire, "catch_up": "all"})

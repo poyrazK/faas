@@ -13,6 +13,8 @@ import (
 // its customer operation so abandoned uploads and account deletion can be GC'd.
 type OperationResultBlob struct {
 	ID, OperationID, AccountID, ExecutionID string
+	WorkflowRunID, WorkflowStep             string
+	JobRunID                                string
 	Generation, Attempt                     int
 	ReportID, Fingerprint, StorageKey       string
 	SizeBytes                               int64

@@ -63,6 +63,10 @@ func TestCustomerPlatformStarterCredentialRecovery(t *testing.T) {
 	runNodeStarterTests(t, "customer-platform", "test/client.test.js")
 }
 
+func TestDataAPIStarterMigrationConfiguration(t *testing.T) {
+	runNodeStarterTests(t, "data-api-starter", "test/migration.test.mjs")
+}
+
 func TestSecretReloadNodeStarterOptsIntoSIGHUP(t *testing.T) {
 	dir, cleanup, err := MaterializeForTest("secret-reload-node")
 	if err != nil {
@@ -267,4 +271,9 @@ func TestS3UploaderStarterKeepsRawBodyForEveryContentType(t *testing.T) {
 func TestPostgresStarterMigrationCredentialBoundary(t *testing.T) {
 	runNodeStarterTests(t, "rest-api-postgres", "test/migration.test.js")
 	runNodeStarterTests(t, "customer-platform", "test/migration.test.js")
+}
+
+func TestPostgresStarterConnectionRecovery(t *testing.T) {
+	runNodeStarterTests(t, "rest-api-postgres", "test/database.test.js")
+	runNodeStarterTests(t, "rest-api-postgres", "test/app.test.js")
 }

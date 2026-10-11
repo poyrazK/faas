@@ -470,8 +470,8 @@ func TestCmdBillingRetry_NoOpenCharge(t *testing.T) {
 
 	stderr, restore := captureStderr(t)
 	defer restore()
-	if code := cmdBillingRetry(nil); code != 1 {
-		t.Errorf("cmdBillingRetry no-open-charge = %d, want 1", code)
+	if code := cmdBillingRetry(nil); code != 4 {
+		t.Errorf("cmdBillingRetry no-open-charge = %d, want 4", code)
 	}
 	if !strings.Contains(stderr.String(), "good standing") {
 		t.Errorf("stderr missing friendly hint; got: %q", stderr.String())
@@ -535,8 +535,8 @@ func TestCmdBillingCancel_AlreadyCancelledFriendlyHint(t *testing.T) {
 
 	stderr, restore := captureStderr(t)
 	defer restore()
-	if code := cmdBillingCancel([]string{"--yes"}); code != 1 {
-		t.Errorf("cmdBillingCancel already-cancelled = %d, want 1", code)
+	if code := cmdBillingCancel([]string{"--yes"}); code != 5 {
+		t.Errorf("cmdBillingCancel already-cancelled = %d, want 5", code)
 	}
 	if !strings.Contains(stderr.String(), "No active subscription") {
 		t.Errorf("stderr missing friendly hint; got: %q", stderr.String())

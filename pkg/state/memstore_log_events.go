@@ -89,3 +89,45 @@ func (m *MemStore) ListLogEvents(_ context.Context, filter LogEventFilter) ([]Lo
 	}
 	return rows, hasMore, nil
 }
+
+// ListAccountTraceLogEvents mirrors the PostgreSQL account-wide trace read.
+func (m *MemStore) ListAccountTraceLogEvents(_ context.Context, filter AccountTraceLogFilter) ([]LogEvent, bool, error) {
+	normalized, err := normalizeAccountTraceLogFilter(filter)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(normalized.AppIDs) == 0 {
+		return nil, false, nil
+	}
+	apps := make(map[string]bool, len(normalized.AppIDs))
+	for _, appID := range normalized.AppIDs {
+		apps[appID] = true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rows := make([]LogEvent, 0, normalized.Limit+1)
+	for _, event := range m.logEvents {
+		if event.AccountID != normalized.AccountID || !apps[event.AppID] || event.TraceID != normalized.TraceID {
+			continue
+		}
+		if normalized.Source != "" && event.Source != normalized.Source {
+			continue
+		}
+		if event.OccurredAt.Before(normalized.Since) || !event.OccurredAt.Before(normalized.Until) {
+			continue
+		}
+		rows = append(rows, cloneLogEvent(event))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].OccurredAt.Equal(rows[j].OccurredAt) {
+			return rows[i].OccurredAt.After(rows[j].OccurredAt)
+		}
+		return rows[i].ID > rows[j].ID
+	})
+	hasMore := len(rows) > normalized.Limit
+	if hasMore {
+		rows = rows[:normalized.Limit]
+	}
+	return rows, hasMore, nil
+}

@@ -57,6 +57,13 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, s
 // the server session alive across CLI process restarts; the archive itself is
 // never copied to the local state directory.
 func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
+	phase := "upload"
+	defer func() {
+		if err != nil {
+			err = &deployPhaseError{stage: phase, err: err}
+		}
+	}()
+
 	f, err := openCustomerFile(path)
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
@@ -118,9 +125,12 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	}
 
 	for restart := 0; restart <= resumableUploadMaxRestarts; restart++ {
+		phase = "upload"
 		var session api.ResumableUploadSession
 		statePersisted := false
 		if restart == 0 && stateFound {
+			// A saved session may already have committed a deployment.
+			phase = "submission"
 			remote, discoverErr := c.GetUploadSession(ctx, state.UploadID)
 			if discoverErr == nil {
 				switch strings.ToLower(remote.Status) {
@@ -128,9 +138,10 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 					if remote.DeploymentID == nil || *remote.DeploymentID == "" {
 						return api.DeploymentResponse{}, "", true, errors.New("upload session is committed without a deployment id")
 					}
+					phase = "deployment"
 					dep, err := c.GetDeployment(ctx, *remote.DeploymentID)
 					if err != nil {
-						return api.DeploymentResponse{}, "", true, fmt.Errorf("recover committed upload deployment: %w", err)
+						return api.DeploymentResponse{ID: *remote.DeploymentID}, "", true, fmt.Errorf("recover committed upload deployment: %w", err)
 					}
 					removeResumableUploadState(statePath)
 					return dep, archiveSHA256, true, nil
@@ -160,6 +171,7 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			}
 		}
 
+		phase = "upload"
 		if session.UploadID == "" {
 			if restart > 0 {
 				if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -229,13 +241,14 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			return api.DeploymentResponse{}, "", true, err
 		}
 
+		phase = "submission"
 		dep, err := commitUploadWithRetry(ctx, c, session.UploadID)
 		if err == nil {
 			removeResumableUploadState(statePath)
 			return dep, archiveSHA256, true, nil
 		}
 		if ctx.Err() != nil {
-			return api.DeploymentResponse{}, "", true, ctx.Err()
+			return dep, "", true, ctx.Err()
 		}
 		if isUploadSessionRestart(err) && restart < resumableUploadMaxRestarts {
 			cancelUploadBestEffort(ctx, c, session.UploadID)
@@ -243,7 +256,7 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			stateFound = false
 			continue
 		}
-		return api.DeploymentResponse{}, "", true, err
+		return dep, "", true, err
 	}
 	return api.DeploymentResponse{}, "", true, errors.New("resumable upload exhausted its restart budget")
 }
@@ -378,7 +391,11 @@ func commitUploadWithRetry(ctx context.Context, c *Client, uploadID string) (api
 			if deploymentID == "" {
 				return api.DeploymentResponse{}, fmt.Errorf("upload committed but response did not include a deployment id: %w", err)
 			}
-			return c.GetDeployment(ctx, deploymentID)
+			recovered, recoverErr := c.GetDeployment(ctx, deploymentID)
+			if recoverErr != nil {
+				return api.DeploymentResponse{ID: deploymentID}, recoverErr
+			}
+			return recovered, nil
 		}
 		if isUploadSessionRestart(err) || !retryableUploadError(err) || attempt == resumableUploadMaxAttempts-1 {
 			return api.DeploymentResponse{}, err

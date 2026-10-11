@@ -28,7 +28,7 @@ class PlatformTenantReconciliationApplyResponse:
     plan_hash: str
     applied_at: datetime.datetime
     applied: bool
-    """True when the confirmed plan completed"""
+    """True when the confirmed plan completed, including an already-converged no-op."""
     changes: list[PlatformTenantReconciliationPlanChange]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

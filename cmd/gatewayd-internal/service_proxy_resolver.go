@@ -99,3 +99,38 @@ func serviceTargetFromApp(app state.App, isPreview bool) gateway.ServiceTarget {
 		WebSocketEnabled: app.WebSocketEnabled,
 	}
 }
+
+func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.ServiceProxyEnvironmentBindingResolver {
+	return func(ctx context.Context, callerAppID, callerDeploymentID, service string) (gateway.ServiceProxyEnvironmentBinding, bool, bool, error) {
+		bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore)
+		if !ok {
+			return gateway.ServiceProxyEnvironmentBinding{}, false, false, nil
+		}
+		route, managed, found, err := bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, callerAppID, callerDeploymentID, service)
+		if err != nil {
+			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) {
+				return gateway.ServiceProxyEnvironmentBinding{}, managed, false, gateway.ErrServiceProxyBindingDenied
+			}
+			return gateway.ServiceProxyEnvironmentBinding{}, managed, false, fmt.Errorf("resolve GitOps service binding %q: %w", service, err)
+		}
+		if !managed || !found {
+			return gateway.ServiceProxyEnvironmentBinding{}, managed, found, nil
+		}
+		target, err := store.AppByID(ctx, route.TargetAppID)
+		if err != nil {
+			return gateway.ServiceProxyEnvironmentBinding{}, true, false, fmt.Errorf("load GitOps service target: %w", err)
+		}
+		if target.ID != route.TargetAppID || target.Status == state.AppDeleted || target.AccountID != route.AccountID {
+			return gateway.ServiceProxyEnvironmentBinding{}, true, false, gateway.ErrServiceProxyBindingDenied
+		}
+		return gateway.ServiceProxyEnvironmentBinding{
+			Target:             serviceTargetFromApp(target, false),
+			TargetDeploymentID: route.TargetDeploymentID,
+			ReleaseSetID:       route.ReleaseSetID,
+			AccountID:          route.AccountID,
+			RequireHTTPS:       route.RequireHTTPS,
+			CallScope:          route.CallScope,
+			Reliability:        route.Reliability,
+		}, true, true, nil
+	}
+}

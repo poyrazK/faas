@@ -46,6 +46,10 @@ vmlinux-*
 /gregale
 /gregale-mfa-qr.png
 
+# JavaScript dependencies and generated Data API client output
+node_modules/
+sdk/data/dist/
+
 # Manifest-derived Ansible inventory (generated; never hand-edit)
 /deploy/ansible/.generated/
 .cache/ansible/

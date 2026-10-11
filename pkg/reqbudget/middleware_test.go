@@ -309,6 +309,10 @@ func TestIsSyncInvokeRequest(t *testing.T) {
 		want   bool
 	}{
 		{http.MethodPost, "/v1/apps/demo/invoke", true},
+		{http.MethodPost, "/v1/apps/demo/entities/invoke", true},
+		{http.MethodGet, "/v1/apps/demo/entities/invoke", false},
+		{http.MethodPost, "/v1/apps//entities/invoke", false},
+		{http.MethodPost, "/v1/apps/demo/entities/invoke/extra", false},
 		{http.MethodPost, "/v1/apps/demo/invoke/async", false},
 		{http.MethodGet, "/v1/apps/demo/invoke", false},
 		{http.MethodPost, "/v1/apps//invoke", false},

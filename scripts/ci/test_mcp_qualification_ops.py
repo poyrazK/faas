@@ -255,7 +255,7 @@ class TaskRestartQualificationTest(unittest.TestCase):
             "import json, os, sys\n"
             "assert os.environ['MCP_TASKS_TEST_DATABASE_URL'] == 'postgres://user:secret@db.invalid/mcp'\n"
             "assert not any('secret' in value for value in sys.argv)\n"
-            f"print({json.dumps(json.dumps(receipt))!r})\n"
+            f"print({json.dumps(receipt)!r})\n"
         )
         fake_node.chmod(0o700)
         env = os.environ.copy()

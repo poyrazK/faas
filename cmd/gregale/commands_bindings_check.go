@@ -16,6 +16,8 @@ import (
 
 func cmdBindingsCheck(args []string) int {
 	fs := newFlagSet("bindings check", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose a live deployment and readiness options")
+	app := fs.String("app", "", "app slug")
 	scope := fs.String("scope", "", "require the selected deployment to use this scope (default its current scope)")
 	deployment := fs.String("deployment", "", "exact live deployment id or vN revision whose evidence must pass")
 	maxAge := fs.Duration("max-verification-age", bindingcheck.DefaultMaxVerificationAge, "maximum age of passed probe evidence (default 10m)")
@@ -24,11 +26,42 @@ func cmdBindingsCheck(args []string) int {
 	wait := fs.Bool("wait", false, "poll read-only inventory while probes, refreshes or application acknowledgements are pending")
 	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time to wait for binding preflight")
 	pollInterval := fs.Duration("poll-interval", bindingCheckPollIntervalDefault, "inventory polling interval with --wait")
-	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "wait")
-	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) || *maxAge <= 0 || *timeout <= 0 || *pollInterval <= 0 || !validBindingDeploymentFlag(*deployment) {
+	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "wait", "interactive")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	positionals, mergeErr := mergeAppFlag(positionals, *app, 1)
+	if mergeErr != nil || fs.NArg() != 0 {
+		return printErr("Invalid app arguments", fmt.Errorf("provide at most one app"))
+	}
+	if *interactive {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" && f.Name != "timeout" && f.Name != "poll-interval" {
+				invalid = true
+			}
+		})
+		if invalid || len(positionals) > 1 || *timeout <= 0 || *pollInterval <= 0 {
+			return printErr("Invalid interactive check flags", fmt.Errorf("use --interactive with optional app, --timeout and --poll-interval; choose readiness options in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use bindings check APP with explicit flags for scripts"))
+		}
+		explicit := ""
+		if len(positionals) == 1 {
+			explicit = positionals[0]
+		}
+		slug, err := resolveReadAppTarget(explicit)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdBindingsCheckInteractive(slug, *timeout, *pollInterval)
+	}
+	if len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) || *maxAge <= 0 || *timeout <= 0 || *pollInterval <= 0 || !validBindingDeploymentFlag(*deployment) {
 		PrintUsage(osStderr, "usage: gregale bindings check <app> [--deployment ID|vN] [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--wait --timeout DURATION --poll-interval DURATION] [--json]", "bindings")
 		return 1
 	}
+
 	if *scope != "" {
 		if problem := api.ValidateScope(*scope); problem != nil {
 			return printErr("Invalid binding scope", problem)

@@ -26,8 +26,20 @@ expect_needed 'migrations/example_test.go'
 expect_needed 'pkg/db/pgtest/pgtest.go'
 expect_needed 'pkg/state/pgstore.go'
 expect_needed 'go.mod'
+expect_needed '.github/workflows/ci.yml'
+expect_needed 'scripts/ci/e2eshard/main.go'
+expect_needed 'scripts/ci/migration-full-suite-needed.sh'
+expect_needed 'scripts/ci/migration-full-suite-needed_test.sh'
 expect_needed $'docs/operations.md\npkg/api/types.go\n.github/workflows/cd-controlplane.yml'
 expect_needed './pkg/reqbudget/budget.go'
+
+# The workflow uses pipefail: an early relevant path must still require the
+# suite when the remaining diff exceeds the pipe buffer.
+large_diff=$'migrations/example.sql\n'
+for ((i=0; i<20000; i++)); do
+  large_diff+="docs/unrelated-${i}.md"$'\n'
+done
+expect_needed "$large_diff"
 
 expect_not_needed ''
 expect_not_needed '.github/workflows/cd-controlplane.yml'

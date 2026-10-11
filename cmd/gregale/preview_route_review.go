@@ -240,6 +240,15 @@ func previewSourceReviewRoute(row previewReportRoute, requirementStatus string) 
 		item.Reasons = append(item.Reasons, "contract_compatibility_break")
 		item.NextActions = append(item.NextActions, "Review the removed route or response-schema compatibility break before release.")
 	}
+	if len(row.Unknowns) > 0 {
+		if item.Priority != "blocker" {
+			item.Priority = "needs_evidence"
+		}
+		if !containsString(item.Reasons, "response_schema_comparison_unknown") {
+			item.Reasons = append(item.Reasons, "response_schema_comparison_unknown")
+		}
+		item.NextActions = append(item.NextActions, "Review the unsupported response-schema comparison before relying on compatibility evidence.")
+	}
 	switch requirementStatus {
 	case "violated":
 		item.Priority = "blocker"

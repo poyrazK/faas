@@ -11,7 +11,7 @@
 //   - adding an optional property → exit 0 (NOT breaking; INFO row).
 //   - changing type → exit 2 (BREAKING), prose carries
 //     type_change kind.
-//   - --json envelope: NDJSON, one record per break.
+//   - --json envelope: NDJSON, one record per break or unknown.
 //
 // All tests use t.TempDir so the YAML fixtures don't leak across
 // runs (a leak would make later tests pass on the wrong fixture).
@@ -178,6 +178,46 @@ func TestCmdOpenapiDiff_TypeChangeExitsTwo(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "type_change") {
 		t.Errorf("type-change docs: stdout missing type_change kind\n--- stdout ---\n%s", stdout.String())
+	}
+}
+
+func TestCmdOpenapiDiff_ChangedUnionExitsThree(t *testing.T) {
+	base := writeYAML(t, `openapi: 3.1.0
+info: { title: test, version: "1" }
+paths:
+  /items:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: string }
+                  - { type: integer }
+`)
+	prop := writeYAML(t, `openapi: 3.1.0
+info: { title: test, version: "1" }
+paths:
+  /items:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: string }
+                  - { type: boolean }
+`)
+	stdout, restore := swapStdout(t)
+	defer restore()
+
+	if code := cmdOpenapiDiff([]string{base, prop}); code != 3 {
+		t.Fatalf("changed union docs: code = %d, want 3\n--- stdout ---\n%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "UNKNOWN") || !strings.Contains(stdout.String(), "unsupported_union_change") {
+		t.Fatalf("changed union output = %q, want an explicit unknown finding", stdout.String())
 	}
 }
 

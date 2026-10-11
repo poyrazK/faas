@@ -34,7 +34,7 @@ func (m *MemStore) operationPinsLocked(op Operation) {
 }
 
 func (m *MemStore) deploymentRevisionRetainedLocked(id string) bool {
-	return m.revisionPins[id].After(time.Now()) || m.operationRetainsDeploymentLocked(id)
+	return m.revisionPins[id].After(time.Now()) || m.durableWorkRetainsDeploymentLocked(id)
 }
 
 func (m *MemStore) operationRetainedDefinitionLocked(op Operation, now time.Time) (OperationDefinition, bool) {

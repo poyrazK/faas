@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"time"
 
 	"github.com/jackc/pgerrcode"
@@ -82,6 +83,21 @@ func (s *PgStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountID
 // message in one transaction. The channel head row is the cross-replica
 // serialization point; rolled-back attempts cannot leave sequence holes.
 func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string) (ManagedRealtimeChannelMessage, error) {
+	return s.AppendManagedRealtimeChannelMetadata(ctx, endpointID, channel, data, binary, idempotencyKey, nil)
+}
+func (s *PgStore) AppendManagedRealtimeChannelMetadata(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, metadata map[string]string) (ManagedRealtimeChannelMessage, error) {
+	return s.AppendManagedRealtimeChannelConditional(ctx, endpointID, channel, data, binary, idempotencyKey, metadata, nil)
+}
+func (s *PgStore) AppendManagedRealtimeChannelConditional(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, metadata map[string]string, expected *int64) (ManagedRealtimeChannelMessage, error) {
+	return s.appendManagedRealtimeChannel(ctx, endpointID, channel, data, binary, idempotencyKey, metadata, expected, nil, nil)
+}
+func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, metadata map[string]string, expected *int64, expiration *ManagedRealtimeEntityExpiration, schedule *ManagedRealtimeSchedule) (ManagedRealtimeChannelMessage, error) {
+	if expected != nil && *expected < 0 {
+		return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryInvalid
+	}
+	if api.ValidateRealtimeMetadata(metadata) != nil {
+		return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryInvalid
+	}
 	if err := validateManagedRealtimeHistoryAppend(endpointID, channel, data, idempotencyKey); err != nil {
 		return ManagedRealtimeChannelMessage{}, err
 	}
@@ -177,12 +193,12 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 	if idempotencyKey != "" {
 		var existing ManagedRealtimeChannelMessage
 		err := tx.QueryRow(ctx, `
-			select sequence, data, is_binary, created_at
+			select sequence, data, is_binary, created_at, target_message_id, version, message_event, deleted,metadata
 			from managed_realtime_channel_messages
-			where endpoint_id = $1 and channel = $2 and idempotency_key = $3
-		`, endpointID, channel, idempotencyKey).Scan(&existing.Sequence, &existing.Data, &existing.Binary, &existing.CreatedAt)
+			where endpoint_id = $1 and channel = $2 and target_message_id = $3 order by sequence desc limit 1
+		`, endpointID, channel, idempotencyKey).Scan(&existing.Sequence, &existing.Data, &existing.Binary, &existing.CreatedAt, &existing.TargetMessageID, &existing.Version, &existing.MessageEvent, &existing.Deleted, &existing.Metadata)
 		if err == nil {
-			if existing.Binary != binary || !bytes.Equal(existing.Data, data) {
+			if !equalRealtimeMetadata(existing.Metadata, metadata) || existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) {
 				return ManagedRealtimeChannelMessage{}, ErrConflict
 			}
 			existing.EndpointID, existing.Channel, existing.IdempotencyKey = endpointID, channel, idempotencyKey
@@ -195,7 +211,70 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: read realtime publish key: %w", err)
 		}
 	}
+	if err := checkExpectedRealtimeSequence(expected, next-1); err != nil {
+		return ManagedRealtimeChannelMessage{}, err
+	}
+	if expiration != nil {
+		row, err := readReducerPG(ctx, tx, endpointID, channel)
+		if err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if row == nil || !reducerExpirationMatches(*row, *expiration, time.Now().UTC()) {
+			return ManagedRealtimeChannelMessage{}, ErrConflict
+		}
+	}
+	if schedule != nil {
+		row, err := readRealtimeSchedulePG(ctx, tx, schedule.EndpointID, schedule.Channel, schedule.ID, true)
+		if err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if !scheduleMatches(row, *schedule, time.Now().UTC()) {
+			return ManagedRealtimeChannelMessage{}, ErrConflict
+		}
+		schedule = &row
+		reducer, err := readReducerPG(ctx, tx, endpointID, channel)
+		if err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if err = checkScheduleConditions(row, reducer); err != nil {
+			var failure *ManagedRealtimeScheduleConditionFailure
+			if row.OnConditionFailure == "skip" && errors.As(err, &failure) {
+				updated, eventRow := finishRealtimeScheduleOccurrence(row, 0, time.Now().UTC(), failure.Error())
+				if err = saveSkippedRealtimeSchedulePG(ctx, tx, updated); err != nil {
+					return ManagedRealtimeChannelMessage{}, err
+				}
+				if err = recordRealtimeScheduleHistoryPG(ctx, tx, eventRow, "skipped"); err != nil {
+					return ManagedRealtimeChannelMessage{}, err
+				}
+				if !exists {
+					if _, err = tx.Exec(ctx, `delete from managed_realtime_channel_heads where endpoint_id=$1 and channel=$2 and next_sequence=1`, endpointID, channel); err != nil {
+						return ManagedRealtimeChannelMessage{}, err
+					}
+				}
+				if err = tx.Commit(ctx); err != nil {
+					return ManagedRealtimeChannelMessage{}, err
+				}
+				return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeScheduleSkipped
+			}
+			return ManagedRealtimeChannelMessage{}, err
+		}
+	}
+	if schedule != nil {
+		var maxBytes int64
+		if err := tx.QueryRow(ctx, `select max_message_bytes from managed_realtime_endpoints where id=$1`, endpointID).Scan(&maxBytes); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if maxBytes > 0 && int64(len(data)) > maxBytes {
+			return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryInvalid
+		}
+	}
+	if expiration == nil {
+		if err := validateEventSchemaPG(ctx, tx, endpointID, channel, data, binary, metadata); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+	}
 	message := ManagedRealtimeChannelMessage{
+		Metadata: cloneRealtimeMetadata(metadata), TargetMessageID: idempotencyKey, Version: 1, MessageEvent: "created",
 		EndpointID: endpointID, Channel: channel, Sequence: next,
 		Data: append([]byte(nil), data...), Binary: binary, IdempotencyKey: idempotencyKey,
 	}
@@ -205,10 +284,13 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 	}
 	if err := tx.QueryRow(ctx, `
 		insert into managed_realtime_channel_messages
-			(endpoint_id, channel, sequence, data, is_binary, idempotency_key, created_at)
-		values ($1, $2, $3, $4, $5, $6, clock_timestamp()) returning created_at
-	`, endpointID, channel, next, data, binary, key).Scan(&message.CreatedAt); err != nil {
+			(endpoint_id, channel, sequence, data, is_binary, idempotency_key, created_at,metadata)
+		values ($1, $2, $3, $4, $5, $6, clock_timestamp(),$7) returning created_at
+	`, endpointID, channel, next, data, binary, key, metadataJSON(metadata)).Scan(&message.CreatedAt); err != nil {
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: insert realtime channel message: %w", err)
+	}
+	if err := applyReducerPG(ctx, tx, endpointID, channel, []ManagedRealtimeChannelMessage{message}); err != nil {
+		return ManagedRealtimeChannelMessage{}, err
 	}
 	newOldest := oldest
 	if floor := next - ManagedRealtimeHistoryMaxMessages + 1; floor > newOldest {
@@ -229,6 +311,17 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: trim realtime channel history: %w", err)
 		}
 	}
+	if schedule != nil {
+		row, eventRow := completeRealtimeSchedule(*schedule, message.Sequence, message.CreatedAt)
+		_, err := tx.Exec(ctx, `update managed_realtime_schedules set status=$4,sequence=$5,attempts=$6,cycle_attempts=$7,next_attempt_at=null,last_attempt_at=$8,version=$9,updated_at=$8,deliver_at=$10,occurrence=$11,completed_occurrences=$12 where endpoint_id=$1 and channel=$2 and schedule_id=$3`, row.EndpointID, row.Channel, row.ID, row.Status, row.Sequence, row.Attempts, row.CycleAttempts, row.LastAttemptAt, row.Version, row.DeliverAt, row.Occurrence, row.CompletedOccurrences)
+		if err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if err = recordRealtimeScheduleHistoryPG(ctx, tx, eventRow, "published"); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: commit realtime history append: %w", err)
 	}
@@ -292,7 +385,7 @@ func (s *PgStore) ReadManagedRealtimeChannelHistory(ctx context.Context, endpoin
 		return history, nil
 	}
 	rows, err := tx.Query(ctx, `
-		select sequence, data, is_binary, idempotency_key, created_at
+		select sequence, data, is_binary, idempotency_key, created_at, target_message_id, version, message_event, deleted,metadata
 		from managed_realtime_channel_messages
 		where endpoint_id = $1 and channel = $2 and sequence > $3 and sequence >= $4
 		order by sequence asc limit $5
@@ -303,7 +396,7 @@ func (s *PgStore) ReadManagedRealtimeChannelHistory(ctx context.Context, endpoin
 	for rows.Next() {
 		message := ManagedRealtimeChannelMessage{EndpointID: endpointID, Channel: channel}
 		var key *string
-		if err := rows.Scan(&message.Sequence, &message.Data, &message.Binary, &key, &message.CreatedAt); err != nil {
+		if err := rows.Scan(&message.Sequence, &message.Data, &message.Binary, &key, &message.CreatedAt, &message.TargetMessageID, &message.Version, &message.MessageEvent, &message.Deleted, &message.Metadata); err != nil {
 			rows.Close()
 			return ManagedRealtimeChannelHistory{}, fmt.Errorf("state: scan realtime channel message: %w", err)
 		}

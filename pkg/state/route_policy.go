@@ -21,11 +21,12 @@ var (
 )
 
 type RoutePolicySnapshot struct {
-	SavedRequirements *api.SavedRouteRequirements
-	Account           Account
-	App               App
-	Rules             []api.EdgeRuleResponse
-	Contract          *RoutePolicyContract
+	LifecycleSuccessors map[string]RouteLifecycleSuccessor
+	SavedRequirements   *api.SavedRouteRequirements
+	Account             Account
+	App                 App
+	Rules               []api.EdgeRuleResponse
+	Contract            *RoutePolicyContract
 }
 
 // Captured bytes are loaded through the same snapshot/transaction as policy.

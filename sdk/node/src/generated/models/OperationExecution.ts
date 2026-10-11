@@ -3,11 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Retained execution generation and ledger attempt count without private invocation data.
+ * Retained execution generation. Exactly one invocation_id or workflow_run_id is present. Workflow attempts counts retained HTTP step attempts at that generation.
  */
 export type OperationExecution = {
   generation: number;
-  invocation_id: string;
+  invocation_id?: string;
+  job_run_id?: string;
+  workflow_run_id?: string;
   state: string;
   attempts: number;
   created_at: string;

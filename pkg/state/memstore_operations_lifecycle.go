@@ -21,7 +21,7 @@ func (m *MemStore) operationForInvocationLocked(invocationID string) (Operation,
 }
 
 func (m *MemStore) operationClaimLocked(inv Invocation) (Invocation, error) {
-	op, _, exists := m.operationForInvocationLocked(inv.ID)
+	op, def, exists := m.operationForInvocationLocked(inv.ID)
 	if !exists {
 		return inv, nil
 	}
@@ -30,7 +30,7 @@ func (m *MemStore) operationClaimLocked(inv Invocation) (Invocation, error) {
 		return Invocation{}, err
 	}
 	m.operationSaveLocked(op, event)
-	return operationExecutionHeaders(inv, op, capability), nil
+	return operationExecutionHeaders(inv, op, def, capability), nil
 }
 
 func (m *MemStore) operationSaveLocked(op Operation, event api.OperationEvent) {

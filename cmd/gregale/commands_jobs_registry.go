@@ -62,6 +62,9 @@ func cmdJobsRegistryList(args []string) int {
 }
 
 func cmdJobsRegistrySet(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRegistrySetInteractive()
+	}
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale jobs registry set <job> --registry <h> --user <u> (--password-stdin|--password <p>)", "jobs")
 		return 1
@@ -129,6 +132,9 @@ func cmdJobsRegistrySet(args []string) int {
 }
 
 func cmdJobsRegistryRm(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
+		return cmdJobsRegistryRmInteractive()
+	}
 	if len(args) != 3 || args[1] != "--registry" || !jobSlugPattern.MatchString(args[0]) || args[2] == "" {
 		PrintUsage(os.Stderr, "usage: gregale jobs registry rm <job> --registry <h>", "jobs")
 		return 1

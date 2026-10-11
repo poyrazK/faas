@@ -1,0 +1,679 @@
+// Handlers for the headless source-ref deploy path (issue #739,
+// DEPLOY-PROV-4 / ADR-092). The customer-facing entry point is
+//
+//	POST /v1/apps/{slug}/deployments/source-ref
+//
+// accepting JSON {repo, ref, format}. Server resolves the durable
+// install row, asks the githubd gRPC bridge to mint/cache the
+// installation token and fetch the upstream tarball,
+// spools it under FAAS_SPOOL_ROOT, validates its tarball shape,
+// creates the deployment row (Kind=DeploymentKindGitHub), and
+// emits the `deploy.source_ref` audit row.
+//
+// Auth chain (cmd/apid/server.go):
+//
+//	authLimited → requireMFA → requireScope(ScopesDeployWriteSurface) → idempotent → handleSourceRefDeploy
+//
+// Why a separate file: the handler reads SourceRefStreamer + IDOR
+// + audit + cap helper wiring in one place, mirrors the canonical
+// `createDeployment` shape (cmd/apid/handlers.go:309) but without
+// the multipart / image / override / signature gates. Manifest
+// extensions are resolved after the archive is available and pass
+// through the same sidecar validator as local source deploys.
+//
+// Tokens: the install token is minted and scoped inside githubd's
+// streaming call. It is NOT persisted to the deployment row, NOT
+// logged, and NOT returned in the wire response. The raw value
+// never crosses the file system or the audit sink.
+package apidserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// handleSourceRefDeploy is the source-ref variant of
+// createDeployment (cmd/apid/handlers.go:309). Mirrors the
+// gate-chain shape (`loadAppAndPreflight` + IDOR + decode +
+// validate + enqueue + audit + maybeFlipMFA) but swaps
+// multipart-tarball for githubd-streamed-tarball and pins a
+// distinct audit kind (`deploy.source_ref`).
+//
+// Extracted helpers in this file stay ≤ 50 lines each per the
+// CLAUDE.md handler cap:
+//
+//   - resolveInstallToken     — durable install lookup, 404 on missing row
+//   - streamSourceTarball     — gRPC streaming + cap-bound + spool
+//   - auditSourceRefDeploy    — emits deploy.source_ref {…} + log
+//   - isValidRef              — ref-shape guard before the gRPC fetch
+func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
+	if !ok {
+		return
+	}
+	if p := s.enforceSecurityPostureGate(r.Context(), app); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	var req api.SourceRefDeployRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad request", err.Error()))
+		return
+	}
+	req.Repo = strings.TrimSpace(req.Repo)
+	req.Ref = strings.TrimSpace(req.Ref)
+	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
+	if req.Repo == "" || req.Ref == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Validation failed", "repo and ref are required"))
+		return
+	}
+	if !isValidRef(req.Ref) {
+		api.WriteProblem(w, api.ErrInvalidRef(req.Ref))
+		return
+	}
+	if req.SourceBranch != "" {
+		if strings.HasPrefix(req.SourceBranch, "refs/tags/") {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid source branch", "source_branch must name a GitHub branch"))
+			return
+		}
+		req.SourceBranch = strings.TrimPrefix(req.SourceBranch, "refs/heads/")
+		if !isValidRef(req.SourceBranch) || !isCanonicalCommitSHA(req.Ref) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid source branch", "source_branch requires a valid branch name and a full 40-character commit SHA in ref"))
+			return
+		}
+	}
+	// Forward-compat: only "tarball" is wired in PR-A; any other
+	// value is a 400 so future readers don't silently drive a
+	// half-implemented format.
+	if req.Format != "" && req.Format != fieldNameTarball {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
+		return
+	}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
+	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
+	if rolloutProblem != nil {
+		api.WriteProblem(w, rolloutProblem)
+		return
+	}
+
+	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	branchRef, branchProblem := s.resolveSourceRefBranch(r.Context(), acct.ID, installID, req.Repo, req.Ref)
+	if branchProblem != nil {
+		api.WriteProblem(w, branchProblem)
+		return
+	}
+
+	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+	stream, p := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	defer func() { _ = stream.Body.Close() }()
+
+	spoolPath, spoolBytes, p := validateAndSpool(stream.Body, limits)
+	if p != nil {
+		// A gRPC stream can fail after delivering some bytes. In that
+		// case validateAndSpool only sees the pipe's read error; close
+		// the stream first so the terminal *api.Problem is available
+		// and the caller gets 503/source_ref_unavailable rather than a
+		// misleading 400/bad-source response.
+		_ = stream.Body.Close()
+		if stream.Stats != nil && stream.Stats.Err != nil {
+			if problem := api.AsProblem(stream.Stats.Err); problem != nil {
+				api.WriteProblem(w, problem)
+			} else {
+				api.WriteProblem(w, api.ErrSourceRefUnavailable("source stream ended with an error"))
+			}
+			return
+		}
+		api.WriteProblem(w, p)
+		return
+	}
+	// Close immediately after the reader reaches EOF so the gRPC client
+	// publishes terminal stream metadata (including the resolved SHA and
+	// any transport error) before the handler makes acceptance decisions.
+	if closeErr := stream.Body.Close(); closeErr != nil {
+		if problem := api.AsProblem(closeErr); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrSourceRefUnavailable("source stream ended with an error"))
+		}
+		return
+	}
+	// Truncated means the codeload archive exceeded
+	// SourceTarballMaxMB mid-stream; map that to RFC 7807 413.
+	if stream.Stats != nil && stream.Stats.Truncated {
+		api.WriteProblem(w, api.ErrSourceTooLarge(limits, spoolBytes))
+		return
+	}
+	if stream.Stats != nil && stream.Stats.Err != nil {
+		if problem := api.AsProblem(stream.Stats.Err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrSourceRefUnavailable("source stream ended with an error"))
+		}
+		return
+	}
+	resolvedSHA := ""
+	if stream.Stats != nil {
+		resolvedSHA = stream.Stats.ResolvedCommitSHA
+	}
+	if resolvedSHA == "" && isCanonicalCommitSHA(req.Ref) {
+		resolvedSHA = req.Ref
+	}
+	if !isCanonicalCommitSHA(resolvedSHA) {
+		api.WriteProblem(w, api.ErrSourceRefUnavailable("githubd did not return an immutable commit SHA"))
+		return
+	}
+	sourceAccepted := false
+	defer func() {
+		if !sourceAccepted {
+			_ = os.Remove(spoolPath)
+		}
+	}()
+	if req.SourceBranch != "" {
+		if p := s.verifyPinnedSourceBranch(r.Context(), acct.ID, installID, req.Repo, req.SourceBranch, resolvedSHA); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		branchRef = req.SourceBranch
+	}
+	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
+	var workflowDefs []api.WorkflowSpec
+	if manifest != nil {
+		workflowDefs = manifest.Workflows
+		overrides, applied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+		if workloadProblem != nil {
+			api.WriteProblem(w, workloadProblem)
+			return
+		}
+		if applied {
+			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, overrides, limits, acct.Plan)
+			if rolloutProblem != nil {
+				api.WriteProblem(w, rolloutProblem)
+				return
+			}
+		}
+	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
+	}
+	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	manifestCommitted := false
+	defer func(ctx context.Context) {
+		if manifestCommitted || !sourceRefManifestNeedsRollback(stagedManifest) {
+			return
+		}
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
+			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
+		}
+	}(r.Context())
+	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !req.NoTriggers)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+
+	// Issue #977 / ADR-116: validate annotation fields carried on
+	// the JSON body. The source-ref path uses the JSON wire (vs the
+	// tarball path's multipart), so the values arrive on req.Reason /
+	// req.Tag / req.DeployedBy / req.PRNumber directly. Same DB CHECK
+	// mirrors as the tarball path; nil/zero values pass through to NULL
+	// on the row.
+	ann := annotationFromRequest(req)
+	if prob := validateAnnotationForm(ann); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
+
+	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
+	var sourceInstallationID int64
+	if branchRef != "" {
+		sourceInstallationID = installID
+	}
+	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+		OperationDefinitions:      sourceOperationSpecs(manifest),
+		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
+		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
+		AppID:                     app.ID,
+		Kind:                      state.DeploymentKindGitHub,
+		SourcePath:                spoolPath,
+		SourceBytes:               spoolBytes,
+		SourceRoot:                app.RootDir,
+		SourceURL:                 fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
+		CommitSHA:                 resolvedSHA,
+		GitHubSourceRef:           branchRef,
+		GitHubInstallationID:      sourceInstallationID,
+		Scope:                     rollout.Scope,
+		FunctionRuntime:           functionRuntimeForApp(app),
+		LogSpool:                  spoolRoot(),
+		Log:                       s.log,
+		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
+		// attribution. The source-ref path is the dashboard +
+		// CLI flow that streams a GH repo through the apid
+		// pipeline (cmd/apid/handlers_source_ref.go), NOT the
+		// githubd_bridge push-triggered path (which stamps
+		// "github" + pusher at the bridge itself — see
+		// cmd/apid/githubd_bridge.go::EnqueueBuild). This
+		// handler runs over HTTP, so the via classifier routes
+		// through cmd/apid.deploy_actor.routeKindForRequest.
+		ActorUserID: acct.ID,
+		ActorVia:    routeKindForRequest(r),
+		ActorFromIP: middleware.ClientIP(r),
+		// Issue #977 / ADR-116: annotation surface forwarded onto
+		// the deployment row from the request's annotationForm.
+		// nil/zero values are dropped by EnqueueParams handling.
+		Reason:                 ann.Reason,
+		Tag:                    ann.Tag,
+		DeployedBy:             ann.DeployedBy,
+		PRNumber:               ann.PRNumber,
+		TrafficPercent:         rollout.TrafficPercent,
+		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+		RollbackOn5xx:          rollout.RollbackOn5xx,
+		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
+		CanaryPreset:           rollout.CanaryPreset,
+		CanaryStep:             rollout.CanaryStep,
+		CanaryTotalSteps:       rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
+		CanaryStages:           rollout.CanaryStages,
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
+		Workflows:              marshalWorkflowDefinitions(workflowDefs),
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
+	})
+	if err != nil {
+		s.writeDeploymentCreateError(w, err)
+		return
+	}
+	manifestCommitted = true
+	sourceAccepted = true
+	s.auditSourceRefManifestScaling(r.Context(), acct, app, stagedManifest)
+	s.auditSourceRefDeploy(r, acct, app, res, prev, req, resolvedSHA, installID, ann)
+	// Reload the deployment row so the response carries the
+	// canonical wire shape (mirrors createDeployment's
+	// LatestDeployment re-read).
+	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+func (s *server) verifyPinnedSourceBranch(ctx context.Context, accountID string, installationID int64, repo, branch, commitSHA string) *api.Problem {
+	branchHeads, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return api.ErrSourceRefUnavailable("GitHub branch verification is not configured")
+	}
+	head, found, err := branchHeads.GetBranchHead(ctx, accountID, installationID, repo, branch)
+	if err != nil {
+		return api.ErrSourceRefUnavailable("could not verify the source branch after fetching its commit")
+	}
+	if !found {
+		return api.ErrSourceRefStale(fmt.Sprintf("GitHub branch %q no longer exists", branch))
+	}
+	if !isCanonicalCommitSHA(head) {
+		return api.ErrSourceRefUnavailable("GitHub returned an invalid branch head")
+	}
+	if !strings.EqualFold(head, commitSHA) {
+		return api.ErrSourceRefStale(fmt.Sprintf("GitHub branch %q no longer points to source commit %s", branch, commitSHA))
+	}
+	return nil
+}
+
+// resolveSourceRefBranch records mutable intent only when GitHub confirms the
+// requested ref currently names a branch. Tags and commit IDs keep their
+// existing pinned-to-SHA behavior. A lookup failure is surfaced instead of
+// silently accepting an unverifiable mutable ref.
+func (s *server) resolveSourceRefBranch(ctx context.Context, accountID string, installationID int64, repo, ref string) (string, *api.Problem) {
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	if strings.HasPrefix(ref, "refs/tags/") || isSourceRefSHA(ref) {
+		return "", nil
+	}
+	branchHeads, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return "", api.ErrSourceRefUnavailable("GitHub branch verification is not configured")
+	}
+	head, found, err := branchHeads.GetBranchHead(ctx, accountID, installationID, repo, branch)
+	if err != nil {
+		return "", api.ErrSourceRefUnavailable("could not verify whether the requested GitHub ref is a branch")
+	}
+	if !found {
+		return "", nil
+	}
+	if !isCanonicalCommitSHA(head) {
+		return "", api.ErrSourceRefUnavailable("GitHub returned an invalid branch head")
+	}
+	return branch, nil
+}
+
+func isSourceRefSHA(ref string) bool {
+	if len(ref) < 7 || len(ref) > 40 {
+		return false
+	}
+	for _, r := range ref {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (s *server) auditSourceRefManifestScaling(ctx context.Context, acct state.Account, app state.App, staged sourceRefManifestStaged) {
+	if !staged.scalingChanged {
+		return
+	}
+	s.audit.Emit(ctx, "app.updated", &acct.ID, map[string]any{
+		"app_id": app.ID,
+		"slug":   app.Slug,
+		"old": map[string]any{
+			"scaling_policy": statePolicyToDTO(staged.previousScalingPolicy),
+		},
+		"new": map[string]any{
+			"scaling_policy": statePolicyToDTO(staged.appliedScalingPolicy),
+		},
+		"source": "deploy.source_ref",
+	})
+}
+
+// resolveInstallToken prefers an exact app/repository binding. For an unbound
+// repository it checks every account-owned installation's repository catalog
+// and accepts exactly one match. This avoids the old recency fallback, which
+// could send an organization repository through an unrelated installation.
+func (s *server) resolveInstallToken(ctx context.Context, acct state.Account, app state.App, repoFullName string) (int64, *api.Problem) {
+	binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID)
+	if err == nil && canonicalGitHubRepo(binding.RepoFullName) == canonicalGitHubRepo(repoFullName) {
+		return s.requireOwnedGitHubInstallation(ctx, acct.ID, binding.InstallID)
+	}
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrCapacity("could not load repository binding")
+	}
+	return s.resolveRepositoryInstallation(ctx, acct.ID, repoFullName)
+}
+
+func (s *server) resolveRepositoryInstallation(ctx context.Context, accountID, repoFullName string) (int64, *api.Problem) {
+	installs, err := s.store.ListGitHubInstallationsForAccount(ctx, accountID)
+	if err != nil {
+		return 0, api.ErrCapacity("could not list GitHub installations")
+	}
+	if len(installs) == 0 {
+		return 0, api.ErrGitHubInstallNotFound()
+	}
+
+	wanted := canonicalGitHubRepo(repoFullName)
+	matches := make([]int64, 0, 1)
+	for _, inst := range installs {
+		repos, listErr := s.githubd.ListInstallableRepos(ctx, accountID, inst.InstallationID)
+		if listErr != nil {
+			if problem := api.AsProblem(listErr); problem != nil {
+				return 0, problem
+			}
+			return 0, api.ErrSourceRefUnavailable("could not resolve the repository's GitHub installation")
+		}
+		for _, repo := range repos {
+			if canonicalGitHubRepo(repo.FullName) == wanted {
+				matches = append(matches, inst.InstallationID)
+				break
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return 0, api.NewProblem(http.StatusForbidden, api.CodeGitHubRepoNotAccessible,
+			"Repository is not accessible", "none of this account's GitHub App installations can access the repository")
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, api.NewProblem(http.StatusConflict, api.CodeGitHubInstallAmbiguous,
+			"GitHub installation is ambiguous", "more than one connected installation can access the repository; bind the app to select one")
+	}
+}
+
+func (s *server) requireOwnedGitHubInstallation(ctx context.Context, accountID string, installationID int64) (int64, *api.Problem) {
+	inst, err := s.store.GitHubInstallForAccountInstallation(ctx, accountID, installationID)
+	if errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrGitHubInstallNotFound()
+	}
+	if err != nil {
+		return 0, api.ErrCapacity("could not load GitHub installation")
+	}
+	if inst.InstallationID <= 0 {
+		return 0, api.ErrGitHubInstallNotFound()
+	}
+	return inst.InstallationID, nil
+}
+
+// streamSourceTarball opens a server-streaming gRPC to githubd.
+// Returns the *StreamSourceRefResult so the caller can read
+// truncated + bytes_streamed via Stats on Close.
+//
+// The githubd-side cap is passed through as
+// maxArchiveBytes=SourceTarballMaxMB*MiB so the wire shape
+// fails closed mid-stream rather than OOM'ing the box.
+func (s *server) streamSourceTarball(ctx context.Context, acct state.Account, installID int64, repo, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, *api.Problem) {
+	res, err := s.githubd.StreamSourceRef(ctx, acct.ID, installID, repo, ref, maxArchiveBytes)
+	if err != nil {
+		if p := api.AsProblem(err); p != nil {
+			return nil, p
+		}
+		return nil, api.ErrSourceRefUnavailable("stream source tarball failed")
+	}
+	if res == nil || res.Body == nil {
+		return nil, api.ErrSourceRefUnavailable("githubd returned empty stream")
+	}
+	return res, nil
+}
+
+// auditSourceRefDeploy emits the `deploy.source_ref` audit row
+// with the canonical {repo, ref, source_sha, install_id, ...}
+// payload. log line mirrors createDeployment's
+// "deployment created" — slug, deployment id, source SHA. The
+// raw install token is NEVER in the payload (the token stays
+// scoped to the streaming call only).
+//
+// Issue #606 / SAFE-RELEASES-E.1: per-call actor attribution.
+// The deployment row was just stamped with the four actor
+// columns by apidsource.Enqueue — we re-read it here so the
+// audit row carries the resolved "<via>:<id>" actor on
+// events.actor AND the actor_* payload keys (via mergeActorAudit).
+// Issue #977 / ADR-116: the audit data{} map gains 4 keys
+// (reason / tag / deployed_by / pr_number) when present via
+// mergeAnnotationAudit (see handlers_source_tarball.go). nil/zero
+// values are omitted so pre-feature rows stay byte-identical at
+// the JSON layer.
+func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app state.App, res apidsource.EnqueueResult, prev state.Deployment, req api.SourceRefDeployRequest, resolvedSHA string, installID int64, ann annotationForm) {
+	ctx := r.Context()
+
+	s.log.Info("source-ref deployment enqueued",
+		"deployment", res.DeploymentID,
+		"app", app.ID,
+		"repo", logsanitize.Field(req.Repo),
+		"ref", logsanitize.Field(req.Ref),
+		"source_sha", logsanitize.Field(resolvedSHA),
+		"deployed_by", logsanitize.Field(ann.DeployedBy),
+		slog.Int("pr_number", ann.PRNumber),
+		"tag", logsanitize.Field(ann.Tag),
+	)
+	// Re-read the just-written deployment row to pick up the
+	// actor columns (apidsource.Enqueue stamped them in its tx).
+	d, dErr := s.store.DeploymentByID(ctx, res.DeploymentID)
+	if dErr != nil {
+		// MEDIUM review #4: when the read-back fails we must
+		// NOT fall through with a zero Deployment — that would
+		// make resolvedActorString emit ':unknown' (via empty,
+		// '<via>:unknown' branch) and bypass EmitAs's actor==''
+		// fallback. The audit row would land with corrupt
+		// attribution exactly when forensics needs it most.
+		// Early-return without an audit row: the durable
+		// deployment row is already committed (with the
+		// structured actor columns stamped at INSERT time), so
+		// the SOC 2 / GDPR audit-trail question still has an
+		// answer via deployments.deployed_by_user_id /
+		// deployed_via / deployed_from_ip; the events-table
+		// row just doesn't get stamped this time. Operator
+		// can grep by deployment_id and recover attribution
+		// from the row directly.
+		s.log.Warn("auditSourceRefDeploy: skip audit row, read deployment for actor attribution failed",
+			"deployment", res.DeploymentID, "err", dErr)
+		return
+	}
+	resolvedActor := resolvedActorString(d.DeployedVia, d.DeployedByUserID, d.PusherLogin)
+	supersedes := prev.ID
+	if state.IsServiceRollout(d) {
+		// The predecessor remains live until readiness promotion; do not
+		// claim this enqueue replaced it in the audit timeline.
+		supersedes = ""
+	}
+	data := map[string]any{
+		"app_id":        app.ID,
+		"deployment_id": res.DeploymentID,
+		"build_id":      res.BuildID,
+		"repo":          req.Repo,
+		"ref":           req.Ref,
+		"source_sha":    resolvedSHA,
+		"install_id":    installID,
+		"supersedes":    supersedes,
+	}
+	// Issue #977 / ADR-116: mirror the annotation surface into
+	// the deploy.source_ref audit row. mergeAnnotationAudit is
+	// "omit when zero" so pre-feature rows stay byte-identical
+	// at the JSON layer.
+	mergeAnnotationAudit(data, ann)
+	s.audit.EmitAs(ctx, resolvedActor, "deploy.source_ref", &acct.ID, mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.recordDeploymentActivity(ctx, r, acct, app, d,
+		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes, "source": "source_ref"})
+}
+
+// isValidRef is the cheap pre-flight ref-shape guard. Anything
+// rejected here never reaches the githubd bridge. Branch / tag /
+// short-SHA / 40-char SHA all clear the shape predicate; githubd
+// resolves non-SHA refs and the handler accepts only its canonical
+// 40-character result.
+//
+// Mirrors the predicate githubd uses for codeload paths
+// (cmd/githubd/source_ref_streamer.go::isValidSourceRefRef).
+// We intentionally do NOT call that internal helper — apid ↔
+// githubd only communicate over the gRPC seam (CLAUDE.md component
+// ownership).
+func isValidRef(ref string) bool {
+	if len(ref) < 1 || len(ref) > 200 || ref == "@" || strings.HasPrefix(ref, "/") ||
+		strings.HasSuffix(ref, "/") || strings.Contains(ref, "//") ||
+		strings.Contains(ref, "..") || strings.Contains(ref, "@{") ||
+		strings.HasSuffix(ref, ".") {
+		return false
+	}
+	if len(ref) < 7 && isLowerHexRef(ref) {
+		return false
+	}
+	if strings.ContainsRune(ref, 92) || strings.ContainsRune(ref, 0) ||
+		strings.ContainsRune(ref, 96) || strings.ContainsRune(ref, 63) ||
+		strings.ContainsRune(ref, 37) || strings.ContainsRune(ref, 91) ||
+		strings.ContainsRune(ref, 93) || strings.ContainsRune(ref, 123) ||
+		strings.ContainsRune(ref, 125) || strings.ContainsRune(ref, 60) ||
+		strings.ContainsRune(ref, 62) || strings.ContainsRune(ref, 34) ||
+		strings.ContainsRune(ref, 39) || strings.ContainsRune(ref, '*') {
+		return false
+	}
+	for _, r := range ref {
+		if r <= 0x20 || r == 0x7f || r == 58 || r == 94 || r == 126 {
+			return false
+		}
+	}
+	for _, part := range strings.Split(ref, "/") {
+		if part == "" || strings.HasPrefix(part, ".") ||
+			strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+func isLowerHexRef(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func isCanonicalCommitSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}

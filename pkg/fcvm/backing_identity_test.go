@@ -220,3 +220,30 @@ func TestClassifyBackingRefusalAsSnapshotStale(t *testing.T) {
 		}
 	}
 }
+
+// A live-migration capture is restored on the destination through the same
+// backing check as a park; it must carry the identity too (H5-12).
+func TestMigrationCaptureRestoresOnTheDestination(t *testing.T) {
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
+	layer := filepath.Join(f.dir, "layer.ext4")
+	if _, err := f.m.Wake(ctx, WakeRequest{
+		Instance: "source", BaseKey: f.base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby,
+	}); err != nil {
+		t.Fatalf("Wake(source): %v", err)
+	}
+	memKey := "snap/d1/warm/captures/m1/v2/mem"
+	if _, err := f.m.SnapshotKeepAlive(ctx, "source", SnapshotSpec{StorageKey: memKey, VMStateStorageKey: "snap/d1/warm/captures/m1/v2/vmstate"}); err != nil {
+		t.Fatalf("SnapshotKeepAlive: %v", err)
+	}
+	inst, err := f.m.Wake(ctx, WakeRequest{
+		Instance: "destination", BaseKey: f.base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby,
+		Snapshot: &Snapshot{FCVersion: testFCVersion, StorageKey: memKey, VMStatePath: "/snap/state"},
+	})
+	if err != nil {
+		t.Fatalf("Wake(destination): %v", err)
+	}
+	if inst.Method != WakeRestore {
+		t.Fatalf("destination method = %s, want restore from the migration capture", inst.Method)
+	}
+}

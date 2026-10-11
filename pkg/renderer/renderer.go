@@ -477,6 +477,8 @@ func daemonConfigFor(m *manifest.Manifest, registryName string) *manifest.Daemon
 		return m.Daemons.Builderd
 	case "imaged":
 		return m.Daemons.Imaged
+	case "profiled":
+		return m.Daemons.Profiled
 	case "realtimed":
 		return m.Daemons.Realtimed
 	}

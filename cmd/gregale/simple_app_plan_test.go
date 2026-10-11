@@ -115,6 +115,8 @@ func TestDeployPlanUsesCommittedProfileUnlessWorktreeSelected(t *testing.T) {
 	withCwd(t, repo)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 
 	runPlan := func(args ...string) string {
 		t.Helper()

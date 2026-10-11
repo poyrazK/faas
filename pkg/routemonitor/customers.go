@@ -122,6 +122,7 @@ func ProjectReport(r api.RouteMonitorReport, details bool) api.RouteMonitorRepor
 	return r
 }
 func ProjectIncident(i api.RouteMonitorIncident, details bool) api.RouteMonitorIncident {
+	EnsureIncidentTimeline(&i)
 	i.OpeningReport = ProjectReport(i.OpeningReport, details)
 	if i.RecoveryReport != nil {
 		r := ProjectReport(*i.RecoveryReport, details)
@@ -130,6 +131,11 @@ func ProjectIncident(i api.RouteMonitorIncident, details bool) api.RouteMonitorI
 	if !details {
 		for j := range i.Evidence {
 			i.Evidence[j].CustomerID = ""
+		}
+		for j := range i.Escalations {
+			for k := range i.Escalations[j].Evidence {
+				i.Escalations[j].Evidence[k].CustomerID = ""
+			}
 		}
 	}
 	return i

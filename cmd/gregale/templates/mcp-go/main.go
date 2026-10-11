@@ -28,8 +28,9 @@ const (
 )
 
 var (
-	summaryStyles   = []string{"brief", "technical", "executive"}
-	sampleRecordIDs = []string{"example-1", "example-2", "example-3"}
+	summaryStyles      = []string{"brief", "technical", "executive"}
+	sampleRecordIDs    = []string{"example-1", "example-2", "example-3"}
+	sampleRecordOwners = map[string]string{"example-1": "demo-caller-a", "example-2": "demo-caller-b", "example-3": "demo-caller-a"}
 )
 
 type rpcRequest struct {
@@ -140,7 +141,19 @@ func main() {
 }
 
 func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w http.ResponseWriter, r *http.Request) {
-	if len(r.Header.Values("Origin")) > 0 {
+	origins := r.Header.Values("Origin")
+	allowed := len(origins) == 0
+	if len(origins) == 1 {
+		for _, origin := range config.AllowedOrigins {
+			if origin == origins[0] {
+				allowed = true
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				break
+			}
+		}
+	}
+	if !allowed {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin_not_allowed"})
 		return
 	}
@@ -153,7 +166,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			status = "degraded"
 		}
 		writeJSON(w, statusCode, map[string]any{
-			"status": status, "instance_id": strings.TrimSpace(os.Getenv("FAAS_INSTANCE_ID")),
+			"ok": ready, "status": status, "instance_id": strings.TrimSpace(os.Getenv("FAAS_INSTANCE_ID")),
 			"catalog_revision": revision, "catalog_sha256": digest,
 		})
 		return
@@ -691,7 +704,8 @@ func readResource(w http.ResponseWriter, r *http.Request, id, rawParams json.Raw
 		return
 	}
 	recordID, ok := customerRecordID(params.URI)
-	if !ok {
+	owner, known := sampleRecordOwners[recordID]
+	if !ok || !known || (auth.mode != "open" && (identity == nil || identity.subject != owner)) {
 		writeRPCError(w, id, -32002, "resource not found", http.StatusNotFound)
 		return
 	}
@@ -904,7 +918,11 @@ func complete(w http.ResponseWriter, id, rawParams json.RawMessage, auth *authen
 			writeRPCError(w, id, -32602, "unknown completion reference or argument", http.StatusBadRequest)
 			return
 		}
-		candidates = sampleRecordIDs
+		for _, recordID := range sampleRecordIDs {
+			if auth.mode == "open" || identity != nil && identity.subject == sampleRecordOwners[recordID] {
+				candidates = append(candidates, recordID)
+			}
+		}
 	default:
 		writeRPCError(w, id, -32602, "unknown completion reference", http.StatusBadRequest)
 		return

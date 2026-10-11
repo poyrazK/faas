@@ -21,6 +21,7 @@ import (
 // verbatim. There is no "retry on status" field because only a transport
 // failure may arm a replay (ADR-201 §1).
 type EdgeRuleRetryResolved struct {
+	EdgeRuleCondition
 	ID                 string
 	AccountID          string
 	AppID              string
@@ -59,6 +60,7 @@ func (r *EdgeRuleRetryResolved) Policy() RetryPolicy {
 // Every field is already defaulted and clamped post-compile, so a zero here
 // means the customer's stored value, not "unset".
 type EdgeRuleCircuitBreakerResolved struct {
+	EdgeRuleCondition
 	ID               string
 	AccountID        string
 	AppID            string

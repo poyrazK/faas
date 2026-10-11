@@ -37,6 +37,9 @@ func testCustomerOperationManagedContractIsolation(t *testing.T, s operationLife
 	if api.OperationIDHeader == api.ExclusiveOperationIDHeader || headers[api.OperationIDHeader] != op.ID || headers[api.ExclusiveOperationIDHeader] != "" {
 		t.Fatalf("customer claim crossed the managed operation identity boundary: %+v", headers)
 	}
+	if headers[api.OperationTransactionVersionHeader] != "" || headers[api.OperationResultMaxBytesHeader] != "" {
+		t.Fatal("ordinary HTTP silently opted into transaction receipts")
+	}
 	// A managed operation identity cannot substitute for the customer operation
 	// proof, even when the invocation and attempt capability are otherwise valid.
 	delete(headers, api.OperationIDHeader)

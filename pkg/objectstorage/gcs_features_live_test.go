@@ -65,9 +65,16 @@ func TestGCSLiveFeatureQualification(t *testing.T) {
 		if err != nil || v.Status != "Enabled" {
 			t.Fatal(v, err)
 		}
+		// GCS asks callers to wait at least 30 seconds after enabling versioning.
+		select {
+		case <-time.After(31 * time.Second):
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	})
 	key, receipt := "qualification/目录 /+%.txt", uuid.NewString()
 	var first UploadResult
+	var second UploadResult
 	t.Run("tracked put and current proof", func(t *testing.T) {
 		first, err = p.WriteTrackedObject(ctx, bucket, key, receipt, strings.NewReader("payload"), 7, ObjectMetadata{ContentType: "text/plain", Metadata: map[string]string{"owner": "qualification"}, Tags: map[string]string{"team": "storage"}})
 		if err != nil || first.ProviderVersionID == "" {
@@ -113,7 +120,8 @@ func TestGCSLiveFeatureQualification(t *testing.T) {
 		}
 	})
 	t.Run("retained receipt and version read", func(t *testing.T) {
-		if _, err := p.WriteTrackedObject(ctx, bucket, key, uuid.NewString(), strings.NewReader("new"), 3, ObjectMetadata{}); err != nil {
+		second, err = p.WriteTrackedObject(ctx, bucket, key, uuid.NewString(), strings.NewReader("new"), 3, ObjectMetadata{})
+		if err != nil || second.ProviderVersionID == "" {
 			t.Fatal(err)
 		}
 		page, err := p.ConfirmTrackedObjectHistory(ctx, bucket, ObjectHistoryProofRequest{Key: key, Receipt: receipt, SizeBytes: 7, BeforeRequest: func(context.Context) error { return nil }})
@@ -136,13 +144,23 @@ func TestGCSLiveFeatureQualification(t *testing.T) {
 		}
 	})
 	t.Run("interoperable version listing", func(t *testing.T) {
-		page, err := p.ListObjectVersionPage(ctx, bucket, ObjectVersionListRequest{Prefix: "qualification/", Limit: 1})
-		if err != nil || len(page.Items) != 1 || page.NextKeyMarker == "" {
+		page, err := p.ListObjectVersionPage(ctx, bucket, ObjectVersionListRequest{Prefix: key, Limit: 1})
+		if err != nil || len(page.Items) != 1 || page.Items[0].Key != key || page.NextKeyMarker != key {
 			t.Fatal(page, err)
 		}
-		next, err := p.ListObjectVersionPage(ctx, bucket, ObjectVersionListRequest{Prefix: "qualification/", KeyMarker: page.NextKeyMarker, ProviderVersionMarker: page.NextProviderVersionMarker, Limit: 100})
-		if err != nil || len(next.Items) < 1 {
+		next, err := p.ListObjectVersionPage(ctx, bucket, ObjectVersionListRequest{Prefix: key, KeyMarker: page.NextKeyMarker, ProviderVersionMarker: page.NextProviderVersionMarker, Limit: 100})
+		if err != nil || len(next.Items) != 1 || next.Items[0].Key != key || next.NextKeyMarker != "" {
 			t.Fatal(next, err)
+		}
+		versions := map[string]bool{page.Items[0].ProviderVersionID: page.Items[0].IsLatest, next.Items[0].ProviderVersionID: next.Items[0].IsLatest}
+		oldLatest, oldFound := versions[first.ProviderVersionID]
+		newLatest, newFound := versions[second.ProviderVersionID]
+		if len(versions) != 2 || !oldFound || oldLatest || !newFound || !newLatest {
+			t.Fatal("incorrect native version identities", versions)
+		}
+		prefixes, err := p.ListObjectVersionPage(ctx, bucket, ObjectVersionListRequest{Prefix: "qualification/目录", Delimiter: "/", Limit: 100})
+		if err != nil || len(prefixes.CommonPrefixes) != 1 || prefixes.CommonPrefixes[0] != "qualification/目录 /" {
+			t.Fatal(prefixes, err)
 		}
 	})
 	t.Run("multipart copied range and generation receipt", func(t *testing.T) {

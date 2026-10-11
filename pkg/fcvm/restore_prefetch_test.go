@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,72 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
+
+// adr: 225 — every recorded byte receives a bounded hint, including sparse
+// ranges and partial tails, even if a successful hint warms no cache pages.
+func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
+	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}, {20<<20 + 17, adviseChunk + 19}}
+	var hints []fileRange
+	if err := adviseFileRanges(ranges, func(off, n int64) error {
+		hints = append(hints, fileRange{off, n})
+		return nil // A successful advisory call need not populate the cache.
+	}); err != nil {
+		t.Fatal(err)
+	}
+	index := 0
+	for _, r := range ranges {
+		end := r.Off + r.Len
+		covered := r.Off
+		for covered < end {
+			if index == len(hints) {
+				t.Fatalf("range %+v stops at %d; recorded bytes have no hint", r, covered)
+			}
+			hint := hints[index]
+			if hint.Off != covered || hint.Len <= 0 || hint.Len > adviseChunk || hint.Off+hint.Len > end {
+				t.Fatalf("hint %+v does not continue bounded coverage at %d within %+v", hint, covered, r)
+			}
+			covered += hint.Len
+			index++
+		}
+	}
+	if index != len(hints) {
+		t.Fatalf("%d unexpected hints outside recorded ranges", len(hints)-index)
+	}
+	if tail := hints[len(hints)-1]; tail != (fileRange{20<<20 + 17 + adviseChunk, 19}) {
+		t.Fatalf("partial tail = %+v", tail)
+	}
+}
+
+// adr: 225 — stop on the first failed hint and preserve its error and range.
+func TestAdviseFileRangesStopsOnFailure(t *testing.T) {
+	failure := errors.New("advisory submission failed")
+	var hints []fileRange
+	err := adviseFileRanges([]fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}, func(off, n int64) error {
+		hints = append(hints, fileRange{off, n})
+		if len(hints) == 2 {
+			return failure
+		}
+		return nil
+	})
+	if !errors.Is(err, failure) || err.Error() != fmt.Sprintf("fadvise %d+%d: %s", adviseChunk, adviseChunk, failure) {
+		t.Fatalf("error = %v; want failed chunk and original error", err)
+	}
+	if len(hints) != 2 {
+		t.Fatalf("submitted %d hints after failure, want 2", len(hints))
+	}
+}
+
+// adr: 225 — an empty working set never submits an advisory I/O request.
+func TestAdviseFileRangesEmpty(t *testing.T) {
+	for _, ranges := range [][]fileRange{nil, {}, {{0, 0}, {4096, 0}}} {
+		if err := adviseFileRanges(ranges, func(int64, int64) error {
+			t.Fatal("empty ranges submitted a hint")
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 // adr: 224 — every capture of one deployment shares a prefetch family, so a
 // new capture's first wake reuses the previous capture's working set.

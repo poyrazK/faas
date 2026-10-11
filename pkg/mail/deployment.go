@@ -84,6 +84,6 @@ func DeploymentFailedBody(f DeploymentFailure) (subject, body string) {
 	if dashboard := safe(f.DashboardURL); dashboard != "" {
 		fmt.Fprintf(&b, "Open the deployment in the dashboard:\n%s\n\n", dashboard)
 	}
-	b.WriteString("— onebox faas\n")
+	b.WriteString("— Gregale\n")
 	return subject, b.String()
 }

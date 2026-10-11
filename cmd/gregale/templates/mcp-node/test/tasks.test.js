@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../app.js';
 import { createPostgresMcpTaskStore } from '../task-store.js';
-import { createMcpTaskRuntime, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from '../tasks.js';
+import { createMcpTaskRuntime, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers, RetryableMcpTaskError, validateMcpTaskRetryPolicy } from '../tasks.js';
 
 function owner(authInfo, authMode) {
   if (authMode === 'open') return 'public';
@@ -301,9 +301,13 @@ test('task failures do not expose exception text in persisted results', async ()
 test('PostgreSQL store encrypts task arguments and scopes records to the app and caller', async () => {
   const calls = [];
   const rows = new Map();
+  const fairness = new Map();
+  let claimOrder = 0;
   const pool = { async query(sql, params) {
     calls.push({ sql, params });
+    if (sql.includes("AS trusted")) return { rows: [{ trusted: true }] };
     if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => row.owner_hash.equals(params[1])).length }] };
+    if (sql.includes('INSERT INTO gregale_mcp_task_crypto_keys')) return { rows: [{ key_fingerprint: params[2] }] };
     if (sql.includes('INSERT INTO gregale_mcp_tasks')) {
       const row = {
         task_id: params[1], tool_name: params[3], handler_version: params[4], status: 'queued',
@@ -314,15 +318,25 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
         lease_token: null, lease_expires_at: null, cancel_requested_at: null,
       };
       rows.set(row.task_id, row);
+      const ownerHash = row.owner_hash.toString('hex');
+      if (!fairness.has(ownerHash)) fairness.set(ownerHash, { owner_hash: row.owner_hash, last_claimed_order: 0 });
       return { rows: [row] };
     }
-    if (sql.includes('WITH candidate AS')) {
-      const row = [...rows.values()].find(task => task.status === 'queued');
+    if (sql.includes('WITH chosen_owner AS MATERIALIZED')) {
+      const readyOwners = new Map([...rows.values()]
+        .filter(task => task.status === 'queued')
+        .map(task => [task.owner_hash.toString('hex'), task.owner_hash]));
+      const cursor = [...readyOwners.entries()]
+        .map(([key, owner_hash]) => ({ ...fairness.get(key), owner_hash }))
+        .sort((left, right) => left.last_claimed_order - right.last_claimed_order || Buffer.compare(left.owner_hash, right.owner_hash))[0];
+      if (!cursor) return { rows: [] };
+      const row = [...rows.values()].find(task => task.status === 'queued' && task.owner_hash.equals(cursor.owner_hash));
       if (!row) return { rows: [] };
       row.status = 'running';
       row.attempt_count++;
       row.lease_token = params[2];
       row.lease_expires_at = new Date('2026-10-06T10:01:00Z');
+      cursor.last_claimed_order = ++claimOrder;
       return { rows: [row] };
     }
     if (sql.includes("SET status = CASE WHEN cancel_requested_at IS NULL THEN 'completed'")) {
@@ -338,7 +352,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
     return { rows: [] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'app-123', ownerKey: 'x'.repeat(48), ttlMs: 3_600_000 });
-  await store.initialize();
+  await store.migrate();
   const authInfo = { resource: new URL('https://mcp.example/mcp'), extra: { subject: 'alice' }, clientId: 'client-a' };
   const record = await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo, authMode: 'external-oauth' });
   const insert = calls.find(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'));
@@ -349,10 +363,6 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   assert.ok(!insert.params[5].includes(Buffer.from('private report input')));
   assert.equal(record.task_id, insert.params[1]);
   const aliceOwnerHash = Buffer.from(insert.params[2]);
-  await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo: { ...authInfo, extra: { subject: 'bob' } }, authMode: 'external-oauth' });
-  const bobInsert = calls.filter(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'))[1];
-  assert.ok(!aliceOwnerHash.equals(bobInsert.params[2]), 'different authenticated principals have different owner hashes');
-
   const claim = await store.claim(3, 30_000);
   assert.equal(claim.task_id, record.task_id);
   assert.deepEqual(claim.arguments, { secret: 'private report input' }, 'task arguments decrypt only after a worker claims the row');
@@ -361,6 +371,9 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   const completion = calls.find(call => call.sql.includes("SET status = CASE WHEN cancel_requested_at IS NULL THEN 'completed'"));
   assert.ok(Buffer.isBuffer(completion.params[3]), 'task results are encrypted before storage');
   assert.ok(!completion.params[3].includes(Buffer.from('private report output')));
+  await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo: { ...authInfo, extra: { subject: 'bob' } }, authMode: 'external-oauth' });
+  const bobInsert = calls.filter(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'))[1];
+  assert.ok(!aliceOwnerHash.equals(bobInsert.params[2]), 'different authenticated principals have different owner hashes');
   const recovered = await store.get({ taskID: record.task_id, authInfo, authMode: 'external-oauth' });
   assert.deepEqual(recovered.result, result, 'task results decrypt for the same authenticated owner');
   assert.equal(await store.get({ taskID: record.task_id, authInfo: { ...authInfo, extra: { subject: 'bob' } }, authMode: 'external-oauth' }), null);
@@ -371,15 +384,15 @@ test('queue metrics count only unexpired queued and running rows in the task nam
   let captured;
   const pool = { async query(sql, params) {
     captured = { sql, params };
-    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', without_compatible_worker_tasks: '1' }] };
+    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', running_tasks: '2', capacity_waiting_tasks: '1', failed_tasks: '2', retry_waiting_tasks: '1', active_workers: '2', draining_workers: '0', unsupported_handler_tasks: '1' }] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, withoutCompatibleWorkerTasks: 1 });
-  assert.deepEqual(captured.params, ['mcp-worker-prod']);
-  assert.match(captured.sql, /status IN \('queued', 'running'\)/);
-  assert.match(captured.sql, /expires_at > clock_timestamp\(\)/);
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1, failedTasks: 2, retryWaitingTasks: 1, activeWorkers: 2, drainingWorkers: 0, unsupportedHandlerTasks: 1, withoutCompatibleWorkerTasks: 1 });
+  assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4]);
+  assert.match(captured.sql, /status IN \('queued', 'running', 'failed'\)/);
+  assert.match(captured.sql, /expires_at > instant.now/);
   assert.match(captured.sql, /MIN\(created_at\)/);
-  assert.match(captured.sql, /gregale_mcp_task_worker_handlers/);
+  assert.match(captured.sql, /gregale_mcp_task_workers/);
   assert.match(captured.sql, /handler_version/);
 });
 
@@ -393,7 +406,7 @@ test('worker capability heartbeats publish exact handler versions and remove on 
     { name: 'build_report', version: '2' },
   ]);
   assert.match(calls[0].sql, /INSERT INTO gregale_mcp_task_worker_handlers/);
-  assert.deepEqual(calls[0].params, ['mcp-worker-prod', workerID, ['build_report', 'build_report'], ['1', '2']]);
+  assert.deepEqual(calls[0].params, ['mcp-worker-prod', workerID, ['build_report', 'build_report'], ['1', '2'], '']);
   await store.removeWorkerCapabilities(workerID);
   assert.match(calls[1].sql, /DELETE FROM gregale_mcp_task_worker_handlers/);
   assert.deepEqual(calls[1].params, ['mcp-worker-prod', workerID]);
@@ -591,4 +604,90 @@ test('MCP Tasks are advertised and the modern wire methods round-trip through th
   assert.equal(synchronous.result.resultType, 'complete', synchronous.text);
   assert.equal(synchronous.result.content[0].text, 'Report sync is ready after 1 steps.');
   assert.equal(store.rows.size, rowCount, 'clients without Tasks support do not create task records');
+});
+
+
+test('retry policy rejects invalid attempt and delay bounds', () => {
+  assert.deepEqual(validateMcpTaskRetryPolicy(), { maxAttempts: 3, retryBaseDelayMs: 1000, retryMaxDelayMs: 60000 });
+  for (const policy of [{ maxAttempts: 0 }, { maxAttempts: 11 }, { maxAttempts: 1.5 }, { retryBaseDelayMs: 99 }, { retryMaxDelayMs: 999 }, { retryMaxDelayMs: 86400001 }]) {
+    assert.throws(() => validateMcpTaskRetryPolicy(policy), /MCP task/);
+  }
+});
+
+test('runtime passes explicit retry classification and bounded jitter to the store', async () => {
+  const store = new MemoryTaskStore();
+  let observed;
+  const originalFail = store.fail.bind(store);
+  store.fail = async (id, token, error, options) => {
+    observed = { error, options };
+    return originalFail(id, token, error);
+  };
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, maxAttempts: 2, retryBaseDelayMs: 100, retryMaxDelayMs: 100, handlers: {
+    work: { version: '1', async execute() { throw new RetryableMcpTaskError('private secret'); } },
+  } });
+  await runtime.start();
+  try {
+    await runtime.create('work', {}, undefined, 'open');
+    await eventually(() => observed, 'retry options were not recorded');
+    assert.deepEqual(observed.error, { code: -32603, message: 'Task execution failed' });
+    assert.equal(observed.options.retryable, true);
+    assert.equal(observed.options.maxAttempts, 2);
+    assert.ok(observed.options.retryDelayMs >= 50 && observed.options.retryDelayMs <= 100);
+  } finally { await runtime.stop(); }
+});
+
+test('drain finishes active handlers and concurrent stop calls share completion', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let began;
+  const started = new Promise(resolve => { began = resolve; });
+  const completion = new Promise(resolve => { finish = resolve; });
+  const events = [];
+  store.workerHeartbeat = async () => { events.push('available'); };
+  store.workerDraining = async () => { events.push('draining'); };
+  store.workerStopped = async () => { events.push('stopped'); };
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, handlers: { build_report: { version: '1', async execute() { began(); return completion; } } } });
+  await runtime.start();
+  await started;
+  const first = runtime.stop();
+  assert.equal(runtime.stop(), first);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(events.includes('draining'));
+  assert.equal(events.includes('stopped'), false);
+  finish({ content: [] });
+  assert.deepEqual(await first, { timedOut: false });
+  assert.equal(store.rows.get(task.task_id).status, 'completed');
+  assert.equal(events.at(-1), 'stopped');
+});
+
+test('drain deadline aborts handlers and suppresses late terminal writes', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let signal;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 1000, handlers: { build_report: { version: '1', async execute(_, context) { signal = context.signal; return completion; } } } });
+  await runtime.start();
+  assert.deepEqual(await runtime.stop(), { timedOut: true });
+  assert.equal(signal.aborted, true);
+  finish({ content: [] });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(store.rows.get(task.task_id).status, 'running');
+});
+
+test('active handlers keep renewing their lease while draining', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let renewed;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const renewal = new Promise(resolve => { renewed = resolve; });
+  const originalHeartbeat = store.heartbeat.bind(store);
+  store.heartbeat = async (...args) => { const state = await originalHeartbeat(...args); renewed(); return state; };
+  await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 10000, handlers: { build_report: { version: '1', async execute() { return completion; } } } });
+  await runtime.start();
+  const stopping = runtime.stop();
+  try { await renewal; } finally { finish({ content: [] }); }
+  assert.deepEqual(await stopping, { timedOut: false });
 });

@@ -6,6 +6,11 @@
  * Matching retained-event metadata and original recipient membership.
  */
 export type EventReplayPreviewMatch = {
+  /**
+   * Age limit of the current subscription is exceeded at observation time; historical backfill requires an explicit override to admit it.
+   */
+  delivery_expired: boolean;
+  delivery_deadline_at?: string;
   event_id: string;
   event_source: string;
   event_type: string;

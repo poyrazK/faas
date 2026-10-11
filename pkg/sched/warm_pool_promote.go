@@ -127,7 +127,18 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 
 		resumeStartedAt := time.Now()
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
-		resumeErr := resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+		var resumeErr error
+		if imageHealthcheckRequiredFromDep(dep) {
+			if checked, ok := e.vmm.(interface {
+				ResumeWarmInstanceWithImageHealthcheck(context.Context, string, string) error
+			}); ok {
+				resumeErr = checked.ResumeWarmInstanceWithImageHealthcheck(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+			} else {
+				resumeErr = errors.New("sched: warm resume cannot enforce image healthcheck")
+			}
+		} else {
+			resumeErr = resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
+		}
 		cancel()
 		if resumeErr != nil {
 			if e.discardWarmPromotion(ctx, warm, "resume_failed") {

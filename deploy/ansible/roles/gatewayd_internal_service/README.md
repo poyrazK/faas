@@ -39,8 +39,8 @@ under `/var/lib/faas/log-drains` before delivery.
 ## Drop-ins
 
 - `99-faas-node-name.conf.j2` (linked from `_shared/`) — exposes this box's
-  compute_node identity to gatewayd-internal so the multi-box handshake
-  layer reads the right name without a TOML edit.
+  compute_node identity to gatewayd-internal and realtimed. The realtimed
+  daemon uses it to report resumable channel routes to apid.
 - `99-faas-role.conf.j2` — wires the per-box role gate through to
   gatewayd-internal via `FAAS_GATEWAYD_ROLE` (note: NOT `_INTERNAL` — the
   env-var name matches the daemon's `pkg/role` lookup key) so
@@ -60,11 +60,9 @@ under `/var/lib/faas/log-drains` before delivery.
 
 ## Restart handler
 
-The role declares a `notify: restart faas-gatewayd-internal` handler on the
-FAAS_NODE_NAME drop-in install so a name change is picked up immediately
-on the next `ansible-playbook` run. Other daemons in this role cluster do
-NOT restart on drop-in change — the operator's `systemctl enable --now`
-loop is the contract there.
+The role restarts gatewayd-internal and realtimed when their FAAS_NODE_NAME
+drop-ins change, so both daemons use the current node identity after the next
+`ansible-playbook` run.
 
 ## See also
 

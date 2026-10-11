@@ -180,7 +180,12 @@ func ParseRuntimeConfigChangedPayload(raw string) (RuntimeConfigChangedPayload, 
 // releases a prepared fence when persistence fails. Generation is allocated
 // from PostgreSQL and never decreases across apid restarts.
 type EdgeRuleChangedPayload struct {
-	AppID      string   `json:"app_id"`
+	AppID string `json:"app_id"`
+	// AccountID owns AppID. The gateway fences a hostname only for requests
+	// whose app that account owns: gateways ignore another account's rules
+	// on a host, so its mutation never needs to hold that host's traffic.
+	// Empty (a pre-scoping publisher) fences every app on the host.
+	AccountID  string   `json:"account_id,omitempty"`
 	RuleID     string   `json:"rule_id,omitempty"`
 	Operation  string   `json:"op"`
 	Phase      string   `json:"phase,omitempty"`
@@ -685,6 +690,12 @@ const (
 	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
 	//           "expires_at":RFC3339}
 	NotifyDeploymentSmokeChallenge = "deployment_smoke_challenge"
+	// NotifyRouteProbeChallenge carries an ADR-847 route probe token from apid
+	// to every gateway. It is a separate kind from the smoke challenge: it
+	// pins one live deployment but never bypasses customer auth gates.
+	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
+	//           "expires_at":RFC3339}
+	NotifyRouteProbeChallenge = "route_probe_challenge"
 	// NotifyGithubDeploymentChanged is emitted by the deployment status
 	// trigger for githubd's Check Run projector. It is intentionally separate
 	// from NotifyDeploymentChanged so existing scheduler/gateway consumers do
@@ -865,11 +876,10 @@ const (
 	// NotifyTrustedSignerChanged {"app_id":uuid, "signer":"...",
 	//                              "kind":"upserted|deleted"}
 	//   apid → imaged (issue #472 / ADR-054): a row was written or
-	//   removed from app_trusted_signers. imaged refreshes its
-	//   in-memory cache of /etc/faas/secrets/trusted-publishers/ so
-	//   a freshly-onboarded publisher takes effect on the NEXT
-	//   deploy without an imaged restart. The pg_notify payload is
-	//   informational — the on-disk dir is the source of truth.
+	//   removed from app_trusted_signers. imaged reads that table on
+	//   every verify, so the notify only triggers revalidation of live
+	//   signed images (ADR-058 amendment). The payload is informational
+	//   — the table is the source of truth.
 	NotifyTrustedSignerChanged = "trusted_signer_changed"
 	// NotifyAuditEvent {"outbox_id":N, "kind":"app.signature_missing|...",
 	//                    "app_id":uuid, "deployment_id":uuid,
@@ -938,7 +948,9 @@ const (
 	NotifyCachePurge = "cache_purge_requested"
 	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
 	// {"app_id":uuid, "op":"created|replaced|deleted"}.
-	//   apid is the only listener (cmd/apid/openapi_doc_subscriber.go
+	//   Deployment capture triggers also send app_id/deployment_id (ADR-831).
+	//   gatewayd-internal invalidates declaration/lifecycle caches.
+	//   apid listens (cmd/apid/openapi_doc_subscriber.go
 	//   wires it alongside NotifyEdgeRuleChanged); the payload
 	//   flushes the per-app cache entry in pkg/openapidiff.SpecCache.
 	//   PR-A scope: this signal is one of two triggers for the

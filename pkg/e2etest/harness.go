@@ -1389,6 +1389,19 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	if iface := os.Getenv("FAAS_PUBLIC_IFACE"); iface != "" {
 		env = append(env, "FAAS_PUBLIC_IFACE="+iface)
 	}
+	// vmmd tuning knobs a benchmark or acceptance run may set explicitly
+	// (prepared networks, restore concurrency/prefetch, a private resource
+	// journal on a shared host). Unset keeps vmmd's own defaults.
+	for _, name := range []string{
+		"FAAS_PREPARED_NETWORKS",
+		"FAAS_RESTORE_CONCURRENCY",
+		"FAAS_RESTORE_PREFETCH",
+		"FAAS_VMMD_RESOURCE_JOURNAL_DIR",
+	} {
+		if v := os.Getenv(name); v != "" {
+			env = append(env, name+"="+v)
+		}
+	}
 	return env
 }
 
@@ -1720,6 +1733,29 @@ func (h *Harness) RestartSchedd() error {
 	return nil
 }
 
+// SetAPIDEnv updates the retained apid launch recipe without exposing private
+// runtime settings to other daemons or guests. RestartAPID applies the change.
+func (h *Harness) SetAPIDEnv(key, value string) error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if key == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("e2etest: invalid apid environment entry")
+	}
+	entry := key + "=" + value
+	found := false
+	for i, existing := range h.apidEnv {
+		if strings.HasPrefix(existing, key+"=") {
+			h.apidEnv[i] = entry
+			found = true
+		}
+	}
+	if !found {
+		h.apidEnv = append(h.apidEnv, entry)
+	}
+	return nil
+}
+
 // KillAPID terminates and reaps the apid child while leaving the rest of the
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.
@@ -1999,6 +2035,7 @@ func (s *safeBuffer) String() string {
 func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
 	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
+	argv = append(argv, daemonConfigArgs(name, env)...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = &safeBuffer{}
@@ -2008,6 +2045,24 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 		t.Fatalf("e2etest: start %s: %v", name, err)
 	}
 	return cmd
+}
+
+// daemonConfigArgs is a harness-only launch selector. It supplies the real
+// operator TOML flag on initial startup and restart; it grants no admission.
+func daemonConfigArgs(name string, env []string) []string {
+	if name != "apid" {
+		return nil
+	}
+	var path string
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_CONFIG="); ok {
+			path = value
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	return []string{"--config", path}
 }
 
 // requireDaemonsAlive fails the test immediately if a daemon this harness
@@ -2858,16 +2913,9 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	if h.SignKeyPath == "" {
 		_ = writeScheddSignPub(t, h)
 	}
-	// guest/init lives at repo root in dev; tests don't run a real guest,
-	// but imaged still wants the path. Use a placeholder file so its
-	// existence check passes — the metal test will overwrite with the
-	// real binary if it needs to.
-	guestInit := os.Getenv("FAAS_GUEST_INIT")
-	if guestInit == "" {
-		guestInit = filepath.Join(tmp, "init")
-		if err := os.WriteFile(guestInit, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatalf("e2etest: write placeholder guest init: %v", err)
-		}
+	guestInit, err := harnessGuestInit(tmp, os.Getenv("FAAS_GUEST_INIT"), os.Getenv("FAAS_TEST_KERNEL"))
+	if err != nil {
+		t.Fatalf("e2etest: guest init prerequisite: %v", err)
 	}
 	env := imagedEnv(t, dbURL, guestInit, appsRoot, tmp)
 	// imaged must sign with the same keypair schedd verifies against
@@ -2919,4 +2967,20 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
 	}
 	t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
+}
+
+// A placeholder is safe only when no guest kernel is configured. Otherwise
+// imaged can replace a real base's PID 1 with a script that immediately exits.
+func harnessGuestInit(tmp, configured, kernel string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	if kernel != "" {
+		return "", fmt.Errorf("FAAS_TEST_KERNEL requires an explicit FAAS_GUEST_INIT; refusing placeholder PID 1")
+	}
+	path := filepath.Join(tmp, "init")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		return "", err
+	}
+	return path, nil
 }

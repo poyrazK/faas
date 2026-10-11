@@ -18,7 +18,7 @@ func (h *Handler) beginHostingVerification(ctx context.Context, app state.App, d
 	}
 	p, err := store.UpdateDeploymentHostingVerification(ctx, dep.ID, state.HostingVerificationUpdate{Action: state.HostingVerificationBegin, At: h.hostingVerificationTime()})
 	if errors.Is(err, state.ErrHostingVerificationExpired) {
-		return nil, h.hostingVerificationUnavailable(ctx, app, dep, started)
+		return nil, h.hostingVerificationUnavailable(ctx, app, dep, started, p.LastRouteChecks)
 	}
 	if errors.Is(err, state.ErrHostingVerificationFinalized) {
 		return nil, errHostingVerificationFinalized
@@ -29,7 +29,7 @@ func (h *Handler) beginHostingVerification(ctx context.Context, app state.App, d
 	return &p, nil
 }
 
-func (h *Handler) retryHostingVerification(ctx context.Context, app state.App, dep state.Deployment, progress *state.HostingVerificationProgress, started time.Time, code string, cause error) error {
+func (h *Handler) retryHostingVerification(ctx context.Context, app state.App, dep state.Deployment, progress *state.HostingVerificationProgress, started time.Time, code string, cause error, routeChecks *apihostingreceipt.RouteCheckSet) error {
 	store, ok := h.store.(state.DeploymentHostingVerificationStore)
 	if !ok || progress == nil {
 		return fmt.Errorf("imaged: durable hosting verification store unavailable: %w", cause)
@@ -37,7 +37,7 @@ func (h *Handler) retryHostingVerification(ctx context.Context, app state.App, d
 	now := h.hostingVerificationTime()
 	p, err := store.UpdateDeploymentHostingVerification(ctx, dep.ID, state.HostingVerificationUpdate{
 		Action: state.HostingVerificationRetry, Attempt: progress.Attempts, At: now, ErrorCode: code,
-		RetryNotBefore: now.Add(db.NotificationRetryDelay(progress.Attempts)),
+		RouteChecks: routeChecks, RetryNotBefore: now.Add(db.NotificationRetryDelay(progress.Attempts)),
 	})
 	if errors.Is(err, state.ErrHostingVerificationFinalized) {
 		return errHostingVerificationFinalized
@@ -46,7 +46,7 @@ func (h *Handler) retryHostingVerification(ctx context.Context, app state.App, d
 		return fmt.Errorf("imaged: persist hosting verification retry: %w", err)
 	}
 	if !now.Before(p.DeadlineAt) {
-		return h.hostingVerificationUnavailable(ctx, app, dep, started)
+		return h.hostingVerificationUnavailable(ctx, app, dep, started, p.LastRouteChecks)
 	}
 	return fmt.Errorf("imaged: hosting verification retry eligible after %s: %w", p.RetryNotBefore.Format(time.RFC3339Nano), cause)
 }
@@ -73,8 +73,14 @@ func (h *Handler) hostingVerificationTime() time.Time {
 	return time.Now().UTC()
 }
 
-func (h *Handler) hostingVerificationUnavailable(ctx context.Context, app state.App, dep state.Deployment, started time.Time) error {
+func (h *Handler) hostingVerificationUnavailable(ctx context.Context, app state.App, dep state.Deployment, started time.Time, routeChecks *apihostingreceipt.RouteCheckSet) error {
 	err := errors.New("public candidate verification remained unavailable within the recovery window; inspect deployment and gateway diagnostics, then retry the deployment")
 	smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, Path: HostingHealthPath(app, dep), Authentication: apihostingreceipt.AuthenticationPlatformChallenge, ErrorCode: apihostingreceipt.SmokeErrorVerificationUnavailable, Error: err.Error()}
+	if routeChecks != nil {
+		copied := *routeChecks
+		copied.Status = apihostingreceipt.RouteCheckSetUnavailable
+		copied.Checks = append([]apihostingreceipt.RouteCheckResult(nil), routeChecks.Checks...)
+		smoke.RouteChecks = &copied
+	}
 	return h.commitHostingFailure(ctx, app, dep, smoke, err, started)
 }

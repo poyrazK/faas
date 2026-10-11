@@ -17,6 +17,9 @@ package main
 // Defined here (with a `//go:build windows` tag) so it shadows the
 // unix implementation in isatty_unix.go on a Windows build.
 func stdoutIsTTY() bool {
+	if nonInteractive {
+		return false
+	}
 	if testOnlyTTY != nil {
 		return *testOnlyTTY
 	}
@@ -27,6 +30,9 @@ func stdoutIsTTY() bool {
 // justification: gregale.exe is not a supported runtime, so the
 // prompt path always falls back to the `--yes` / non-TTY shape.
 func stdinIsTTY() bool {
+	if nonInteractive {
+		return false
+	}
 	if testOnlyTTY != nil {
 		return *testOnlyTTY
 	}

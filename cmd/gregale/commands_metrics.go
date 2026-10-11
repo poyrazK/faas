@@ -107,7 +107,7 @@ func cmdMetrics(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(m))
 	}
-	renderAppMetrics(osStdout, m)
+	renderAppMetrics(osStdout, slug, m)
 	return 0
 }
 
@@ -119,11 +119,15 @@ func cmdMetrics(args []string) int {
 // When Source is "degraded: <reason>" we render a one-line warning
 // before the values so the customer understands the zeroes are
 // real (Prometheus isn't reachable), not a bug.
-func renderAppMetrics(w io.Writer, m api.AppMetricsResponse) {
+func renderAppMetrics(w io.Writer, slug string, m api.AppMetricsResponse) {
 	if m.Source != "" && m.Source != appmetrics.SourcePrometheus {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (values below are zero — Prometheus is unavailable)\n", m.Source)
 	}
+	// Same App/Slug pair as `gregale slo` (H5-4): the id alone named no app.
 	_, _ = fmt.Fprintf(w, "App:        %s\n", m.AppID)
+	if slug != "" {
+		_, _ = fmt.Fprintf(w, "Slug:       %s\n", slug)
+	}
 	_, _ = fmt.Fprintf(w, "Range:      %s\n", m.Range)
 	if m.AsOf != "" {
 		_, _ = fmt.Fprintf(w, "As of:      %s\n", m.AsOf)
@@ -323,11 +327,14 @@ func renderThrottleSuggestions(w io.Writer, r api.ThrottleSuggestionsResponse) {
 		_, _ = fmt.Fprintf(w, "  Note: %s\n", r.PerConsumerLimitNote)
 	}
 	if len(r.WouldHaveRejected) == 0 {
-		_, _ = fmt.Fprintln(w, "  Would have rejected: (no per-route over-cap counts — degraded source or empty window)")
+		_, _ = fmt.Fprintln(w, "  Minutes over the candidate rate: (no per-route counts — degraded source or empty window)")
 		return
 	}
-	_, _ = fmt.Fprintln(w, "  Would have rejected:")
+	// over_cap_count counts 1-minute windows whose average rate exceeded
+	// the candidate; burst is not modelled, so a bursty route can be
+	// throttled in minutes whose average stays under it.
+	_, _ = fmt.Fprintln(w, "  Minutes over the candidate rate (1-minute averages; burst not modelled):")
 	for _, p := range r.WouldHaveRejected {
-		_, _ = fmt.Fprintf(w, "    %-40s over-cap count=%.2f\n", p.Route, p.OverCapCount)
+		_, _ = fmt.Fprintf(w, "    %-40s %.0f min\n", p.Route, p.OverCapCount)
 	}
 }

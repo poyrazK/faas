@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -387,6 +388,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			transport.DisableKeepAlives = true
 		}
 	}
+	if err := configureRuntimeIngressProxy(proxy, pgStore, os.Getenv); err != nil {
+		return err
+	}
 	// Issue #587 / PR-A: per-request drain tracker shared between
 	// the InternalReverseProxy and the control mux so every
 	// ServeHTTP surface contributes to the same in-flight count.
@@ -632,7 +636,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// timeout that fires before gatewayd-internal replies still carries the
 	// same correlation id a CDN/Worker can preserve.
 	publicHandler = gateway.RequestIDMiddleware(publicHandler)
-	publicHandler = httpsec.Static(publicHandler)
+	// ADR-830: forced headers on Gregale-owned hosts; on customer hosts the
+	// platform values are defaults the proxy hop replaces with the app's.
+	appsDomain := platformAppsDomain()
+	publicHandler = httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		true, publicHandler)
 
 	// Control mux + listeners. Combine opsMetrics.Registry() with
 	// budgetReg into a prometheus.Gatherers so /metrics exposes
@@ -664,6 +673,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: multi-host bind check failed: %w", err)
 	}
 	publicSrv, controlSrv := buildServers(listenAddr, controlAddr, publicHandler, controlMux)
+	edgeObserver, err := prepareRuntimePublicEdgeObserver(ctx, proxy, pgStore, publicEdgeConfig(upstreamMode, h2cEnabled, listenAddr, trustedIngressCIDRs, os.Getenv), os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	publicSrv.Handler = ingress.WrapPublicIdentity(publicSrv.Handler, edgeObserver.identityHandler())
+	publicSrv.Handler = ingress.WrapNativePublicIdentity(publicSrv.Handler, edgeObserver.nativeIdentityHandler())
+	defer edgeObserver.attach(ctx, publicSrv)()
 	// Tier A8 / ADR-083 (code-review fix #5): hook the public
 	// listener's ConnState to the in-flight tracker so the
 	// DNSHandoff orchestrator can wait for in-flight to reach

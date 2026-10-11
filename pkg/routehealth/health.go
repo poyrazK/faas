@@ -21,6 +21,7 @@ func Validate(request api.SetRouteHealthGateRequest) error {
 		return fmt.Errorf("supply report/enforce, expected_revision, and a routes array of at most %d entries; enforcement requires routes", api.RouteHealthMaxRoutes)
 	}
 	seen := map[[2]string]bool{}
+	probes := 0
 	for _, route := range request.Routes {
 		switch route.Method {
 		case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
@@ -36,7 +37,16 @@ func Validate(request api.SetRouteHealthGateRequest) error {
 		if err := ValidateWatchStatuses(route.WatchStatuses); err != nil {
 			return err
 		}
+		if err := ValidateProbe(route); err != nil {
+			return err
+		}
+		if route.Probe != nil {
+			probes++
+		}
 		seen[[2]string{route.Method, route.Path}] = true
+	}
+	if probes > api.RouteHealthProbeMaxRoutes {
+		return fmt.Errorf("at most %d routes can enable synthetic probes", api.RouteHealthProbeMaxRoutes)
 	}
 	return nil
 }
@@ -69,20 +79,27 @@ func Evaluate(report *api.RouteHealthReport, anchor *time.Time, unavailable stri
 		if latency {
 			report.MinimumLatencyRequests = api.RouteHealthMinLatencyRequests
 		}
-		for j := range finding.Windows {
-			w := &finding.Windows[j]
-			rate(&w.Candidate)
-			rate(&w.Stable)
-			w.ErrorStatus, w.ErrorReason = errorWindow(*w, anchor, unavailable)
-			w.LatencyStatus, w.LatencyReason, w.LatencyDeltaMS, w.LatencyFactor = "", "", nil, nil
-			w.Status, w.Reason = w.ErrorStatus, w.ErrorReason
-			if latency {
-				w.LatencyStatus, w.LatencyReason = latencyWindow(w, finding.MaxP95MS, finding.CheckLatency, anchor, unavailable)
-				w.Status, w.Reason = combine(w.ErrorStatus, w.ErrorReason, w.LatencyStatus, w.LatencyReason)
-			}
-		}
+		evaluateWindows(finding.Windows, *finding, anchor, unavailable)
 		SummarizeFinding(finding)
+		applyPooledEvidence(finding, anchor, unavailable)
+		applySyntheticEvidence(finding, anchor, unavailable)
 		report.Status, report.Reason = combine(report.Status, report.Reason, finding.Status, finding.Reason)
+	}
+}
+
+func evaluateWindows(windows []api.RouteHealthWindowEvidence, finding api.RouteHealthFinding, anchor *time.Time, unavailable string) {
+	latency := LatencyEnabled(finding.CheckLatency, finding.MaxP95MS)
+	for j := range windows {
+		w := &windows[j]
+		rate(&w.Candidate)
+		rate(&w.Stable)
+		w.ErrorStatus, w.ErrorReason = errorWindow(*w, anchor, unavailable)
+		w.LatencyStatus, w.LatencyReason, w.LatencyDeltaMS, w.LatencyFactor = "", "", nil, nil
+		w.Status, w.Reason = w.ErrorStatus, w.ErrorReason
+		if latency {
+			w.LatencyStatus, w.LatencyReason = latencyWindow(w, finding.MaxP95MS, finding.CheckLatency, anchor, unavailable)
+			w.Status, w.Reason = combine(w.ErrorStatus, w.ErrorReason, w.LatencyStatus, w.LatencyReason)
+		}
 	}
 }
 
@@ -240,7 +257,7 @@ func ValidateWatchStatuses(statuses []int) error {
 
 func RoutesEqual(a, b []api.RouteHealthRoute) bool {
 	return slices.EqualFunc(a, b, func(x, y api.RouteHealthRoute) bool {
-		return x.Method == y.Method && x.Path == y.Path && x.CheckLatency == y.CheckLatency && x.MaxP95MS == y.MaxP95MS && slices.Equal(x.WatchStatuses, y.WatchStatuses)
+		return x.Method == y.Method && x.Path == y.Path && x.CheckLatency == y.CheckLatency && x.MaxP95MS == y.MaxP95MS && slices.Equal(x.WatchStatuses, y.WatchStatuses) && probePath(x.Probe) == probePath(y.Probe)
 	})
 }
 
@@ -248,6 +265,10 @@ func CloneRoutes(routes []api.RouteHealthRoute) []api.RouteHealthRoute {
 	out := slices.Clone(routes)
 	for i := range out {
 		out[i].WatchStatuses = slices.Clone(out[i].WatchStatuses)
+		if out[i].Probe != nil {
+			probe := *out[i].Probe
+			out[i].Probe = &probe
+		}
 	}
 	return out
 }

@@ -2,6 +2,19 @@
 # Every field is optional; defaults are filled in by LoadConfig (see
 # cmd/vmmd/config.go). Defaults are noted next to each field.
 
+# native_process_recovery: EXPERIMENTAL journal-backed VM ownership recovery.
+# Dedicated native acceptance is required before enabling broadly.
+# Default: false
+# native_process_recovery = true
+
+# native_snapshot_publication_root: EXPERIMENTAL persistent, root-owned 0700
+# directory outside the jail and image-staging roots. It stores immutable
+# capture receipts and tombstones for cleanup already authorized by schedd.
+# Requires native_process_recovery = true and does not itself enable capture,
+# restore, qualification polling, or activation.
+# Default: "" (disabled)
+# native_snapshot_publication_root = "/var/lib/faas/vmmd-publications"
+
 # socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
 # Default: /run/faas/vmmd.sock
 # socket_path = "/run/faas/vmmd.sock"

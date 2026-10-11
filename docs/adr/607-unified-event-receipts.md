@@ -77,7 +77,45 @@ remain historical evidence; current app names and execution metadata are omitted
 when the app belongs to another account. Deleted or unavailable targets have no
 recovery action.
 
+## Selective CLI recovery
+
+`gregale events recover --source SOURCE --id ID --subscription SUB` selects one
+retained captured or backfilled recipient using bounded receipt pages. It uses
+the advertised routing, plain handler, keyed handler, or unified dead-letter
+action through the existing Go client replay methods. Handler actions target
+the latest eligible retained replay when one exists. The CLI validates known
+methods, endpoints, and selected identity before making a selective POST;
+unsupported or ambiguous actions fail without a mutation.
+
+`--dry-run` performs only receipt reads and reports availability. It exits zero
+for an inspected recipient with no available action; actual recovery exits
+nonzero in that case. `--json` reports identity, dry-run flag, status, action,
+and the accepted replay result or unavailable reason. Successful consumers,
+active deliveries/replays, cancellations, unavailable evidence, and already
+admitted workflows are explained without inferring a replay from execution state.
+
+The endpoint retains write-scope, ownership, deadline, lease, and replay
+identity checks. An action can become stale between GET and POST; the CLI
+reports rejection without attempting a different replay path. Acceptance of
+recovery does not assert execution completion or exactly-once side effects.
+
+## Independent workflow routing recovery
+
+ADR-648 extends recipient routing ownership to captured workflows and mixed
+receipts. The same `routing_replay` action recovers a failed workflow recipient
+without waiting for pending siblings. `gregale events recover` selects this
+action by the captured recipient ID. Run and step APIs own recovery after
+workflow admission; routing replay preserves one run per accepted recipient.
+
 ## Qualification
+
+Selective CLI recovery tests cover all four action kinds, dry-run isolation,
+recipient pagination, unavailable evidence, unsupported/ambiguous actions, and
+stale POST rejection. CLI event, help, completion, and generated-reference
+checks pass with the race detector. The PostgreSQL publish-to-handler recovery
+integration is described in [ADR-647](647-independent-event-routing-default.md);
+its HTTP consumer and VM bridge are fixtures, so native guest and fleet staging
+qualification remain required.
 
 Memory and real-PostgreSQL tests exercise mixed routing/execution outcomes,
 whole-snapshot counts, pagination during replay, scoped lookup, cancellation and

@@ -429,7 +429,13 @@ func assertGraphAdmissionRechecksAfterTargetLock(t *testing.T, pool *pgxpool.Poo
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Retirement follows the account -> app -> deployment lock order used by
+	// lifecycle invalidation. Admission must recheck the graph after that
+	// account fence is released, rather than deadlock on an inverted order.
 	var id string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM accounts WHERE id=$1 FOR UPDATE`, op.AccountID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.QueryRow(ctx, `SELECT id::text FROM apps WHERE id=$1 FOR UPDATE`, target.AppID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +445,7 @@ func assertGraphAdmissionRechecksAfterTargetLock(t *testing.T, pool *pgxpool.Poo
 			PlatformTenantID: tenant.ID, IdempotencyKey: "target-retirement-race", Input: []byte(`{"count":1}`)})
 		finished <- err
 	}()
-	waitOperationCodeQueryLock(t, pool, "LockCustomerOperationReleaseApps")
+	waitOperationCodeQueryLock(t, pool, "LockCustomerOperationAccount")
 	if _, err := tx.Exec(ctx, `UPDATE deployments SET status='superseded' WHERE id=$1`, target.ID); err != nil {
 		t.Fatal(err)
 	}

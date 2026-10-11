@@ -15,7 +15,8 @@ func UnitApidCloneWorker() daemonunit.Unit {
 	u := UnitApid()
 	var files []string
 	for _, path := range strings.Fields(u.EnvironmentFile) {
-		if strings.TrimPrefix(path, "-") != "/etc/faas/sealed.env" {
+		clean := strings.TrimPrefix(path, "-")
+		if clean != "/etc/faas/sealed.env" && clean != "/etc/faas/profiling.env" {
 			files = append(files, path)
 		}
 	}

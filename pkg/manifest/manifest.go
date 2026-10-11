@@ -419,6 +419,7 @@ type Daemons struct {
 	GatewaydInternal *DaemonConfig `yaml:"gatewayd_internal,omitempty"`
 	Imaged           *DaemonConfig `yaml:"imaged,omitempty"`
 	Builderd         *DaemonConfig `yaml:"builderd,omitempty"`
+	Profiled         *DaemonConfig `yaml:"profiled,omitempty"`
 	Realtimed        *DaemonConfig `yaml:"realtimed,omitempty"`
 	Outboundd        *DaemonConfig `yaml:"outboundd,omitempty"`
 }
@@ -1224,6 +1225,7 @@ func (d *Daemons) validate() Errors {
 		"imaged":            d.Imaged,
 		"builderd":          d.Builderd,
 		"realtimed":         d.Realtimed,
+		"profiled":          d.Profiled,
 		"outboundd":         d.Outboundd,
 	} {
 		if dc == nil {

@@ -78,8 +78,8 @@ func cmdAuditEvents(args []string) int {
 
 // cmdAuditEventsList implements `gregale audit-events list
 // [--kind-prefix P] [--app-id <uuid>] [--since RFC3339] [--limit N]
-// [--include-anonymous] [--verbose]`. Returns 0 on success, 2 on
-// operator error (bad flags), 1 on transport / 5xx.
+// [--include-anonymous] [--verbose]`. Returns 0 on success, 1 on
+// invalid input, 2 on authentication failure, and 3 on platform failure.
 func cmdAuditEventsList(args []string) int {
 	fs := newFlagSet("audit-events list", flag.ContinueOnError)
 	kindPrefix := fs.String("kind-prefix", "", "filter by `kind` prefix (e.g. stateless.advisory)")
@@ -93,12 +93,14 @@ func cmdAuditEventsList(args []string) int {
 	}
 	if fs.NArg() != 0 {
 		printCommandValidation(os.Stderr, "usage: gregale audit-events list [--kind-prefix P] [--app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
-		return 2
+		return 1
+	}
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		return printErr("Invalid --limit", err)
 	}
 	if *since != "" {
 		if _, err := time.Parse(time.RFC3339, *since); err != nil {
-			fmt.Fprintf(os.Stderr, "gregale: --since must be RFC 3339 (e.g. 2026-07-25T00:00:00Z): %v\n", err)
-			return 2
+			return printErr("Invalid --since", fmt.Errorf("must be RFC 3339 (e.g. 2026-07-25T00:00:00Z): %w", err))
 		}
 	}
 

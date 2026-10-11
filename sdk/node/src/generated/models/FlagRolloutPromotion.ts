@@ -11,7 +11,7 @@ export type FlagRolloutPromotion = {
   flag: string;
   rule_id: string;
   /**
-   * Current version after promotion
+   * Current version after promotion, unchanged when held or complete.
    */
   config_version: number;
   /**

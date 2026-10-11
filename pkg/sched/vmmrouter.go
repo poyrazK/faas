@@ -574,6 +574,10 @@ type jobVMMClient interface {
 	WaitJobExit(context.Context, JobExitSpec) (JobExitResult, error)
 }
 
+type heldJobVMMClient interface {
+	ReleaseJobStart(context.Context, JobStartSpec) error
+}
+
 // JobColdBoot routes a claimed job task to its owning vmmd. Job RPCs are
 // optional on the per-node client interface so older test doubles and nodes
 // can continue serving the ordinary VM lifecycle surface.
@@ -586,6 +590,12 @@ func (r *VMMRouter) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 	if !ok {
 		return JobVmmResult{}, api.NewProblem(501, api.CodeNotImplemented,
 			"Job execution unavailable", "vmmd client does not support jobs")
+	}
+	if spec.StartHeld {
+		if _, ok := cli.(heldJobVMMClient); !ok {
+			return JobVmmResult{}, api.NewProblem(501, api.CodeNotImplemented,
+				"Held job start unavailable", "vmmd client does not support held job start release")
+		}
 	}
 	return jobClient.JobColdBoot(ctx, spec)
 }
@@ -602,6 +612,19 @@ func (r *VMMRouter) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitR
 			"Job execution unavailable", "vmmd client does not support jobs")
 	}
 	return jobClient.WaitJobExit(ctx, spec)
+}
+
+func (r *VMMRouter) ReleaseJobStart(ctx context.Context, spec JobStartSpec) error {
+	cli, err := r.resolveFor(ctx, spec.NodeID)
+	if err != nil {
+		return err
+	}
+	releaser, ok := cli.(heldJobVMMClient)
+	if !ok {
+		return api.NewProblem(501, api.CodeNotImplemented,
+			"Held job start unavailable", "vmmd client does not support held job start")
+	}
+	return releaser.ReleaseJobStart(ctx, spec)
 }
 
 // CreateFromSnapshot implements RoutedVMM.
@@ -666,6 +689,20 @@ func (r *VMMRouter) ResumeWarmInstance(ctx context.Context, nodeID, instance str
 			"Warm-pool resume unavailable", "vmmd client does not support warm-pool resume")
 	}
 	return resumer.ResumeWarmInstance(ctx, instance)
+}
+
+func (r *VMMRouter) ResumeWarmInstanceWithImageHealthcheck(ctx context.Context, nodeID, instance string) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	resumer, ok := cli.(interface {
+		ResumeWarmInstanceWithImageHealthcheck(context.Context, string) error
+	})
+	if !ok {
+		return errors.New("sched: warm resume cannot enforce image healthcheck")
+	}
+	return resumer.ResumeWarmInstanceWithImageHealthcheck(ctx, instance)
 }
 
 // Destroy implements RoutedVMM.

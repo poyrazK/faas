@@ -8,6 +8,8 @@ import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
+import type { DevPatchPreview } from './DevPatchPreview.js';
+import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { RollbackOperation } from './RollbackOperation.js';
 import type { ScanResult } from './ScanResult.js';
@@ -24,10 +26,12 @@ export type DeploymentResponse = {
    * Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
    */
   promotion_hold?: DeploymentPromotionHold;
+  durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
   /**
    * Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
    */
   stage_state?: Record<string, any>;
+  dev_patch?: DevPatchPreview;
   id: string;
   app_id: string;
   /**

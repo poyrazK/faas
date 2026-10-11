@@ -102,17 +102,20 @@ func (m *MemStore) ExpireRevisionPins(_ context.Context) (int64, error) {
 	defer m.mu.Unlock()
 	var expired int64
 	pruned := 0
-	ids := make(map[string]struct{}, len(m.revisionPins)+len(m.operationCodePins))
+	ids := make(map[string]struct{}, len(m.revisionPins)+len(m.operationCodePins)+len(m.workflowCodePins))
 	for id := range m.revisionPins {
 		ids[id] = struct{}{}
 	}
 	for id := range m.operationCodePins {
 		ids[id] = struct{}{}
 	}
+	for id := range m.workflowCodePins {
+		ids[id] = struct{}{}
+	}
 	now := time.Now()
 	for id := range ids {
 		if m.revisionPins[id].After(now) || m.operationCodePins[id].After(now) ||
-			m.operationRetainsDeploymentLocked(id) || m.deploymentInUsableReleaseLocked(id) {
+			m.durableWorkRetainsDeploymentLocked(id) || m.deploymentInUsableReleaseLocked(id) {
 			continue
 		}
 		if pruned >= api.RevisionPinCleanupPageMax {
@@ -120,6 +123,7 @@ func (m *MemStore) ExpireRevisionPins(_ context.Context) (int64, error) {
 		}
 		delete(m.revisionPins, id)
 		delete(m.operationCodePins, id)
+		delete(m.workflowCodePins, id)
 		pruned++
 		if dep, exists := m.deployments[id]; exists && dep.Status == DeployLive && dep.TrafficPercent == 0 {
 			dep.Status = DeploySuperseded

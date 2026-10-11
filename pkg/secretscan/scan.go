@@ -168,7 +168,7 @@ func ScanEnvContent(path string, data []byte) []Finding {
 	// because we're tracking scope, not matching tokens.
 	inPEMBlock := false
 	// Manual line scan: bytes.IndexByte avoids copying the whole file into
-	// memory just to iterate lines. The repo is on Go 1.25 per go.mod and
+	// memory just to iterate lines. The repo is on Go 1.26 per go.mod and
 	// bytes.SplitSeq would also work, but the loop is small enough that
 	// the explicit IndexByte form keeps the per-line buffer zero-alloc.
 	for lineNo := 1; ; lineNo++ {

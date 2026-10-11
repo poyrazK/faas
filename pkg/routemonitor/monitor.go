@@ -31,7 +31,50 @@ func Validate(req api.SetRouteMonitorRequest) error {
 	if req.Routes == nil || req.Enabled && len(req.Routes) == 0 {
 		return errors.New("supply a routes array; enabled monitoring requires routes")
 	}
+	switch OnViolation(req.OnViolation) {
+	case "report":
+	case "rollback":
+		// Automatic rollback acts only on error budgets (ADR-845).
+		if !slices.ContainsFunc(req.Routes, func(r api.RouteMonitorRoute) bool { return r.Max5xxRateBPS != nil }) {
+			return errors.New("on_violation rollback requires at least one route with max_5xx_rate_bps")
+		}
+	default:
+		return errors.New("on_violation must be report or rollback")
+	}
 	return routehealth.Validate(api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: req.ExpectedRevision, Routes: selectors})
+}
+
+func ValidatePreviewRequest(req api.PreviewRouteMonitorRequest, currentRevision int64) error {
+	return Validate(api.SetRouteMonitorRequest{
+		CustomerGroupBy:  req.CustomerGroupBy,
+		Enabled:          true,
+		ExpectedRevision: &currentRevision,
+		Routes:           req.Routes,
+	})
+}
+
+func ValidatePreview(preview api.RouteMonitorPreview) error {
+	if !preview.PreviewOnly || preview.CurrentRevision < 0 || preview.Report.Revision != preview.CurrentRevision || !preview.Report.Enabled {
+		return errors.New("invalid route monitor preview metadata")
+	}
+	return ValidateReport(preview.Report)
+}
+
+func ValidatePreviewForRequest(preview api.RouteMonitorPreview, req api.PreviewRouteMonitorRequest) error {
+	if err := ValidatePreview(preview); err != nil {
+		return err
+	}
+	if preview.Report.CustomerGroupBy != req.CustomerGroupBy || len(preview.Report.Routes) != len(req.Routes) {
+		return errors.New("route monitor preview does not match the proposed budgets")
+	}
+	routes := make([]api.RouteMonitorRoute, len(preview.Report.Routes))
+	for i := range preview.Report.Routes {
+		routes[i] = preview.Report.Routes[i].Route
+	}
+	if !RoutesEqual(routes, req.Routes) {
+		return errors.New("route monitor preview does not match the proposed budgets")
+	}
+	return nil
 }
 func CloneRoutes(in []api.RouteMonitorRoute) []api.RouteMonitorRoute {
 	out := slices.Clone(in)
@@ -81,6 +124,12 @@ func Evaluate(r *api.RouteMonitorReport, unavailable string) {
 	evaluateCustomers(r, unavailable)
 }
 func evaluateFinding(f *api.RouteMonitorFinding, anchor *time.Time, unavailable string) {
+	evaluateWindows(f, anchor, unavailable)
+	applyPooledEvidence(f, anchor, unavailable)
+}
+
+// evaluateWindows derives window and finding verdicts from f.Windows.
+func evaluateWindows(f *api.RouteMonitorFinding, anchor *time.Time, unavailable string) {
 	errors, latencies := []string{}, []string{}
 	for j := range f.Windows {
 		w := &f.Windows[j]
@@ -197,6 +246,18 @@ func ValidateReport(r api.RouteMonitorReport) error {
 			c := w.Observed
 			if !w.Start.Equal(expected[j].Start) || !w.End.Equal(expected[j].End) || !validMonitorCounts(c) {
 				return errors.New("invalid monitor observations")
+			}
+		}
+		if len(f.PooledWindows) > 0 {
+			pooled, ok := PooledWindows(r.ObservationAnchor, r.CheckedAt)
+			if !ok || len(f.PooledWindows) != len(pooled) {
+				return errors.New("invalid pooled monitor windows")
+			}
+			copy.Routes[i].PooledWindows = slices.Clone(f.PooledWindows)
+			for j, w := range f.PooledWindows {
+				if !w.Start.Equal(pooled[j].Start) || !w.End.Equal(pooled[j].End) || !validMonitorCounts(w.Observed) {
+					return errors.New("invalid pooled monitor observations")
+				}
 			}
 		}
 	}

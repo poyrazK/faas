@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ EnvironmentWorkloadIntentStore = (*MemStore)(nil)
@@ -41,6 +43,29 @@ func (m *MemStore) EnvironmentWorkloadIntent(_ context.Context, accountID, appID
 	return cloneWorkloadIntent(row), nil
 }
 
+func (m *MemStore) EnvironmentWorkloadIntentByJob(_ context.Context, accountID, jobID string) (EnvironmentWorkloadIntent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if accountID == "" || jobID == "" {
+		return EnvironmentWorkloadIntent{}, ErrInvalidArgument
+	}
+	var found *EnvironmentWorkloadIntent
+	for _, row := range m.appEnvironmentWorkloadIntents {
+		if row.AccountID != accountID || row.JobID != jobID {
+			continue
+		}
+		if found != nil {
+			return EnvironmentWorkloadIntent{}, ErrConflict
+		}
+		copy := cloneWorkloadIntent(row)
+		found = &copy
+	}
+	if found == nil {
+		return EnvironmentWorkloadIntent{}, ErrNotFound
+	}
+	return *found, nil
+}
+
 func (m *MemStore) putWorkloadIntentLocked(row EnvironmentWorkloadIntent) EnvironmentWorkloadIntent {
 	if m.appEnvironmentWorkloadIntents == nil {
 		m.appEnvironmentWorkloadIntents = map[environmentWorkloadIntentKey]EnvironmentWorkloadIntent{}
@@ -65,9 +90,45 @@ func (m *MemStore) PutEnvironmentWorkloadIntent(_ context.Context, row Environme
 		return row, err
 	}
 	previous := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{row.AppID, row.EnvironmentID}]
+	if err := m.validateEnvironmentServiceBindingTargetsLocked(row); err != nil {
+		return row, err
+	}
+	count := len(row.ServiceBindings)
+	for key, intent := range m.appEnvironmentWorkloadIntents {
+		if key.AppID == row.AppID && key.EnvironmentID != row.EnvironmentID {
+			count += len(intent.ServiceBindings)
+		}
+	}
+	variables := map[string]bool{}
+	for _, variable := range m.envs {
+		if variable.AppID == row.AppID {
+			count++
+			if variable.Scope == env.Slug {
+				variables[variable.Key] = true
+			}
+		}
+	}
+	refs := m.environmentSecretRefsLocked(row.AppID, env.Slug)
+	for key := range m.appEnvironmentSecretRefs {
+		if key.AppID == row.AppID {
+			count++
+		}
+	}
+	limits, _ := api.LimitsFor(m.accounts[row.AccountID].Plan)
+	for _, binding := range row.ServiceBindings {
+		if variables[binding.EnvKey] || refs[binding.EnvKey] != "" {
+			return row, ErrConflict
+		}
+	}
+	if len(row.ServiceBindings) != 0 && count > limits.EnvVarsMax {
+		return row, ErrConflict
+	}
 	row, err = validateWorkloadIntentWrite(row, previous, app, env.Slug, m.accounts[row.AccountID].Plan)
 	if err != nil {
 		return row, err
+	}
+	if row.JobID != previous.JobID || previous.JobID != "" && len(workloadIntentChangedPaths(previous, row)) != 0 {
+		return row, ErrEnvironmentGitManaged
 	}
 	paths := workloadIntentChangedPaths(previous, row)
 	managed, err := m.gitOpsGuardScopedWriteLocked(row.AccountID, row.AppID, env.Slug, paths)

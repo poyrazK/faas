@@ -45,16 +45,30 @@ type Config struct {
 
 // TasksConfig describes optional starter-owned durable task processing. The
 // CLI validates the contract but the starter owns the worker implementation.
+type TaskOwnerKeyReference struct {
+	ID  string `json:"id"`
+	Env string `json:"env"`
+}
 type TasksConfig struct {
-	Enabled                *bool  `json:"enabled"`
-	DatabaseURLEnv         string `json:"database_url_env,omitempty"`
-	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
-	NamespaceEnv           string `json:"namespace_env,omitempty"`
-	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
-	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
-	WorkerConcurrency      int    `json:"worker_concurrency,omitempty"`
-	MaxOutstanding         int    `json:"max_outstanding,omitempty"`
-	MaxOutstandingPerOwner int    `json:"max_outstanding_per_owner,omitempty"`
+	OwnerKeyID               string                  `json:"owner_key_id,omitempty"`
+	PreviousOwnerKeys        []TaskOwnerKeyReference `json:"previous_owner_keys,omitempty"`
+	PayloadEncryptionVersion int                     `json:"payload_encryption_version,omitempty"`
+	Enabled                  *bool                   `json:"enabled"`
+	DatabaseURLEnv           string                  `json:"database_url_env,omitempty"`
+	EncryptionKeysEnv        string                  `json:"encryption_keys_env,omitempty"`
+	OwnerKeyEnv              string                  `json:"owner_key_env,omitempty"`
+	NamespaceEnv             string                  `json:"namespace_env,omitempty"`
+	TTLSeconds               int                     `json:"ttl_seconds,omitempty"`
+	ShutdownTimeoutMS        int                     `json:"shutdown_timeout_ms,omitempty"`
+	PollIntervalMS           int                     `json:"poll_interval_ms,omitempty"`
+	MaxAttempts              int                     `json:"max_attempts,omitempty"`
+	RetryBaseDelayMS         int                     `json:"retry_base_delay_ms,omitempty"`
+	RetryMaxDelayMS          int                     `json:"retry_max_delay_ms,omitempty"`
+	WorkerConcurrency        int                     `json:"worker_concurrency,omitempty"`
+	MaxRunning               int                     `json:"max_running,omitempty"`
+	MaxRunningPerOwner       int                     `json:"max_running_per_owner,omitempty"`
+	MaxOutstanding           int                     `json:"max_outstanding,omitempty"`
+	MaxOutstandingPerOwner   int                     `json:"max_outstanding_per_owner,omitempty"`
 }
 
 type AuthConfig struct {
@@ -237,6 +251,25 @@ func (c Config) Validate() error {
 }
 
 func (c *TasksConfig) validate() error {
+	if c != nil {
+		if c.OwnerKeyID != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`).MatchString(c.OwnerKeyID) {
+			return fmt.Errorf("invalid tasks.owner_key_id")
+		}
+		if len(c.PreviousOwnerKeys) > 16 || c.PayloadEncryptionVersion < 0 || c.PayloadEncryptionVersion > 2 {
+			return fmt.Errorf("invalid task encryption settings")
+		}
+		seen := map[string]bool{}
+		if c.OwnerKeyID != "" {
+			seen[c.OwnerKeyID] = true
+		}
+		for _, key := range c.PreviousOwnerKeys {
+			if !regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`).MatchString(key.ID) || !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(key.Env) || seen[key.ID] {
+				return fmt.Errorf("invalid tasks.previous_owner_keys")
+			}
+			seen[key.ID] = true
+		}
+	}
+
 	if c == nil {
 		return nil
 	}
@@ -255,6 +288,14 @@ func (c *TasksConfig) validate() error {
 			return fmt.Errorf("tasks.%s must name an uppercase environment variable", field.name)
 		}
 	}
+	if c.EncryptionKeysEnv != "" {
+		if !taskEnvName.MatchString(c.EncryptionKeysEnv) {
+			return fmt.Errorf("tasks.encryption_keys_env must name an uppercase environment variable")
+		}
+		if c.EncryptionKeysEnv == c.DatabaseURLEnv || c.EncryptionKeysEnv == c.OwnerKeyEnv || c.EncryptionKeysEnv == c.NamespaceEnv {
+			return fmt.Errorf("tasks encryption keys must use a distinct environment variable")
+		}
+	}
 	if c.DatabaseURLEnv == c.OwnerKeyEnv || c.DatabaseURLEnv == c.NamespaceEnv || c.OwnerKeyEnv == c.NamespaceEnv {
 		return fmt.Errorf("tasks database, owner key, and namespace must use distinct environment variables")
 	}
@@ -264,8 +305,37 @@ func (c *TasksConfig) validate() error {
 	if c.PollIntervalMS != 0 && (c.PollIntervalMS < 500 || c.PollIntervalMS > 30_000) {
 		return fmt.Errorf("tasks.poll_interval_ms must be between 500 and 30000")
 	}
+	if c.ShutdownTimeoutMS != 0 && (c.ShutdownTimeoutMS < 1000 || c.ShutdownTimeoutMS > 300_000) {
+		return fmt.Errorf("tasks.shutdown_timeout_ms must be between 1000 and 300000")
+	}
 	if c.WorkerConcurrency != 0 && (c.WorkerConcurrency < 1 || c.WorkerConcurrency > 16) {
 		return fmt.Errorf("tasks.worker_concurrency must be between 1 and 16")
+	}
+	if c.MaxAttempts < 0 || c.MaxAttempts > 10 {
+		return fmt.Errorf("tasks.max_attempts must be between 1 and 10 when specified")
+	}
+	base, maximum := c.RetryBaseDelayMS, c.RetryMaxDelayMS
+	if base == 0 {
+		base = 1000
+	}
+	if maximum == 0 {
+		maximum = 60000
+	}
+	if base < 100 || base > 86400000 || maximum < base || maximum > 86400000 {
+		return fmt.Errorf("task retry delays must be between 100 and 86400000 milliseconds, with maximum at least base")
+	}
+	if c.MaxRunning < 0 || c.MaxRunningPerOwner < 0 {
+		return fmt.Errorf("task running limits must be positive integers when specified")
+	}
+	running, runningOwner := c.MaxRunning, c.MaxRunningPerOwner
+	if running == 0 {
+		running = api.MCPTaskDefaultMaxRunning
+	}
+	if runningOwner == 0 {
+		runningOwner = api.MCPTaskDefaultMaxRunningPerOwner
+	}
+	if runningOwner > running {
+		return fmt.Errorf("tasks.max_running_per_owner must not exceed tasks.max_running")
 	}
 	if c.MaxOutstanding < 0 || c.MaxOutstandingPerOwner < 0 {
 		return fmt.Errorf("task admission limits must be positive integers when specified")

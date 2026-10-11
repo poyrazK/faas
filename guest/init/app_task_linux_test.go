@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -119,8 +120,108 @@ func TestServeAppTaskOnceHandlesOneCommand(t *testing.T) {
 	if result.Status != apptaskproto.StatusSucceeded || string(result.Stdout) != "ok" {
 		t.Fatalf("result = %+v", result)
 	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// adr: 230
+func TestServeAppTaskOnceKeepsGuestAliveUntilHostConsumesResult(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	executed := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- serveAppTaskOnce(ctx, ln, func(context.Context, apptaskproto.Request, *apptaskproto.OutputWriter, *apptaskproto.OutputWriter) (apptaskproto.Result, error) {
+			defer close(executed)
+			exit := 0
+			return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit}, nil
+		})
+	}()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	readGate := make(chan struct{})
+	client, err := apptaskproto.NewClient(appTaskPausedReader{Conn: conn, gate: readGate, ctx: ctx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultReceived := make(chan error, 1)
+	go func() {
+		result, err := client.Execute(ctx, apptaskproto.Request{
+			Version: apptaskproto.Version, TaskID: "task-1", Command: []string{"true"}, TimeoutSeconds: 1, MaxOutputBytes: 1024,
+		})
+		if err == nil && result.Status != apptaskproto.StatusSucceeded {
+			err = errors.New("task did not succeed")
+		}
+		resultReceived <- err
+	}()
+	select {
+	case <-executed:
+	case <-ctx.Done():
+		t.Fatal("guest did not execute the task")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("guest halted before host consumed the queued result: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(readGate)
+	if err := <-resultReceived; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("guest halted before host closed the result session: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type appTaskPausedReader struct {
+	net.Conn
+	gate <-chan struct{}
+	ctx  context.Context
+}
+
+func (c appTaskPausedReader) Read(p []byte) (int, error) {
+	select {
+	case <-c.gate:
+		return c.Conn.Read(p)
+	case <-c.ctx.Done():
+		return 0, c.ctx.Err()
+	}
+}
+
+// adr: 230
+func TestAppTaskHostCloseWaitIsBounded(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := awaitAppTaskHostClose(ctx, guest); err == nil {
+		t.Fatal("unresponsive host was accepted as a delivered result")
+	} else if !errors.Is(err, context.DeadlineExceeded) {
+		var timeout net.Error
+		if !errors.As(err, &timeout) || !timeout.Timeout() {
+			t.Fatalf("host-close wait: %v", err)
+		}
 	}
 }
 

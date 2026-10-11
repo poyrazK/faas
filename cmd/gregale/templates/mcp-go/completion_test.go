@@ -25,7 +25,7 @@ func TestCompletionReturnsBoundedPromptAndResourceSuggestions(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			complete(response, json.RawMessage("1"), json.RawMessage(test.params))
+			complete(response, json.RawMessage("1"), json.RawMessage(test.params), testScopedAuthenticator(t, `{"mode":"open"}`), nil)
 			if response.Code != 200 {
 				t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
 			}
@@ -58,7 +58,7 @@ func TestCompletionReturnsBoundedPromptAndResourceSuggestions(t *testing.T) {
 
 func TestCompletionRejectsUnknownReferencesAndArguments(t *testing.T) {
 	response := httptest.NewRecorder()
-	complete(response, json.RawMessage("1"), json.RawMessage(`{"ref":{"type":"ref/prompt","name":"private"},"argument":{"name":"style","value":"b"}}`))
+	complete(response, json.RawMessage("1"), json.RawMessage(`{"ref":{"type":"ref/prompt","name":"private"},"argument":{"name":"style","value":"b"}}`), testScopedAuthenticator(t, `{"mode":"open"}`), nil)
 	if response.Code != 400 {
 		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
 	}

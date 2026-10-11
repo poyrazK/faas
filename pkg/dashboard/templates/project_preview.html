@@ -116,7 +116,7 @@
         <tbody>
           {{range .Data.WillDeploy}}
             <tr>
-              <td>{{.Slug}}</td>
+              <td>{{.Slug}}{{if .Image}}<br><small class="muted">Image: <code>{{.Image}}</code></small>{{end}}</td>
               <td><span class="badge badge-{{.Action}}">{{.ActionGlyph}} {{.ActionLabel}}</span></td>
               <td>{{if .ID}}<code>{{.ID}}</code>{{if .ExistingRoot}} <span class="muted">(root: {{.ExistingRoot}})</span>{{end}}{{else}}<span class="muted">new</span>{{end}}</td>
               <td><input type="checkbox" name="exclude" value="{{.Slug}}" form="apply-form"></td>

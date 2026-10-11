@@ -428,6 +428,37 @@ func TestPreparedNetworkTeardownFailureRetainsSlot(t *testing.T) {
 	}
 }
 
+func TestPreparedNetworkWakeRefillSettlesFirst(t *testing.T) {
+	m, p := testPreparedPool(t, 1)
+	p.refillDelay = 200 * time.Millisecond
+	p.done = make(chan struct{})
+	go p.run()
+	policy, _ := m.preparedPolicy(WakeRequest{Plan: "scale", EgressMbit: 250})
+	start := time.Now()
+	p.observe(policy)
+	ready := func() int {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return len(p.ready)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if ready() != 0 {
+		t.Fatal("refill ran inside the wake tail")
+	}
+	for ready() != 1 {
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("worker did not refill after the settle delay")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if elapsed := time.Since(start); elapsed < p.refillDelay {
+		t.Fatalf("refill after %s, before the %s settle delay", elapsed, p.refillDelay)
+	}
+	if err := m.ClosePreparedNetworks(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPreparedNetworkShutdownDrainsWorker(t *testing.T) {
 	m, p := testPreparedPool(t, 2)
 	p.done = make(chan struct{})

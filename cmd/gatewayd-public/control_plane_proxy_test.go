@@ -387,6 +387,10 @@ func TestIsComputeOwnedGatewayPath(t *testing.T) {
 		{path: "/v1/invocations:dispatch_batch", want: true},
 		{path: "/v1/invocations", want: false},
 		{path: "/v1/whoami", want: false},
+		// ADR-741 debugger tunnel.
+		{path: "/v1/apps/dev-api-0123/debug", want: true},
+		{path: "/v1/apps/dev-api-0123/debug/x", want: false},
+		{path: "/v1/apps/dev-api-0123/debugger", want: false},
 	} {
 		if got := isComputeOwnedGatewayPath(tc.path); got != tc.want {
 			t.Errorf("isComputeOwnedGatewayPath(%q) = %v, want %v", tc.path, got, tc.want)

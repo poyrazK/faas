@@ -72,6 +72,9 @@ type DeployReceipt struct {
 	CommitSHA        string                `json:"commit_sha,omitempty"`
 	Dirty            bool                  `json:"dirty,omitempty"`
 	SourceSHA256     string                `json:"source_sha256,omitempty"`
+	Interrupted      bool                  `json:"interrupted,omitempty"`
+	WaitStage        string                `json:"wait_stage,omitempty"`
+	Recovery         *deployRecovery       `json:"recovery,omitempty"`
 	TimedOut         bool                  `json:"timed_out,omitempty"`
 	ResumeCommand    string                `json:"resume_command,omitempty"`
 	PreviewURL       string                `json:"preview_url,omitempty"`

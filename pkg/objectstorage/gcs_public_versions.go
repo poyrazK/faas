@@ -37,17 +37,40 @@ func (p *GCS) PresignVersionRead(ctx context.Context, bucket, method, key, gener
 }
 
 type gcsVersionListXML struct {
-	XMLName     xml.Name              `xml:"ListVersionsResult"`
-	Encoding    string                `xml:"EncodingType"`
-	Truncated   *bool                 `xml:"IsTruncated"`
-	NextKey     string                `xml:"NextKeyMarker"`
-	NextVersion string                `xml:"NextVersionIdMarker"`
-	Versions    []gcsListedVersionXML `xml:"Version"`
-	Markers     []struct{}            `xml:"DeleteMarker"`
-	Prefixes    []struct {
+	XMLName        xml.Name              `xml:"ListVersionsResult"`
+	Encoding       []string              `xml:"EncodingType"`
+	NativeEncoding []string              `xml:"Encoding-Type"`
+	Truncated      *bool                 `xml:"IsTruncated"`
+	NextKey        string                `xml:"NextKeyMarker"`
+	NextVersion    string                `xml:"NextVersionIdMarker"`
+	Versions       []gcsListedVersionXML `xml:"Version"`
+	Markers        []struct{}            `xml:"DeleteMarker"`
+	Prefixes       []struct {
 		Prefix string `xml:"Prefix"`
 	} `xml:"CommonPrefixes"`
 }
+
+func gcsVersionListEncoding(out gcsVersionListXML) (string, error) {
+	// GCS returns Encoding-Type; retain the S3 spelling for compatible replies.
+	// Multiple markers cannot establish a single decoding contract.
+	if len(out.Encoding)+len(out.NativeEncoding) == 0 {
+		return "", nil
+	}
+	if len(out.Encoding)+len(out.NativeEncoding) != 1 {
+		return "", ErrUnavailable
+	}
+	encoding := ""
+	if len(out.NativeEncoding) == 1 {
+		encoding = out.NativeEncoding[0]
+	} else {
+		encoding = out.Encoding[0]
+	}
+	if encoding != "url" {
+		return "", ErrUnavailable
+	}
+	return encoding, nil
+}
+
 type gcsListedVersionXML struct {
 	Key      string    `xml:"Key"`
 	ID       string    `xml:"VersionId"`
@@ -90,7 +113,8 @@ func validGCSVersionListRequest(bucket string, r ObjectVersionListRequest) bool 
 func gcsVersionListKey(key, encoding string) (string, error) {
 	if encoding == "url" {
 		var err error
-		key, err = url.PathUnescape(key)
+		// Native GCS XML uses form encoding: '+' is a space and '%2B' a plus.
+		key, err = url.QueryUnescape(key)
 		if err != nil {
 			return "", ErrUnavailable
 		}
@@ -105,12 +129,13 @@ func gcsVersionListKey(key, encoding string) (string, error) {
 
 func parseGCSVersionList(out gcsVersionListXML, r ObjectVersionListRequest) (ObjectVersionListPage, error) {
 	page := ObjectVersionListPage{Items: []ListedObjectVersion{}, CommonPrefixes: []string{}}
-	if out.Truncated == nil || len(out.Markers) != 0 || len(out.Versions)+len(out.Prefixes) > int(r.Limit) {
+	encoding, err := gcsVersionListEncoding(out)
+	if err != nil || out.Truncated == nil || len(out.Markers) != 0 || len(out.Versions)+len(out.Prefixes) > int(r.Limit) {
 		return page, ErrUnavailable
 	}
 	seen := map[string]bool{}
 	for _, v := range out.Versions {
-		key, err := gcsVersionListKey(v.Key, out.Encoding)
+		key, err := gcsVersionListKey(v.Key, encoding)
 		_, genErr := gcsGeneration(v.ID)
 		if err != nil || genErr != nil || !strings.HasPrefix(key, r.Prefix) || v.Size == nil || *v.Size < 0 || *v.Size > api.MaxObjectUploadBytes || v.Latest == nil || v.Modified.IsZero() || !validUploadETag(v.ETag) || seen[key+"\x00"+v.ID] {
 			return ObjectVersionListPage{}, ErrUnavailable
@@ -119,27 +144,27 @@ func parseGCSVersionList(out gcsVersionListXML, r ObjectVersionListRequest) (Obj
 		page.Items = append(page.Items, ListedObjectVersion{Object: Object{Key: key, ETag: v.ETag, Size: *v.Size, LastModified: v.Modified}, ProviderVersionID: v.ID, IsLatest: *v.Latest, StorageClass: "STANDARD"})
 	}
 	for _, p := range out.Prefixes {
-		key, err := gcsVersionListKey(p.Prefix, out.Encoding)
+		key, err := gcsVersionListKey(p.Prefix, encoding)
 		if err != nil || r.Delimiter == "" || !strings.HasPrefix(key, r.Prefix) || !strings.HasSuffix(key, r.Delimiter) || seen["prefix\x00"+key] {
 			return ObjectVersionListPage{}, ErrUnavailable
 		}
 		seen["prefix\x00"+key] = true
 		page.CommonPrefixes = append(page.CommonPrefixes, key)
 	}
-	if err := finishGCSVersionList(&page, out, r); err != nil {
+	if err := finishGCSVersionList(&page, out, r, encoding); err != nil {
 		return ObjectVersionListPage{}, err
 	}
 	return page, nil
 }
 
-func finishGCSVersionList(page *ObjectVersionListPage, out gcsVersionListXML, r ObjectVersionListRequest) error {
+func finishGCSVersionList(page *ObjectVersionListPage, out gcsVersionListXML, r ObjectVersionListRequest, encoding string) error {
 	if !*out.Truncated {
 		if out.NextKey != "" || out.NextVersion != "" {
 			return ErrUnavailable
 		}
 		return nil
 	}
-	key, err := gcsVersionListKey(out.NextKey, out.Encoding)
+	key, err := gcsVersionListKey(out.NextKey, encoding)
 	if err != nil || !strings.HasPrefix(key, r.Prefix) || key == r.KeyMarker && out.NextVersion == r.ProviderVersionMarker || len(page.Items)+len(page.CommonPrefixes) == 0 {
 		return ErrUnavailable
 	}

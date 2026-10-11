@@ -48,8 +48,8 @@ for its deployable dependencies (for example,
 `GREGALE_SERVICE_API_URL=http://api.svc.gregale:10081`) and additive HTTPS
 canary companions (for example,
 `GREGALE_SERVICE_API_HTTPS_URL=https://api.internal`). The private DNS and
-proxy path provides the endpoint even when the target app is cold; image-only
-managed services remain customer-provided and are not given a Gregale URL.
+proxy path provides the endpoint even when the target app is cold; denylisted
+stateful image services remain customer-provided and are not given a Gregale URL.
 Compose services may set `x-gregale-service-policy: declared` to make this
 dependency list an outbound authorization allowlist. The omitted/default
 `account` policy preserves same-account reachability for existing projects.
@@ -200,7 +200,8 @@ type Workload struct {
     Command    []string // start-command override
     Class      Class    // http|graphql|grpc|job|worker|unknown — a HINT pre-probe
     Schedule   string   // cron expression, when declared
-    DependsOn  []string // Compose service dependencies (name-only graph edges)
+    DependsOn  []string // Compose service dependency graph edges
+    DependsOnConditions map[string]string // explicit started/healthy release conditions
     Ports      []int
     EnvKeys    []string // KEYS ONLY — never values (spec §11: never log secrets)
     Source     string   // "docker-compose.yml: api" — shown in the table
@@ -254,9 +255,12 @@ Output sorted by `Name`.
 `nats`, `minio`, `memcached`, `etcd` → `Managed`, with an env hint. Matched on
 the image name, ignoring registry host and tag.
 
-Non-datastore services declaring `image:` with no `build:` are **skipped with a
-warning** — arbitrary prebuilt images trip the two-drive `FROM`-base constraint
-(`pkg/oci/image.go`), which needs its own ADR.
+Stateless services declaring `image:` with no `build:` deploy through the OCI
+image worker, returning a deployment ID without a source build ID. Tags are
+resolved and pinned before materialization; registry credentials, signatures,
+Linux/amd64 selection, and full-rootfs plan gates use the existing container
+path. A service with both `build:` and `image:` still builds from source. See
+[ADR-678](adr/678-compose-prebuilt-image-workloads.md).
 
 ---
 
@@ -392,10 +396,13 @@ not starve tenant wakes under `make test-load`.
 - **Project-level env** (shared `DATABASE_URL` across members) is not in this
   plan. `app_envs` is keyed `(app_id, key)`; a project-level tier is a later
   migration and should land with preview-environment scoping, not before.
-- **Compose readiness conditions** (`service_healthy` and
-  `service_completed_successfully`) are surfaced as dependency edges but do
-  not block a VM at boot. Callers should use the generated service URL and
-  retry through the proxy; a readiness-aware rollout gate is a follow-up.
+- **Compose readiness conditions:** `service_healthy` now gates initial project
+  release activation against captured dependency deployment IDs, with durable
+  waits and unchanged predecessor traffic on failure
+  ([ADR-685](adr/685-compose-dependency-release-gates.md)). It does not hold VM
+  boot or continuously monitor another service. `service_started` retains
+  admission ordering; completion conditions and healthy managed targets are
+  rejected explicitly.
 - **Preview deploys per branch** stay out of scope. They need env scoping first
   and are their own milestone.
 - **An override file** (`faas.yaml` naming workloads explicitly) remains open

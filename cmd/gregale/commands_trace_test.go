@@ -237,3 +237,19 @@ func TestCmdTraceWatchTimesOut(t *testing.T) {
 		t.Fatalf("stderr=%q missing timeout message", stderr())
 	}
 }
+
+// An account-wide evidence read that failed carries no app; it must not
+// print as "trace : detail".
+func TestTraceLookupErrorLine(t *testing.T) {
+	for _, tc := range []struct {
+		item api.AccountTraceLookupError
+		want string
+	}{
+		{api.AccountTraceLookupError{App: "checkout", Detail: "request telemetry unavailable"}, "trace checkout: request telemetry unavailable"},
+		{api.AccountTraceLookupError{Detail: "HTTP log events unavailable"}, "trace: HTTP log events unavailable"},
+	} {
+		if got := traceLookupErrorLine(tc.item); got != tc.want {
+			t.Errorf("traceLookupErrorLine(%+v) = %q, want %q", tc.item, got, tc.want)
+		}
+	}
+}

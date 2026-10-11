@@ -34,6 +34,40 @@ func (m *MemStore) GetRouteMonitor(_ context.Context, accountID, appID string) (
 	defer m.mu.Unlock()
 	return m.routeMonitorConfigLocked(accountID, appID)
 }
+func (m *MemStore) PreviewRouteMonitor(ctx context.Context, accountID, appID string, req api.PreviewRouteMonitorRequest) (api.RouteMonitorPreview, error) {
+	return m.PreviewRouteMonitorWithCustomerDetails(ctx, accountID, appID, req, false)
+}
+func (m *MemStore) PreviewRouteMonitorWithCustomerDetails(_ context.Context, accountID, appID string, req api.PreviewRouteMonitorRequest, details bool) (api.RouteMonitorPreview, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, err := m.routeMonitorConfigLocked(accountID, appID)
+	if err != nil {
+		return api.RouteMonitorPreview{}, err
+	}
+	if routemonitor.ValidatePreviewRequest(req, current.Revision) != nil {
+		return api.RouteMonitorPreview{}, ErrInvalidArgument
+	}
+	configChanged := !current.Enabled || current.CustomerGroupBy != req.CustomerGroupBy || !routemonitor.RoutesEqual(current.Routes, req.Routes)
+	proposed := api.RouteMonitorConfig{
+		CustomerGroupBy: req.CustomerGroupBy,
+		AppID:           appID,
+		Enabled:         true,
+		Revision:        current.Revision,
+		Routes:          routemonitor.CloneRoutes(req.Routes),
+	}
+	if !configChanged && current.UpdatedAt != nil {
+		updatedAt := current.UpdatedAt.UTC()
+		proposed.UpdatedAt = &updatedAt
+	}
+	report := routemonitor.NewReport(proposed, time.Now())
+	routemonitor.Evaluate(&report, "telemetry_unavailable")
+	return api.RouteMonitorPreview{
+		CurrentRevision:                     current.Revision,
+		PreviewOnly:                         true,
+		ConfigChangeResetsObservationAnchor: configChanged,
+		Report:                              routemonitor.ProjectReport(report, details),
+	}, nil
+}
 func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, req api.SetRouteMonitorRequest) (api.RouteMonitorConfig, error) {
 	if routemonitor.Validate(req) != nil {
 		return api.RouteMonitorConfig{}, ErrInvalidArgument
@@ -50,7 +84,7 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 	if req.Enabled && (!m.accounts[accountID].Plan.DebugTelemetryEnabled() || !m.accounts[accountID].MayDeploy()) {
 		return c, ErrRouteInvestigationPlan
 	}
-	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.RoutesEqual(c.Routes, req.Routes) {
+	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.OnViolation(c.OnViolation) == routemonitor.OnViolation(req.OnViolation) && routemonitor.RoutesEqual(c.Routes, req.Routes) {
 		return c, nil
 	}
 	if c.Revision >= api.RouteRequirementsMaxRevision {
@@ -64,6 +98,11 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 		}
 	}
 	c.Enabled, c.Routes, c.CustomerGroupBy, c.Revision, c.UpdatedAt = req.Enabled, routemonitor.CloneRoutes(req.Routes), req.CustomerGroupBy, c.Revision+1, &now
+	// Match Postgres, which omits the default report action.
+	c.OnViolation = ""
+	if routemonitor.OnViolation(req.OnViolation) == "rollback" {
+		c.OnViolation = "rollback"
+	}
 	if m.routeMonitorConfigs == nil {
 		m.routeMonitorConfigs = map[string]api.RouteMonitorConfig{}
 	}

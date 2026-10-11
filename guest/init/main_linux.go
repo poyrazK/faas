@@ -286,6 +286,12 @@ func boot() error {
 	if err != nil {
 		return err
 	}
+	if err := startProfileBridge(manifest.Profiling, slog.Default()); err != nil {
+		slog.Default().Warn("profile bridge unavailable", "err", err)
+	}
+	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
+		slog.Default().Warn("trace bridge unavailable", "err", err)
+	}
 	if manifest.AfterRestore != nil {
 		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
 	}
@@ -296,6 +302,12 @@ func boot() error {
 	// access to the local signal socket. The runner does not inherit root UID.
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
 		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
+	}
+	// ADR-687: without the reseed server, Node and Python processes restored
+	// from a snapshot replay the captured random state. Env stamping injects
+	// no preload when this fails, so a failure is loud but not fatal.
+	if err := startRestoreReseedServer(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
+		slog.Default().Error("restore reseed server unavailable", "err", err)
 	}
 
 	// G2: read /etc/faas/secrets.env (unsealed JSON, written by vmmd at
@@ -320,6 +332,15 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
+	if qualificationReceiptErr != nil {
+		slog.Default().Warn("qualification configuration receipt control is invalid")
+		qualificationReceiptToken = ""
+	} else if qualificationReceiptToken != "" && (secErr != nil || apiErr != nil) {
+		slog.Default().Warn("qualification configuration was not fully loaded; withholding receipt")
+		clear(qualificationReceiptMACKey)
+		qualificationReceiptToken = ""
+	}
 
 	// Issue #463 / ADR-069 / PR-B: discover the workload roster
 	// (deployment-level main + sidecars). A missing
@@ -336,7 +357,11 @@ func boot() error {
 		}
 	}
 	if rosterErr == nil && len(roster.Sidecars) > 0 {
-		return runWorkloads(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy)
+		var receiptControl *qualificationConfigReceiptControl
+		if qualificationReceiptToken != "" {
+			receiptControl = &qualificationConfigReceiptControl{token: qualificationReceiptToken, macKey: qualificationReceiptMACKey}
+		}
+		return runWorkloadsWithQualificationReceipt(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy, receiptControl)
 	}
 	// Roster absent or empty Sidecars = legacy path. Log the
 	// roster error if it was a parse failure (the legacy
@@ -344,6 +369,10 @@ func boot() error {
 	// no roster file).
 	if rosterErr != nil && !isNotExist(rosterErr) {
 		slog.Default().Warn("workloads.json could not be parsed; proceeding without sidecars", "err_kind", errorKind(rosterErr))
+	}
+	if qualificationReceiptToken != "" {
+		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
+		clear(qualificationReceiptMACKey)
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a
@@ -398,6 +427,10 @@ func boot() error {
 	if rotatingSecrets != nil {
 		startRuntimeSecretReloader(bootCtx, manifest, rotatingSecrets, supRef, slog.Default())
 	}
+	// ADR-740: developer environments receive live source patches. vmmd
+	// answers dev_patch_disabled for every other app, which ends the loop
+	// after a single request.
+	startDevPatchLoop(bootCtx, supRef, slog.Default())
 	// M-2 / ADR-139 §Decision 1: HEALTHCHECK poll goroutine.
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
@@ -470,10 +503,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	env = stampProfileEnv(env, m.Profiling)
+	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
+	env = StampRestoreReseedEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {
@@ -487,6 +524,17 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// for warm handlers uses the traceparent HTTP header at the guest
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
+	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
+	// workload only.
+	preload := ""
+	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
+		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+		} else {
+			preload = devDebugPreloadPath
+		}
+	}
+	env = StampDevDebugEnv(env, preload)
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -504,16 +552,20 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// When sup is nil (unit tests that exercise runAppWithEnv directly
 	// without a supervisor), we fall back to the legacy bare stdout
 	// wiring — those tests don't read LogTail.
+	var output io.Writer = os.Stdout
 	if sup != nil {
-		mw := io.MultiWriter(os.Stdout, sup.LogBuffer())
-		cmd.Stdout, cmd.Stderr = mw, mw
-	} else {
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
 	credential, err := processCredential("", m.EffectiveUser())
 	if err != nil {
 		return fmt.Errorf("run app: %w", err)
 	}
+	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	if err != nil {
+		return fmt.Errorf("run app: workload output pipe: %w", err)
+	}
+	defer outputPipe.finish()
+	cmd.Stdout, cmd.Stderr = outputPipe.w, outputPipe.w
 	readyPath, guestReadyPath, err := prepareRuntimeSecretReadyFile(projection, "", m.SecretReloadReadiness)
 	if err != nil {
 		return err
@@ -562,6 +614,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
+	outputPipe.closeWriter()
+	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
+		if processSecrets == nil {
+			return cmd.Env
+		}
+		return imageReadinessSecretEnvironment(cmd.Env, m, secrets, processSecrets.snapshot(), apiEnv)
+	})
+	defer retireImageReadiness()
 	if sup != nil {
 		sup.markStarted()
 		if sup.onHealthy != nil {
@@ -1931,6 +1991,9 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 	}
+	if runErr == nil {
+		done.DevPatch = buildDevPatchSourceMap(m, readBuildPlan)
+	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {
 			fmt.Fprintf(os.Stderr, "guest-init: open build-done: %v\n", openErr)
@@ -2405,6 +2468,11 @@ func pivotInto(root string) error {
 		if err := syscall.Mount(mnt.src, mnt.dst, mnt.fs, 0, ""); err != nil {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
+	}
+	// A fresh devtmpfs lacks the /dev/fd and /dev/std{in,out,err} links
+	// images expect from a container runtime (nginx logs to /dev/stderr).
+	if err := ensureStandardDevLinks("/dev"); err != nil {
+		slog.Default().Warn("post-pivot standard /dev links", "err", err)
 	}
 	return nil
 }

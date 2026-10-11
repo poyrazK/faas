@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 566 — closed-minute job billing must include completed and deleted jobs.
@@ -63,7 +64,15 @@ func TestFinancialPostgresJobBillingWindow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows := financialRowsWithContext(t, ctx, store, a.ID, head)
+			// A fresh sampler also catches up earlier closed minutes (H5-55),
+			// which may bill this job's residency before the window; the
+			// window minute alone is under test here.
+			var rows []state.FinancialUsageRecord
+			for _, row := range financialRowsWithContext(t, ctx, store, a.ID, head) {
+				if row.Evidence.Start.Equal(minute) {
+					rows = append(rows, row)
+				}
+			}
 			if tc.seconds == 0 {
 				if len(rows) != 0 {
 					t.Fatalf("billed outside residency: %+v", rows)

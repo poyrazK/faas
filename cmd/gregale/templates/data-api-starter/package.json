@@ -1,0 +1,20 @@
+{
+  "name": "gregale-data-api-starter-migrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "migrate": "node migrations/migrate.mjs",
+    "release": "node migrations/release.mjs",
+    "test": "node --test test/*.test.mjs",
+    "receipts:cleanup": "node migrations/cleanup-receipts.mjs",
+    "rpc:permissions": "node migrations/rpc-permissions.mjs"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  }
+}

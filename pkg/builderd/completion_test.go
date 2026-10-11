@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,7 @@ func TestCompletionPublicationOrderAndStaleWorker(t *testing.T) {
 			if err := os.WriteFile(layer, []byte("image bytes"), 0600); err != nil {
 				t.Fatal(err)
 			}
+			t.Setenv("FAAS_DEPLOY_BASE_REF_MINIMAL", "ghcr.io/test/minimal@sha256:"+strings.Repeat("a", 64))
 			vm := &fakeVM{out: BuildOutcome{OCIImage: layer}}
 			if scenario == "reaped" {
 				vm.waitHook = func() {
@@ -63,6 +65,10 @@ func TestCompletionPublicationOrderAndStaleWorker(t *testing.T) {
 					t.Fatalf("stale publication: %+v %+v", result, dep)
 				}
 				return
+			}
+			ref, refErr := s.BuildRuntimeBaseRef(ctx, id)
+			if refErr != nil || ref != "ghcr.io/test/minimal@sha256:"+strings.Repeat("a", 64) {
+				t.Fatalf("lost build runtime identity: %q %v", ref, refErr)
 			}
 			if bootCalls != 1 {
 				t.Fatalf("boot calls %d", bootCalls)

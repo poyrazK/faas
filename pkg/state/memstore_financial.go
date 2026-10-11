@@ -244,6 +244,22 @@ func (m *MemStore) RecordFinancialSamplingWindow(_ context.Context, minute time.
 	return nil
 }
 
+func (m *MemStore) FinancialCompletedComputeMinutes(_ context.Context, start, end time.Time) ([]time.Time, error) {
+	if !validFinancialSamplingWindow(start, end) {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []time.Time
+	for minute, row := range m.financialSamplingWindows {
+		if row.compute && !minute.Before(start) && minute.Before(end) {
+			out = append(out, minute)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out, nil
+}
+
 func (m *MemStore) FinancialSamplingCoverage(_ context.Context, start, end time.Time) (FinancialSamplingCoverage, error) {
 	if !validFinancialSamplingWindow(start, end) {
 		return FinancialSamplingCoverage{}, ErrInvalidArgument

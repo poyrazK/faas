@@ -37,6 +37,9 @@ type runtimeConfigRequest struct {
 	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 	Generation              string `json:"generation,omitempty"`
 	PreviousGeneration      string `json:"previous_generation,omitempty"`
+	// PatchGeneration is the last developer live patch applied (ADR-740).
+	PatchGeneration int64 `json:"patch_generation,omitempty"`
+	PatchApplyMS    int64 `json:"patch_apply_ms,omitempty"`
 }
 
 type runtimeConfigResponse struct {
@@ -47,6 +50,7 @@ type runtimeConfigResponse struct {
 	Accepted   bool               `json:"accepted,omitempty"`
 	Generation string             `json:"generation,omitempty"`
 	Error      string             `json:"error,omitempty"`
+	DevPatch   *devPatchWire      `json:"dev_patch,omitempty"`
 }
 
 // dialRuntimeConfigHost is a variable so the HTTP seam can be exercised with

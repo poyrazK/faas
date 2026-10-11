@@ -1,20 +1,33 @@
+import { mcpTaskHandlerInventory } from './task-compatibility.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
+const TASK_TOOL_NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
+const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
-const WORKER_CAPABILITY_HEARTBEAT_MS = 10_000;
-const MAX_ATTEMPTS = 3;
+// Only this explicit handler error opts into retries. Messages are never persisted.
+export class RetryableMcpTaskError extends Error {
+  constructor(message = 'Transient task failure', options) {
+    super(message, options);
+    this.name = 'RetryableMcpTaskError';
+  }
+}
+
+export function validateMcpTaskRetryPolicy({ maxAttempts = 3, retryBaseDelayMs = 1000, retryMaxDelayMs = 60_000 } = {}) {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) throw new Error('MCP task max attempts must be between 1 and 10');
+  if (!Number.isSafeInteger(retryBaseDelayMs) || retryBaseDelayMs < 100 || retryBaseDelayMs > 86_400_000) throw new Error('MCP task retry base delay must be between 100 and 86400000 milliseconds');
+  if (!Number.isSafeInteger(retryMaxDelayMs) || retryMaxDelayMs < retryBaseDelayMs || retryMaxDelayMs > 86_400_000) throw new Error('MCP task retry maximum delay must be between the base delay and 86400000 milliseconds');
+  return { maxAttempts, retryBaseDelayMs, retryMaxDelayMs };
+}
 const MAX_TASK_SUBSCRIPTIONS = 64;
 const MAX_TASK_SUBSCRIPTION_IDS = 64;
 const MAX_WATCHED_TASKS = 512;
 const TASK_INPUT_REQUIRED = Symbol('task input required');
 const INPUT_METHODS = new Set(['elicitation/create', 'sampling/createMessage', 'roots/list']);
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TASK_TOOL_NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
-const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function clientSupportsMcpTasks(ctx) {
   const capabilities = ctx?.mcpReq?.envelope?.['io.modelcontextprotocol/clientCapabilities'];
@@ -67,37 +80,34 @@ function inputMethodsFor(clientCapabilities) {
   return methods;
 }
 
-export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollIntervalMs = 2000, workerConcurrency = 1, workerEnabled = true, keepAlive = false, drainTimeoutMs = 10_000, onDrain = () => {}, onError = () => {} }) {
+export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDrain = () => {}, pollIntervalMs = 2000, workerConcurrency = 1, shutdownTimeoutMs = 30_000, maxAttempts = 3, retryBaseDelayMs = 1000, retryMaxDelayMs = 60_000, workerEnabled = true, keepAlive = false, onError = () => {} }) {
   if (!store || typeof store.initialize !== 'function' || typeof store.claim !== 'function') throw new Error('MCP Tasks require a durable task store');
   if (!handlers || typeof handlers !== 'object' || Array.isArray(handlers)) throw new Error('MCP Tasks require a handler registry');
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 500 || pollIntervalMs > 30_000) throw new Error('MCP task polling must be between 500 and 30000 milliseconds');
   if (!Number.isSafeInteger(workerConcurrency) || workerConcurrency < 1 || workerConcurrency > 16) throw new Error('MCP task worker concurrency must be between 1 and 16');
+  if (!Number.isSafeInteger(shutdownTimeoutMs) || shutdownTimeoutMs < 1000 || shutdownTimeoutMs > 300_000) throw new Error('MCP task shutdown timeout must be between 1000 and 300000 milliseconds');
   if (typeof workerEnabled !== 'boolean' || typeof keepAlive !== 'boolean') throw new Error('MCP task worker options must be boolean');
 
-  if (!Number.isSafeInteger(drainTimeoutMs) || drainTimeoutMs < 1000 || drainTimeoutMs > 300_000) throw new Error('MCP drain timeout must be between 1 and 300 seconds');
-  const supportedHandlers = [];
+  validateMcpTaskRetryPolicy({ maxAttempts, retryBaseDelayMs, retryMaxDelayMs });
+
+  handlers = Object.freeze({...handlers});
+  const supportedHandlers = mcpTaskHandlerInventory(handlers);
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
-    if (!TASK_TOOL_NAME_PATTERN.test(name) || !handler || typeof handler.version !== 'string' || !TASK_HANDLER_VERSION_PATTERN.test(handler.version)) throw new Error('Invalid MCP task handler registration');
-    if (handler.validate !== undefined && typeof handler.validate !== 'function') throw new Error('MCP task handler validate must be a function');
+    if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid MCP task handler name');
+    if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
-      if (!TASK_HANDLER_VERSION_PATTERN.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
-      supportedHandlers.push({ name, version });
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
+
       executionHandlers.set(JSON.stringify([name, version]), execute);
     }
   }
 
   const active = new Set();
-  const executions = new Map();
-  let stopPromise;
-  let claimPromise;
-  let capabilityPromise;
+  const executions = new Set();
+  let stopping;
   const taskSubscriptions = new Set();
   let timer;
-  let workerCapabilityTimer;
-  let workerCapabilityHeartbeatBusy = false;
-  let lastWorkerCapabilityCleanup = 0;
-  const workerID = randomUUID();
   let taskSubscriptionTimer;
   let taskSubscriptionPollBusy = false;
   let taskStoreUnsubscribe;
@@ -106,27 +116,12 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
   let draining = false;
   let closed = true;
   let lastCleanup = 0;
+  const workerID = randomUUID();
+  let lastWorkerHeartbeat = -Infinity;
+  let workerHeartbeatPending;
 
   function reportError() {
     try { onError(); } catch { /* Never let diagnostics stop task workers. */ }
-  }
-
-  async function refreshWorkerCapabilities() {
-    if (!workerEnabled || closed || workerCapabilityHeartbeatBusy || typeof store.heartbeatWorkerCapabilities !== 'function') return;
-    workerCapabilityHeartbeatBusy = true;
-    try {
-      capabilityPromise = store.heartbeatWorkerCapabilities(workerID, supportedHandlers, deploymentID);
-      await capabilityPromise;
-      const now = Date.now();
-      if (now - lastWorkerCapabilityCleanup >= 60 * 60 * 1000 && typeof store.cleanupStaleWorkerCapabilities === 'function') {
-        await store.cleanupStaleWorkerCapabilities();
-        lastWorkerCapabilityCleanup = now;
-      }
-    } catch {
-      reportError();
-    } finally {
-      workerCapabilityHeartbeatBusy = false;
-    }
   }
 
   function ownerPartition(authInfo, authMode) {
@@ -255,7 +250,6 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
 
     const controller = new AbortController();
     let abortReason = '';
-    executions.set(task.task_id, { task, abort() { abortReason = 'drain_timeout'; controller.abort(); } });
     let heartbeatBusy = false;
     let pausedForInput = false;
     const heartbeat = setInterval(async () => {
@@ -263,6 +257,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
       heartbeatBusy = true;
       try {
         const state = await store.heartbeat(task.task_id, task.lease_token, LEASE_MS);
+        if (abortReason === 'shutdown') return;
         if (!state.owned) {
           abortReason = 'lease_lost';
           controller.abort();
@@ -278,9 +273,17 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
       }
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
+    const abandon = () => {
+      abortReason = 'shutdown';
+      clearInterval(heartbeat);
+      controller.abort();
+    };
+    abandon.task = task;
+    executions.add(abandon);
 
     try {
       const requestInputs = async requests => {
+        if (abortReason === 'shutdown') throw new Error('Task worker is stopping');
         validateInputRequests(requests);
         for (const request of Object.values(requests)) {
           const capability = request.method === 'elicitation/create' ? `${request.method}:${request.params.mode}` : request.method;
@@ -307,17 +310,32 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
         },
       });
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
-      else if (abortReason !== 'lease_lost' && abortReason !== 'drain_timeout') await store.complete(task.task_id, task.lease_token, result);
+      else if (abortReason !== 'lease_lost' && abortReason !== 'shutdown') await store.complete(task.task_id, task.lease_token, result);
     } catch (error) {
       if (error === TASK_INPUT_REQUIRED) return;
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
-      else if (abortReason !== 'lease_lost' && abortReason !== 'drain_timeout') {
-        await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task execution failed' });
+      else if (abortReason !== 'lease_lost' && abortReason !== 'shutdown') {
+        const ceiling = Math.min(retryMaxDelayMs, retryBaseDelayMs * 2 ** Math.max(0, task.attempt_count - 1));
+        const retryDelayMs = randomInt(Math.ceil(ceiling / 2), ceiling + 1);
+        await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task execution failed' }, { retryable: error instanceof RetryableMcpTaskError, maxAttempts, retryDelayMs });
       }
     } finally {
       clearInterval(heartbeat);
-      executions.delete(task.task_id);
+      executions.delete(abandon);
     }
+  }
+
+  async function refreshWorkerHeartbeat() {
+    const now = performance.now();
+    if (closed || typeof store.workerHeartbeat !== 'function' || now - lastWorkerHeartbeat < 20_000) return;
+    // Bound failed registration attempts too, so diagnostics cannot flood the
+    // database or interrupt normal claim processing under sustained load.
+    lastWorkerHeartbeat = now;
+    try {
+      workerHeartbeatPending = Promise.resolve(store.workerHeartbeat(workerID, supportedHandlers, deploymentID));
+      await workerHeartbeatPending;
+    } catch { reportError(); }
+    finally { workerHeartbeatPending = undefined; }
   }
 
   async function drain() {
@@ -329,11 +347,14 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
         lastCleanup = now;
         await store.cleanupExpired();
       }
+      await refreshWorkerHeartbeat();
       while (!closed && active.size < workerConcurrency) {
-        claimPromise = store.claim(MAX_ATTEMPTS, LEASE_MS, supportedHandlers);
-        const task = await claimPromise;
-        if (!task) break;
-        if (closed) { await store.release(task.task_id, task.lease_token); break; }
+        // A busy queue can keep this loop running across many heartbeat periods.
+        await refreshWorkerHeartbeat();
+        if (closed) break;
+        const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers, workerID);
+        // Do not start work from a claim that completed during shutdown.
+        if (!task || closed) break;
         let work;
         work = runTask(task).catch(reportError).finally(() => {
           active.delete(work);
@@ -349,71 +370,86 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
   }
 
   return {
+    workerID,
+    canCreate: name => Object.hasOwn(handlers,name),
     async start() {
+      if (stopping) throw new Error('A stopped Task runtime cannot be restarted');
       if (!closed) return;
-      await store.initialize();
+      await store.initialize({ admissionHandlers: Object.entries(handlers).map(([name, handler]) => ({ name, version: handler.version })) });
       closed = false;
+      lastWorkerHeartbeat = -Infinity;
       if (workerEnabled) {
-        await refreshWorkerCapabilities();
-        workerCapabilityTimer = setInterval(() => { void refreshWorkerCapabilities(); }, WORKER_CAPABILITY_HEARTBEAT_MS);
-        if (!keepAlive) workerCapabilityTimer.unref?.();
         timer = setInterval(() => { void drain(); }, pollIntervalMs);
         if (!keepAlive) timer.unref?.();
         await drain();
       }
     },
-    async stop() {
-      if (stopPromise) return stopPromise;
-      if (closed) return;
+    stop() {
+      if (stopping) return stopping;
+      if (closed) return Promise.resolve();
       closed = true;
       clearInterval(timer);
-      clearInterval(workerCapabilityTimer);
-      const deadline = Date.now() + drainTimeoutMs;
-      const emit = (state, unfinishedTasks = 0) => { try { onDrain({ state, unfinishedTasks, activeTasks: executions.size, deadline: new Date(deadline).toISOString() }); } catch { reportError(); } };
-      emit('draining');
-      let expired = [];
-      let timeout;
-      const expiry = new Promise(resolve => { timeout = setTimeout(() => {
-        expired = [...executions.values()];
-        for (const execution of expired) execution.abort();
-        resolve();
-      }, drainTimeoutMs); });
-      stopPromise = (async () => {
-        // Complete an in-flight registration before withdrawing capabilities.
-        await capabilityPromise?.catch(reportError);
-        if (workerEnabled && typeof store.removeWorkerCapabilities === 'function') {
-          try { await store.removeWorkerCapabilities(workerID); } catch { reportError(); }
+      clearInterval(taskSubscriptionTimer);
+      taskSubscriptionTimer = undefined;
+      // The deadline includes registry/subscription operations and active work.
+      stopping = (async () => {
+        let deadlineTimer;
+        let registryTimer;
+        let registryBusy = false;
+        let expired = false;
+        let expiredTasks = [];
+        const deadlineAt = new Date(Date.now()+shutdownTimeoutMs).toISOString();
+        try { onDrain({state:'draining',activeTasks:executions.size,deadline:deadlineAt}); } catch { reportError(); }
+        const deadline = new Promise(resolve => {
+          deadlineTimer = setTimeout(() => {
+            expired = true;
+            expiredTasks=[...executions].map(abandon=>abandon.task);
+            for (const abandon of executions) abandon();
+            reportError();
+            resolve();
+          }, shutdownTimeoutMs);
+        });
+        const finish = (async () => {
+          await workerHeartbeatPending?.catch(() => {});
+          if (workerEnabled && typeof store.workerDraining === 'function' && !expired) {
+            const refresh = async () => {
+              if (registryBusy || expired) return;
+              registryBusy = true;
+              try { await store.workerDraining(workerID); } catch { reportError(); }
+              finally { registryBusy = false; }
+            };
+            await refresh();
+            if (!expired) registryTimer = setInterval(() => { void refresh(); }, 20_000);
+          }
+          const unsubscribe = taskStoreUnsubscribe;
+          taskStoreUnsubscribe = undefined;
+          taskStoreSubscribePromise = undefined;
+          if (unsubscribe) await unsubscribe();
+          for (const watcher of [...taskSubscriptions]) {
+            watcher.closed = true;
+            try { watcher.onClose?.(); } catch { reportError(); }
+            taskSubscriptions.delete(watcher);
+          }
+          await Promise.allSettled([...active]);
+          if (!expired && workerEnabled && typeof store.workerStopped === 'function') {
+            try { await store.workerStopped(workerID); } catch { reportError(); }
+          }
+        })().catch(reportError);
+        await Promise.race([finish, deadline]);
+        clearTimeout(deadlineTimer);
+        clearInterval(registryTimer);
+        if (expiredTasks.length && typeof store.releaseMany === 'function') {
+          try { await store.releaseMany(expiredTasks); } catch { reportError(); }
         }
-        clearInterval(taskSubscriptionTimer);
-        taskSubscriptionTimer = undefined;
-        const unsubscribe = taskStoreUnsubscribe;
-        taskStoreUnsubscribe = undefined;
-        taskStoreSubscribePromise = undefined;
-        if (unsubscribe) await unsubscribe();
-        for (const watcher of [...taskSubscriptions]) {
-          watcher.closed = true;
-          try { watcher.onClose?.(); } catch { reportError(); }
-          taskSubscriptions.delete(watcher);
-        }
-        // Claims that finish after shutdown are returned without execution.
-        await claimPromise?.catch(reportError);
-        await Promise.race([Promise.allSettled([...active]), expiry]);
-        clearTimeout(timeout);
-        const unfinished = [...new Map([...expired, ...executions.values()].map(execution => [execution.task.task_id, execution])).values()];
-        // Abort locally before revoking leases: even an uncooperative handler
-        // returning during release cannot publish its result.
-        for (const execution of unfinished) execution.abort();
-        try {
-          if (typeof store.releaseMany === 'function') await store.releaseMany(unfinished.map(({ task }) => task));
-          else await Promise.all(unfinished.map(({ task }) => store.release(task.task_id, task.lease_token)));
-        } catch { reportError(); } // Lease expiry remains the fallback on database failure.
-        emit(unfinished.length ? 'timed_out' : 'completed', unfinished.length);
+        try { onDrain({state:expired?'timed_out':'completed',unfinishedTasks:expiredTasks.length,deadline:deadlineAt}); } catch { reportError(); }
+        // Lease expiry remains the fallback if database cleanup is unavailable.
+        return { timedOut: expired };
       })();
-      return stopPromise;
+      return stopping;
     },
     async create(toolName, args, authInfo, authMode, clientCapabilities = {}) {
-      if (closed) throw new Error('MCP task runtime is draining');
-      const handler = Object.hasOwn(handlers, toolName) ? handlers[toolName] : undefined;
+      if (stopping) throw new Error('MCP task runtime is draining');
+      const handler = handlers[toolName];
       if (!handler || typeof handler.execute !== 'function') throw new Error('MCP task tool is not registered');
       handler.validate?.(args);
       const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities) });
@@ -426,10 +462,6 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollI
         ttlMs: Math.max(0, new Date(task.expires_at).getTime() - new Date(task.created_at).getTime()),
         pollIntervalMs,
       };
-    },
-    canCreate(toolName) {
-      const handler = Object.hasOwn(handlers, toolName) ? handlers[toolName] : undefined;
-      return !!handler && typeof handler.execute === 'function';
     },
     async get(taskID, authInfo, authMode, canAccessTool) {
       const task = await store.get({ taskID, authInfo, authMode });

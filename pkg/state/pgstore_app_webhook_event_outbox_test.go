@@ -27,7 +27,7 @@ func TestPgUsageStatementWebhookOutboxRestartAndConcurrentRelay(t *testing.T) {
 	createStatement := func(start time.Time) state.APIConsumerUsageStatement {
 		t.Helper()
 		statement, created, createErr := store.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
-			AccountID: accountID, AppID: appID, ConsumerID: consumer.ID,
+			AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, Revision: 1,
 			PeriodStart: start, PeriodEnd: start.Add(time.Hour), Currency: "EUR",
 			BillableUnits: 1, AmountMillicents: 25, Priced: true, AsOf: time.Now().UTC(),
 			Buckets: []state.APIConsumerUsageStatementBucket{{
@@ -135,7 +135,7 @@ func TestPgUsageStatementWebhookOutboxFailureRollsBackFinalization(t *testing.T)
 	}
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	statement, _, err := store.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
-		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID,
+		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, Revision: 1,
 		PeriodStart: start, PeriodEnd: start.Add(time.Hour), Currency: "EUR", AsOf: time.Now().UTC(),
 	})
 	if err != nil {

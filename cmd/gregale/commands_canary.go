@@ -24,6 +24,10 @@ func cmdCanary(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "gate":
+		return cmdCanaryProfileGate(args[1:])
+	case "advance":
+		return cmdCanaryAdvance(args[1:])
 	case "simulate":
 		return cmdCanarySimulate(args[1:])
 	default:

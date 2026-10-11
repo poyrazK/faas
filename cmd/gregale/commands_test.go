@@ -89,8 +89,8 @@ func TestClientRendersAPIProblem(t *testing.T) {
 	if ae.Problem.Code != api.CodePlanLimitApps {
 		t.Errorf("code = %q", ae.Problem.Code)
 	}
-	if exitCodeForStatus(ae.Problem.Status) != 1 {
-		t.Errorf("403 should map to exit 1, got %d", exitCodeForStatus(ae.Problem.Status))
+	if exitCodeForStatus(ae.Problem.Status) != 6 {
+		t.Errorf("403 should map to exit 6, got %d", exitCodeForStatus(ae.Problem.Status))
 	}
 }
 

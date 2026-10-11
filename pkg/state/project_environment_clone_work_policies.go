@@ -41,6 +41,7 @@ type ProjectEnvironmentCloneEventWorkPolicyBinding struct {
 	KeySelector      string `json:"key_selector"`
 	FairnessSelector string `json:"fairness_selector"`
 	Action           string `json:"action"`
+	Ordered          bool   `json:"ordered,omitempty"`
 }
 
 type ProjectEnvironmentCloneTriggerWorkPolicyBinding struct {
@@ -73,13 +74,21 @@ func normalizeCloneWorkPolicyDefinitions(definitions ProjectEnvironmentCloneWork
 	definitions.EventBindings = append([]ProjectEnvironmentCloneEventWorkPolicyBinding{}, definitions.EventBindings...)
 	definitions.TriggerBindings = append([]ProjectEnvironmentCloneTriggerWorkPolicyBinding{}, definitions.TriggerBindings...)
 	policies := map[string]bool{}
+	policyByName := make(map[string]workpolicy.Policy, len(definitions.Policies))
 	for _, policy := range definitions.Policies {
 		policies[policy.Name] = true
+		policyByName[policy.Name] = workpolicy.Policy{Name: policy.Name, MaxRunningPerKey: policy.MaxRunningPerKey,
+			MaxRunningPerFairnessKey: policy.MaxRunningPerFairnessKey, PendingUpdates: workpolicy.PendingUpdates(policy.PendingUpdates),
+			Debounce: time.Duration(policy.DebounceMS) * time.Millisecond, ExpiresAfter: time.Duration(policy.ExpiresAfterMS) * time.Millisecond}
 	}
 	events, triggers := map[string]bool{}, map[string]bool{}
 	for _, binding := range definitions.EventBindings {
 		if !validCloneCredentialSourceID(binding.SubscriptionID) || events[binding.SubscriptionID] || !policies[binding.PolicyName] ||
-			(binding.Action != EventWorkInvoke && binding.Action != EventWorkCancelPending) || !validCloneWorkSelectors(binding.KeySelector, binding.FairnessSelector) {
+			(binding.Action != EventWorkInvoke && binding.Action != EventWorkCancelPending) || (binding.Ordered && binding.Action != EventWorkInvoke) ||
+			!validCloneWorkSelectors(binding.KeySelector, binding.FairnessSelector) {
+			return definitions, ErrConflict
+		}
+		if binding.Ordered && validateOrderedEventWorkPolicy(policyByName[binding.PolicyName]) != nil {
 			return definitions, ErrConflict
 		}
 		events[binding.SubscriptionID] = true

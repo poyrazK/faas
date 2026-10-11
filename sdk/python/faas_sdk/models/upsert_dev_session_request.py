@@ -31,6 +31,9 @@ class UpsertDevSessionRequest:
     sessions."""
     postgres: DevPostgresRequest | Unset = UNSET
     """Opts the developer environment into an isolated managed PostgreSQL database."""
+    lease_seconds: int | Unset = UNSET
+    """How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's
+    developer lease maximum return 403 plan_limit_developer_lease."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +51,8 @@ class UpsertDevSessionRequest:
         if not isinstance(self.postgres, Unset):
             postgres = self.postgres.to_dict()
 
+        lease_seconds = self.lease_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -59,6 +64,8 @@ class UpsertDevSessionRequest:
             field_dict["workspace_id"] = workspace_id
         if postgres is not UNSET:
             field_dict["postgres"] = postgres
+        if lease_seconds is not UNSET:
+            field_dict["lease_seconds"] = lease_seconds
 
         return field_dict
 
@@ -90,11 +97,14 @@ class UpsertDevSessionRequest:
         else:
             postgres = DevPostgresRequest.from_dict(_postgres)
 
+        lease_seconds = d.pop("lease_seconds", UNSET)
+
         upsert_dev_session_request = cls(
             type_=type_,
             runtime=runtime,
             workspace_id=workspace_id,
             postgres=postgres,
+            lease_seconds=lease_seconds,
         )
 
         upsert_dev_session_request.additional_properties = d

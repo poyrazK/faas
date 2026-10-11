@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { OperationDeliverySummary } from './OperationDeliverySummary.js';
 import type { OperationProgress } from './OperationProgress.js';
+import type { OperationSubject } from './OperationSubject.js';
 /**
  * Bounded discovery metadata; omits result bytes, artifact locations and execution authority.
  */
 export type OperationSummary = {
+  subject?: OperationSubject;
   /**
    * Present only on account operator listings; absent from tenant-self summaries.
    */

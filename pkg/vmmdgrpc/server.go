@@ -168,6 +168,10 @@ type JobVMMAPI interface {
 	WaitJobExit(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
 }
 
+type JobStartVMMAPI interface {
+	ReleaseJobStart(context.Context, string) error
+}
+
 // ExecutionVMMAPI is the optional post-restore execution surface. Keeping it
 // separate from VmmdAPI preserves compatibility with older vmmd fakes and
 // makes capability negotiation explicit: a node without a configured
@@ -249,6 +253,9 @@ type Server struct {
 	ops   *wire.OpsMetrics
 	fcVer string
 	log   *slog.Logger
+	// diverged (ADR-740) lists instances that were served a developer live
+	// patch; their snapshot captures are refused. nil disables the guard.
+	diverged *DivergedInstances
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -396,6 +403,15 @@ func (s *Server) WithMigrationStore(store state.Store) *Server {
 // WithNodeID wires the local compute-node identity used by migration
 // lease-expiry reconciliation. It is optional for legacy single-box and
 // unit-test fixtures that do not have a compute_nodes row.
+// WithDivergedInstances shares the ADR-740 live-patch registry with the
+// runtime-config receiver so snapshot captures can refuse patched instances.
+func (s *Server) WithDivergedInstances(diverged *DivergedInstances) *Server {
+	if s != nil {
+		s.diverged = diverged
+	}
+	return s
+}
+
 func (s *Server) WithNodeID(nodeID string) *Server {
 	if s != nil {
 		s.nodeID = strings.TrimSpace(nodeID)
@@ -688,7 +704,18 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 
 // JobColdBoot starts a job-task VM through the optional Manager job surface.
 func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest) (*vmmdpb.JobColdBootResponse, error) {
-	const op = "JobColdBoot"
+	return s.jobColdBoot(ctx, req, false)
+}
+
+func (s *Server) JobColdBootHeld(ctx context.Context, req *vmmdpb.JobColdBootRequest) (*vmmdpb.JobColdBootResponse, error) {
+	return s.jobColdBoot(ctx, req, true)
+}
+
+func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest, startHeld bool) (*vmmdpb.JobColdBootResponse, error) {
+	op := "JobColdBoot"
+	if startHeld {
+		op = "JobColdBootHeld"
+	}
 	start := time.Now()
 	jobVMM, ok := s.vmm.(JobVMMAPI)
 	if !ok {
@@ -702,7 +729,23 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	inst, err := jobVMM.BootJob(ctx, boot)
+	boot.StartHeld = startHeld
+	var inst *fcvm.Instance
+	if req.GetQualificationExecution() != nil {
+		qualifier, supported := s.vmm.(environmentQualificationJobVMMAPI)
+		if !supported {
+			err = state.ErrConflict
+		} else {
+			ctx = withIncomingCorrelation(ctx)
+			var frame state.EnvironmentQualificationExecution
+			frame, err = s.qualificationFrame(ctx, req.GetQualificationExecution())
+			if err == nil {
+				inst, err = qualifier.BootEnvironmentQualificationJob(ctx, frame, boot)
+			}
+		}
+	} else {
+		inst, err = jobVMM.BootJob(ctx, boot)
+	}
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		s.log.Error("vmmd: job cold boot failed", "instance", req.GetInstance(),
@@ -714,10 +757,41 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 			"Job boot failed", "vmmd returned an empty instance")
 		return nil, grpcerr.ToStatus(err)
 	}
+	if inst.Lease.Netns == "" || !inst.Lease.HostIP.Is4() || inst.Lease.UID <= 0 ||
+		int64(int32(inst.Lease.UID)) != int64(inst.Lease.UID) {
+		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an incomplete runtime identity")
+		return nil, grpcerr.ToStatus(err)
+	}
+	if inst.JobStartGateEnabled != startHeld {
+		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd did not honor the requested held-start contract")
+		return nil, grpcerr.ToStatus(err)
+	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance: inst.Lease.Instance,
-		NodeId:   boot.NodeID,
+		Instance:  inst.Lease.Instance,
+		NodeId:    boot.NodeID,
+		Netns:     inst.Lease.Netns,
+		HostIp:    inst.Lease.HostIP.String(),
+		GuestUid:  int32(inst.Lease.UID),
+		StartHeld: startHeld,
 	}, nil
+}
+
+func (s *Server) ReleaseJobStart(ctx context.Context, req *vmmdpb.ReleaseJobStartRequest) (*vmmdpb.ReleaseJobStartResponse, error) {
+	if req == nil || req.GetInstance() == "" {
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid job start release", "instance is required"))
+	}
+	releaser, ok := s.vmm.(JobStartVMMAPI)
+	if !ok {
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Held job start unavailable", "vmmd job start gate is not configured"))
+	}
+	if err := releaser.ReleaseJobStart(ctx, req.GetInstance()); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.ReleaseJobStartResponse{Instance: req.GetInstance(), Released: true}, nil
 }
 
 // ExecuteExecution sends one validated payload to an already restored
@@ -863,6 +937,13 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if s.diverged.Has(req.GetInstance()) {
+		// The caller expects the VM to be gone after PauseAndSnapshot; destroy
+		// it instead of capturing a snapshot of patched, non-artifact source.
+		err := s.destroyDiverged(ctx, req.GetInstance())
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
 	info, err := s.vmm.Park(ctx, req.GetInstance(), fcvm.SnapshotSpec{
 		VMStatePath:       req.GetVmstatePath(),
 		StorageKey:        req.GetStorageKey(),
@@ -916,6 +997,13 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if s.diverged.Has(req.GetInstance()) {
+		// Refuse before pausing. The scheduler's warm-capture failure path
+		// destroys the VM, and the next wake restores the unpatched artifact.
+		err := devSourceDivergedProblem(req.GetInstance())
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
 	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), fcvm.SnapshotSpec{
 		StorageKey:        req.GetStorageKey(),
 		VMStateStorageKey: req.GetVmstateStorageKey(),
@@ -952,12 +1040,23 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if req.GetImageHealthcheckRequired() {
+		reader, ok := s.vmm.(interface {
+			ImageHealthcheckRequiredFor(string) bool
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract unavailable", "vmmd cannot verify the stored instance contract"))
+		}
+		if !reader.ImageHealthcheckRequiredFor(req.GetInstance()) {
+			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract missing", "the instance was not created with required image healthcheck readiness"))
+		}
+	}
 	err := resumer.ResumeVM(ctx, req.GetInstance())
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance()}, nil
+	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance(), ImageHealthcheckVerified: req.GetImageHealthcheckRequired(), SupportsImageHealthcheckMonitoring: true}, nil
 }
 
 // WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The
@@ -1119,6 +1218,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	s.ForgetCPU(req.GetInstance())
 	s.ForgetNet(req.GetInstance())
 	s.ForgetActivity(req.GetInstance())
+	s.diverged.Forget(req.GetInstance())
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
 }
@@ -1431,9 +1531,11 @@ func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingRes
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 	return &vmmdpb.PingResponse{
-		FcVersion:             s.fcVer,
-		ServerTime:            timestamppb.Now(),
-		SupportsSecretAliases: true,
+		FcVersion:                          s.fcVer,
+		ServerTime:                         timestamppb.Now(),
+		SupportsSecretAliases:              true,
+		SupportsImageHealthcheck:           true,
+		SupportsImageHealthcheckMonitoring: true,
 	}, nil
 }
 

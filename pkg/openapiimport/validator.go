@@ -40,11 +40,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/jsonschemautil"
+	"github.com/onebox-faas/faas/pkg/routelifecycle"
 )
 
 // openapiImportSchema is the structural-minimum schema embedded
@@ -192,6 +194,16 @@ func ValidateImport(body []byte) (version string, endpointCount int, err error) 
 		return "", 0, ve
 	}
 
+	paths, _ := parsed["paths"].(map[string]any)
+	for path, value := range paths {
+		item, _ := value.(map[string]any)
+		for _, method := range []string{"get", "post", "put", "patch", "delete", "head", "options", "trace"} {
+			operation, _ := item[method].(map[string]any)
+			if _, lifecycleErr := routelifecycle.Parse(operation); lifecycleErr != nil {
+				return "", 0, &ValidationError{Path: "/paths/" + strings.ReplaceAll(strings.ReplaceAll(path, "~", "~0"), "/", "~1") + "/" + method, Reason: lifecycleErr.Error()}
+			}
+		}
+	}
 	// Extract version + endpoint count from the parsed doc.
 	if v, ok := parsed["openapi"].(string); ok {
 		version = v

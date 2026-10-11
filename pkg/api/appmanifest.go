@@ -174,6 +174,9 @@ type AppManifest struct {
 	WorkingDir string `json:"working_dir,omitempty"`
 	// Port is the readiness/serving port; 0 means DefaultAppPort.
 	Port int `json:"port,omitempty"`
+	// ServiceBindingTransport selects the URL scheme injected for reviewed
+	// service bindings. Empty preserves the legacy HTTP behavior.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// Ports preserves the OCI image's protocol-aware listener declarations.
 	// Port remains the primary HTTP/readiness contract; Ports lets workloads
 	// discover additional TCP or UDP listeners inside their shared netns. Named
@@ -215,6 +218,8 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
+	Tracing          *TracingConfig        `json:"tracing,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -340,6 +345,22 @@ const (
 	PreAuthCoordinationLocal   = "local"
 	PreAuthCoordinationCentral = "central"
 )
+
+// DefaultPreAuthRateLimit is the observe-only guard a new app receives when its
+// create request does not set pre_auth_rate_limit (ADR-829). Observe never
+// rejects a request, so the default cannot break an app; the customer switches
+// to enforce once the recorded would-block traffic looks right.
+func DefaultPreAuthRateLimit(plan Plan) *PreAuthRateLimitConfig {
+	limits, ok := LimitsFor(plan)
+	if !ok {
+		return nil
+	}
+	return &PreAuthRateLimitConfig{
+		Mode:              PreAuthRateLimitObserve,
+		RequestsPerSecond: min(PreAuthDefaultRequestsPerSecond, limits.RateLimitRPS),
+		Burst:             min(PreAuthDefaultBurst, limits.RateLimitBurst),
+	}
+}
 
 func (c *PreAuthRateLimitConfig) Validate(plan Plan) error {
 	if c == nil {
@@ -585,6 +606,12 @@ func (m AppManifest) EffectiveWorkingDir() string {
 	return m.WorkingDir
 }
 
+// EffectiveServiceBindingTransport returns the configured transport or the
+// backwards-compatible default for older manifests.
+func (m AppManifest) EffectiveServiceBindingTransport() ServiceBindingTransport {
+	return m.ServiceBindingTransport.Effective()
+}
+
 // EffectiveExecutionMode returns ExecutionMode or the default
 // ExecutionModeRequest. The "request" default preserves the M-1
 // behaviour for existing customers (no ExecutionMode set).
@@ -641,6 +668,12 @@ func (m AppManifest) Validate() error {
 // app row and are merged into the image manifest later, so requiring a real
 // entrypoint here would make the customer API depend on deployment order.
 func (m AppManifest) ValidateLifecyclePlan(plan Plan) error {
+	if err := m.Profiling.Validate(plan); err != nil {
+		return err
+	}
+	if err := m.Tracing.Validate(plan); err != nil {
+		return err
+	}
 	if len(m.Entrypoint) == 0 {
 		m.Entrypoint = []string{"__lifecycle_validation__"}
 	}
@@ -690,6 +723,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if _, err := NormalizeServiceBindingTransport(m.ServiceBindingTransport); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
 	if err := m.PreAuthRateLimit.Validate(plan); err != nil {

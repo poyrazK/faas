@@ -3,13 +3,93 @@ package fcvm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
+
+func TestBootHeldJobPersistsGateAndReleaseTargetsOnlyThatInstance(t *testing.T) {
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+	req := testJobBootRequest("job-held")
+	req.StartHeld = true
+	inst, err := m.BootJob(context.Background(), req)
+	if err != nil {
+		t.Fatalf("BootJob: %v", err)
+	}
+	if !inst.IsJob || !inst.JobStartGateEnabled {
+		t.Fatalf("held instance = %+v", inst)
+	}
+	if err := m.ReleaseJobStart(context.Background(), req.Instance); err != nil {
+		t.Fatalf("ReleaseJobStart: %v", err)
+	}
+	if err := m.ReleaseJobStart(context.Background(), req.Instance); err != nil {
+		t.Fatalf("idempotent ReleaseJobStart: %v", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.jobBootSpecs) != 1 || !vmm.jobBootSpecs[0].StartHeld ||
+		!reflect.DeepEqual(vmm.jobStarts, []string{req.Instance, req.Instance}) {
+		t.Fatalf("job boot specs/releases = %+v / %+v", vmm.jobBootSpecs, vmm.jobStarts)
+	}
+}
+
+func TestBootJobUnsealsSelectedSecretsOnlyInsideVmmd(t *testing.T) {
+	identity := newIdentity(t)
+	const value = "job-db-secret-do-not-log"
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+	m.SetHostIdentity(identity)
+	req := testJobBootRequest("job-secret")
+	req.SealedEnvEntries = []SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: sealEnv(t, identity,
+		secretbox.Envelope{"DATABASE_URL": value})}}
+	if _, err := m.BootJob(t.Context(), req); err != nil {
+		t.Fatalf("BootJob: %v", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.jobBootSpecs) != 1 {
+		t.Fatalf("job boot specs = %d, want 1", len(vmm.jobBootSpecs))
+	}
+	spec := vmm.jobBootSpecs[0]
+	var secrets secretbox.Envelope
+	if err := json.Unmarshal(spec.SecretsEnvJSON, &secrets); err != nil {
+		t.Fatalf("decode staged secrets: %v", err)
+	}
+	if secrets["DATABASE_URL"] != value || len(spec.Env) != 0 {
+		t.Fatalf("job secret projection = %#v, ordinary env = %#v", secrets, spec.Env)
+	}
+	manifest, err := json.Marshal(JobManifest{Kind: "job", Env: spec.Env})
+	if err != nil {
+		t.Fatalf("marshal job manifest: %v", err)
+	}
+	if strings.Contains(string(manifest), value) {
+		t.Fatal("secret plaintext leaked into the job manifest")
+	}
+}
+
+func TestBootJobSealedSecretsRequireHostIdentity(t *testing.T) {
+	identity := newIdentity(t)
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+	req := testJobBootRequest("job-no-key")
+	req.SealedEnvEntries = []SealedEnvEntry{{Key: "TOKEN", Ciphertext: sealEnv(t, identity, secretbox.Envelope{"TOKEN": "value"})}}
+	if _, err := m.BootJob(t.Context(), req); !errors.Is(err, ErrNoHostKey) {
+		t.Fatalf("BootJob error = %v, want ErrNoHostKey", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.jobBootSpecs) != 0 {
+		t.Fatalf("job boot started without a host key: %+v", vmm.jobBootSpecs)
+	}
+}
 
 // An artifact restore can ignore cancellation until an I/O call returns. The
 // manager must still fence its late successful return, and a concurrent stop

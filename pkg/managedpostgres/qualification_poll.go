@@ -20,8 +20,18 @@ func qualificationPoll(ctx context.Context, interval time.Duration) error {
 }
 
 func qualifyProviderReady(ctx context.Context, provider Provider, resourceID string, interval time.Duration) (ObservedDatabase, error) {
+	return qualifyProviderReadyWithRestore(ctx, provider, resourceID, interval, nil)
+}
+
+func qualifyProviderReadyWithRestore(ctx context.Context, provider Provider, resourceID string, interval time.Duration, restore *RestoreRequest) (ObservedDatabase, error) {
 	for {
-		observed, err := provider.Inspect(ctx, resourceID)
+		var observed ObservedDatabase
+		var err error
+		if inspector, ok := provider.(RestoreInspector); ok && restore != nil {
+			observed, err = inspector.InspectRestore(ctx, resourceID, *restore)
+		} else {
+			observed, err = provider.Inspect(ctx, resourceID)
+		}
 		if err != nil {
 			return observed, err
 		}
@@ -30,6 +40,11 @@ func qualifyProviderReady(ctx context.Context, provider Provider, resourceID str
 		}
 		switch observed.Status {
 		case ProviderStatusReady:
+			if restore != nil {
+				if err := validateCloneRestoreObservation(Database{RestoreSourceResourceID: restore.SourceResourceID, RestorePointInTime: restore.PointInTime}, observed); err != nil {
+					return observed, err
+				}
+			}
 			return observed, nil
 		case ProviderStatusPending:
 		default:

@@ -271,19 +271,20 @@ func runDebugRegressionsStream(ctx context.Context, client *api.Client, slug str
 				continue
 			}
 			var payload struct {
-				AppID          string `json:"app_id"`
-				DeploymentID   string `json:"deployment_id"`
-				Route          string `json:"route"`
-				P95MS          int    `json:"p95_ms"`
-				P95BaseMS      int    `json:"p95_base_ms"`
-				AffectedCount  int    `json:"affected_count"`
-				Factor         string `json:"regression_factor"`
-				State          string `json:"state"`
-				FirstDetected  string `json:"first_detected_at"`
-				LastDetected   string `json:"last_detected_at"`
-				AcknowledgedAt string `json:"acknowledged_at"`
-				DismissedUntil string `json:"dismissed_until"`
-				ResolvedAt     string `json:"resolved_at"`
+				AppID          string                        `json:"app_id"`
+				DeploymentID   string                        `json:"deployment_id"`
+				Route          string                        `json:"route"`
+				P95MS          int                           `json:"p95_ms"`
+				P95BaseMS      int                           `json:"p95_base_ms"`
+				AffectedCount  int                           `json:"affected_count"`
+				Factor         string                        `json:"regression_factor"`
+				State          string                        `json:"state"`
+				FirstDetected  string                        `json:"first_detected_at"`
+				LastDetected   string                        `json:"last_detected_at"`
+				AcknowledgedAt string                        `json:"acknowledged_at"`
+				DismissedUntil string                        `json:"dismissed_until"`
+				ResolvedAt     string                        `json:"resolved_at"`
+				Suspected      *api.DebugSuspectedDependency `json:"suspected_dependency"`
 			}
 			if err := json.Unmarshal([]byte(event.Data), &payload); err != nil || (appID != "" && payload.AppID != appID) {
 				continue
@@ -295,6 +296,7 @@ func runDebugRegressionsStream(ctx context.Context, client *api.Client, slug str
 				State: payload.State, FirstDetectedAt: payload.FirstDetected,
 				LastDetectedAt: payload.LastDetected, AcknowledgedAt: payload.AcknowledgedAt,
 				DismissedUntil: payload.DismissedUntil, ResolvedAt: payload.ResolvedAt,
+				SuspectedDependency: payload.Suspected,
 			}
 			displaySlug := slug
 			if all {

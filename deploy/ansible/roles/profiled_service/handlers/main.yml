@@ -1,0 +1,11 @@
+---
+- name: profiled_service — reload daemon units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-profiled
+
+- name: profiled_service — restart active collector
+  ansible.builtin.command: systemctl try-restart faas-profiled.service # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-profiled
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

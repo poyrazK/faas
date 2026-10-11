@@ -31,22 +31,38 @@ type RedisResponseCache struct {
 }
 
 type redisResponseCacheRecord struct {
-	Version         int                        `json:"version"`
-	Key             CacheKey                   `json:"key"`
-	StatusCode      int                        `json:"status_code"`
-	Header          map[string][]string        `json:"header"`
-	Body            []byte                     `json:"body"`
-	Tags            []string                   `json:"tags,omitempty"`
-	FreshUntil      time.Time                  `json:"fresh_until"`
-	RevalidateUntil time.Time                  `json:"revalidate_until"`
-	ErrorUntil      time.Time                  `json:"error_until"`
-	RuleAction      *state.EdgeRuleCacheAction `json:"rule_action,omitempty"`
+	ServedDeploymentID string                     `json:"served_deployment_id,omitempty"`
+	Version            int                        `json:"version"`
+	Key                CacheKey                   `json:"key"`
+	StatusCode         int                        `json:"status_code"`
+	Header             map[string][]string        `json:"header"`
+	Body               []byte                     `json:"body"`
+	Tags               []string                   `json:"tags,omitempty"`
+	FreshUntil         time.Time                  `json:"fresh_until"`
+	RevalidateUntil    time.Time                  `json:"revalidate_until"`
+	ErrorUntil         time.Time                  `json:"error_until"`
+	RuleAction         *state.EdgeRuleCacheAction `json:"rule_action,omitempty"`
 }
 
 // NewRedisResponseCache connects to a redis:// or rediss:// endpoint and
 // verifies it before the gateway begins serving. The caller may treat an error
 // as a signal to retain local-only caching.
 func NewRedisResponseCache(parentCtx context.Context, rawURL string) (*RedisResponseCache, error) {
+	opts, err := redisResponseCacheOptions(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(parentCtx, redisResponseCacheAdminTimeout)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("ping response-cache Redis: %w", err)
+	}
+	return &RedisResponseCache{client: client}, nil
+}
+
+func redisResponseCacheOptions(rawURL string) (*redis.Options, error) {
 	opts, err := redis.ParseURL(rawURL)
 	if err != nil {
 		// rawURL may contain credentials; do not allow parser details to put
@@ -57,14 +73,10 @@ func NewRedisResponseCache(parentCtx context.Context, rawURL string) (*RedisResp
 	opts.ReadTimeout = redisResponseCacheIOTimeout
 	opts.WriteTimeout = redisResponseCacheIOTimeout
 	opts.PoolSize = 8
-	client := redis.NewClient(opts)
-	ctx, cancel := context.WithTimeout(parentCtx, redisResponseCacheAdminTimeout)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("ping response-cache Redis: %w", err)
-	}
-	return &RedisResponseCache{client: client}, nil
+	// Bound the whole operation, including connection initialization and
+	// retries, instead of giving each socket operation a fresh IO timeout.
+	opts.ContextTimeoutEnabled = true
+	return opts, nil
 }
 
 func (c *RedisResponseCache) Get(key CacheKey) (*cacheEntry, error) {
@@ -99,16 +111,17 @@ func (c *RedisResponseCache) Put(entry *cacheEntry) error {
 		return nil
 	}
 	record := redisResponseCacheRecord{
-		Version:         redisResponseCacheVersion,
-		Key:             entry.key,
-		StatusCode:      entry.statusCode,
-		Header:          copyHeader(entry.header),
-		Body:            append([]byte(nil), entry.body...),
-		Tags:            append([]string(nil), entry.tags...),
-		FreshUntil:      entry.freshUntil,
-		RevalidateUntil: entry.revalidateUntil,
-		ErrorUntil:      entry.errorUntil,
-		RuleAction:      copyCacheRuleAction(entry.ruleAction),
+		Version:            redisResponseCacheVersion,
+		Key:                entry.key,
+		StatusCode:         entry.statusCode,
+		Header:             copyHeader(entry.header),
+		ServedDeploymentID: entry.servedDeploymentID,
+		Body:               append([]byte(nil), entry.body...),
+		Tags:               append([]string(nil), entry.tags...),
+		FreshUntil:         entry.freshUntil,
+		RevalidateUntil:    entry.revalidateUntil,
+		ErrorUntil:         entry.errorUntil,
+		RuleAction:         copyCacheRuleAction(entry.ruleAction),
 	}
 	raw, err := json.Marshal(record)
 	if err != nil {
@@ -250,16 +263,17 @@ func (r redisResponseCacheRecord) cacheEntry() *cacheEntry {
 		staleUntil = r.RevalidateUntil
 	}
 	return &cacheEntry{
-		key:             r.Key,
-		statusCode:      r.StatusCode,
-		header:          copyHeader(r.Header),
-		body:            append([]byte(nil), r.Body...),
-		tags:            append([]string(nil), r.Tags...),
-		freshUntil:      r.FreshUntil,
-		revalidateUntil: r.RevalidateUntil,
-		errorUntil:      r.ErrorUntil,
-		staleUntil:      staleUntil,
-		ruleAction:      copyCacheRuleAction(r.RuleAction),
+		key:                r.Key,
+		servedDeploymentID: r.ServedDeploymentID,
+		statusCode:         r.StatusCode,
+		header:             copyHeader(r.Header),
+		body:               append([]byte(nil), r.Body...),
+		tags:               append([]string(nil), r.Tags...),
+		freshUntil:         r.FreshUntil,
+		revalidateUntil:    r.RevalidateUntil,
+		errorUntil:         r.ErrorUntil,
+		staleUntil:         staleUntil,
+		ruleAction:         copyCacheRuleAction(r.RuleAction),
 	}
 }
 

@@ -12,6 +12,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,17 +35,41 @@ import (
 // TestMain flips testOnlyTTY back to &true so the next test starts in
 // the default-on state. Production binaries never see this — testOnlyTTY
 // is `nil` in non-test builds (output.go).
+const cliTestHomePrefix = "gregale-cli-test-home-"
+
 func TestMain(m *testing.M) {
 	// A missing per-test stub must never read, overwrite, or delete the
 	// developer's real OS credentials. Explicit test doubles still take
 	// precedence through effectiveKeyring.
 	keyring.MockInit()
+	// Likewise for the CLI's files. On macOS os.UserConfigDir follows HOME,
+	// not XDG_CONFIG_HOME, so tests that isolate only XDG wrote a fake
+	// api_base, session, token and completion caches into the developer's
+	// real ~/Library/Application Support/gregale (production hunt #8).
+	// Tests that set HOME themselves still override this per test.
+	// Helper subprocesses (exec of this test binary) inherit the parent's
+	// sandbox; creating their own leaked one empty dir per helper because
+	// they are killed before the deferred cleanup runs.
+	sandbox, owned := os.Getenv("HOME"), false
+	if !strings.Contains(filepath.Base(sandbox), cliTestHomePrefix) {
+		var err error
+		if sandbox, err = os.MkdirTemp("", cliTestHomePrefix); err != nil {
+			panic(err)
+		}
+		owned = true
+	}
+	for key, dir := range map[string]string{"HOME": sandbox, "XDG_CONFIG_HOME": sandbox + "/.config", "XDG_CACHE_HOME": sandbox + "/.cache", "XDG_STATE_HOME": sandbox + "/.local/state"} {
+		_ = os.Setenv(key, dir)
+	}
 	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
 	_ = os.Unsetenv("NO_COLOR")
 	resetNOColorCache()
 	on := true
 	testOnlyTTY = &on
 	code := m.Run()
+	if owned {
+		_ = os.RemoveAll(sandbox)
+	}
 	testOnlyTTY = nil
 	if hadNoColor {
 		_ = os.Setenv("NO_COLOR", previousNoColor)

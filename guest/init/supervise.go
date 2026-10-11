@@ -98,6 +98,10 @@ type Supervisor struct {
 	// supervisor checks it after Start returns so an intentional SIGTERM does
 	// not get mistaken for a crash and restarted under an `always` policy.
 	stopRequested atomic.Bool
+	// restartRequested marks the current child's exit as an intentional
+	// restart (ADR-740 developer live patch). It bypasses the restart policy
+	// and never counts against Max.
+	restartRequested atomic.Bool
 	// Runtime secret delivery is fenced to the command generation. Process is
 	// published only after cmd.Start, never read concurrently with it.
 	startSignalMu      sync.Mutex
@@ -338,6 +342,9 @@ func (s *Supervisor) Run() error {
 			return nil
 		}
 		err := s.Start()
+		if s.restartRequested.Swap(false) && !s.stopRequested.Load() {
+			continue
+		}
 		if !s.shouldRestart(err) {
 			if err == nil || s.stopRequested.Load() {
 				s.trackExit(0)
@@ -454,6 +461,47 @@ func (s *Supervisor) Stop(ctx context.Context, sig syscall.Signal, grace time.Du
 		}
 	})
 	return stopErr
+}
+
+// errNoWorkloadProcess reports a restart request before the first fork.
+var errNoWorkloadProcess = errors.New("supervisor: no running workload process")
+
+// defaultRestartGrace bounds how long an intentional restart waits for the
+// child to exit after its stop signal before escalating to SIGKILL.
+const defaultRestartGrace = 5 * time.Second
+
+// RequestRestart stops the current child with its stop signal so Run starts
+// it again with the current files (ADR-740 developer live patch). Unlike a
+// crash, this restart ignores the restart policy and is not counted against
+// Max. A child still running after its grace period is killed.
+func (s *Supervisor) RequestRestart() error {
+	cmd := s.lastCmd.Load()
+	if cmd == nil || cmd.Process == nil {
+		return errNoWorkloadProcess
+	}
+	sig, grace := s.stopSignal, s.stopGrace
+	if sig == 0 || sig == syscall.SIGKILL {
+		sig = syscall.SIGTERM
+	}
+	if grace <= 0 || grace > defaultRestartGrace {
+		grace = defaultRestartGrace
+	}
+	s.restartRequested.Store(true)
+	if err := cmd.Process.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		s.restartRequested.Store(false)
+		return fmt.Errorf("supervisor: send %s for restart: %w", sig, err)
+	}
+	go func() {
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		<-timer.C
+		// Once Run starts the replacement, lastCmd no longer points at
+		// this child; only a child that ignored its signal is killed.
+		if s.lastCmd.Load() == cmd {
+			_ = cmd.Process.Kill()
+		}
+	}()
+	return nil
 }
 
 // ForwardSignal (M-2 / ADR-138 §Decision 1) sends `sig` to the

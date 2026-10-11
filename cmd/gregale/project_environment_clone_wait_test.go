@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,8 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	if code := envCreate([]string{"--full", "--wait", "stage", "--from", "production", "--project", "shop", "--timeout", "1"}); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errOut.String())
 	}
@@ -96,7 +99,12 @@ func TestProjectEnvironmentCloneWaitTimeoutFailureAndIdentity(t *testing.T) {
 			if vector == "cancelled" {
 				cancel()
 			}
-			op, timedOut, err := waitForProjectEnvironmentClone(ctx, NewClient(srv.URL, "test"), initial, 20*time.Millisecond)
+			// Failure and identity checks need a response, not a short deadline race.
+			timeout := 5 * time.Second
+			if vector == "timeout" {
+				timeout = 20 * time.Millisecond
+			}
+			op, timedOut, err := waitForProjectEnvironmentClone(ctx, NewClient(srv.URL, "test"), initial, timeout)
 			wantError := vector == "identity" || vector == "revision" || vector == "unknown" || vector == "cancelled"
 			if (err != nil) != wantError || timedOut != (vector == "timeout") || (vector == "failed" || vector == "compensated") && op.Status != vector {
 				t.Fatalf("status = %s, timeout = %t, error = %v", op.Status, timedOut, err)

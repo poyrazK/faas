@@ -266,6 +266,7 @@ LatestSupersededDeployment
 ListAPIConsumersForApp
 ListAPIKeys
 ListAccountCredits
+ListAccountTraceLogEvents
 ListActiveRegressionsByApp
 ListAlertDeliveriesForRule
 ListAlertPresets
@@ -375,6 +376,7 @@ ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
 ListRecentEventsForAccount
+ListRequestTelemetryByAccountTrace
 ListRequestTelemetryByApp
 ListRequestTelemetryByPlatformTenant
 ListRequestTelemetryDependencySpans
@@ -476,6 +478,7 @@ RecordGitHubBinding
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
+RecordScenarioTestChaosInjections
 RecordStripePushHour
 RecordUploadCommitOutcome
 RecordWebhookDelivery
@@ -509,6 +512,7 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
+ScenarioTestChaosMatchEvidence
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow

@@ -6,6 +6,10 @@
  * A bounded sample of an enabled subscription or workflow considered by the event router.
  */
 export type EventPreviewSubscription = {
+  /**
+   * Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation.
+   */
+  schema_versions?: Array<string>;
   app_slug: string;
   /**
    * Present for workflow recipients.

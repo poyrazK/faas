@@ -45,7 +45,8 @@ export class SecurityService {
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -133,7 +134,8 @@ export class SecurityService {
         409: `The replacement deployment is not yet eligible for recovery.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         500: `code: capacity — server-side error; retry with backoff.`,
       },

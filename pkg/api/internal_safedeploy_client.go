@@ -127,3 +127,9 @@ func (c *InternalSafeDeployClient) RecoverCanaryRouteHealth(ctx context.Context,
 		CanaryRouteHealthRecoveryRequest{ExpectedStep: expectedStep}, &out)
 	return out, err
 }
+
+func (c *InternalSafeDeployClient) AbortProfileRegressedCanary(ctx context.Context, id string, expectedStep int) (CanaryAdvanceResponse, error) {
+	var out CanaryAdvanceResponse
+	err := c.canary.do(ctx, http.MethodPost, "/v1/internal/safe-deploy/deployments/"+url.PathEscape(id)+"/canary/advance", AdvanceCanaryRequest{ExpectedStep: expectedStep, ProfileGateRollback: true}, &out)
+	return out, err
+}

@@ -162,6 +162,7 @@ type RetainedChannelMessage struct {
 	Data              []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
 	Binary            bool                   `protobuf:"varint,3,opt,name=binary,proto3" json:"binary,omitempty"`
 	CreatedAtUnixNano int64                  `protobuf:"varint,4,opt,name=created_at_unix_nano,json=createdAtUnixNano,proto3" json:"created_at_unix_nano,omitempty"`
+	MetadataJson      []byte                 `protobuf:"bytes,5,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -224,6 +225,322 @@ func (x *RetainedChannelMessage) GetCreatedAtUnixNano() int64 {
 	return 0
 }
 
+func (x *RetainedChannelMessage) GetMetadataJson() []byte {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return nil
+}
+
+type ReportChannelRouteRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EndpointId    string                 `protobuf:"bytes,1,opt,name=endpoint_id,json=endpointId,proto3" json:"endpoint_id,omitempty"`
+	Channel       string                 `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"`
+	NodeName      string                 `protobuf:"bytes,3,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	Subscribed    bool                   `protobuf:"varint,4,opt,name=subscribed,proto3" json:"subscribed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportChannelRouteRequest) Reset() {
+	*x = ReportChannelRouteRequest{}
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportChannelRouteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportChannelRouteRequest) ProtoMessage() {}
+
+func (x *ReportChannelRouteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportChannelRouteRequest.ProtoReflect.Descriptor instead.
+func (*ReportChannelRouteRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_realtime_history_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ReportChannelRouteRequest) GetEndpointId() string {
+	if x != nil {
+		return x.EndpointId
+	}
+	return ""
+}
+
+func (x *ReportChannelRouteRequest) GetChannel() string {
+	if x != nil {
+		return x.Channel
+	}
+	return ""
+}
+
+func (x *ReportChannelRouteRequest) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *ReportChannelRouteRequest) GetSubscribed() bool {
+	if x != nil {
+		return x.Subscribed
+	}
+	return false
+}
+
+type ReportChannelRouteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Applied       bool                   `protobuf:"varint,1,opt,name=applied,proto3" json:"applied,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportChannelRouteResponse) Reset() {
+	*x = ReportChannelRouteResponse{}
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportChannelRouteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportChannelRouteResponse) ProtoMessage() {}
+
+func (x *ReportChannelRouteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportChannelRouteResponse.ProtoReflect.Descriptor instead.
+func (*ReportChannelRouteResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_realtime_history_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ReportChannelRouteResponse) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
+type DurableCursorRequest struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	EndpointId   string                 `protobuf:"bytes,1,opt,name=endpoint_id,json=endpointId,proto3" json:"endpoint_id,omitempty"`
+	Principal    string                 `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
+	Subscription string                 `protobuf:"bytes,3,opt,name=subscription,proto3" json:"subscription,omitempty"`
+	Channel      string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	// Used only when creating a new named subscription; existing cursors win.
+	InitialSequence int64 `protobuf:"varint,5,opt,name=initial_sequence,json=initialSequence,proto3" json:"initial_sequence,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *DurableCursorRequest) Reset() {
+	*x = DurableCursorRequest{}
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DurableCursorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DurableCursorRequest) ProtoMessage() {}
+
+func (x *DurableCursorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DurableCursorRequest.ProtoReflect.Descriptor instead.
+func (*DurableCursorRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_realtime_history_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DurableCursorRequest) GetEndpointId() string {
+	if x != nil {
+		return x.EndpointId
+	}
+	return ""
+}
+
+func (x *DurableCursorRequest) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *DurableCursorRequest) GetSubscription() string {
+	if x != nil {
+		return x.Subscription
+	}
+	return ""
+}
+
+func (x *DurableCursorRequest) GetChannel() string {
+	if x != nil {
+		return x.Channel
+	}
+	return ""
+}
+
+func (x *DurableCursorRequest) GetInitialSequence() int64 {
+	if x != nil {
+		return x.InitialSequence
+	}
+	return 0
+}
+
+type AdvanceDurableCursorRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EndpointId    string                 `protobuf:"bytes,1,opt,name=endpoint_id,json=endpointId,proto3" json:"endpoint_id,omitempty"`
+	Principal     string                 `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
+	Subscription  string                 `protobuf:"bytes,3,opt,name=subscription,proto3" json:"subscription,omitempty"`
+	Channel       string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	Sequence      int64                  `protobuf:"varint,5,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdvanceDurableCursorRequest) Reset() {
+	*x = AdvanceDurableCursorRequest{}
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdvanceDurableCursorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdvanceDurableCursorRequest) ProtoMessage() {}
+
+func (x *AdvanceDurableCursorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdvanceDurableCursorRequest.ProtoReflect.Descriptor instead.
+func (*AdvanceDurableCursorRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_realtime_history_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *AdvanceDurableCursorRequest) GetEndpointId() string {
+	if x != nil {
+		return x.EndpointId
+	}
+	return ""
+}
+
+func (x *AdvanceDurableCursorRequest) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *AdvanceDurableCursorRequest) GetSubscription() string {
+	if x != nil {
+		return x.Subscription
+	}
+	return ""
+}
+
+func (x *AdvanceDurableCursorRequest) GetChannel() string {
+	if x != nil {
+		return x.Channel
+	}
+	return ""
+}
+
+func (x *AdvanceDurableCursorRequest) GetSequence() int64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+type DurableCursorResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sequence      int64                  `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DurableCursorResponse) Reset() {
+	*x = DurableCursorResponse{}
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DurableCursorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DurableCursorResponse) ProtoMessage() {}
+
+func (x *DurableCursorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_realtime_history_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DurableCursorResponse.ProtoReflect.Descriptor instead.
+func (*DurableCursorResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_realtime_history_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *DurableCursorResponse) GetSequence() int64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
 var File_onebox_faas_apid_v1_realtime_history_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_realtime_history_proto_rawDesc = "" +
@@ -239,14 +556,45 @@ const file_onebox_faas_apid_v1_realtime_history_proto_rawDesc = "" +
 	"\bmessages\x18\x01 \x03(\v2+.onebox.faas.apid.v1.RetainedChannelMessageR\bmessages\x12'\n" +
 	"\x0foldest_sequence\x18\x02 \x01(\x03R\x0eoldestSequence\x12'\n" +
 	"\x0flatest_sequence\x18\x03 \x01(\x03R\x0elatestSequence\x12/\n" +
-	"\x13history_unavailable\x18\x04 \x01(\bR\x12historyUnavailable\"\x91\x01\n" +
+	"\x13history_unavailable\x18\x04 \x01(\bR\x12historyUnavailable\"\xb6\x01\n" +
 	"\x16RetainedChannelMessage\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x03R\bsequence\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x16\n" +
 	"\x06binary\x18\x03 \x01(\bR\x06binary\x12/\n" +
-	"\x14created_at_unix_nano\x18\x04 \x01(\x03R\x11createdAtUnixNano2\x88\x01\n" +
+	"\x14created_at_unix_nano\x18\x04 \x01(\x03R\x11createdAtUnixNano\x12#\n" +
+	"\rmetadata_json\x18\x05 \x01(\fR\fmetadataJson\"\x93\x01\n" +
+	"\x19ReportChannelRouteRequest\x12\x1f\n" +
+	"\vendpoint_id\x18\x01 \x01(\tR\n" +
+	"endpointId\x12\x18\n" +
+	"\achannel\x18\x02 \x01(\tR\achannel\x12\x1b\n" +
+	"\tnode_name\x18\x03 \x01(\tR\bnodeName\x12\x1e\n" +
+	"\n" +
+	"subscribed\x18\x04 \x01(\bR\n" +
+	"subscribed\"6\n" +
+	"\x1aReportChannelRouteResponse\x12\x18\n" +
+	"\aapplied\x18\x01 \x01(\bR\aapplied\"\xbe\x01\n" +
+	"\x14DurableCursorRequest\x12\x1f\n" +
+	"\vendpoint_id\x18\x01 \x01(\tR\n" +
+	"endpointId\x12\x1c\n" +
+	"\tprincipal\x18\x02 \x01(\tR\tprincipal\x12\"\n" +
+	"\fsubscription\x18\x03 \x01(\tR\fsubscription\x12\x18\n" +
+	"\achannel\x18\x04 \x01(\tR\achannel\x12)\n" +
+	"\x10initial_sequence\x18\x05 \x01(\x03R\x0finitialSequence\"\xb6\x01\n" +
+	"\x1bAdvanceDurableCursorRequest\x12\x1f\n" +
+	"\vendpoint_id\x18\x01 \x01(\tR\n" +
+	"endpointId\x12\x1c\n" +
+	"\tprincipal\x18\x02 \x01(\tR\tprincipal\x12\"\n" +
+	"\fsubscription\x18\x03 \x01(\tR\fsubscription\x12\x18\n" +
+	"\achannel\x18\x04 \x01(\tR\achannel\x12\x1a\n" +
+	"\bsequence\x18\x05 \x01(\x03R\bsequence\"3\n" +
+	"\x15DurableCursorResponse\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x03R\bsequence2\xd4\x04\n" +
 	"\x0fRealtimeHistory\x12u\n" +
-	"\x12ReadChannelHistory\x12..onebox.faas.apid.v1.ReadChannelHistoryRequest\x1a/.onebox.faas.apid.v1.ReadChannelHistoryResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x12ReadChannelHistory\x12..onebox.faas.apid.v1.ReadChannelHistoryRequest\x1a/.onebox.faas.apid.v1.ReadChannelHistoryResponse\x12i\n" +
+	"\x10GetDurableCursor\x12).onebox.faas.apid.v1.DurableCursorRequest\x1a*.onebox.faas.apid.v1.DurableCursorResponse\x12t\n" +
+	"\x14AdvanceDurableCursor\x120.onebox.faas.apid.v1.AdvanceDurableCursorRequest\x1a*.onebox.faas.apid.v1.DurableCursorResponse\x12r\n" +
+	"\x12ResetDurableCursor\x120.onebox.faas.apid.v1.AdvanceDurableCursorRequest\x1a*.onebox.faas.apid.v1.DurableCursorResponse\x12u\n" +
+	"\x12ReportChannelRoute\x12..onebox.faas.apid.v1.ReportChannelRouteRequest\x1a/.onebox.faas.apid.v1.ReportChannelRouteResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_realtime_history_proto_rawDescOnce sync.Once
@@ -260,18 +608,31 @@ func file_onebox_faas_apid_v1_realtime_history_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_realtime_history_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_realtime_history_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_onebox_faas_apid_v1_realtime_history_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_onebox_faas_apid_v1_realtime_history_proto_goTypes = []any{
-	(*ReadChannelHistoryRequest)(nil),  // 0: onebox.faas.apid.v1.ReadChannelHistoryRequest
-	(*ReadChannelHistoryResponse)(nil), // 1: onebox.faas.apid.v1.ReadChannelHistoryResponse
-	(*RetainedChannelMessage)(nil),     // 2: onebox.faas.apid.v1.RetainedChannelMessage
+	(*ReadChannelHistoryRequest)(nil),   // 0: onebox.faas.apid.v1.ReadChannelHistoryRequest
+	(*ReadChannelHistoryResponse)(nil),  // 1: onebox.faas.apid.v1.ReadChannelHistoryResponse
+	(*RetainedChannelMessage)(nil),      // 2: onebox.faas.apid.v1.RetainedChannelMessage
+	(*ReportChannelRouteRequest)(nil),   // 3: onebox.faas.apid.v1.ReportChannelRouteRequest
+	(*ReportChannelRouteResponse)(nil),  // 4: onebox.faas.apid.v1.ReportChannelRouteResponse
+	(*DurableCursorRequest)(nil),        // 5: onebox.faas.apid.v1.DurableCursorRequest
+	(*AdvanceDurableCursorRequest)(nil), // 6: onebox.faas.apid.v1.AdvanceDurableCursorRequest
+	(*DurableCursorResponse)(nil),       // 7: onebox.faas.apid.v1.DurableCursorResponse
 }
 var file_onebox_faas_apid_v1_realtime_history_proto_depIdxs = []int32{
 	2, // 0: onebox.faas.apid.v1.ReadChannelHistoryResponse.messages:type_name -> onebox.faas.apid.v1.RetainedChannelMessage
 	0, // 1: onebox.faas.apid.v1.RealtimeHistory.ReadChannelHistory:input_type -> onebox.faas.apid.v1.ReadChannelHistoryRequest
-	1, // 2: onebox.faas.apid.v1.RealtimeHistory.ReadChannelHistory:output_type -> onebox.faas.apid.v1.ReadChannelHistoryResponse
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
+	5, // 2: onebox.faas.apid.v1.RealtimeHistory.GetDurableCursor:input_type -> onebox.faas.apid.v1.DurableCursorRequest
+	6, // 3: onebox.faas.apid.v1.RealtimeHistory.AdvanceDurableCursor:input_type -> onebox.faas.apid.v1.AdvanceDurableCursorRequest
+	6, // 4: onebox.faas.apid.v1.RealtimeHistory.ResetDurableCursor:input_type -> onebox.faas.apid.v1.AdvanceDurableCursorRequest
+	3, // 5: onebox.faas.apid.v1.RealtimeHistory.ReportChannelRoute:input_type -> onebox.faas.apid.v1.ReportChannelRouteRequest
+	1, // 6: onebox.faas.apid.v1.RealtimeHistory.ReadChannelHistory:output_type -> onebox.faas.apid.v1.ReadChannelHistoryResponse
+	7, // 7: onebox.faas.apid.v1.RealtimeHistory.GetDurableCursor:output_type -> onebox.faas.apid.v1.DurableCursorResponse
+	7, // 8: onebox.faas.apid.v1.RealtimeHistory.AdvanceDurableCursor:output_type -> onebox.faas.apid.v1.DurableCursorResponse
+	7, // 9: onebox.faas.apid.v1.RealtimeHistory.ResetDurableCursor:output_type -> onebox.faas.apid.v1.DurableCursorResponse
+	4, // 10: onebox.faas.apid.v1.RealtimeHistory.ReportChannelRoute:output_type -> onebox.faas.apid.v1.ReportChannelRouteResponse
+	6, // [6:11] is the sub-list for method output_type
+	1, // [1:6] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -288,7 +649,7 @@ func file_onebox_faas_apid_v1_realtime_history_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_realtime_history_proto_rawDesc), len(file_onebox_faas_apid_v1_realtime_history_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

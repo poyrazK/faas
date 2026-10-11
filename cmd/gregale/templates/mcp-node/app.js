@@ -4,7 +4,7 @@ import express from 'express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { completable, createMcpHandler, McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import { createAuth } from './auth.js';
+import { createAuth, verifiedCallerIdentity } from './auth.js';
 import { createRuntimeCatalog } from './catalog.js';
 import { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from './tasks.js';
 import { createResourceUpdateHub, validResourceUpdateURI } from './resource-updates.js';
@@ -16,6 +16,11 @@ const MCP_SERVER_INFO_META_KEY = 'io.modelcontextprotocol/serverInfo';
 const MCP_SERVER_INFO = { name: 'gregale-mcp-server', version: '1.0.0' };
 const SUMMARY_STYLES = ['brief', 'technical', 'executive'];
 const SAMPLE_RECORD_IDS = ['example-1', 'example-2', 'example-3'];
+const SAMPLE_RECORD_OWNERS = Object.freeze({
+  'example-1': 'demo-caller-a',
+  'example-2': 'demo-caller-b',
+  'example-3': 'demo-caller-a',
+});
 const MCP_TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_TASK_SUBSCRIPTION_STREAMS = 128;
 const MAX_TASK_RESOURCE_SUBSCRIPTIONS = 64;
@@ -184,6 +189,9 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
   }
 
   function createServer({ authInfo, era }) {
+    const caller = verifiedCallerIdentity(authInfo);
+    const canReadSampleRecord = recordID => Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
+      && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
     const server = new McpServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
       capabilities: {
         tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
@@ -210,11 +218,20 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     }
     for (const entry of catalog.resources()) {
       if (!auth.resourcePolicy.canAccess(entry.policyKey, authInfo)) continue;
-      const callback = (uri, variables, ctx) => typeof entry.uriOrTemplate === 'string'
-        ? entry.handler(uri, ctx || variables, { authInfo, config, taskRuntime })
-        : entry.handler(uri, variables, ctx, { authInfo, config, taskRuntime });
-      server.registerResource(entry.name, entry.uriOrTemplate, entry.definition,
-        auth.resourcePolicy.guard(entry.policyKey, callback, 'Resource access denied'));
+      const uriOrTemplate = entry.name === 'customer_record'
+        ? new ResourceTemplate('customer://records/{recordId}', { list: undefined, complete: {
+            recordId: value => SAMPLE_RECORD_IDS.filter(id => canReadSampleRecord(id) && id.startsWith(value.toLowerCase())),
+          } }) : entry.uriOrTemplate;
+      const callback = (uri, variables, ctx) => {
+        if (entry.name === 'customer_record' && !canReadSampleRecord(variables.recordId)) throw new Error('Resource not found');
+        return typeof uriOrTemplate === 'string' ? entry.handler(uri, ctx || variables, {authInfo,config,taskRuntime})
+          : entry.handler(uri,variables,ctx,{authInfo,config,taskRuntime});
+      };
+      server.registerResource(entry.name, uriOrTemplate, entry.definition, auth.resourcePolicy.guard(entry.policyKey,callback,'Resource access denied'));
+    }
+    function registerPrompt(name, definition, callback) {
+      if (!auth.promptPolicy.canAccess(name, authInfo)) return;
+      server.registerPrompt(name, definition, auth.promptPolicy.guard(name, callback, 'Prompt access denied'));
     }
     if (taskRuntime) {
       const taskTemplate = new ResourceTemplate('task://tasks/{taskId}', { list: undefined });

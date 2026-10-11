@@ -15,12 +15,13 @@ T = TypeVar("T", bound="OperationResultArtifact")
 
 @_attrs_define
 class OperationResultArtifact:
-    """Verified result reference in a private customer-managed object bucket."""
+    """Verified private result reference, from a managed object or direct Job upload."""
 
     id: UUID
     name: str
     uri: str
-    """obj://<app UUID>/<bucket UUID>/<opaque object key>; never a signed URL."""
+    """Managed obj:// source or opaque operation://<operation UUID>/artifacts/<artifact UUID> direct-upload
+    reference; never a signed URL or physical storage key."""
     size_bytes: int
     sha256: str
     expires_at: datetime.datetime | Unset = UNSET

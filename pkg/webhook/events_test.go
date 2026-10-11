@@ -1,5 +1,7 @@
 package webhook
 
+// adr: 735
+
 import (
 	"context"
 	"encoding/json"
@@ -52,6 +54,43 @@ func TestEmit_RejectsUnknownEvent(t *testing.T) {
 	err := Emit(context.Background(), state.NewMemStore(), "app", state.AppWebhookEvent("not.valid"), nil)
 	if err == nil {
 		t.Fatal("Emit accepted an unknown event")
+	}
+}
+
+// ADR-735: health changes require explicit opt-in even for wildcard hooks.
+func TestEmit_HealthRequiresExplicitSubscription(t *testing.T) {
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(t.Context(), "health-opt-in@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "health-opt-in", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		filter []string
+		want   int
+	}{
+		{"wildcard", nil, 0},
+		{"explicit", []string{"app.health.changed"}, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			hook, err := store.CreateAppWebhook(t.Context(), state.AppWebhook{
+				AppID: app.ID, AccountID: account.ID, TargetURL: "https://" + test.name + ".example/hook", EventFilter: test.filter, Enabled: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Emit(t.Context(), store, app.ID, state.AppWebhookEventAppHealthChanged, api.AppHealthChangedWebhookPayload{Status: "unhealthy"}); err != nil {
+				t.Fatal(err)
+			}
+			deliveries, _, err := store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+			if err != nil || len(deliveries) != test.want {
+				t.Fatalf("deliveries = %d, want %d: %v", len(deliveries), test.want, err)
+			}
+		})
 	}
 }
 

@@ -29,20 +29,22 @@ func TestResidentGBHoursPerMonth(t *testing.T) {
 		// to 0 (Hobby rejected min>0); the PR-A tier-up means Hobby
 		// customers can opt into a warm floor, and the bill
 		// auto-counts via pkg/meter/sampler.go:238-239.
-		// Hobby 1x256: (256+8) × 1 × 30 / 1024 = 7920/1024 = 7.734375
-		{"Hobby min=1 bills", api.PlanHobby, 256, 1, 7.734375},
+		// Hobby 1x256: (256+8) × 1 × 720 / 1024 = 190080/1024 = 185.625
+		{"Hobby min=1 bills", api.PlanHobby, 256, 1, 185.625},
 
-		// Pro 512 MB: (512+8) × 1 × 30 / 1024 = 15600/1024 = 15.234375
-		{"Pro 1x512", api.PlanPro, 512, 1, 15.234375},
+		// Pro 512 MB: (512+8) × 1 × 720 / 1024 = 374400/1024 = 365.625
+		// (more than Pro's 250 GB-h included quota on its own).
+		{"Pro 1x512", api.PlanPro, 512, 1, 365.625},
 
-		// Pro 256 MB: (256+8) × 1 × 30 / 1024 = 7920/1024 = 7.734375
-		{"Pro 1x256", api.PlanPro, 256, 1, 7.734375},
+		// Pro 256 MB: (256+8) × 1 × 720 / 1024 = 190080/1024 = 185.625
+		{"Pro 1x256", api.PlanPro, 256, 1, 185.625},
 
-		// Scale 1024 MB × 2: (1024+8) × 2 × 30 / 1024 = 61920/1024 = 60.46875
-		{"Scale 2x1024", api.PlanScale, 1024, 2, 60.46875},
+		// Scale 1024 MB × 2: (1024+8) × 2 × 720 / 1024 = 1486080/1024 = 1451.25.
+		// production-us hunt #7 (H5-67): the CLI echoed ~60.5 GB-h/mo here.
+		{"Scale 2x1024", api.PlanScale, 1024, 2, 1451.25},
 
-		// Scale 1024 MB × 1: (1024+8) × 1 × 30 / 1024 = 30960/1024 = 30.234375
-		{"Scale 1x1024", api.PlanScale, 1024, 1, 30.234375},
+		// Scale 1024 MB × 1: (1024+8) × 1 × 720 / 1024 = 743040/1024 = 725.625
+		{"Scale 1x1024", api.PlanScale, 1024, 1, 725.625},
 
 		// Pro min=0 → 0 even if plan allows.
 		{"Pro min=0", api.PlanPro, 512, 0, 0},
@@ -99,7 +101,7 @@ func TestPrintResidentCostEcho_Pro(t *testing.T) {
 	// Pins UX §6.5 copy.
 	for _, want := range []string{
 		"1 instance of 512 MB kept warm",
-		"~15.2 GB-h/mo",
+		"~365.6 GB-h/mo",
 		"billed against your included quota",
 		"1000 millicent/GB-h overage",
 	} {
@@ -125,7 +127,7 @@ func TestPrintResidentCostEcho_ScalePlural(t *testing.T) {
 	if !strings.Contains(out, "2 instances of 1024 MB kept warm") {
 		t.Errorf("stdout missing plural form\nfull: %s", out)
 	}
-	if !strings.Contains(out, "~60.5 GB-h/mo") {
+	if !strings.Contains(out, "~1451.2 GB-h/mo") {
 		t.Errorf("stdout missing Scale 2x1024 estimate\nfull: %s", out)
 	}
 }

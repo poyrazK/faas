@@ -17,18 +17,19 @@ type OperationDoctorResponse struct {
 }
 
 type OperationDoctorCheck struct {
-	Check        string `json:"check"`
-	Status       string `json:"status"`
-	Impact       string `json:"impact"`
-	Code         string `json:"code"`
-	Message      string `json:"message"`
-	Remediation  string `json:"remediation,omitempty"`
-	DefinitionID string `json:"definition_id,omitempty"`
-	Name         string `json:"name,omitempty"`
-	Revision     string `json:"revision,omitempty"`
-	ReleaseID    string `json:"release_id,omitempty"`
-	Limit        *int64 `json:"limit,omitempty"`
-	Observed     *int64 `json:"observed,omitempty"`
+	Check         string `json:"check"`
+	Status        string `json:"status"`
+	Impact        string `json:"impact"`
+	Code          string `json:"code"`
+	Message       string `json:"message"`
+	Remediation   string `json:"remediation,omitempty"`
+	DefinitionID  string `json:"definition_id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Revision      string `json:"revision,omitempty"`
+	ReleaseID     string `json:"release_id,omitempty"`
+	ExecutionKind string `json:"execution_kind,omitempty"`
+	Limit         *int64 `json:"limit,omitempty"`
+	Observed      *int64 `json:"observed,omitempty"`
 }
 
 // SubmissionState considers submission checks only. A delivery warning never

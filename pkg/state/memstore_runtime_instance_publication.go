@@ -38,6 +38,10 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 			return Instance{}, ErrConflict
 		}
 	}
+	acceptance, err := m.prepareRuntimeUpgradeAcceptanceLocked(p)
+	if err != nil {
+		return Instance{}, err
+	}
 	prior := instance
 	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
 	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
@@ -52,6 +56,12 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 		}
 	}
 	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
+	if acceptance != nil {
+		if m.runtimeUpgradeAcceptances == nil {
+			m.runtimeUpgradeAcceptances = make(map[string]RuntimeUpgradeAcceptance)
+		}
+		m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
+	}
 	return instance, nil
 }
 

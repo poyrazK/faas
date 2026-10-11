@@ -154,3 +154,28 @@ func TestProductionRouteMonitorConfigurationAndResponseValidation(t *testing.T) 
 		t.Fatal("nil array accepted")
 	}
 }
+
+func TestProductionRouteMonitorPreviewContract(t *testing.T) {
+	report := monitorFixture()
+	Evaluate(&report, "")
+	proposal := api.PreviewRouteMonitorRequest{Routes: []api.RouteMonitorRoute{report.Routes[0].Route}}
+	preview := api.RouteMonitorPreview{
+		CurrentRevision:                     report.Revision,
+		PreviewOnly:                         true,
+		ConfigChangeResetsObservationAnchor: true,
+		Report:                              report,
+	}
+	if err := ValidatePreviewForRequest(preview, proposal); err != nil {
+		t.Fatalf("valid preview rejected: %v", err)
+	}
+	wrongBudget := proposal
+	wrongBudget.Routes = CloneRoutes(proposal.Routes)
+	wrongBudget.Routes[0].MaxP95MS++
+	if err := ValidatePreviewForRequest(preview, wrongBudget); err == nil {
+		t.Fatal("preview accepted a different proposal")
+	}
+	preview.CurrentRevision++
+	if err := ValidatePreview(preview); err == nil {
+		t.Fatal("preview accepted a mismatched saved revision")
+	}
+}

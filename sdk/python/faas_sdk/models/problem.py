@@ -50,6 +50,18 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    current_sequence: int | Unset = UNSET
+    """Observed channel head on realtime_sequence_conflict."""
+    condition_field: str | Unset = UNSET
+    condition_index: int | Unset = UNSET
+    field_exists: bool | Unset = UNSET
+    entity_key: str | Unset = UNSET
+    expected_version: int | Unset = UNSET
+    current_version: int | Unset = UNSET
+    entity_exists: bool | Unset = UNSET
+    message_index: int | Unset = UNSET
+    expected_sequence: int | Unset = UNSET
+    """Requested channel head precondition."""
     bindings_check: BindingCheckReport | Unset = UNSET
     """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
     passed report does not independently establish application readiness or credential use. Optional application
@@ -152,6 +164,26 @@ class Problem:
 
         code = self.code
 
+        current_sequence = self.current_sequence
+
+        condition_field = self.condition_field
+
+        condition_index = self.condition_index
+
+        field_exists = self.field_exists
+
+        entity_key = self.entity_key
+
+        expected_version = self.expected_version
+
+        current_version = self.current_version
+
+        entity_exists = self.entity_exists
+
+        message_index = self.message_index
+
+        expected_sequence = self.expected_sequence
+
         bindings_check: dict[str, Any] | Unset = UNSET
         if not isinstance(self.bindings_check, Unset):
             bindings_check = self.bindings_check.to_dict()
@@ -236,6 +268,26 @@ class Problem:
                 "code": code,
             }
         )
+        if current_sequence is not UNSET:
+            field_dict["current_sequence"] = current_sequence
+        if condition_field is not UNSET:
+            field_dict["condition_field"] = condition_field
+        if condition_index is not UNSET:
+            field_dict["condition_index"] = condition_index
+        if field_exists is not UNSET:
+            field_dict["field_exists"] = field_exists
+        if entity_key is not UNSET:
+            field_dict["entity_key"] = entity_key
+        if expected_version is not UNSET:
+            field_dict["expected_version"] = expected_version
+        if current_version is not UNSET:
+            field_dict["current_version"] = current_version
+        if entity_exists is not UNSET:
+            field_dict["entity_exists"] = entity_exists
+        if message_index is not UNSET:
+            field_dict["message_index"] = message_index
+        if expected_sequence is not UNSET:
+            field_dict["expected_sequence"] = expected_sequence
         if bindings_check is not UNSET:
             field_dict["bindings_check"] = bindings_check
         if type_ is not UNSET:
@@ -294,6 +346,26 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        current_sequence = d.pop("current_sequence", UNSET)
+
+        condition_field = d.pop("condition_field", UNSET)
+
+        condition_index = d.pop("condition_index", UNSET)
+
+        field_exists = d.pop("field_exists", UNSET)
+
+        entity_key = d.pop("entity_key", UNSET)
+
+        expected_version = d.pop("expected_version", UNSET)
+
+        current_version = d.pop("current_version", UNSET)
+
+        entity_exists = d.pop("entity_exists", UNSET)
+
+        message_index = d.pop("message_index", UNSET)
+
+        expected_sequence = d.pop("expected_sequence", UNSET)
 
         _bindings_check = d.pop("bindings_check", UNSET)
         bindings_check: BindingCheckReport | Unset
@@ -395,6 +467,16 @@ class Problem:
             title=title,
             status=status,
             code=code,
+            current_sequence=current_sequence,
+            condition_field=condition_field,
+            condition_index=condition_index,
+            field_exists=field_exists,
+            entity_key=entity_key,
+            expected_version=expected_version,
+            current_version=current_version,
+            entity_exists=entity_exists,
+            message_index=message_index,
+            expected_sequence=expected_sequence,
             bindings_check=bindings_check,
             type_=type_,
             instance=instance,

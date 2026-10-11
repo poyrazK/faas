@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_delivery_summary import OperationDeliverySummary
     from ..models.operation_progress import OperationProgress
+    from ..models.operation_subject import OperationSubject
 
 
 T = TypeVar("T", bound="OperationSummary")
@@ -34,6 +35,9 @@ class OperationSummary:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     expires_at: datetime.datetime
+    subject: OperationSubject | Unset = UNSET
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     platform_tenant_id: UUID | Unset = UNSET
     """Present only on account operator listings; absent from tenant-self summaries."""
     progress: OperationProgress | Unset = UNSET
@@ -61,6 +65,10 @@ class OperationSummary:
 
         expires_at = self.expires_at.isoformat()
 
+        subject: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.subject, Unset):
+            subject = self.subject.to_dict()
+
         platform_tenant_id: str | Unset = UNSET
         if not isinstance(self.platform_tenant_id, Unset):
             platform_tenant_id = str(self.platform_tenant_id)
@@ -85,6 +93,8 @@ class OperationSummary:
                 "expires_at": expires_at,
             }
         )
+        if subject is not UNSET:
+            field_dict["subject"] = subject
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
         if progress is not UNSET:
@@ -96,6 +106,7 @@ class OperationSummary:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_delivery_summary import OperationDeliverySummary
         from ..models.operation_progress import OperationProgress
+        from ..models.operation_subject import OperationSubject
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -117,6 +128,13 @@ class OperationSummary:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
+
+        _subject = d.pop("subject", UNSET)
+        subject: OperationSubject | Unset
+        if isinstance(_subject, Unset):
+            subject = UNSET
+        else:
+            subject = OperationSubject.from_dict(_subject)
 
         _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
         platform_tenant_id: UUID | Unset
@@ -143,6 +161,7 @@ class OperationSummary:
             created_at=created_at,
             updated_at=updated_at,
             expires_at=expires_at,
+            subject=subject,
             platform_tenant_id=platform_tenant_id,
             progress=progress,
         )

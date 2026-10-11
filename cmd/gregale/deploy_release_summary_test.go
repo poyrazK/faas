@@ -316,3 +316,24 @@ func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.
 		t.Errorf("revision-less target rendered as v0\nfull output:\n%s", got)
 	}
 }
+
+// adr: 199
+// production-us hunt #8: mid-canary the previous release still served 90%,
+// and the summary suggested `rollback --to v5`, two releases back. The hint
+// is now the safe exit: promote the still-serving release.
+func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment:             api.DeploymentResponse{ID: "d7", Revision: 7, Status: statusLive, TrafficPercent: 10, CanaryPreset: "custom"},
+		Previous:               &api.DeploymentResponse{ID: "d6", Revision: 6, Status: statusLive, TrafficPercent: 90},
+		RollbackTargetID:       "d5",
+		RollbackTargetRevision: 5,
+	}, "h6-lab")
+	got := out.String()
+	if !strings.Contains(got, "Abort canary: gregale traffic promote --app h6-lab --deployment v6") {
+		t.Fatalf("mid-canary summary lacks the abort hint:\n%s", got)
+	}
+	if strings.Contains(got, "--to v5") {
+		t.Fatalf("mid-canary summary still offers a rollback past the serving release:\n%s", got)
+	}
+}

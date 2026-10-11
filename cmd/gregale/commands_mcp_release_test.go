@@ -233,6 +233,8 @@ func TestMCPTaskDefaultsMatchAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var defaults struct {
+		MaxRunning             int
+		MaxRunningPerOwner     int
 		MaxOutstanding         int
 		MaxOutstandingPerOwner int
 	}

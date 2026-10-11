@@ -1,0 +1,11 @@
+# Build this customer-owned image in your image pipeline, then register its
+# immutable Linux/amd64 registry digest with Gregale Jobs. App source builds
+# still use Gregale's builder microVM; Dockerfile.job is not an app Dockerfile.
+FROM node:22-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY packages/gregale-sdk.tgz packages/gregale-sdk.tgz
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY contract.mjs export.mjs job.mjs ./
+USER node
+ENTRYPOINT ["node", "/app/job.mjs"]

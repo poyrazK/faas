@@ -14,6 +14,14 @@ import (
 var artifactDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func ValidateArtifact(req api.OperationArtifactRequest, limits api.OperationPlanLimits) error {
+	if err := ValidateArtifactUpload(api.OperationArtifactUploadRequest{ReportID: req.ReportID, Name: req.Name, SizeBytes: req.SizeBytes, SHA256: req.SHA256}, limits); err != nil {
+		return err
+	}
+	_, _, _, err := ParseArtifactURI(req.URI)
+	return err
+}
+
+func ValidateArtifactUpload(req api.OperationArtifactUploadRequest, limits api.OperationPlanLimits) error {
 	if req.ReportID == "" || len(req.ReportID) > api.OperationReportIDMaxBytes || !validArtifactText(req.ReportID) ||
 		req.Name == "" || len(req.Name) > api.OperationArtifactNameMaxBytes || !validArtifactText(req.Name) || strings.ContainsAny(req.Name, "/\\") ||
 		!artifactDigest.MatchString(req.SHA256) || req.SizeBytes < 0 {
@@ -22,8 +30,31 @@ func ValidateArtifact(req api.OperationArtifactRequest, limits api.OperationPlan
 	if req.SizeBytes > limits.ArtifactMaxBytes || limits.ArtifactsPerOperation <= 0 {
 		return fmt.Errorf("artifact exceeds plan limit")
 	}
-	_, _, _, err := ParseArtifactURI(req.URI)
-	return err
+	return nil
+}
+
+// JobUploadArtifactDeclaration derives an opaque reference, never a provider
+// URL or physical storage key. Each native execution has its own identity.
+func JobUploadArtifactDeclaration(id, run string, attempt int, req api.OperationArtifactUploadRequest) api.OperationArtifactRequest {
+	return UploadArtifactDeclaration(id, run, attempt, req)
+}
+
+// UploadArtifactDeclaration binds an opaque file identity to its execution.
+func UploadArtifactDeclaration(id, execution string, attempt int, req api.OperationArtifactUploadRequest) api.OperationArtifactRequest {
+	return api.OperationArtifactRequest{ReportID: req.ReportID, Name: req.Name, SizeBytes: req.SizeBytes, SHA256: req.SHA256,
+		URI: fmt.Sprintf("operation://%s/artifacts/%s", id, ArtifactIdentity(id, execution, attempt, req.ReportID))}
+}
+
+// WorkflowArtifactIdentity is stable across approved resumes of the same run.
+func WorkflowArtifactIdentity(operation, run, step, reportID string) string {
+	return uuid.NewSHA1(uuid.Nil, []byte(operation+"/"+run+"/"+step+"/"+reportID)).String()
+}
+
+// WorkflowUploadArtifactDeclaration keeps the final step's logical file identity
+// independent of generation/attempt; native authority is always checked separately.
+func WorkflowUploadArtifactDeclaration(id, run, step string, req api.OperationArtifactUploadRequest) api.OperationArtifactRequest {
+	return api.OperationArtifactRequest{ReportID: req.ReportID, Name: req.Name, SizeBytes: req.SizeBytes, SHA256: req.SHA256,
+		URI: fmt.Sprintf("operation://%s/artifacts/%s", id, WorkflowArtifactIdentity(id, run, step, req.ReportID))}
 }
 
 // Object keys remain opaque: parsing never cleans or rewrites them.

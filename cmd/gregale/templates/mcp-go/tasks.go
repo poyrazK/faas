@@ -145,6 +145,7 @@ func init() {
 }
 
 type mcpTaskConfig struct {
+	EncryptionKeysEnv        string                    `json:"encryption_keys_env"`
 	Enabled                  *bool                     `json:"enabled"`
 	DatabaseURLEnv           string                    `json:"database_url_env"`
 	OwnerKeyEnv              string                    `json:"owner_key_env"`
@@ -165,6 +166,7 @@ type mcpTaskPreviousOwnerKey struct {
 }
 
 type mcpTaskKey struct {
+	mainAAD      bool
 	id           string
 	ownerHashKey []byte
 	payloadKey   []byte
@@ -376,6 +378,48 @@ func startMCPTaskRuntime(config mcpConfig, role string) (*mcpTaskRuntime, error)
 				id: spec.ID, ownerHashKey: deriveTaskKey(masterKey, "gregale-mcp-task-owner:v1"),
 				payloadKey: deriveTaskKey(masterKey, "gregale-mcp-task-payload:v1"),
 			})
+		}
+		if settings.EncryptionKeysEnv != "" {
+			if !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(settings.EncryptionKeysEnv) {
+				pool.Close()
+				return nil, errors.New("invalid task encryption environment name")
+			}
+			var keys struct {
+				ActiveKeyID string            `json:"activeKeyId"`
+				Keys        map[string]string `json:"keys"`
+			}
+			decoder := json.NewDecoder(strings.NewReader(os.Getenv(settings.EncryptionKeysEnv)))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&keys) != nil || decoder.Decode(new(any)) != io.EOF || len(keys.Keys) < 1 || len(keys.Keys) > 16 {
+				pool.Close()
+				return nil, errors.New("invalid MCP task encryption keys")
+			}
+			ownerKey := runtime.taskKeys[0].ownerHashKey
+			mainKeys := []mcpTaskKey{{id: "legacy", ownerHashKey: ownerKey, payloadKey: runtime.taskKeys[0].payloadKey}}
+			for id, secret := range keys.Keys {
+				if id == "legacy" || !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(id) || len([]byte(secret)) < 32 {
+					pool.Close()
+					return nil, errors.New("invalid MCP task encryption keys")
+				}
+				mainKeys = append(mainKeys, mcpTaskKey{id: id, ownerHashKey: ownerKey, payloadKey: deriveTaskKey([]byte(secret), "gregale-mcp-task-payload:v2:"+id), mainAAD: true})
+			}
+			active := -1
+			for i, key := range mainKeys {
+				if key.id == keys.ActiveKeyID {
+					active = i
+					break
+				}
+			}
+			if active < 0 {
+				pool.Close()
+				return nil, errors.New("unknown active MCP task encryption key")
+			}
+			mainKeys[0], mainKeys[active] = mainKeys[active], mainKeys[0]
+			runtime.taskKeys = append(mainKeys, runtime.taskKeys...)
+			runtime.payloadEncryptionVersion = 2
+			if keys.ActiveKeyID == "legacy" {
+				runtime.payloadEncryptionVersion = 1
+			}
 		}
 		if err := runtime.initialize(ctx); err != nil {
 			pool.Close()
@@ -672,6 +716,9 @@ func (runtime *mcpTaskRuntime) encryptPayload(plain []byte, taskID, field string
 		return nil, err
 	}
 	aad := []byte("gregale-mcp-task:v1:" + runtime.namespace + ":" + taskID + ":" + field)
+	if key.mainAAD && runtime.payloadEncryptionVersion == 2 {
+		aad = append(aad, []byte(":key:"+key.id)...)
+	}
 	sealed := aead.Seal(nil, nonce, plain, aad)
 	tagAt := len(sealed) - aead.Overhead()
 	if runtime.payloadEncryptionVersion == 1 {
@@ -712,8 +759,7 @@ func (runtime *mcpTaskRuntime) decryptPayload(value []byte, taskID, field string
 		}
 		for _, key := range runtime.taskKeys {
 			if key.id == keyID {
-				candidates = []mcpTaskKey{key}
-				break
+				candidates = append(candidates, key)
 			}
 		}
 		if len(candidates) == 0 {
@@ -738,7 +784,11 @@ func (runtime *mcpTaskRuntime) decryptPayload(value []byte, taskID, field string
 		if err != nil {
 			return nil, err
 		}
-		plain, err := aead.Open(nil, nonce, sealed, aad)
+		candidateAAD := aad
+		if key.mainAAD && value[0] == 2 {
+			candidateAAD = append(append([]byte(nil), aad...), []byte(":key:"+key.id)...)
+		}
+		plain, err := aead.Open(nil, nonce, sealed, candidateAAD)
 		if err == nil {
 			return plain, nil
 		}

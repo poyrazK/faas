@@ -289,6 +289,26 @@ class DurableTaskRuntime:
                 })
             self.active_owner_key_id = owner_key_id
             self.payload_keys = {item["id"]: item["payload_key"] for item in self.owner_keys}
+        self._main_payload_keys = {}
+        if self.role != "observer" and settings.get("encryption_keys_env"):
+            name = settings["encryption_keys_env"]
+            if not isinstance(name,str) or not re.fullmatch(r"[A-Z_][A-Z0-9_]*",name):
+                raise ValueError("invalid task encryption environment name")
+            keys = json.loads(os.environ.get(name,""))
+            if not isinstance(keys,dict) or set(keys)!={"activeKeyId","keys"} or not isinstance(keys["keys"],dict) or not 1 <= len(keys["keys"]) <= 16:
+                raise ValueError("invalid MCP task encryption keys")
+            for key_id,secret in keys["keys"].items():
+                if key_id=="legacy" or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",key_id) or not isinstance(secret,str) or len(secret.encode())<32:
+                    raise ValueError("invalid MCP task encryption keys")
+                self._main_payload_keys[key_id]=_derive_key(secret.encode(),"gregale-mcp-task-payload:v2:"+key_id)
+            active=keys["activeKeyId"]
+            if active!="legacy" and active not in self._main_payload_keys:
+                raise ValueError("unknown active MCP task encryption key")
+            self._legacy_payload_keys=dict(self.payload_keys)
+            self.payload_keys.update(self._main_payload_keys)
+            self.payload_keys["legacy"]=self.owner_keys[0]["payload_key"]
+            self.active_owner_key_id=active
+            self.payload_encryption_version=1 if active=="legacy" else 2
         def integer_setting(name, default, zero_uses_default=False):
             value = settings.get(name)
             if value is None or zero_uses_default and value == 0:
@@ -705,7 +725,10 @@ class DurableTaskRuntime:
     def _encrypt_payload(self, plain, task_id, field):
         key_id = self.active_owner_key_id.encode("ascii")
         nonce = os.urandom(12)
-        sealed = self._aesgcm(self.payload_keys[self.active_owner_key_id]).encrypt(nonce, plain, self._aad(task_id, field))
+        aad=self._aad(task_id,field)
+        if self.active_owner_key_id in self._main_payload_keys:
+            aad+=b":key:"+key_id
+        sealed = self._aesgcm(self.payload_keys[self.active_owner_key_id]).encrypt(nonce, plain, aad)
         if self.payload_encryption_version == 1:
             return b"\x01" + nonce + sealed[-16:] + sealed[:-16]
         return b"\x02" + bytes([len(key_id)]) + key_id + nonce + sealed[-16:] + sealed[:-16]
@@ -715,7 +738,7 @@ class DurableTaskRuntime:
             raise ValueError("invalid encrypted MCP task payload")
         if value[0] == 1:
             offset = 1
-            candidates = [key["payload_key"] for key in self.owner_keys]
+            candidates = [(key["payload_key"],self._aad(task_id,field)) for key in self.owner_keys]
         elif value[0] == 2:
             key_id_length = value[1]
             if not 1 <= key_id_length <= 64 or len(value) < 2 + key_id_length + 28:
@@ -724,7 +747,10 @@ class DurableTaskRuntime:
             if not TASK_KEY_ID_PATTERN.fullmatch(key_id) or key_id not in self.payload_keys:
                 raise ValueError("unknown MCP task payload key ID")
             offset = 2 + key_id_length
-            candidates = [self.payload_keys[key_id]]
+            candidates = [(self.payload_keys[key_id], self._aad(task_id,field)+(b":key:"+key_id.encode() if key_id in self._main_payload_keys else b""))]
+            legacy=getattr(self,"_legacy_payload_keys",{}).get(key_id)
+            if legacy is not None:
+                candidates.append((legacy,self._aad(task_id,field)))
         else:
             raise ValueError("invalid encrypted MCP task payload")
         if len(value) < offset + 28:
@@ -732,9 +758,9 @@ class DurableTaskRuntime:
         nonce = value[offset:offset + 12]
         sealed = value[offset + 28:] + value[offset + 12:offset + 28]
         last_error = None
-        for key in candidates:
+        for key,aad in candidates:
             try:
-                return self._aesgcm(key).decrypt(nonce, sealed, self._aad(task_id, field))
+                return self._aesgcm(key).decrypt(nonce, sealed, aad)
             except Exception as exc:
                 last_error = exc
         raise ValueError("could not decrypt MCP task payload with configured keys") from last_error

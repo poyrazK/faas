@@ -41,11 +41,13 @@ import (
 type Client = api.Client
 
 // NewClient wraps api.NewClient.
-func NewClient(baseURL, token string) *Client { return api.NewClient(baseURL, token) }
+func NewClient(baseURL, token string) *Client {
+	return bindProfileCompletionCache(api.NewClient(baseURL, token))
+}
 
 // NewClientWithDeployTimeout wraps api.NewClientWithDeployTimeout.
 func NewClientWithDeployTimeout(baseURL, token string, d time.Duration) *Client {
-	return api.NewClientWithDeployTimeout(baseURL, token, d)
+	return bindProfileCompletionCache(api.NewClientWithDeployTimeout(baseURL, token, d))
 }
 
 // APIError aliases the SDK's error type. CLI callers type-switch on

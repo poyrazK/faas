@@ -16,6 +16,71 @@ from faas_sdk.models import (
 )
 
 
+def test_historical_read_and_public_version_pagination() -> None:
+    from faas_sdk.api.storage import list_object_bucket_versions
+    from faas_sdk.models import ObjectVersionList
+
+    bucket = UUID("11111111-1111-4111-8111-111111111111")
+    version = UUID("22222222-2222-4222-8222-222222222222")
+    key = "目录 /+%.txt"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer token"
+        if request.method == "POST":
+            assert json.loads(request.content) == {
+                "method": "GET",
+                "key": key,
+                "expires_in": 300,
+                "version_id": str(version),
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "url": "https://s3.gregale.dev/assets/file",
+                    "method": "GET",
+                    "headers": {},
+                    "expires_at": "2026-10-07T00:00:00Z",
+                },
+            )
+        assert request.url.path == f"/v1/apps/demo/buckets/{bucket}/objects/versions"
+        assert request.url.params["key_marker"] == key
+        assert request.url.params["version_id_marker"] == str(version)
+        assert request.url.params["prefix"] == "目录"
+        assert request.url.params["limit"] == "1"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "key": key,
+                        "version_id": str(version),
+                        "is_latest": False,
+                        "delete_marker": False,
+                        "size_bytes": 3,
+                        "last_modified": "2026-10-07T00:00:00Z",
+                    }
+                ],
+                "common_prefixes": [],
+                "next_key_marker": key,
+                "next_version_id_marker": str(version),
+            },
+        )
+
+    with AuthenticatedClient(
+        base_url="https://api.example.test", token="token", httpx_args={"transport": httpx.MockTransport(handle)}
+    ) as client:
+        sign_bucket_object.sync(
+            "demo", bucket, client=client, body=ObjectSignRequest(method="GET", key=key, version_id=version)
+        )
+        page = list_object_bucket_versions.sync(
+            "demo", bucket, client=client, prefix="目录", key_marker=key, version_id_marker=str(version), limit=1
+        )
+        assert isinstance(page, ObjectVersionList)
+        assert page.items[0].version_id == str(version)
+        assert page.next_key_marker == key
+        assert page.next_version_id_marker == str(version)
+
+
 def test_signed_object_request_and_receipt() -> None:
     bucket = UUID("11111111-1111-4111-8111-111111111111")
     receipt = UUID("33333333-3333-4333-8333-333333333333")

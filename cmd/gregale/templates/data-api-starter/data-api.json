@@ -1,0 +1,11 @@
+{
+  "output": "client/src/database.types.ts",
+  "migrate": {
+    "command": ["gregale", "deploy", "--name", "notes-migrations", "--dockerfile", "--source", "worktree", "--wait", "--timeout", "15m"],
+    "directory": "."
+  },
+  "check": {
+    "command": ["npm", "run", "typecheck"],
+    "directory": "client"
+  }
+}

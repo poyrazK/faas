@@ -121,7 +121,8 @@ func cmdAlertAdd(args []string) int {
 	fs := newFlagSet("alerts add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
-	metric := fs.String("metric", "", "metric (closed set; includes MCP task age and metrics freshness)")
+	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
+	metric := fs.String("metric", "", "metric (closed set; includes MCP task, event retention, and event storage metrics)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
@@ -166,6 +167,7 @@ func cmdAlertAdd(args []string) int {
 		Comparison:                      *comparison,
 		Threshold:                       *threshold,
 		WindowSpec:                      *windowSpec,
+		EventSubscriptionID:             *eventSubscription,
 		FailureSource:                   *failureSource,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
@@ -289,11 +291,31 @@ func cmdAlertInfo(args []string) int {
 // cmdAlertDeliveries lists a rule's delivery ledger, newest first.
 func cmdAlertDeliveries(args []string) int {
 	fs := newFlagSet("alerts deliveries", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose a rule and inspect recent webhook deliveries")
 	slug := fs.String("app", "", "app slug (required)")
 	limit := fs.Int("limit", 20, "max deliveries (1..100)")
 	includeTest := fs.Bool("include-test", false, "include test deliveries")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *interactive {
+		invalid := fs.NArg() != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive delivery flags", fmt.Errorf("use alerts deliveries --interactive with optional --app; choose the rule and delivery options in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use alerts deliveries ID --app APP for scripts"))
+		}
+		app, err := resolveReadAppTarget(*slug)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdAlertDeliveriesInteractive(app)
 	}
 	if *slug == "" || fs.NArg() != 1 || *limit < 1 || *limit > 100 {
 		PrintUsage(os.Stderr, "usage: gregale alerts deliveries <alert-id> --app <slug> [--limit N] [--include-test]", "alerts")
@@ -314,21 +336,33 @@ func cmdAlertDeliveries(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(deliveries))
 	}
+	return renderAlertDeliveries(deliveries, *includeTest)
+}
+
+func renderAlertDeliveries(deliveries []api.AlertDeliveryResponse, includeTest bool) int {
 	if len(deliveries) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No deliveries yet.")
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "FIRED_AT\tSTATUS\tATTEMPTS\tHTTP\tOBSERVED\tERROR")
+	header := "FIRED_AT\tSTATUS\tATTEMPTS\tHTTP\tOBSERVED\tERROR"
+	if includeTest {
+		header += "\tTEST"
+	}
+	_, _ = fmt.Fprintln(tw, header)
 	for _, d := range deliveries {
-		httpStatus, errText := "-", d.LastError
+		httpStatus, errText := "-", oneLine(d.LastError)
 		if d.LastStatusCode > 0 {
 			httpStatus = strconv.Itoa(d.LastStatusCode)
 		}
 		if errText == "" {
 			errText = "-"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatThreshold(d.ObservedValue), errText)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatThreshold(d.ObservedValue), errText)
+		if includeTest {
+			_, _ = fmt.Fprintf(tw, "\t%t", d.IsTest)
+		}
+		_, _ = fmt.Fprintln(tw)
 	}
 	_ = tw.Flush()
 	return 0
@@ -355,6 +389,7 @@ func alertDeliverySummary(d api.AlertDeliveryResponse) string {
 // the constraint (alerts.go:118-123).
 func cmdAlertUpdate(args []string) int {
 	fs := newFlagSet("alerts update", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose an alert and edit its settings")
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (3..120 chars)")
 	enabled := fs.Bool(flagNameEnabled, true, "enable/disable the rule")
@@ -373,6 +408,26 @@ func cmdAlertUpdate(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	if *interactive {
+		invalid := fs.NArg() != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive update flags", fmt.Errorf("use alerts update --interactive with optional --app; choose settings in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use alerts update ID --app APP with explicit flags for scripts"))
+		}
+		app, err := resolveReadAppTarget(*slug)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdAlertUpdateInteractive(app)
+	}
+
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1

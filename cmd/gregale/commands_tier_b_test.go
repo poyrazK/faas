@@ -383,6 +383,25 @@ func TestTierB_OverageCap_BadArgExitsOne(t *testing.T) {
 	}
 }
 
+// TestTierB_OverageCap_NegativeCentsExplained pins H8-32: "-5" used to reach
+// flag.Parse as an undefined flag and print Go's raw usage dump.
+func TestTierB_OverageCap_NegativeCentsExplained(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, "", http.StatusOK)
+	stderr, restore := captureStderr(t)
+	code := cmdOverageCap([]string{"-5"})
+	restore()
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if out := stderr.String(); !strings.Contains(out, "non-negative integer") || strings.Contains(out, "flag provided but not defined") {
+		t.Fatalf("stderr = %q, want the invalid-cap explanation", out)
+	}
+	if f.sawPath != "" {
+		t.Fatalf("negative cap reached the API: %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
 func TestTierB_OverageCap_SetHappyPath(t *testing.T) {
 	resetJSONOut(t)
 	acct := api.AccountResponse{Email: "u@x", Plan: "hobby"}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -12,6 +12,10 @@ from ..models.route_health_route_watch_statuses_item import (
     check_route_health_route_watch_statuses_item,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.route_health_probe import RouteHealthProbe
+
 
 T = TypeVar("T", bound="RouteHealthRoute")
 
@@ -34,6 +38,11 @@ class RouteHealthRoute:
     max_p95_ms: int | Unset = UNSET
     """Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero
     disables it. Does not enable the relative slowdown check."""
+    probe: RouteHealthProbe | Unset = UNSET
+    """Opt-in synthetic probe for a GET or HEAD selector (ADR-847). While a canary is in flight and organic
+    evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments
+    with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they
+    wake the app like any request. At most 5 selectors per app."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +61,10 @@ class RouteHealthRoute:
 
         max_p95_ms = self.max_p95_ms
 
+        probe: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.probe, Unset):
+            probe = self.probe.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,11 +79,15 @@ class RouteHealthRoute:
             field_dict["check_latency"] = check_latency
         if max_p95_ms is not UNSET:
             field_dict["max_p95_ms"] = max_p95_ms
+        if probe is not UNSET:
+            field_dict["probe"] = probe
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_health_probe import RouteHealthProbe
+
         d = dict(src_dict)
         method = check_route_health_route_method(d.pop("method"))
 
@@ -89,12 +106,20 @@ class RouteHealthRoute:
 
         max_p95_ms = d.pop("max_p95_ms", UNSET)
 
+        _probe = d.pop("probe", UNSET)
+        probe: RouteHealthProbe | Unset
+        if isinstance(_probe, Unset):
+            probe = UNSET
+        else:
+            probe = RouteHealthProbe.from_dict(_probe)
+
         route_health_route = cls(
             method=method,
             path=path,
             watch_statuses=watch_statuses,
             check_latency=check_latency,
             max_p95_ms=max_p95_ms,
+            probe=probe,
         )
 
         route_health_route.additional_properties = d

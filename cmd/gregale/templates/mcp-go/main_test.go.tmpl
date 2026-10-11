@@ -1,0 +1,66 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// adr: 426 — pin public MCP tools and Origin rejection on the wire.
+func TestStarterToolAndOriginWireContract(t *testing.T) {
+	config, err := loadMCPConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.AllowedOrigins = []string{"https://trusted.example"}
+	auth, err := newAuthenticator(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, args, want string }{{"greet", `{"name":"Ada"}`, "Ada"}, {"add", `{"a":2.5,"b":3}`, "5.5"}} {
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tc.name + `","arguments":` + tc.args + `}}`
+		req := httptest.NewRequest(http.MethodPost, config.Endpoint, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("MCP-Protocol-Version", currentProtocol)
+		req.Header.Set("Mcp-Method", "tools/call")
+		req.Header.Set("Mcp-Name", tc.name)
+		response := httptest.NewRecorder()
+		handleHTTP(config, auth, nil, response, req)
+		if response.Code != 200 || !strings.Contains(response.Body.String(), tc.want) {
+			t.Fatalf("%s: status=%d body=%s", tc.name, response.Code, response.Body.String())
+		}
+	}
+	for _, tc := range []struct {
+		origin string
+		status int
+	}{{"", 200}, {"https://trusted.example", 200}, {"https://untrusted.example", 403}} {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		response := httptest.NewRecorder()
+		handleHTTP(config, auth, nil, response, req)
+		if response.Code != tc.status {
+			t.Fatalf("origin %q: status=%d want=%d", tc.origin, response.Code, tc.status)
+		}
+	}
+}
+
+// adr: 426 — reject ambiguous configuration and route/origin collisions.
+func TestStarterConfigFailsClosed(t *testing.T) {
+	base := `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","allowed_origins":[],"auth":{"mode":"open"}}`
+	for _, body := range []string{base + ` {}`, strings.Replace(base, `"/mcp"`, `"/healthz"`, 1), strings.Replace(base, `[]`, `["https://trusted.example:bad"]`, 1), strings.Replace(base, `[]`, `["https://trusted.example:"]`, 1)} {
+		file := filepath.Join(t.TempDir(), "gregale-mcp.json")
+		if err := os.WriteFile(file, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("MCP_CONFIG_PATH", file)
+		if _, err := loadMCPConfig(); err == nil {
+			t.Fatalf("accepted %s", body)
+		}
+	}
+}
