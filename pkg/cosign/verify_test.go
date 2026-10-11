@@ -268,16 +268,3 @@ func sha256OfBytes(b []byte) [32]byte {
 func hexDigest(b []byte) string {
 	return hex.EncodeToString(b)
 }
-
-// generateP256PEM is a thin wrapper around GenerateKeyPair — it
-// returns only the public PEM, which is all the directory loader
-// needs. We don't reuse keyPairTempDir (it writes 0400 priv files
-// the loader doesn't use).
-func generateP256PEM(t *testing.T) (privPEM, pubPEM []byte) {
-	t.Helper()
-	privPEM, pubPEM, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-	return privPEM, pubPEM
-}
