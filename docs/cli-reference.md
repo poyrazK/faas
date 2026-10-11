@@ -7231,7 +7231,7 @@ Read authoritative removal blockers for an exact candidate
 
 Store an authenticated admin approval after local and server checks
 
-`gregale routes migration authorize --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> --expected-revision <N> --readiness <PATH> --mapping <PATH> --acknowledge-observed-only <value> [--out <PATH>]`
+`gregale routes migration authorize --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> --expected-revision <N> --readiness <PATH> --mapping <PATH> --acknowledge-observed-only [--out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7241,7 +7241,7 @@ Store an authenticated admin approval after local and server checks
 | `--expected-revision <N>` | current server policy revision | required |
 | `--readiness <PATH>` | reviewed migration readiness JSON | required |
 | `--mapping <PATH>` | reviewed same-app successor mapping | required |
-| `--acknowledge-observed-only <value>` | acknowledge the limits of observed telemetry | required |
+| `--acknowledge-observed-only` | acknowledge the limits of observed telemetry | required |
 | `--out <PATH>` | save server approval receipt to a new file |  |
 
 #### routes migration gate
@@ -7614,12 +7614,12 @@ gregale routes plan pr-42-api --requirements gregale-routes.yaml --throttle-burs
 
 Atomically apply a reviewed server plan and recover its durable receipt
 
-`gregale routes apply --plan <PATH> --confirm <value> [--idempotency-key <KEY>] <slug>`
+`gregale routes apply --plan <PATH> --confirm [--idempotency-key <KEY>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--plan <PATH>` | reviewed version 2 or 3 server plan JSON file | required |
-| `--confirm <value>` | confirm application of every reviewed change | required |
+| `--confirm` | confirm application of every reviewed change | required |
 | `--idempotency-key <KEY>` | stable retry key, defaults to plan SHA-256 |  |
 
 Examples:
@@ -8392,11 +8392,11 @@ Generate or check TypeScript input and output types
 
 Submit tenant-owned work with an immutable retry receipt
 
-`gregale customer-operations start --self <value> [--definition <UUID>] [--input-file <PATH>] [--idempotency-key <KEY>] --receipt-file <PATH> [--timeout <D>]`
+`gregale customer-operations start --self [--definition <UUID>] [--input-file <PATH>] [--idempotency-key <KEY>] --receipt-file <PATH> [--timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--self <value>` | derive tenant from credentials | required |
+| `--self` | derive tenant from credentials | required |
 | `--definition <UUID>` | immutable definition ID for a new receipt |  |
 | `--input-file <PATH>` | JSON input for a new receipt |  |
 | `--idempotency-key <KEY>` | stable request identity for a new receipt |  |
@@ -10117,11 +10117,11 @@ Update endpoint callback, auth, or connection policy
 
 Delete a managed realtime endpoint
 
-`gregale realtime delete --yes <value> <app> <endpoint-id>`
+`gregale realtime delete <app> <endpoint-id> --yes`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--yes <value>` | confirm the deletion | required |
+| `--yes` | confirm the deletion | required |
 
 ### realtime connections
 

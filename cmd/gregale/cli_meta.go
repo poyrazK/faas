@@ -2920,7 +2920,7 @@ var cliCommands = []cliCommand{
 				{Name: "expected-revision", Value: "N", Req: true, Short: "current server policy revision"},
 				{Name: "readiness", Value: "PATH", Req: true, Short: "reviewed migration readiness JSON"},
 				{Name: "mapping", Value: "PATH", Req: true, Short: "reviewed same-app successor mapping"},
-				{Name: "acknowledge-observed-only", Req: true, Short: "acknowledge the limits of observed telemetry"},
+				{Name: "acknowledge-observed-only", Req: true, Bool: true, Short: "acknowledge the limits of observed telemetry"},
 				{Name: "out", Value: "PATH", Short: "save server approval receipt to a new file"},
 			}},
 
@@ -3078,7 +3078,7 @@ var cliCommands = []cliCommand{
 			"gregale routes apply my-api --plan route-plan.json --confirm",
 		}, Flags: []cliFlag{
 			{Name: "plan", Short: "reviewed version 2 or 3 server plan JSON file", Value: "PATH", Req: true},
-			{Name: "confirm", Short: "confirm application of every reviewed change", Req: true},
+			{Name: "confirm", Short: "confirm application of every reviewed change", Req: true, Bool: true},
 			{Name: "idempotency-key", Short: "stable retry key, defaults to plan SHA-256", Value: "KEY"},
 		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain FastAPI, Go HTTP, Express, or Hono route impact between Git revisions", Examples: []string{
 			"gregale routes impact my-api --base origin/main --path . --entrypoint main:app",
@@ -3921,7 +3921,7 @@ var cliCommands = []cliCommand{
 				{Name: "enable", Short: "enable the endpoint"},
 				{Name: "disable", Short: "disable the endpoint"},
 			}},
-			{Name: "delete", Short: "Delete a managed realtime endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{{Name: "yes", Short: "confirm the deletion", Req: true}}},
+			{Name: "delete", Short: "Delete a managed realtime endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{{Name: "yes", Short: "confirm the deletion", Req: true, Bool: true}}, FlagsAfterPositionals: true},
 			{Name: "connections", Short: "List live connections for an endpoint", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},
 				{Name: "principal", Short: "only connections for this authenticated principal", Value: "PRINCIPAL"},
