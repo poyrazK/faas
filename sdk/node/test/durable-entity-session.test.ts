@@ -50,7 +50,8 @@ test('expiry, retention and generation fences survive lost commits and receipt r
  await sim.invoke(lifecycleInput({kind:'advance',generation:0,tick:9,operation_id:operation(2)}));
  await sim.invoke(lifecycleInput({kind:'message',session_id:id,generation:0,sequence:1,payload:2}));
  await sim.invoke(lifecycleInput({kind:'advance',generation:0,tick:18,operation_id:operation(3)}));
- assert.equal((sim.inspect('rooms','document:123').data as {data:{sessions:{closed:boolean}[]}}).data.sessions[0]!.closed,false);
+ const active=sim.inspect('rooms','document:123');assert.ok(active);
+ assert.equal((active.data as {data:{sessions:{closed:boolean}[]}}).data.sessions[0]!.closed,false);
  await sim.invoke(lifecycleInput({kind:'advance',generation:0,tick:19,operation_id:operation(4)}));
  await assert.rejects(sim.invoke(lifecycleInput({kind:'message',session_id:id,generation:0,sequence:2,payload:1})));
  await assert.rejects(sim.invoke(lifecycleInput({kind:'reclaim',generation:0,operation_id:operation(5)})));
@@ -69,7 +70,8 @@ test('expiry, retention and generation fences survive lost commits and receipt r
  const reply={protocol_version:1,request_id:fresh.request_id,status:200,result};
  assert.equal(decodeDurableSessionLifecycleAcknowledgement(reply,fresh,v=>v).generation,1);
  assert.throws(()=>decodeDurableSessionLifecycleAcknowledgement({...reply,result:{...result,value:{...(result.value as object),generation:0}}},fresh,v=>v));
- assert.equal((restored.inspect('rooms','document:123').data as {data:{application:{count:number}}}).data.application.count,2);
+ const retained=restored.inspect('rooms','document:123');assert.ok(retained);
+ assert.equal((retained.data as {data:{application:{count:number}}}).data.application.count,2);
 });
 test('legacy and application migrations preserve ordering and lifecycle metadata',async()=>{
  const legacy=new DurableEntitySimulator(registry());await legacy.invoke(input({kind:'open',session_id:id}));await legacy.invoke(input({kind:'message',session_id:id,sequence:1,payload:2}));
@@ -82,7 +84,8 @@ test('legacy and application migrations preserve ordering and lifecycle metadata
  decodePayload:(value:unknown)=>value as number,handle:({state,payload})=>({state:{total:state.total+payload},result:state.total+payload})})]);
  const restarted=new DurableEntitySimulator(updated);restarted.restore(migrated.checkpoint());
  await restarted.invoke(lifecycleInput({kind:'message',session_id:id,generation:0,sequence:3,payload:1}));
- const state=restarted.inspect('rooms','document:123').data as {schema_version:number;data:{generation:number;application:{total:number};sessions:{sequence:number}[]}};
+ const current=restarted.inspect('rooms','document:123');assert.ok(current);
+ const state=current.data as {schema_version:number;data:{generation:number;application:{total:number};sessions:{sequence:number}[]}};
  assert.equal(state.schema_version,3);assert.equal(state.data.application.total,6);assert.equal(state.data.generation,0);assert.equal(state.data.sessions[0]!.sequence,3);
  assert.throws(()=>decodeDurableSessionLifecycleState({...state.data,tick:-1},v=>v));
  assert.throws(()=>decodeDurableSessionLifecycleState({...state.data,sessions:[{...state.data.sessions[0],active_at:1}]},v=>v));
