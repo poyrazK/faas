@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-976: a repository deploy applies one manifest to one app, so a
+// ADR-985: a repository deploy applies one manifest to one app, so a
 // functions manifest must be refused rather than deploying the repo root.
 func TestSourceRefManifestRejectsFunctions(t *testing.T) {
 	manifest := "functions:\n  - name: thumbs\n    root: functions/thumbs\n    runtime: node24\n"

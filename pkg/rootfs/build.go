@@ -977,7 +977,7 @@ func NormalizeFunctionHandlerFrom(staging, sourcePath, handlerPath string) error
 		return fmt.Errorf("rootfs: read function handler source %q: %w", sourcePath, err)
 	}
 	// The adapter imports the customer's file where it lives, so a handler in
-	// a shared source tree keeps its relative imports (ADR-976).
+	// a shared source tree keeps its relative imports (ADR-985).
 	handlerRel, err := filepath.Rel(filepath.Dir(target), source)
 	if err != nil {
 		return fmt.Errorf("rootfs: locate function handler source %q: %w", sourcePath, err)

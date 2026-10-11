@@ -1,4 +1,4 @@
-# ADR-976: Multiple functions per project, with bucket and webhook triggers
+# ADR-985: Multiple functions per project, with bucket and webhook triggers
 
 - **Status:** accepted
 - **Date:** 2026-10-11

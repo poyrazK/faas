@@ -94,7 +94,7 @@ func invokeAdapter(t *testing.T, interpreter, adapter, path string) (int, string
 	return response.Status, string(body)
 }
 
-// ADR-976: a Node function whose handler lives in a shared tree is served
+// ADR-985: a Node function whose handler lives in a shared tree is served
 // through the adapter, keeps its relative imports, and does not run another
 // function's default handler.js.
 func TestNormalizeFunctionHandlerFromSharedTreeNode(t *testing.T) {
@@ -118,7 +118,7 @@ func TestNormalizeFunctionHandlerFromSharedTreeNode(t *testing.T) {
 	}
 }
 
-// ADR-976: a Python function in a shared tree is loaded in place, so it can
+// ADR-985: a Python function in a shared tree is loaded in place, so it can
 // import a sibling module.
 func TestNormalizeFunctionHandlerFromSharedTreePython(t *testing.T) {
 	python, err := exec.LookPath("python3")

@@ -121,4 +121,4 @@ A manifest with `functions:` holds only `functions`, cron `triggers` and
 function after deploying. `functions:` is applied by `gregale deploy`:
 repository deploys connected through GitHub ignore it for a function app and
 refuse it for any other app. The design is recorded in
-[ADR-976](adr/976-multi-function-projects.md).
+[ADR-985](adr/985-multi-function-projects.md).

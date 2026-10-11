@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// FunctionSpec is one entry of `functions:` (ADR-976). Each entry deploys as
+// FunctionSpec is one entry of `functions:` (ADR-985). Each entry deploys as
 // its own function app; the CLI fans `gregale deploy` out over the list.
 // Root is the uploaded source directory. Handler, when set, names the
 // function's file inside Root, so several Node or Python functions can share

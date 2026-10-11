@@ -349,7 +349,7 @@ func functionAppEntryName(name string) (string, bool) {
 
 // functionHandlerSourcePath returns the handler file inside the built source
 // tree. A deployment handler that names a file for the runtime selects it
-// (ADR-976 shared-tree functions); any other value keeps fallback, the
+// (ADR-985 shared-tree functions); any other value keeps fallback, the
 // runtime's default file.
 func functionHandlerSourcePath(runtime, handler, fallback string) (string, error) {
 	file, ok, err := api.FunctionHandlerFile(runtime, handler)

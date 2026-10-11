@@ -1,6 +1,6 @@
 package main
 
-// deploy_functions.go — `functions:` fan-out for `gregale deploy` (ADR-976).
+// deploy_functions.go — `functions:` fan-out for `gregale deploy` (ADR-985).
 //
 // A manifest that lists several functions deploys each one as its own
 // function app through the ordinary single-function deploy path, then

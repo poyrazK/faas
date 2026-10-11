@@ -1436,7 +1436,7 @@ type Manifest struct {
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
 	// Functions declares several functions deployed from one manifest, each
-	// as its own app (ADR-976). Mutually exclusive with Function.
+	// as its own app (ADR-985). Mutually exclusive with Function.
 	Functions []FunctionSpec   `yaml:"functions,omitempty"`
 	Release   *ReleaseConfig   `yaml:"release,omitempty"`
 	Lifecycle *LifecycleConfig `yaml:"lifecycle,omitempty"`

@@ -581,7 +581,7 @@ func TestFunctionHandlerPaths_CoversAllSupportedRuntimes(t *testing.T) {
 	}
 }
 
-// ADR-976: a deployment handler naming a file selects it inside the built
+// ADR-985: a deployment handler naming a file selects it inside the built
 // tree; the historical handler values keep each runtime's default file.
 func TestFunctionHandlerSourcePath(t *testing.T) {
 	cases := []struct {

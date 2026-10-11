@@ -1143,7 +1143,7 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 			}
 			return shapeFunction, runtimeBinary, handler, nil
 		}
-		// ADR-976: an explicit runtime plus a handler file that exists in the
+		// ADR-985: an explicit runtime plus a handler file that exists in the
 		// source is a complete function shape; a shared source tree may hold
 		// several handlers and no conventional handler.* at its root.
 		if len(displayOverride) > 1 {

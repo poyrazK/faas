@@ -14,7 +14,7 @@ const FunctionHandlerFileMaxBytes = 256
 var functionHandlerFileRE = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 
 // FunctionHandlerFile reports whether handler names a source file for a
-// function runtime (ADR-976 shared-tree functions) and returns its clean path
+// function runtime (ADR-985 shared-tree functions) and returns its clean path
 // relative to the source root. Node runtimes take a .js or .mjs file and
 // Python runtimes a .py file. Any other value, such as the historical
 // "handler.handler", keeps the runtime's default handler file, as do Go

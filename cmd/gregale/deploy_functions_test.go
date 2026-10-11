@@ -175,7 +175,7 @@ func TestFunctionSetPlan(t *testing.T) {
 	}
 }
 
-// ADR-976: functions sharing the project tree each upload the project root
+// ADR-985: functions sharing the project tree each upload the project root
 // with their own handler file and inferred runtime.
 func TestFunctionSetPlanSharedTree(t *testing.T) {
 	dir := writeFunctionProject(t, "functions:\n  - name: resize\n    handler: api/resize.js\n  - name: digest\n    handler: api/digest.py\n  - name: sharp\n    runtime: node24\n    handler: ./api/sharp.mjs\n")
