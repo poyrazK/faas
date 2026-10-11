@@ -1,5 +1,6 @@
 //go:build metal
 
+// spec: §6.2 — leakcheck counts VM scopes only, not the §11 fence pin slices.
 package leakcheck
 
 import (

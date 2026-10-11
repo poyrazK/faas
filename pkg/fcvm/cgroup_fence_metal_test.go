@@ -1,5 +1,6 @@
 //go:build metal && linux
 
+// spec: §11 — the per-VM fence survives a controller reset on real cgroupfs.
 package fcvm
 
 import (

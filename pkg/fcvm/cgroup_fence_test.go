@@ -1,3 +1,5 @@
+// spec: §11 — every VM keeps its memory.max / cpu fence, including after a
+// systemd daemon-reload resets the parent slice's controllers.
 package fcvm
 
 import (
