@@ -92,7 +92,7 @@ export function defineRecoverableDurableSessionEntity<State, Payload, Result>(op
       return {...state, application};
     });
   }
-  return defineDurableEntity({namespace, schema: {version, migrations,
+  return defineDurableEntity<DurableSessionLifecycleState<State>, DurableSessionLifecycleCommand, unknown>({namespace, schema: {version, migrations,
     initialState: (): DurableSessionLifecycleState<State> => ({application: initialState(), generation: 0, tick: 0, sessions: []}),
     decodeState: value => decodeDurableSessionLifecycleState(value, decodeState),
   }, decodePayload(value, event) {
