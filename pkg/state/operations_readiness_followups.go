@@ -87,6 +87,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if n.Reminder != nil && (c.FollowUpAt == nil || !n.Reminder.DueAt.Equal(*c.FollowUpAt)) {
 		n.Reminder = nil
 	}
+	n = readinessEscalationCoordination(n, c, actor, now)
 	n.Coordination = c
 	return n, nil
 }
@@ -158,6 +159,9 @@ func readinessNotificationBaseline(n api.OperationWorkflowReadinessNotification)
 	}
 	if n.BusinessOutcome != nil {
 		return &n.BusinessOutcome.Source
+	}
+	if n.EscalationResponse != nil {
+		return &n.EscalationResponse.Source
 	}
 	return nil
 }

@@ -26,6 +26,9 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	r := req.Completion
 	if r.EscalationPolicy != nil {
 		policy := *r.EscalationPolicy
+		if policy.AcknowledgeAfterSeconds < 0 || policy.AcknowledgeAfterSeconds > api.OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (policy.FallbackOwner != "" && (policy.AcknowledgeAfterSeconds == 0 || policy.FallbackOwner == policy.Owner || strings.TrimSpace(policy.FallbackOwner) != policy.FallbackOwner || len(policy.FallbackOwner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(policy.FallbackOwner) || strings.IndexFunc(policy.FallbackOwner, unicode.IsControl) >= 0)) {
+			return out, ErrInvalidArgument
+		}
 		if !r.WatchOutcome || r.OutcomeDeadlineAt == nil || policy.Owner == "" || strings.TrimSpace(policy.Owner) != policy.Owner || len(policy.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(policy.Owner) || strings.IndexFunc(policy.Owner, unicode.IsControl) >= 0 || len(policy.Note) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(policy.Note) || policy.FollowUpAfterSeconds < 1 || policy.FollowUpAfterSeconds > api.OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds {
 			return out, ErrInvalidArgument
 		}

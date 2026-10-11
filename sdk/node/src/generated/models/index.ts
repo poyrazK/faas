@@ -1149,6 +1149,7 @@ export type { OperationWorkflowPlannedEffect } from './OperationWorkflowPlannedE
 export type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlannedInvariant.js';
 export type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 export type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowPrerequisiteRecovery.js';
+export type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';
 export type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
 export type { OperationWorkflowReadinessBusinessOutcomeEvent } from './OperationWorkflowReadinessBusinessOutcomeEvent.js';
 export type { OperationWorkflowReadinessBusinessOutcomeWatch } from './OperationWorkflowReadinessBusinessOutcomeWatch.js';
@@ -1161,6 +1162,8 @@ export type { OperationWorkflowReadinessCompletionRequest } from './OperationWor
 export type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 export type { OperationWorkflowReadinessCoordinationRequest } from './OperationWorkflowReadinessCoordinationRequest.js';
 export type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
+export type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
+export type { OperationWorkflowReadinessEscalationResponseEvent } from './OperationWorkflowReadinessEscalationResponseEvent.js';
 export type { OperationWorkflowReadinessEvidence } from './OperationWorkflowReadinessEvidence.js';
 export type { OperationWorkflowReadinessEvidenceChange } from './OperationWorkflowReadinessEvidenceChange.js';
 export type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowReadinessFollowUp.js';

@@ -74924,6 +74924,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        escalation_response:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEscalationResponseEvent'
         outcome_escalation:
           $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalation'
         business_outcome_watch:
@@ -74960,6 +74962,7 @@ components:
           - outcome_different_outcome
           - outcome_unavailable
           - outcome_deadline_reached
+          - escalation_response_overdue
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -75371,12 +75374,159 @@ components:
       - status
       - explanation
 
+    OperationWorkflowReadinessEscalationResponse:
+      type: object
+      description: Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+        completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback. Assignment
+        history retains the latest 16 changes.
+      additionalProperties: false
+      properties:
+        deadline_at:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponse.deadline_at. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+          format: date-time
+        initial_owner:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponse.initial_owner. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+        fallback_owner:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponse.fallback_owner. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+        status:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponse.status. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+          enum:
+          - awaiting
+          - acknowledged
+          - closed
+          - deadline_missed
+        first_acknowledged_at:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponse.first_acknowledged_at. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+          format: date-time
+        deadline_notified_at:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponse.deadline_notified_at. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+          format: date-time
+        history:
+          type: array
+          description: OperationWorkflowReadinessEscalationResponse.history. Latest retained manual or automatic assignment changes.
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessAssignmentChange'
+        history_truncated:
+          type: boolean
+          description: OperationWorkflowReadinessEscalationResponse.history_truncated. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+      required:
+      - deadline_at
+      - initial_owner
+      - status
+      - history
+      - history_truncated
+    OperationWorkflowReadinessAssignmentChange:
+      type: object
+      description: Retained server-recorded ownership change for an escalation response target. History is bounded and may be
+        truncated; no business authority is granted.
+      additionalProperties: false
+      properties:
+        from_owner:
+          type: string
+          description: OperationWorkflowReadinessAssignmentChange.from_owner. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+        to_owner:
+          type: string
+          description: OperationWorkflowReadinessAssignmentChange.to_owner. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+        at:
+          type: string
+          description: OperationWorkflowReadinessAssignmentChange.at. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+          format: date-time
+        actor:
+          type: string
+          description: OperationWorkflowReadinessAssignmentChange.actor. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+        reason:
+          type: string
+          description: OperationWorkflowReadinessAssignmentChange.reason. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+          enum:
+          - manual_assignment
+          - response_deadline_fallback
+      required:
+      - from_owner
+      - to_owner
+      - at
+      - actor
+      - reason
+    OperationWorkflowReadinessEscalationResponseEvent:
+      type: object
+      description: Single durable acknowledgment-deadline notice for an assigned escalation, with exact scoped source identity.
+        Does not automatically schedule a second follow-up or indicate business failure.
+      additionalProperties: false
+      properties:
+        escalation_notification_id:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponseEvent.escalation_notification_id. Retained acknowledgment target
+            or assignment observation; never modifies application business reports.
+          format: uuid
+        escalation_sequence:
+          type: integer
+          description: OperationWorkflowReadinessEscalationResponseEvent.escalation_sequence. Retained acknowledgment target or
+            assignment observation; never modifies application business reports.
+          format: int64
+          minimum: 1
+        source:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSnapshotEntry'
+        checked_at:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponseEvent.checked_at. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+          format: date-time
+        deadline_at:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponseEvent.deadline_at. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+          format: date-time
+        owner:
+          type: string
+          description: OperationWorkflowReadinessEscalationResponseEvent.owner. Retained acknowledgment target or assignment observation;
+            never modifies application business reports.
+        reassigned:
+          type: boolean
+          description: OperationWorkflowReadinessEscalationResponseEvent.reassigned. Retained acknowledgment target or assignment
+            observation; never modifies application business reports.
+      required:
+      - escalation_notification_id
+      - escalation_sequence
+      - source
+      - checked_at
+      - deadline_at
+      - owner
+      - reassigned
+
     OperationWorkflowReadinessOutcomeEscalationPolicy:
       type: object
       description: Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome deadline.
         Schedules one assigned follow-up on the deadline notification; never executes business actions.
       additionalProperties: false
       properties:
+        acknowledge_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowReadinessOutcomeEscalationPolicy.acknowledge_after_seconds. Optional positive response target from escalation delivery; zero or omission disables it. Bounded to one week.
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReadinessOutcomeEscalationPolicy.fallback_owner. Optional different owner label requiring a response target. Applied once only to open unacknowledged escalation with unchanged original ownership and no assignment history.
         owner:
           type: string
           description: OperationWorkflowReadinessOutcomeEscalationPolicy.owner. Retained coordination escalation policy or evidence;
@@ -75431,6 +75581,8 @@ components:
         work. Monitoring ends with source retention.
       additionalProperties: false
       properties:
+        response:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEscalationResponse'
         watch_id:
           type: string
           description: OperationWorkflowReadinessOutcomeEscalation.watch_id. Retained coordination escalation policy or evidence;

@@ -23,6 +23,13 @@ class OperationWorkflowReadinessOutcomeEscalationPolicy:
     follow_up_after_seconds: int
     """OperationWorkflowReadinessOutcomeEscalationPolicy.follow_up_after_seconds. Retained coordination escalation
     policy or evidence; business interpretation and execution remain application-owned."""
+    acknowledge_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessOutcomeEscalationPolicy.acknowledge_after_seconds. Optional positive response
+    target from escalation delivery; zero or omission disables it. Bounded to one week."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReadinessOutcomeEscalationPolicy.fallback_owner. Optional different owner label requiring a
+    response target. Applied once only to open unacknowledged escalation with unchanged original ownership and no
+    assignment history."""
     note: str | Unset = UNSET
     """OperationWorkflowReadinessOutcomeEscalationPolicy.note. Retained coordination escalation policy or evidence;
     business interpretation and execution remain application-owned."""
@@ -31,6 +38,10 @@ class OperationWorkflowReadinessOutcomeEscalationPolicy:
         owner = self.owner
 
         follow_up_after_seconds = self.follow_up_after_seconds
+
+        acknowledge_after_seconds = self.acknowledge_after_seconds
+
+        fallback_owner = self.fallback_owner
 
         note = self.note
 
@@ -42,6 +53,10 @@ class OperationWorkflowReadinessOutcomeEscalationPolicy:
                 "follow_up_after_seconds": follow_up_after_seconds,
             }
         )
+        if acknowledge_after_seconds is not UNSET:
+            field_dict["acknowledge_after_seconds"] = acknowledge_after_seconds
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
         if note is not UNSET:
             field_dict["note"] = note
 
@@ -54,11 +69,17 @@ class OperationWorkflowReadinessOutcomeEscalationPolicy:
 
         follow_up_after_seconds = d.pop("follow_up_after_seconds")
 
+        acknowledge_after_seconds = d.pop("acknowledge_after_seconds", UNSET)
+
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
         note = d.pop("note", UNSET)
 
         operation_workflow_readiness_outcome_escalation_policy = cls(
             owner=owner,
             follow_up_after_seconds=follow_up_after_seconds,
+            acknowledge_after_seconds=acknowledge_after_seconds,
+            fallback_owner=fallback_owner,
             note=note,
         )
 

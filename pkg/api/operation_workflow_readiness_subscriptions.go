@@ -37,19 +37,20 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
-	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation    `json:"outcome_escalation,omitempty"`
-	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch `json:"business_outcome_watch,omitempty"`
-	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent `json:"business_outcome,omitempty"`
-	VerificationWatch    *OperationWorkflowReadinessVerificationWatch    `json:"verification_watch,omitempty"`
-	Verification         *OperationWorkflowReadinessVerificationEvent    `json:"verification,omitempty"`
-	Reminder             *OperationWorkflowReadinessDueReminder          `json:"reminder,omitempty"`
-	Coordination         *OperationWorkflowReadinessCoordination         `json:"coordination,omitempty"`
-	ID                   string                                          `json:"id"`
-	Sequence             int64                                           `json:"sequence"`
-	Kind                 string                                          `json:"kind"`
-	CreatedAt            time.Time                                       `json:"created_at"`
-	Explanation          string                                          `json:"explanation"`
-	Change               *OperationWorkflowReadinessChange               `json:"change,omitempty"`
+	EscalationResponse   *OperationWorkflowReadinessEscalationResponseEvent `json:"escalation_response,omitempty"`
+	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation       `json:"outcome_escalation,omitempty"`
+	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch    `json:"business_outcome_watch,omitempty"`
+	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent    `json:"business_outcome,omitempty"`
+	VerificationWatch    *OperationWorkflowReadinessVerificationWatch       `json:"verification_watch,omitempty"`
+	Verification         *OperationWorkflowReadinessVerificationEvent       `json:"verification,omitempty"`
+	Reminder             *OperationWorkflowReadinessDueReminder             `json:"reminder,omitempty"`
+	Coordination         *OperationWorkflowReadinessCoordination            `json:"coordination,omitempty"`
+	ID                   string                                             `json:"id"`
+	Sequence             int64                                              `json:"sequence"`
+	Kind                 string                                             `json:"kind"`
+	CreatedAt            time.Time                                          `json:"created_at"`
+	Explanation          string                                             `json:"explanation"`
+	Change               *OperationWorkflowReadinessChange                  `json:"change,omitempty"`
 }
 type OperationWorkflowReadinessInboxResponse struct {
 	Subscription   OperationWorkflowReadinessSubscription   `json:"subscription"`
@@ -264,9 +265,11 @@ type OperationWorkflowReadinessBusinessOutcomeEvent struct {
 
 // Escalation policy schedules coordination only; owner is an existing team/person label.
 type OperationWorkflowReadinessOutcomeEscalationPolicy struct {
-	Owner                string `json:"owner"`
-	Note                 string `json:"note,omitempty"`
-	FollowUpAfterSeconds int64  `json:"follow_up_after_seconds"`
+	AcknowledgeAfterSeconds int64  `json:"acknowledge_after_seconds,omitempty"`
+	FallbackOwner           string `json:"fallback_owner,omitempty"`
+	Owner                   string `json:"owner"`
+	Note                    string `json:"note,omitempty"`
+	FollowUpAfterSeconds    int64  `json:"follow_up_after_seconds"`
 }
 type OperationWorkflowReadinessOutcomeEscalationReference struct {
 	NotificationID string    `json:"notification_id"`
@@ -276,9 +279,38 @@ type OperationWorkflowReadinessOutcomeEscalationReference struct {
 
 // Current is watch evidence, separate from immutable delivery evidence and human coordination.
 type OperationWorkflowReadinessOutcomeEscalation struct {
-	WatchID              string                                    `json:"watch_id"`
-	SourceNotificationID string                                    `json:"source_notification_id"`
-	SourceSequence       int64                                     `json:"source_sequence"`
-	Current              OperationWorkflowReadinessBusinessOutcome `json:"current"`
-	SuccessObservedAt    *time.Time                                `json:"success_observed_at,omitempty"`
+	Response             *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
+	WatchID              string                                        `json:"watch_id"`
+	SourceNotificationID string                                        `json:"source_notification_id"`
+	SourceSequence       int64                                         `json:"source_sequence"`
+	Current              OperationWorkflowReadinessBusinessOutcome     `json:"current"`
+	SuccessObservedAt    *time.Time                                    `json:"success_observed_at,omitempty"`
+}
+
+// Response targets govern inbox coordination independently of business evidence availability.
+type OperationWorkflowReadinessEscalationResponse struct {
+	DeadlineAt          time.Time                                    `json:"deadline_at"`
+	InitialOwner        string                                       `json:"initial_owner"`
+	FallbackOwner       string                                       `json:"fallback_owner,omitempty"`
+	Status              string                                       `json:"status"`
+	FirstAcknowledgedAt *time.Time                                   `json:"first_acknowledged_at,omitempty"`
+	DeadlineNotifiedAt  *time.Time                                   `json:"deadline_notified_at,omitempty"`
+	History             []OperationWorkflowReadinessAssignmentChange `json:"history"`
+	HistoryTruncated    bool                                         `json:"history_truncated"`
+}
+type OperationWorkflowReadinessAssignmentChange struct {
+	FromOwner string    `json:"from_owner"`
+	ToOwner   string    `json:"to_owner"`
+	At        time.Time `json:"at"`
+	Actor     string    `json:"actor"`
+	Reason    string    `json:"reason"`
+}
+type OperationWorkflowReadinessEscalationResponseEvent struct {
+	EscalationNotificationID string                                  `json:"escalation_notification_id"`
+	EscalationSequence       int64                                   `json:"escalation_sequence"`
+	Source                   OperationWorkflowReadinessSnapshotEntry `json:"source"`
+	CheckedAt                time.Time                               `json:"checked_at"`
+	DeadlineAt               time.Time                               `json:"deadline_at"`
+	Owner                    string                                  `json:"owner"`
+	Reassigned               bool                                    `json:"reassigned"`
 }

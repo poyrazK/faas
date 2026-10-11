@@ -9705,3 +9705,10 @@ const OperationWorkflowReadinessOutcomeWatchesPerPassMax = 10
 
 // Outcome escalation follow-up delay is positive and bounded to one week.
 const OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds = 7 * 24 * 60 * 60
+
+// Response evaluation rotates through retained escalations; assignment history retains the latest changes.
+const OperationWorkflowReadinessEscalationResponsesPerPassMax = 10
+const OperationWorkflowReadinessAssignmentHistoryMax = 16
+
+// Coordination revisions must remain exactly representable by JSON clients.
+const OperationWorkflowReadinessCoordinationRevisionMax int64 = 1<<53 - 1

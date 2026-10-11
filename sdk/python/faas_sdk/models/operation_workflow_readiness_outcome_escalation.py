@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+    from ..models.operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessOutcomeEscalation")
@@ -38,6 +39,10 @@ class OperationWorkflowReadinessOutcomeEscalation:
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
     immutable; current checks are live reads."""
+    response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
+    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
+    Assignment history retains the latest 16 changes."""
     success_observed_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReadinessOutcomeEscalation.success_observed_at. Retained coordination escalation policy or
     evidence; business interpretation and execution remain application-owned."""
@@ -50,6 +55,10 @@ class OperationWorkflowReadinessOutcomeEscalation:
         source_sequence = self.source_sequence
 
         current = self.current.to_dict()
+
+        response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.response, Unset):
+            response = self.response.to_dict()
 
         success_observed_at: str | Unset = UNSET
         if not isinstance(self.success_observed_at, Unset):
@@ -65,6 +74,8 @@ class OperationWorkflowReadinessOutcomeEscalation:
                 "current": current,
             }
         )
+        if response is not UNSET:
+            field_dict["response"] = response
         if success_observed_at is not UNSET:
             field_dict["success_observed_at"] = success_observed_at
 
@@ -73,6 +84,9 @@ class OperationWorkflowReadinessOutcomeEscalation:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+        from ..models.operation_workflow_readiness_escalation_response import (
+            OperationWorkflowReadinessEscalationResponse,
+        )
 
         d = dict(src_dict)
         watch_id = UUID(d.pop("watch_id"))
@@ -82,6 +96,13 @@ class OperationWorkflowReadinessOutcomeEscalation:
         source_sequence = d.pop("source_sequence")
 
         current = OperationWorkflowReadinessBusinessOutcome.from_dict(d.pop("current"))
+
+        _response = d.pop("response", UNSET)
+        response: OperationWorkflowReadinessEscalationResponse | Unset
+        if isinstance(_response, Unset):
+            response = UNSET
+        else:
+            response = OperationWorkflowReadinessEscalationResponse.from_dict(_response)
 
         _success_observed_at = d.pop("success_observed_at", UNSET)
         success_observed_at: datetime.datetime | Unset
@@ -95,6 +116,7 @@ class OperationWorkflowReadinessOutcomeEscalation:
             source_notification_id=source_notification_id,
             source_sequence=source_sequence,
             current=current,
+            response=response,
             success_observed_at=success_observed_at,
         )
 

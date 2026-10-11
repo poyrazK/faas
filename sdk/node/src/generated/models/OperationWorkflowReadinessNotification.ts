@@ -7,6 +7,7 @@ import type { OperationWorkflowReadinessBusinessOutcomeWatch } from './Operation
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
 import type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 import type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
+import type { OperationWorkflowReadinessEscalationResponseEvent } from './OperationWorkflowReadinessEscalationResponseEvent.js';
 import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWorkflowReadinessOutcomeEscalation.js';
 import type { OperationWorkflowReadinessVerificationEvent } from './OperationWorkflowReadinessVerificationEvent.js';
 import type { OperationWorkflowReadinessVerificationWatch } from './OperationWorkflowReadinessVerificationWatch.js';
@@ -14,6 +15,7 @@ import type { OperationWorkflowReadinessVerificationWatch } from './OperationWor
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  escalation_response?: OperationWorkflowReadinessEscalationResponseEvent;
   outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation;
   business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch;
   business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent;
@@ -31,7 +33,7 @@ export type OperationWorkflowReadinessNotification = {
   /**
    * OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
    */
-  kind: 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached';
+  kind: 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue';
   /**
    * OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification.
    */

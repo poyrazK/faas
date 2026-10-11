@@ -30,7 +30,7 @@ func evaluateReadinessOutcomeWatches(ctx context.Context, store readinessSubscri
 	if len(candidates) > api.OperationWorkflowReadinessOutcomeWatchesPerPassMax {
 		candidates = candidates[:api.OperationWorkflowReadinessOutcomeWatchesPerPassMax]
 	}
-	updates := []readinessWatchUpdate{}
+	updates := readinessEscalationResponseUpdates(page.Items, r)
 	cursor := r.OutcomeCursor
 	var firstErr error
 	for _, n := range candidates {
@@ -104,6 +104,9 @@ func applyReadinessOutcomeWatchUpdate(r *readinessSubscriptionRecord, n api.Oper
 			due := notification.CreatedAt.Add(time.Duration(policy.FollowUpAfterSeconds) * time.Second)
 			notification.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: policy.Owner, Note: policy.Note, FollowUpAt: &due, UpdatedAt: notification.CreatedAt, UpdatedBy: "system:outcome_escalation"}
 			notification.OutcomeEscalation = &api.OperationWorkflowReadinessOutcomeEscalation{WatchID: event.WatchID, SourceNotificationID: event.SourceNotificationID, SourceSequence: event.SourceSequence, Current: event.Current}
+			if policy.AcknowledgeAfterSeconds > 0 {
+				notification.OutcomeEscalation.Response = &api.OperationWorkflowReadinessEscalationResponse{DeadlineAt: notification.CreatedAt.Add(time.Duration(policy.AcknowledgeAfterSeconds) * time.Second), InitialOwner: policy.Owner, FallbackOwner: policy.FallbackOwner, Status: "awaiting", History: []api.OperationWorkflowReadinessAssignmentChange{}}
+			}
 			ref := &api.OperationWorkflowReadinessOutcomeEscalationReference{NotificationID: notification.ID, Sequence: notification.Sequence, CreatedAt: notification.CreatedAt}
 			n.BusinessOutcomeWatch.Escalation = ref
 			event.Escalation = ref

@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+    from ..models.operation_workflow_readiness_escalation_response_event import (
+        OperationWorkflowReadinessEscalationResponseEvent,
+    )
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
     from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
     from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
@@ -46,6 +49,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    escalation_response: OperationWorkflowReadinessEscalationResponseEvent | Unset = UNSET
+    """Single durable acknowledgment-deadline notice for an assigned escalation, with exact scoped source identity.
+    Does not automatically schedule a second follow-up or indicate business failure."""
     outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
     """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
     human coordination. First observed application success is retained as a flag; it never automatically
@@ -83,6 +89,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        escalation_response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_response, Unset):
+            escalation_response = self.escalation_response.to_dict()
 
         outcome_escalation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome_escalation, Unset):
@@ -127,6 +137,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if escalation_response is not UNSET:
+            field_dict["escalation_response"] = escalation_response
         if outcome_escalation is not UNSET:
             field_dict["outcome_escalation"] = outcome_escalation
         if business_outcome_watch is not UNSET:
@@ -157,6 +169,9 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+        from ..models.operation_workflow_readiness_escalation_response_event import (
+            OperationWorkflowReadinessEscalationResponseEvent,
+        )
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
         from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
         from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
@@ -171,6 +186,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _escalation_response = d.pop("escalation_response", UNSET)
+        escalation_response: OperationWorkflowReadinessEscalationResponseEvent | Unset
+        if isinstance(_escalation_response, Unset):
+            escalation_response = UNSET
+        else:
+            escalation_response = OperationWorkflowReadinessEscalationResponseEvent.from_dict(_escalation_response)
 
         _outcome_escalation = d.pop("outcome_escalation", UNSET)
         outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset
@@ -234,6 +256,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            escalation_response=escalation_response,
             outcome_escalation=outcome_escalation,
             business_outcome_watch=business_outcome_watch,
             business_outcome=business_outcome,

@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
+import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
 /**
  * Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and human coordination. First observed application success is retained as a flag; it never automatically acknowledges or completes work. Monitoring ends with source retention.
  */
 export type OperationWorkflowReadinessOutcomeEscalation = {
+  response?: OperationWorkflowReadinessEscalationResponse;
   /**
    * OperationWorkflowReadinessOutcomeEscalation.watch_id. Retained coordination escalation policy or evidence; business interpretation and execution remain application-owned.
    */

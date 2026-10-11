@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowReadinessOutcomeEscalationPolicy = {
   /**
+   * OperationWorkflowReadinessOutcomeEscalationPolicy.acknowledge_after_seconds. Optional positive response target from escalation delivery; zero or omission disables it. Bounded to one week.
+   */
+  acknowledge_after_seconds?: number;
+  /**
+   * OperationWorkflowReadinessOutcomeEscalationPolicy.fallback_owner. Optional different owner label requiring a response target. Applied once only to open unacknowledged escalation with unchanged original ownership and no assignment history.
+   */
+  fallback_owner?: string;
+  /**
    * OperationWorkflowReadinessOutcomeEscalationPolicy.owner. Retained coordination escalation policy or evidence; business interpretation and execution remain application-owned.
    */
   owner: string;

@@ -2209,6 +2209,8 @@ from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequir
 from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
 from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
 from .operation_workflow_prerequisite_recovery_steps_item import OperationWorkflowPrerequisiteRecoveryStepsItem
+from .operation_workflow_readiness_assignment_change import OperationWorkflowReadinessAssignmentChange
+from .operation_workflow_readiness_assignment_change_reason import OperationWorkflowReadinessAssignmentChangeReason
 from .operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
 from .operation_workflow_readiness_business_outcome_event import OperationWorkflowReadinessBusinessOutcomeEvent
 from .operation_workflow_readiness_business_outcome_event_previous_status import (
@@ -2243,6 +2245,9 @@ from .operation_workflow_readiness_coordination_request_status import (
 )
 from .operation_workflow_readiness_coordination_status import OperationWorkflowReadinessCoordinationStatus
 from .operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+from .operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
+from .operation_workflow_readiness_escalation_response_event import OperationWorkflowReadinessEscalationResponseEvent
+from .operation_workflow_readiness_escalation_response_status import OperationWorkflowReadinessEscalationResponseStatus
 from .operation_workflow_readiness_evidence import OperationWorkflowReadinessEvidence
 from .operation_workflow_readiness_evidence_category import OperationWorkflowReadinessEvidenceCategory
 from .operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
@@ -5806,6 +5811,8 @@ __all__ = (
     "OperationWorkflowPrerequisiteRecovery",
     "OperationWorkflowPrerequisiteRecoveryReason",
     "OperationWorkflowPrerequisiteRecoveryStepsItem",
+    "OperationWorkflowReadinessAssignmentChange",
+    "OperationWorkflowReadinessAssignmentChangeReason",
     "OperationWorkflowReadinessBusinessOutcome",
     "OperationWorkflowReadinessBusinessOutcomeEvent",
     "OperationWorkflowReadinessBusinessOutcomeEventPreviousStatus",
@@ -5830,6 +5837,9 @@ __all__ = (
     "OperationWorkflowReadinessCoordinationRequestStatus",
     "OperationWorkflowReadinessCoordinationStatus",
     "OperationWorkflowReadinessDueReminder",
+    "OperationWorkflowReadinessEscalationResponse",
+    "OperationWorkflowReadinessEscalationResponseEvent",
+    "OperationWorkflowReadinessEscalationResponseStatus",
     "OperationWorkflowReadinessEvidence",
     "OperationWorkflowReadinessEvidenceCategory",
     "OperationWorkflowReadinessEvidenceChange",
