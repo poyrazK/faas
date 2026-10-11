@@ -1,6 +1,6 @@
 package state_test
 
-// adr: 955
+// adr: 976
 
 import (
 	"testing"
@@ -84,8 +84,8 @@ func TestRouteAdviceQueriesPG(t *testing.T) {
 		get("/search", 200, 5, false, base.Add(2*time.Minute), c1),
 		get("/search", 200, 4, false, base, c2),
 		get("/search", 200, 1, false, base, c3),
-		get("/search", 200, 100, false, base, foreign),                 // another app's consumer: ignored
-		get("/catalog", 200, 100, false, now.Add(-3*time.Hour), ""),    // outside the window
+		get("/search", 200, 100, false, base, foreign),                                                   // another app's consumer: ignored
+		get("/catalog", 200, 100, false, now.Add(-3*time.Hour), ""),                                      // outside the window
 		{app: other.ID, method: "GET", route: "GET /catalog", status: 200, count: 100, lat: 1, at: base}, // another app
 	})
 	q := sqlc.New()

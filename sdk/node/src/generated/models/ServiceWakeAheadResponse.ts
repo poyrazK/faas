@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An app's service wake-ahead opt-in (ADR-956).
+ * An app's service wake-ahead opt-in (ADR-977).
  */
 export type ServiceWakeAheadResponse = {
   slug: string;

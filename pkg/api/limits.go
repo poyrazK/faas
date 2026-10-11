@@ -9209,13 +9209,13 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 const RouteGroupPlanMaxChanges = 32
 
 // RouteHealthSeed bounds the report-mode selectors apid saves for an app that
-// never configured route health when its first canary advances (ADR-951).
+// never configured route health when its first canary advances (ADR-844).
 const (
 	RouteHealthSeedRoutes   = 10
 	RouteHealthSeedLookback = 7 * 24 * time.Hour
 )
 
-// RouteHealthProbe bounds opt-in synthetic route probes (ADR-954): at most
+// RouteHealthProbe bounds opt-in synthetic route probes (ADR-847): at most
 // RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
 // requests per route and deployment, only while a canary is in flight.
 // Probe requests are never written to request telemetry or usage.
@@ -9232,7 +9232,7 @@ const (
 )
 
 // ServiceWakeAhead bounds opt-in wake-ahead along measured service edges
-// (ADR-956). A cold wake of a caller app opens a follow window; a service call
+// (ADR-977). A cold wake of a caller app opens a follow window; a service call
 // from that caller inside it is a hit for the edge. A target is woken ahead
 // only after ServiceWakeAheadMinWakes observed caller wakes, when at least
 // ServiceWakeAheadMinCallShare of them called it and at least
@@ -9258,7 +9258,7 @@ const (
 )
 
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
-// (ADR-957): at most RoutePriorityMaxRules rules, cached by each gateway for
+// (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.
 const (
 	RoutePriorityMaxRules = 20
@@ -9267,14 +9267,14 @@ const (
 )
 
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
-// (ADR-953): two equal halves of at least RouteHealthPooledMinSpan in total,
+// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
 // covering at most the newest RouteHealthPooledMaxSpan of the stage.
 const (
 	RouteHealthPooledMinSpan = 4 * time.Minute
 	RouteHealthPooledMaxSpan = 30 * time.Minute
 )
 
-// RouteAdvice bounds the route advisor (ADR-955): it reads retained request
+// RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
 // rule for a route with at least RouteAdviceMinRequests in the window.
 const (
@@ -9357,7 +9357,7 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
-// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-952): an
+// RouteMonitorRollbackWindow bounds opt-in automatic rollback (ADR-845): an
 // error-budget incident must open within this long after the deployment
 // started serving all traffic.
 const RouteMonitorRollbackWindow = 30 * time.Minute

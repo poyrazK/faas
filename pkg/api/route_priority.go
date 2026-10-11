@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Route priority classes (ADR-957). Routes not listed are normal priority.
+// Route priority classes (ADR-978). Routes not listed are normal priority.
 const (
 	RoutePriorityCritical = "critical"
 	RoutePriorityBulk     = "bulk"

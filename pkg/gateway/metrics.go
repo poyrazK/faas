@@ -717,10 +717,10 @@ type Metrics struct {
 	// speculative wake-ahead along depends_on edges "until measured evidence";
 	// this histogram is that evidence.
 	serviceWakeLatency prometheus.Histogram
-	// serviceWakeAhead (ADR-956) counts speculative wake-ahead decisions by
+	// serviceWakeAhead (ADR-977) counts speculative wake-ahead decisions by
 	// outcome. used/unused close the loop on whether a prediction helped.
 	serviceWakeAhead *prometheus.CounterVec
-	// routePriorityQueue (ADR-957) counts warm-capacity queue entries by route
+	// routePriorityQueue (ADR-978) counts warm-capacity queue entries by route
 	// priority class and outcome.
 	routePriorityQueue *prometheus.CounterVec
 	// servicePreviewToProduction counts internal calls made by a PR preview
@@ -1552,7 +1552,7 @@ func NewMetrics() *Metrics {
 		serviceWakeAhead: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_service_wake_ahead_total",
-				Help: "Opt-in service wake-ahead decisions (ADR-956) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
+				Help: "Opt-in service wake-ahead decisions (ADR-977) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
 			}, []string{"outcome"},
 		),
 		routePriorityQueue: prometheus.NewCounterVec(
@@ -3545,7 +3545,7 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 
 // ObserveServiceWakeLatency records how long an internal caller waited for a
 // parked target to come back. Only the cold path calls this.
-// IncServiceWakeAhead counts one wake-ahead outcome (ADR-956).
+// IncServiceWakeAhead counts one wake-ahead outcome (ADR-977).
 func (m *Metrics) IncServiceWakeAhead(outcome string) {
 	if m == nil || m.serviceWakeAhead == nil {
 		return
@@ -3553,7 +3553,7 @@ func (m *Metrics) IncServiceWakeAhead(outcome string) {
 	m.serviceWakeAhead.WithLabelValues(outcome).Inc()
 }
 
-// IncRoutePriorityQueue counts one warm-capacity queue outcome (ADR-957).
+// IncRoutePriorityQueue counts one warm-capacity queue outcome (ADR-978).
 func (m *Metrics) IncRoutePriorityQueue(class, outcome string) {
 	if m == nil || m.routePriorityQueue == nil {
 		return

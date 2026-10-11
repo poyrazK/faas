@@ -7,7 +7,7 @@ import (
 )
 
 // RouteAdviceRouteStats, RouteAdviceConsumers and RouteAdviceThrottleExcess
-// read retained debugger telemetry for the route advisor (ADR-955).
+// read retained debugger telemetry for the route advisor (ADR-976).
 func (s *PgStore) RouteAdviceRouteStats(ctx context.Context, arg sqlc.RouteAdviceRouteStatsParams) ([]sqlc.RouteAdviceRouteStatsRow, error) {
 	return s.appErrorsQueries().RouteAdviceRouteStats(ctx, s.pool, arg)
 }

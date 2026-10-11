@@ -32,7 +32,7 @@ func pooledRouteHealthReport(t *testing.T) api.RouteHealthReport {
 	return r
 }
 
-// adr: 953
+// adr: 846
 func TestValidateRouteHealthReportAcceptsPooledEvidence(t *testing.T) {
 	r := pooledRouteHealthReport(t)
 	if r.Routes[0].EvidenceWindow != "pooled" || r.Status != "healthy" {

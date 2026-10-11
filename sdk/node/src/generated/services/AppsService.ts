@@ -4558,7 +4558,7 @@ export class AppsService {
   }
   /**
    * Suggest edge rules for observed routes with what-if estimates.
-   * Read-only route advisor (ADR-955). Reads retained request telemetry for
+   * Read-only route advisor (ADR-976). Reads retained request telemetry for
    * the app's busiest observed routes across deployments and suggests three
    * kinds of edge rules: cache for anonymous, successful GET routes with
    * repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -4634,7 +4634,7 @@ export class AppsService {
   }
   /**
    * Read an app's service wake-ahead opt-in.
-   * Service wake-ahead (ADR-956) is off by default. When it is on and this
+   * Service wake-ahead (ADR-977) is off by default. When it is on and this
    * app starts a cold wake, the gateway also starts restoring the services
    * it has measured this app calling soon after it wakes, so their restores
    * overlap instead of running one after another. Measurement is per
@@ -4677,7 +4677,7 @@ export class AppsService {
   }
   /**
    * Turn an app's service wake-ahead on or off.
-   * Sets the ADR-956 opt-in. Gateways apply the change within 30 seconds.
+   * Sets the ADR-977 opt-in. Gateways apply the change within 30 seconds.
    * Wake-ahead never starts while fleet residency is at or above 60% of the
    * admission ceiling, never parks other instances to make room, and goes
    * through the same admission and plan concurrency limits as a request.
@@ -4723,7 +4723,7 @@ export class AppsService {
   }
   /**
    * Read the routes served first and last when an app is saturated.
-   * Route priorities (ADR-957) order the queue requests wait in while every
+   * Route priorities (ADR-978) order the queue requests wait in while every
    * routable instance of the app is busy. Critical requests are served
    * before normal ones and normal before bulk; within a class the queue
    * stays first in, first out, and the request already at the head is never

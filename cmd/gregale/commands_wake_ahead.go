@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,10 +10,11 @@ import (
 
 const wakeAheadUsage = "usage: gregale wake-ahead <slug> [on|off]"
 
-// cmdWakeAhead reads or changes an app's service wake-ahead opt-in (ADR-956).
+// cmdWakeAhead reads or changes an app's service wake-ahead opt-in (ADR-977).
 func cmdWakeAhead(args []string) int {
 	if len(args) < 1 || len(args) > 2 || !validCLISlug(args[0]) {
-		return printErr("Invalid wake-ahead command", errors.New(wakeAheadUsage))
+		PrintUsage(osStderr, wakeAheadUsage, "service-wake-ahead")
+		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -29,7 +29,8 @@ func cmdWakeAhead(args []string) int {
 	case args[1] == "on" || args[1] == "off":
 		out, err = client.SetServiceWakeAhead(ctx, args[0], args[1] == "on")
 	default:
-		return printErr("Invalid wake-ahead command", errors.New(wakeAheadUsage))
+		PrintUsage(osStderr, wakeAheadUsage, "service-wake-ahead")
+		return 1
 	}
 	if err != nil {
 		return printErr("Could not reach service wake-ahead", err)

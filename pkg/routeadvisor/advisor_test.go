@@ -143,7 +143,9 @@ func TestThrottleCandidates(t *testing.T) {
 		{"anonymous traffic would share the bucket", func(in *Inputs) { in.Routes[0].AnonymousRequests = 500 }, false},
 		{"top peak below the limit", func(in *Inputs) { in.Consumers[0].Top.PeakPerMinute = 100 }, false},
 		{"plan ceiling would throttle others", func(in *Inputs) { in.PlanMaxRPS = 1 }, false},
-		{"already throttled", func(in *Inputs) { in.Existing = []ExistingRule{{Kind: "throttle", Path: "/*", Methods: []string{"GET"}}} }, false},
+		{"already throttled", func(in *Inputs) {
+			in.Existing = []ExistingRule{{Kind: "throttle", Path: "/*", Methods: []string{"GET"}}}
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 // serviceWakeAheadRequestMaxBytes bounds the one-field PUT body.
 const serviceWakeAheadRequestMaxBytes = 1024
 
-// getServiceWakeAhead serves GET /v1/apps/{slug}/service-wake-ahead (ADR-956).
+// getServiceWakeAhead serves GET /v1/apps/{slug}/service-wake-ahead (ADR-977).
 func (s *server) getServiceWakeAhead(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.store.(state.ServiceWakeAheadStore)
 	if !ok {

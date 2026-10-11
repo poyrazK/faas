@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// RoutePrioritySetting is an app's saved ADR-957 route priorities.
+// RoutePrioritySetting is an app's saved ADR-978 route priorities.
 // Configured is false when nothing is saved.
 type RoutePrioritySetting struct {
 	Configured bool

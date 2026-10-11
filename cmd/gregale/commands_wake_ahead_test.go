@@ -63,6 +63,28 @@ func TestWakeAheadCLI(t *testing.T) {
 	}
 }
 
+func TestWakeAheadCLIJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: true, UpdatedAt: "2026-10-10T00:00:00Z"})
+	}))
+	defer server.Close()
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	t.Setenv("FAAS_API", server.URL)
+	var output bytes.Buffer
+	old := osStdout
+	osStdout = &output
+	t.Cleanup(func() { osStdout = old })
+	jsonOutput = true
+	if code := cmdWakeAhead([]string{"demo"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var got api.ServiceWakeAheadResponse
+	if err := json.Unmarshal(output.Bytes(), &got); err != nil || got.Slug != "demo" || !got.Enabled {
+		t.Fatalf("json output = %q (%v)", output.String(), err)
+	}
+}
+
 func TestWakeAheadCLIRejectsBadArguments(t *testing.T) {
 	for _, args := range [][]string{{}, {"demo", "maybe"}, {"demo", "on", "extra"}, {"Bad Slug"}} {
 		if code, _, requests := runWakeAheadCLI(t, args...); code == 0 || len(requests) != 0 {
