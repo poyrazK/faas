@@ -36,7 +36,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		case disposableRunsCapabilityKey:
 			available = s.executionAPIEnabled
 		case "object-storage":
-			available = s.objectStorageProvisioningReady()
+			available = s.object.ObjectStorageProvisioningReady()
 		case "github-deploys", "pr-previews":
 			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())

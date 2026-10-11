@@ -8,6 +8,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// AccountHandler is an HTTP handler that runs after authentication has
+// resolved the caller's account. cmd/apid's accountHandler aliases it.
+type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Account)
+
+// APIKeyCarriesScope reports whether key was granted want verbatim.
+func APIKeyCarriesScope(key state.APIKey, want string) bool {
+	for _, scope := range key.Scopes {
+		if scope == want {
+			return true
+		}
+	}
+	return false
+}
+
 // Principal is the authenticated caller. Key is nil when the caller
 // authenticated via the dashboard session cookie (in which case the
 // caller is implicitly treated as having the "admin" scope by

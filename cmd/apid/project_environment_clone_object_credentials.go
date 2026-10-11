@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -84,7 +86,7 @@ func (s *server) prepareCapturedCloneObjectCredential(ctx context.Context, store
 
 func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.ProjectEnvironmentCloneOperation, plan capturedProjectEnvironmentObjectPlan, source state.ProjectEnvironmentCloneObjectCredential, bucket state.ObjectBucket) (state.ProjectEnvironmentCloneObjectCredentialRequest, error) {
 	request := state.ProjectEnvironmentCloneObjectCredentialRequest{AppID: plan.appID, SourceBucketID: plan.source.ID, SourceCredentialID: source.ID}
-	if !s.objectStorageEnabled() || setSecretRecipient() == nil {
+	if !s.object.ObjectStorageEnabled() || setSecretRecipient() == nil {
 		return request, objectstorage.ErrUnavailable
 	}
 	recipient := setSecretRecipient()
@@ -108,8 +110,8 @@ func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.
 		return request, err
 	}
 	limits := api.MustLimitsFor(account.Plan)
-	values := objectStorageBindingSecretValues(objectStorageBindingSecretKeys(source.ManagedPrefix), s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKey, secretKey)
-	secrets, problem := s.sealObjectStorageBindingValues(account, state.App{ID: plan.appID}, credential.ID, op.TargetEnvironment, values, limits)
+	values := object.ObjectStorageBindingSecretValues(object.ObjectStorageBindingSecretKeys(source.ManagedPrefix), s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKey, secretKey)
+	secrets, problem := s.object.SealObjectStorageBindingValues(account, state.App{ID: plan.appID}, credential.ID, op.TargetEnvironment, values, limits)
 	if problem != nil {
 		return request, problem
 	}

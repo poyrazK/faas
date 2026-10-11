@@ -29,6 +29,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -1184,8 +1186,8 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if principal, ok := principalFrom(r); ok && principal.Key != nil &&
-			!apiKeyCarriesScope(*principal.Key, api.ScopeAdmin) &&
-			!apiKeyCarriesScope(*principal.Key, api.ScopeStorageRead) {
+			!httpkit.APIKeyCarriesScope(*principal.Key, api.ScopeAdmin) &&
+			!httpkit.APIKeyCarriesScope(*principal.Key, api.ScopeStorageRead) {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeValidation,
 				"Storage read scope required", "external input manifests require storage:read"))
 			return
@@ -1196,7 +1198,7 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 		}
 		reader, ok := provider.(objectstorage.ObjectReader)
 		if !ok {
-			bucketProblem(w, objectstorage.ErrUnsupported)
+			object.BucketProblem(w, objectstorage.ErrUnsupported)
 			return
 		}
 		req.Inputs, err = readJobInputManifest(r.Context(), reader, bucket.PhysicalName, key, req.InputManifestSHA256)
@@ -1204,7 +1206,7 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 			if errors.Is(err, errJobInputManifestInvalid) {
 				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid input manifest", err.Error()))
 			} else {
-				bucketProblem(w, err)
+				object.BucketProblem(w, err)
 			}
 			return
 		}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -25,13 +26,13 @@ func TestObjectMultipartLayout(t *testing.T) {
 		{api.MaxObjectUploadBytes, 525 << 20, 9987, false},
 		{api.MaxObjectUploadBytes + 1, 0, 0, true},
 	} {
-		partSize, partCount, err := multipartLayout(test.size)
+		partSize, partCount, err := object.MultipartLayout(test.size)
 		if errors.Is(err, objectstorage.ErrInvalid) != test.wantErr || !test.wantErr && (partSize != test.partSize || partCount != test.partCount) {
 			t.Fatalf("multipartLayout(%d) = (%d, %d, %v)", test.size, partSize, partCount, err)
 		}
 	}
 	upload := state.ObjectMultipartUpload{SizeBytes: api.DefaultMultipartPartBytes + 1, PartSizeBytes: api.DefaultMultipartPartBytes, PartCount: 2}
-	if size, err := multipartPartSize(upload, 2); err != nil || size != 1 {
+	if size, err := object.MultipartPartSize(upload, 2); err != nil || size != 1 {
 		t.Fatalf("final part size = %d, %v", size, err)
 	}
 }
@@ -181,14 +182,14 @@ func TestObjectMultipartCompletionIntentSurvivesProviderFailure(t *testing.T) {
 }
 
 func TestMultipartLayoutHonorsPartLimit(t *testing.T) {
-	size, count, err := multipartLayoutWithLimit(65<<20, 64<<20)
+	size, count, err := object.MultipartLayoutWithLimit(65<<20, 64<<20)
 	if err != nil || size != 64<<20 || count != 2 {
 		t.Fatalf("size=%d count=%d err=%v", size, count, err)
 	}
-	if _, _, err = multipartLayoutWithLimit(65<<20, 1<<20); err == nil {
+	if _, _, err = object.MultipartLayoutWithLimit(65<<20, 1<<20); err == nil {
 		t.Fatal("allowed multipart parts smaller than S3 minimum")
 	}
-	if _, _, err = multipartLayoutWithLimit(api.MaxObjectUploadBytes, 64<<20); err == nil {
+	if _, _, err = object.MultipartLayoutWithLimit(api.MaxObjectUploadBytes, 64<<20); err == nil {
 		t.Fatal("exceeded part count with a constrained part ceiling")
 	}
 }

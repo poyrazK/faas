@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -151,7 +152,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 				t.Fatal(err)
 			}
 			operations := []string{}
-			if err = e.s.reconcileObjectUploads(ctx, func(operation, outcome string) { operations = append(operations, operation+"/"+outcome) }); err != nil {
+			if err = e.s.object.ReconcileObjectUploads(ctx, func(operation, outcome string) { operations = append(operations, operation+"/"+outcome) }); err != nil {
 				t.Fatal(err)
 			}
 			c, err = restarted.GetObjectUploadReceipt(ctx, f.account.ID, f.app.ID, "", f.credential.ID, id)
@@ -174,7 +175,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = e.s.reconcileObjectCapacity(ctx, nil); err != nil {
+			if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			j, err = restarted.GetObjectCapacityReconciliation(ctx, f.account.ID, f.bucket.ID, j.ID)

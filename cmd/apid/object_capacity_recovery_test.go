@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -50,7 +52,7 @@ func TestCompleteCapacityInventory(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &capacityInventoryProvider{pages: tc.pages, failAt: tc.failAt}
-			bytes, keys, err := completeObjectInventory(context.Background(), p, "physical")
+			bytes, keys, err := object.CompleteObjectInventory(context.Background(), p, "physical")
 			if tc.ok && (err != nil || bytes != tc.bytes || keys != tc.keys) || !tc.ok && err == nil {
 				t.Fatal(bytes, keys, err)
 			}
@@ -128,7 +130,7 @@ func TestObjectCapacityAPIAndDisabledRecovery(t *testing.T) {
 	if err = json.Unmarshal(r.Body.Bytes(), &j); err != nil {
 		t.Fatal(err)
 	}
-	if err = e.s.reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	r = e.do(t, "GET", path+"/"+j.ID, nil, nil)
@@ -155,7 +157,7 @@ func TestObjectCapacityAPIAndDisabledRecovery(t *testing.T) {
 	if err = json.Unmarshal(r.Body.Bytes(), &j); err != nil {
 		t.Fatal(err)
 	}
-	if err = e.s.reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	r = e.do(t, "GET", path+"/"+j.ID, nil, nil)
@@ -172,7 +174,7 @@ func TestObjectCapacityAPIAndDisabledRecovery(t *testing.T) {
 	if err = json.Unmarshal(r.Body.Bytes(), &j); err != nil {
 		t.Fatal(err)
 	}
-	if err = e.s.reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	r = e.do(t, "GET", path+"/"+j.ID, nil, nil)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -394,7 +395,7 @@ func TestPGCloneStableCaptureBarriersCountControlDeletionJournalOnce(t *testing.
 	provider.drained = true
 	b := buckets[0]
 	deletes := &cloneDeletionRecoveryWriterProvider{}
-	j, err := f.srv.deleteMutableBucketObject(ctx, b, deletes, "key", "", uuid.NewString())
+	j, err := f.srv.object.DeleteMutableBucketObject(ctx, b, deletes, "key", "", uuid.NewString())
 	if !errors.Is(err, objectstorage.ErrUnavailable) || j.State != "dispatched" || deletes.calls != 1 {
 		t.Fatalf("uncertain control deletion fixture: %+v %v", j, err)
 	}

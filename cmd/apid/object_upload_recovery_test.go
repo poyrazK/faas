@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -140,7 +141,7 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	if err = st.RecordObjectUsageReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
-	if err = e.s.reconcileObjectUploads(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c, err = st.GetObjectUploadReceipt(ctx, acct.ID, app.ID, route.ID, "owner", c.ID)
@@ -165,7 +166,7 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = e.s.reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = st.GetObjectCapacityReconciliation(ctx, acct.ID, b.ID, j.ID)
@@ -179,7 +180,7 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	due(ctx, unknown.ID)
-	if err = e.s.reconcileObjectUploads(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := st.GetObjectUploadReceipt(ctx, acct.ID, app.ID, route.ID, "owner", unknown.ID)
@@ -193,7 +194,7 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	// Losing configuration only defers probing; it never closes a dispatched write.
 	e.s.WithObjectStorage(nil)
 	due(ctx, unknown.ID)
-	if err = e.s.reconcileObjectUploads(ctx, nil); err != nil {
+	if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	pending, err = st.GetObjectUploadReceipt(ctx, acct.ID, app.ID, route.ID, "owner", unknown.ID)

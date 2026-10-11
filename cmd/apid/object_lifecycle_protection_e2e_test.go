@@ -114,7 +114,7 @@ func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err = s.reconcileObjectLifecycle(ctx, nil); err != nil {
+		if err = s.object.ReconcileObjectLifecycle(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -125,7 +125,7 @@ func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_bucket_lifecycle SET next_scan_at=clock_timestamp() WHERE bucket_id=$1`, f.bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectLifecycle(ctx, nil); err != nil || deletes.Load() != 1 {
+	if err = s.object.ReconcileObjectLifecycle(ctx, nil); err != nil || deletes.Load() != 1 {
 		t.Fatal("released version not dispatched", err, deletes.Load())
 	}
 	var id string
@@ -141,7 +141,7 @@ func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectDeletions(ctx, nil); err != nil || deletes.Load() != 1 {
+	if err = s.object.ReconcileObjectDeletions(ctx, nil); err != nil || deletes.Load() != 1 {
 		t.Fatal("disabled recovery repeated delete", err, deletes.Load())
 	}
 	receipt, err := client.GetObjectDeletion(ctx, f.app.Slug, f.bucket.ID, id)

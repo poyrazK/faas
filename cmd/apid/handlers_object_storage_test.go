@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -161,12 +162,12 @@ func TestObjectStorageUnconfiguredUsageFeedBlocksNewBucketsButNotCleanup(t *test
 		t.Fatalf("cleanup with missing usage feed = %d %s", response.Code, response.Body.String())
 	}
 }
-func bucketResponse(t *testing.T, r *httptest.ResponseRecorder, status int) bucketView {
+func bucketResponse(t *testing.T, r *httptest.ResponseRecorder, status int) object.BucketView {
 	t.Helper()
 	if r.Code != status {
 		t.Fatalf("got %d want %d: %s", r.Code, status, r.Body.String())
 	}
-	var b bucketView
+	var b object.BucketView
 	if err := json.Unmarshal(r.Body.Bytes(), &b); err != nil {
 		t.Fatal(err)
 	}

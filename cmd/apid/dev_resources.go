@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -76,5 +77,5 @@ func (s *server) cleanupDevSessionBucket(ctx context.Context, store state.Object
 	if err != nil {
 		return err
 	}
-	return s.executeBucketOperation(ctx, store, claimed)
+	return s.object.ExecuteBucketOperation(ctx, store, claimed)
 }

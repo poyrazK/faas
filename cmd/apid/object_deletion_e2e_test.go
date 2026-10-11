@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -42,7 +43,7 @@ func TestObjectDeletionRecoveryMissingPlacementPG(t *testing.T) {
 			// An empty catalog models removal of this placement, without
 			// changing the bucket's immutable placement identity.
 			s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(&objectstorage.Registry{Accounting: f.policy})
-			if e = s.reconcileObjectDeletions(ctx, nil); e != nil {
+			if e = s.object.ReconcileObjectDeletions(ctx, nil); e != nil {
 				t.Fatal(e)
 			}
 			j, e = f.st.GetObjectDeletion(ctx, f.account.ID, f.bucket.ID, j.ID)
@@ -151,7 +152,7 @@ func TestObjectDeletionControlRecoveryPG(t *testing.T) {
 	f.enabled.Store(false)
 	srv.Close()
 	s = newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-	if s.objectStorageEnabled() {
+	if s.object.ObjectStorageEnabled() {
 		t.Fatal("recovery fixture unexpectedly enabled ingress")
 	}
 	srv = httptest.NewServer(s.handler())
@@ -160,7 +161,7 @@ func TestObjectDeletionControlRecoveryPG(t *testing.T) {
 	if _, e = f.pool.Exec(ctx, `UPDATE object_deletions SET retry_at=now() WHERE id=$1`, id); e != nil {
 		t.Fatal(e)
 	}
-	if e = s.reconcileObjectDeletions(ctx, nil); e != nil {
+	if e = s.object.ReconcileObjectDeletions(ctx, nil); e != nil {
 		t.Fatal(e)
 	}
 	receipt, e = client.GetObjectDeletion(ctx, f.app.Slug, f.bucket.ID, id)

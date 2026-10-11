@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -266,7 +267,7 @@ func signedURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, b
 	} else {
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
-	if err = s.reconcileObjectUploads(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	done, err := s.store.(state.ObjectTrackedUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", c.ID, lost.UploadID)

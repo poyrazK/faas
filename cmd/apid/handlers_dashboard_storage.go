@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -62,7 +63,7 @@ func (s *server) renderAppStoragePage(w http.ResponseWriter, r *http.Request, lo
 	data := dashboard.StorageData{
 		App:        dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain)},
 		Configured: s.objectStorage != nil,
-		Enabled:    s.objectStorageProvisioningReady(),
+		Enabled:    s.object.ObjectStorageProvisioningReady(),
 		Action:     dashboardStorageActionFlash(r),
 		SignedURL:  signed,
 	}
@@ -207,9 +208,9 @@ func (s *server) dashboardCreateStorageBucket(w http.ResponseWriter, r *http.Req
 	if !publicRead {
 		serveAt = ""
 	}
-	req := createBucketRequest{Name: strings.TrimSpace(r.FormValue("name")), Scope: strings.TrimSpace(r.FormValue("scope")), Region: strings.TrimSpace(r.FormValue("region")), Public: publicRead, ServeAt: serveAt}
+	req := object.CreateBucketRequest{Name: strings.TrimSpace(r.FormValue("name")), Scope: strings.TrimSpace(r.FormValue("scope")), Region: strings.TrimSpace(r.FormValue("region")), Public: publicRead, ServeAt: serveAt}
 	slug := r.PathValue("slug")
-	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets", "", url.Values{}, req, s.createBucket)
+	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets", "", url.Values{}, req, s.object.CreateBucket)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
@@ -226,11 +227,11 @@ func (s *server) dashboardDeleteStorageBucket(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.objectStorage == nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		object.BucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
 	slug, bucketID := r.PathValue("slug"), r.PathValue("bucket")
-	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucketID), bucketID, url.Values{}, nil, s.deleteBucket)
+	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucketID), bucketID, url.Values{}, nil, s.object.DeleteBucket)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
@@ -247,7 +248,7 @@ func (s *server) dashboardDeleteStorageObject(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.objectStorage == nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
+		object.BucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -257,7 +258,7 @@ func (s *server) dashboardDeleteStorageObject(w http.ResponseWriter, r *http.Req
 	slug, bucketID, key := r.PathValue("slug"), strings.TrimSpace(r.FormValue("bucket_id")), r.FormValue("key")
 	query := url.Values{"key": []string{key}}
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucketID) + "/objects"
-	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodDelete, path, bucketID, query, nil, s.deleteBucketObject)
+	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodDelete, path, bucketID, query, nil, s.object.DeleteBucketObject)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
@@ -296,7 +297,7 @@ func (s *server) dashboardSignStorageObject(w http.ResponseWriter, r *http.Reque
 	}
 	slug, bucketID := r.PathValue("slug"), strings.TrimSpace(r.FormValue("bucket_id"))
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucketID) + "/signed-url"
-	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodPost, path, bucketID, url.Values{}, req, s.signBucketObject)
+	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodPost, path, bucketID, url.Values{}, req, s.object.SignBucketObject)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}

@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -737,8 +738,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runRollbackOn5xxWorker(ctx)
 		go srv.runOperationArtifactCleanup(ctx)
-		go srv.runObjectStorageRecovery(ctx)
-		go srv.runObjectStorageAccounting(ctx)
+		go srv.object.RunObjectStorageRecovery(ctx)
+		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
@@ -828,7 +829,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
-			BeforeAccountDelete: srv.cleanupExpiredAccountObjectBuckets,
+			BeforeAccountDelete: srv.object.CleanupExpiredAccountObjectBuckets,
 			Mailer:              graceSenderAdapter{m: srv.mailer},
 			Log:                 log,
 			Interval:            graceIntervalFromEnv(log),
@@ -1561,7 +1562,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: load billing provider: %w", err)
 		}
 		provName = loadedName
-		if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+		if err := object.ValidateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
 			return err
 		}
 		if billingProv != nil {
