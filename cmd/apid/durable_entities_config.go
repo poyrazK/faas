@@ -18,7 +18,12 @@ import (
 func (s *server) configureDurableEntities(ctx context.Context, getenv func(string) string) error {
 	s.durableEntitySockets = nil
 	s.durableEntityTenantQuotas = nil
+	s.durableEntityQuotaMigrationEnabled = false
 	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
+	migration := getenv("FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED") == "1"
+	if migration && !quotas {
+		return errors.New("quota migration requires tenant quotas")
+	}
 	if quotas && getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
 		return errors.New("tenant quotas require durable entities")
 	}
@@ -163,6 +168,7 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityBackupsEnabled = backups
 	s.durableEntityHealthEnabled = health
 	s.durableEntityTenantQuotas = tenantQuotas
+	s.durableEntityQuotaMigrationEnabled = migration
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance

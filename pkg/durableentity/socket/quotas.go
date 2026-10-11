@@ -56,6 +56,7 @@ type quotaRecord struct {
 	Grants       []Grant             `json:"grants"`
 	Connections  []connectionLease   `json:"connections"`
 	Entities     []entityReservation `json:"entities"`
+	Migration    *QuotaMigration     `json:"migration,omitempty"`
 }
 type QuotaError struct {
 	Budget          string
@@ -102,7 +103,10 @@ func (q *Quotas) read(ctx context.Context, key string) (quotaRecord, string, err
 		return quotaRecord{}, "", err
 	}
 	var r quotaRecord
-	if json.Unmarshal(body, &r) != nil || r.Schema != 1 || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > 64 {
+	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || r.Schema != 1 || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > 64 {
+		return quotaRecord{}, "", durableentity.ErrCorrupt
+	}
+	if r.Migration != nil && !r.Migration.valid() {
 		return quotaRecord{}, "", durableentity.ErrCorrupt
 	}
 	seen := map[string]bool{}
@@ -174,6 +178,9 @@ func retryWindow(r quotaRecord, now time.Time) int {
 	return max(1, int(r.Window.Add(quotaWindow).Sub(now).Seconds())+1)
 }
 func (q *Quotas) mutate(ctx context.Context, key string, scope *quotaScope, change func(*quotaRecord, time.Time) error) error {
+	return q.mutateMigration(ctx, key, scope, false, change)
+}
+func (q *Quotas) mutateMigration(ctx context.Context, key string, scope *quotaScope, migration bool, change func(*quotaRecord, time.Time) error) error {
 	for attempt := 0; attempt < 8; attempt++ {
 		r, version, err := q.read(ctx, key)
 		now := q.now()
@@ -187,6 +194,9 @@ func (q *Quotas) mutate(ctx context.Context, key string, scope *quotaScope, chan
 		}
 		r.Limits = stricterLimits(r.Limits, q.Limits)
 		prune(&r, now)
+		if !migration && r.Migration != nil && r.Migration.Phase != "complete" {
+			return ErrMigrationPending
+		}
 		if err = change(&r, now); err != nil {
 			return err
 		}
@@ -197,7 +207,11 @@ func (q *Quotas) mutate(ctx context.Context, key string, scope *quotaScope, chan
 		if len(body) > maxQuotaRecordBytes {
 			return durableentity.ErrLimit
 		}
-		_, err = q.Store.Put(ctx, "tenant-quotas/v1/"+key, body, version)
+		writtenVersion, writeErr := q.Store.Put(ctx, "tenant-quotas/v1/"+key, body, version)
+		err = writeErr
+		if err == nil && writtenVersion == "" {
+			err = durableentity.ErrUncertain
+		}
 		if errors.Is(err, durableentity.ErrConflict) {
 			continue
 		}
@@ -323,6 +337,9 @@ func (q *Quotas) CheckConnection(ctx context.Context, id durableentity.ID, lease
 	}
 	if err != nil {
 		return err
+	}
+	if r.Migration != nil && r.Migration.Phase != "complete" {
+		return ErrGrantDenied
 	}
 	for _, c := range r.Connections {
 		if c.ID == lease && q.now().Before(c.Expires) {

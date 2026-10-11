@@ -37,6 +37,7 @@ func (s *server) durableEntityReadinessForApp(appID string) durableEntityReadine
 	configuration("conditional_storage", s.durableEntities != nil, true, "Configured manager passed startup checks; current bucket health and fleet consistency are not checked here.")
 	configuration("app_allowlist", s.durableEntityApps[appID], true, "This app must be explicitly enabled on the serving node.")
 	configuration("tenant_quotas", s.durableEntityTenantQuotas != nil, true, "Release baseline requires shared tenant admission budgets and a positive per-entity retained-byte cap.")
+	configuration("quota_migration_workflow", s.durableEntityQuotaMigrationEnabled, false, "Optional fenced reservation backfill and coverage scan; scope completion is inspected separately.")
 	configuration("service_sessions", s.durableEntitySockets != nil, false, "Optional bounded WebSocket transport.")
 	configuration("browser_sessions", s.durableEntitySessionGrants != nil, false, "Optional scoped browser session grants.")
 	configuration("alarms", s.durableEntityAlarmsEnabled, false, "Optional scheduled entity wake-ups.")

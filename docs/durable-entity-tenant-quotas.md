@@ -10,6 +10,9 @@ apps/environments have separate budgets; this is not a fleet-wide account cap.
 ## Configuration
 
 Keep production disabled until independent GCS/KVM acceptance passes.
+
+For populated scopes, use the opt-in [quota migration workflow](durable-entity-quota-migration.md)
+to plan, fence, backfill and verify historical reservations before restoring ingress.
 `FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED=1` requires durable invocation preview
 and a positive `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` (per-entity cap, at most
 64 MiB). Browser grants still require the separate socket/browser preview flags.

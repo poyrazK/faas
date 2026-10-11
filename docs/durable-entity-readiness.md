@@ -27,6 +27,10 @@ guest, or modify release gates. A 200 response means the report was available;
 inspect its fields and checks before drawing readiness conclusions. A trusted,
 source/configuration-bound external evidence verifier remains future work.
 
+The optional [quota migration workflow](durable-entity-quota-migration.md) reports
+scope progress separately. A completed coverage pass does not verify fleet
+quiescence or native acceptance, so this report retains its external blockers.
+
 ## Qualification
 
 [CI run 38142483672](https://github.com/poyrazK/faas/actions/runs/38142483672)

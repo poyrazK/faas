@@ -45,6 +45,10 @@ func durableEntityTenantLimits(getenv func(string) string, entityBytes int64) (e
 	return limits, nil
 }
 func writeEntityTenantQuotaProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, entitysocket.ErrMigrationPending) {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entity_quota_migration_pending", "Quota migration pending", "scope admission is held until reservation backfill and verification complete"))
+		return
+	}
 	var quota *entitysocket.QuotaError
 	if errors.As(err, &quota) {
 		if quota.RetryAfter > 0 {
