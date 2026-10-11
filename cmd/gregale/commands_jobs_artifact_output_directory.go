@@ -39,15 +39,15 @@ func inspectArtifactOutputDirectory(path string) (*artifactOutputDirectory, erro
 			return result, nil
 		}
 		if err != nil {
-			current.Close()
+			_ = current.Close()
 			return nil, err
 		}
 		next, err := openArtifactTaskDirectory(current, part)
 		if err != nil {
-			current.Close()
+			_ = current.Close()
 			return nil, fmt.Errorf("output path components must be real directories, not files or symlinks")
 		}
-		current.Close()
+		_ = current.Close()
 		current = next
 		walked = filepath.Join(walked, part)
 	}
@@ -56,9 +56,9 @@ func inspectArtifactOutputDirectory(path string) (*artifactOutputDirectory, erro
 
 func (d *artifactOutputDirectory) Close() {
 	if d.root != nil && d.root != d.anchor {
-		d.root.Close()
+		_ = d.root.Close()
 	}
-	d.anchor.Close()
+	_ = d.anchor.Close()
 }
 
 func (d *artifactOutputDirectory) create(ctx context.Context) error {
@@ -69,19 +69,19 @@ func (d *artifactOutputDirectory) create(ctx context.Context) error {
 	for _, part := range d.missing {
 		if ctx.Err() != nil {
 			if current != d.anchor {
-				current.Close()
+				_ = current.Close()
 			}
 			return ctx.Err()
 		}
 		if err := current.Mkdir(part, 0750); err != nil {
 			if current != d.anchor {
-				current.Close()
+				_ = current.Close()
 			}
 			return fmt.Errorf("could not create output directory; a destination may have appeared or permissions may prevent creation; no existing directory was adopted")
 		}
 		next, err := openArtifactTaskDirectory(current, part)
 		if current != d.anchor {
-			current.Close()
+			_ = current.Close()
 		}
 		if err != nil {
 			return err

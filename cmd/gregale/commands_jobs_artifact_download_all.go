@@ -264,7 +264,7 @@ func verifyExistingJobArtifact(ctx context.Context, root *os.Root, artifact jobr
 	if err != nil {
 		return mismatch()
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
 	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
 		return mismatch()

@@ -23,7 +23,7 @@ type localJobDefaults struct {
 
 func (d localJobDefaults) validate() error {
 	if d.Version != 1 || !jobSlugPattern.MatchString(d.Job) || d.Tasks < 0 {
-		return errors.New("Job defaults require version 1, a valid Job name, and a nonnegative task count")
+		return errors.New("job defaults require version 1, a valid Job name, and a nonnegative task count")
 	}
 	if err := validateJobArtifactIncludes(d.Include); err != nil {
 		return err
@@ -51,11 +51,11 @@ func readJobDefaults() (localJobDefaults, string, error) {
 	if err != nil {
 		return localJobDefaults{}, path, err
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return localJobDefaults{}, path, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var d localJobDefaults
 	decoder := json.NewDecoder(io.LimitReader(file, 65537))
 	decoder.DisallowUnknownFields()
@@ -155,8 +155,8 @@ func cmdJobsDefaults(args []string) int {
 		if err != nil {
 			return printErr("Could not save Job defaults", err)
 		}
-		defer os.Remove(tmp.Name())
-		defer tmp.Close()
+		defer func() { _ = os.Remove(tmp.Name()) }()
+		defer func() { _ = tmp.Close() }()
 		if _, err = tmp.Write(append(data, '\n')); err == nil {
 			err = tmp.Sync()
 		}

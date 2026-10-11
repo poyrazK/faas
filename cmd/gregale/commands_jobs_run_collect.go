@@ -98,9 +98,9 @@ func waitAndCollectJobRun(parentCtx context.Context, client *api.Client, name st
 	} else {
 		receipt.Phase = "download"
 		if jsonOutput {
-			receipt.ExitCode = downloadJobRunArtifactsWithFilters([]string{name, accepted.ID}, directory, resume, false, includes, excludes, &accepted, func(artifacts jobRunArtifactReceipt) int { receipt.Artifacts = &artifacts; return 0 })
+			receipt.ExitCode = downloadJobRunArtifactsWithContext(signalCtx, []string{name, accepted.ID}, directory, resume, false, includes, excludes, &accepted, func(artifacts jobRunArtifactReceipt) int { receipt.Artifacts = &artifacts; return 0 })
 		} else {
-			receipt.ExitCode = downloadJobRunArtifactsWithFilters([]string{name, accepted.ID}, directory, resume, false, includes, excludes, &accepted, nil)
+			receipt.ExitCode = downloadJobRunArtifactsWithContext(signalCtx, []string{name, accepted.ID}, directory, resume, false, includes, excludes, &accepted, nil)
 		}
 		if receipt.ExitCode != 0 {
 			receipt.Error = "artifact collection did not complete; no run was submitted during collection"

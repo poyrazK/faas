@@ -63,21 +63,17 @@ func openArtifactTaskDirectory(parent *os.Root, name string) (*os.Root, error) {
 	opened, err := root.Stat(".")
 	after, afterErr := parent.Lstat(name)
 	if err != nil || afterErr != nil || !after.IsDir() || after.Mode()&os.ModeSymlink != 0 || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
-		root.Close()
+		_ = root.Close()
 		return nil, fmt.Errorf("task destination directory changed during inspection")
 	}
 	return root, nil
 }
 
-func downloadJobRunArtifacts(pos []string, directory string, resume, dryRun bool) int {
-	return downloadJobRunArtifactsWithReceipt(pos, directory, resume, dryRun, nil, nil)
-}
-
-func downloadJobRunArtifactsWithReceipt(pos []string, directory string, resume, dryRun bool, accepted *api.JobRunResponse, receive func(jobRunArtifactReceipt) int) int {
-	return downloadJobRunArtifactsWithFilters(pos, directory, resume, dryRun, nil, nil, accepted, receive)
-}
-
 func downloadJobRunArtifactsWithFilters(pos []string, directory string, resume, dryRun bool, includes, excludes []string, accepted *api.JobRunResponse, receive func(jobRunArtifactReceipt) int) int {
+	return downloadJobRunArtifactsWithContext(context.Background(), pos, directory, resume, dryRun, includes, excludes, accepted, receive)
+}
+
+func downloadJobRunArtifactsWithContext(parentCtx context.Context, pos []string, directory string, resume, dryRun bool, includes, excludes []string, accepted *api.JobRunResponse, receive func(jobRunArtifactReceipt) int) int {
 	if len(pos) != 2 || directory == "" || !jobSlugPattern.MatchString(pos[0]) || (pos[1] != "latest" && !jobRunIDPattern.MatchString(pos[1])) {
 		return printErr("Invalid whole-run download", fmt.Errorf("usage: gregale jobs artifact-download JOB RUN_ID|latest --all-tasks --out-dir DIR [--dry-run] [--resume]"))
 	}
@@ -98,7 +94,7 @@ func downloadJobRunArtifactsWithFilters(pos []string, directory string, resume, 
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(parentCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, 5*time.Minute)
 	defer cancel()
@@ -179,7 +175,7 @@ func downloadJobRunArtifactsWithFilters(pos []string, directory string, resume, 
 		for a := range plan.Artifacts {
 			if ctx.Err() != nil {
 				if root != nil {
-					root.Close()
+					_ = root.Close()
 				}
 				return printErr("Artifact discovery interrupted", ctx.Err())
 			}
@@ -222,7 +218,7 @@ func downloadJobRunArtifactsWithFilters(pos []string, directory string, resume, 
 			}
 		}
 		if root != nil {
-			root.Close()
+			_ = root.Close()
 		}
 	}
 	if ctx.Err() != nil {
@@ -305,7 +301,7 @@ func downloadJobRunArtifactsWithFilters(pos []string, directory string, resume, 
 				}
 			}
 			if root != nil {
-				root.Close()
+				_ = root.Close()
 			}
 		}
 	} else if !dryRun {

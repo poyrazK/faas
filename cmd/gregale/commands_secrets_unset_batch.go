@@ -45,7 +45,7 @@ func executeSecretsUnsetBatch(client *Client, app string, keys []string, scope s
 	receipt := secretsUnsetBatchReceipt{App: app, Scope: scopeOrDefault(scope), Status: "removing", RequestedKeys: keys, RemovedKeys: []string{}, Removals: []secretBatchRemoval{}, WaitForAckRequested: wait}
 	fail := func(title string, err error) int {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			err = fmt.Errorf("%s: %w", err, context.Canceled)
+			err = fmt.Errorf("%w: %w", err, context.Canceled)
 		}
 		receipt.Status = "incomplete"
 		if jsonOutput {

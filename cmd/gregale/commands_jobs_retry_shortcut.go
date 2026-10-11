@@ -18,7 +18,7 @@ func resolveJobRecoveryRun(ctx context.Context, client *api.Client, name, ref, l
 		return "", err
 	}
 	if job.Name != name || !jobRunIDPattern.MatchString(job.ID) || job.AccountID == "" {
-		return "", fmt.Errorf("Job response did not identify the requested Job")
+		return "", fmt.Errorf("job response did not identify the requested Job")
 	}
 	if ref == "latest" {
 		page, err := client.ListJobRunsPage(ctx, name, 1, 0)

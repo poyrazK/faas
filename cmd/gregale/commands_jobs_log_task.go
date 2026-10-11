@@ -24,8 +24,9 @@ func splitJobLogTask(args []string) ([]string, string, bool, error) {
 				if i+1 >= len(args) {
 					return nil, "", false, fmt.Errorf("--task requires a nonnegative task index")
 				}
+				//nolint:gosec // G602: the i+1 >= len(args) guard above rejects a missing value.
+				task = args[i+1]
 				i++
-				task = args[i]
 			}
 			n, err := strconv.Atoi(task)
 			if err != nil || n < 0 {

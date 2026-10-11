@@ -21,40 +21,40 @@ func cmdWorkflows(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|wait|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
 		return 1
 	}
-	subcommand := args[0]
+	subcommand, rest := args[0], args[1:]
 	switch subcommand {
 	case "list", "ls", "runs":
-		return cmdWorkflowsList(args[1:])
+		return cmdWorkflowsList(rest)
 	case "schedules":
-		return cmdWorkflowSchedules(args[1:])
+		return cmdWorkflowSchedules(rest)
 	case "schedule-history":
-		return cmdWorkflowScheduleHistory(args[1:])
+		return cmdWorkflowScheduleHistory(rest)
 	case "run":
-		return cmdWorkflowsRun(args[1:])
+		return cmdWorkflowsRun(rest)
 	case "wait":
-		return cmdWorkflowsWait(args[1:])
+		return cmdWorkflowsWait(rest)
 	case "diagnose":
-		return cmdWorkflowsDiagnose(args[1:])
+		return cmdWorkflowsDiagnose(rest)
 	case "status", "get", "show":
-		return cmdWorkflowsStatus(args[1:])
+		return cmdWorkflowsStatus(rest)
 	case "steps":
-		return cmdWorkflowsSteps(args[1:])
+		return cmdWorkflowsSteps(rest)
 	case "attempts":
-		return cmdWorkflowsAttempts(args[1:])
+		return cmdWorkflowsAttempts(rest)
 	case "retry":
-		return cmdWorkflowsRetry(args[1:])
+		return cmdWorkflowsRetry(rest)
 	case "resume":
-		return cmdWorkflowsResume(args[1:])
+		return cmdWorkflowsResume(rest)
 	case "resumes":
-		return cmdWorkflowsResumes(args[1:])
+		return cmdWorkflowsResumes(rest)
 	case "cancel":
-		return cmdWorkflowsCancel(args[1:])
+		return cmdWorkflowsCancel(rest)
 	case "cancel-queued-preview":
-		return cmdWorkflowsQueuedCancel(args[1:], false)
+		return cmdWorkflowsQueuedCancel(rest, false)
 	case "cancel-queued":
-		return cmdWorkflowsQueuedCancel(args[1:], true)
+		return cmdWorkflowsQueuedCancel(rest, true)
 	case "events":
-		return cmdWorkflowsEvents(args[1:])
+		return cmdWorkflowsEvents(rest)
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", subcommand), "workflows")
 		if parent, ok := lookupCliCommand("workflows"); ok {

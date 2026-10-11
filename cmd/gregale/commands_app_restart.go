@@ -223,9 +223,10 @@ func outputAppRestartStatus(slug string, row api.RuntimeConfigRestartStatusRespo
 		_, _ = fmt.Fprintf(osStdout, "  Processing finished: %s\n", row.CompletedAt.UTC().Format(time.RFC3339))
 	}
 	command := recoveryCLI() + " app " + recoveryArgument(slug) + " restart status --wake-id " + recoveryArgument(row.WakeID) + " --wait"
-	if row.Status == "completed" {
+	switch row.Status {
+	case "completed":
 		command = recoveryCLI() + " app " + recoveryArgument(slug) + " health"
-	} else if row.Status == "failed" {
+	case "failed":
 		command = recoveryCLI() + " inspect " + recoveryArgument(slug)
 	}
 	_, _ = fmt.Fprintf(osStdout, "  Next command (POSIX shells):\n    %s\n", command)

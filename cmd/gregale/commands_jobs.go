@@ -70,58 +70,59 @@ func cmdJobs(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale jobs <overview|defaults|list|add|info|update|rm|next|run|runs|status|occurrences|wait|results|cancel|tasks|attempts|retry|replay-failed|artifact-url|artifact-download|artifacts|logs|registry> [args]", "jobs")
 		return 1
 	}
-	switch args[0] {
+	subcommand, rest := args[0], args[1:]
+	switch subcommand {
 	case subList:
-		return cmdJobsList(args[1:])
+		return cmdJobsList(rest)
 	case subAdd:
-		return cmdJobsAdd(args[1:])
+		return cmdJobsAdd(rest)
 	case subInfo:
-		return cmdJobsInfo(args[1:])
+		return cmdJobsInfo(rest)
 	case subUpdate:
-		return cmdJobsUpdate(args[1:])
+		return cmdJobsUpdate(rest)
 	case subRm:
-		return cmdJobsRm(args[1:])
+		return cmdJobsRm(rest)
 	case "next":
-		return cmdJobsNext(args[1:])
+		return cmdJobsNext(rest)
 	case "run":
-		return cmdJobsRun(args[1:])
+		return cmdJobsRun(rest)
 	case subRuns:
-		return cmdJobsRuns(args[1:])
+		return cmdJobsRuns(rest)
 	case "status":
-		return cmdJobsStatus(args[1:])
+		return cmdJobsStatus(rest)
 	case "occurrences":
-		return cmdJobsOccurrences(args[1:])
+		return cmdJobsOccurrences(rest)
 	case "overview":
-		return cmdJobsOverview(args[1:])
+		return cmdJobsOverview(rest)
 	case "defaults":
-		return cmdJobsDefaults(args[1:])
+		return cmdJobsDefaults(rest)
 	case "results":
-		return cmdJobsResults(args[1:])
+		return cmdJobsResults(rest)
 	case "wait":
-		return cmdJobsWait(args[1:])
+		return cmdJobsWait(rest)
 	case "cancel":
-		return cmdJobsCancel(args[1:])
+		return cmdJobsCancel(rest)
 	case "tasks":
-		return cmdJobsTasks(args[1:])
+		return cmdJobsTasks(rest)
 	case "attempts":
-		return cmdJobsAttempts(args[1:])
+		return cmdJobsAttempts(rest)
 	case "retry":
-		return cmdJobsRetry(args[1:])
+		return cmdJobsRetry(rest)
 	case "replay-failed":
-		return cmdJobsReplayFailed(args[1:])
+		return cmdJobsReplayFailed(rest)
 	case "artifact-url":
-		return cmdJobsArtifactURL(args[1:])
+		return cmdJobsArtifactURL(rest)
 	case "artifact-download":
-		return cmdJobsArtifactDownload(args[1:])
+		return cmdJobsArtifactDownload(rest)
 	case "artifacts":
-		return cmdJobsArtifacts(args[1:])
+		return cmdJobsArtifacts(rest)
 	case "logs":
-		return cmdJobsLogs(args[1:])
+		return cmdJobsLogs(rest)
 	case "registry":
-		return cmdJobsRegistry(args[1:])
+		return cmdJobsRegistry(rest)
 	}
-	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
+	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", subcommand)
+	sug, _ := suggestSubcommand(subcommand, parent)
 	maybeSuggestSub(sug)
 	return 1
 }
@@ -1424,7 +1425,7 @@ func cmdJobsRetry(args []string) int {
 			return printErr("Invalid Job name", fmt.Errorf("provide a valid Job name"))
 		}
 	}
-	if !(taskSet && args[1] == "latest") && !jobRunIDPattern.MatchString(args[1]) {
+	if (!taskSet || args[1] != "latest") && !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>   (run-id is uuid v4)", "jobs")
 		return 1
 	}

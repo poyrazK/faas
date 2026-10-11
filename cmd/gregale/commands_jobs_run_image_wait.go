@@ -32,7 +32,7 @@ func waitForJobRunImage(parent context.Context, client *api.Client, name string,
 				return outputCode
 			}
 		} else {
-			printErr("Image preparation ended before submission", fmt.Errorf("%s; no run submitted; inspect %s", err, command))
+			printErr("Image preparation ended before submission", fmt.Errorf("%w; no run submitted; inspect %s", err, command))
 		}
 		return code
 	}

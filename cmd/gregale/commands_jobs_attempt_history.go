@@ -15,7 +15,8 @@ func collectJobAttemptHistory(client *api.Client, singleCtx context.Context, nam
 	if !all {
 		return client.ListJobTaskAttemptsPage(singleCtx, name, runID, taskIndex, limit, offset)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Each page has its own deadline, independent of latest-run selection.
+	ctx, stop := signal.NotifyContext(context.WithoutCancel(singleCtx), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var result api.ListJobTaskAttemptsResponse
 	seen := map[int]bool{}

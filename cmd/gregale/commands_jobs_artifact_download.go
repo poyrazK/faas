@@ -124,7 +124,7 @@ func cmdJobsArtifactDownload(args []string) int {
 	if err != nil {
 		return printErr("Could not open output directory", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	name := filepath.Base(output)
 	if _, err := root.Lstat(name); err == nil || !os.IsNotExist(err) {
 		return printErr("Cannot save artifact", fmt.Errorf("output must be a new file in an existing directory; existing files and symlinks are not overwritten"))
@@ -175,7 +175,7 @@ func saveDownloadedJobArtifact(ctx context.Context, client *api.Client, root *os
 	}
 	signed := artifact.Download
 	u, err := url.Parse(signed.URL)
-	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback())) || signed.Method != "GET" {
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || (u.Scheme != "https" && (u.Scheme != "http" || net.ParseIP(u.Hostname()) == nil || !net.ParseIP(u.Hostname()).IsLoopback())) || signed.Method != "GET" {
 		return fmt.Errorf("artifact response did not provide a valid signed GET URL")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, signed.URL, nil)
@@ -196,7 +196,7 @@ func saveDownloadedJobArtifact(ctx context.Context, client *api.Client, root *os
 		}
 		return fmt.Errorf("artifact transfer failed; request a fresh download and retry")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("artifact transfer returned HTTP %d; request a fresh download and retry", response.StatusCode)
 	}
@@ -209,8 +209,8 @@ func saveDownloadedJobArtifact(ctx context.Context, client *api.Client, root *os
 	if err != nil {
 		return fmt.Errorf("create temporary output: %w", err)
 	}
-	defer root.Remove(temporary)
-	defer file.Close()
+	defer func() { _ = root.Remove(temporary) }()
+	defer func() { _ = file.Close() }()
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(response.Body, artifact.SizeBytes+1))
 	if err != nil {
