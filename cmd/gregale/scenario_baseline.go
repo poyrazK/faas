@@ -141,6 +141,15 @@ func validateTestBaselineRun(plan testRunPlan, receipt *testRunReceipt) error {
 
 func testLoadScheduleMatches(actual *testLoadEvidence, cfg *testLoadConfig) bool {
 	want := newTestLoadEvidence(cfg)
+	if len(actual.Streams) != len(want.Streams) {
+		return false
+	}
+	for i, stream := range actual.Streams {
+		expected := want.Streams[i]
+		if stream.Name != expected.Name || stream.VUs != expected.VUs || stream.Arrival.TargetRate != expected.Arrival.TargetRate || stream.Arrival.Planned != expected.Arrival.Planned || strings.Join(stream.Requests, ",") != strings.Join(expected.Requests, ",") {
+			return false
+		}
+	}
 	if actual.Mode != want.Mode || actual.VUs != want.VUs || actual.MaxVUs != want.MaxVUs || actual.IterationLimit != want.IterationLimit || actual.RequestedDurationMS != want.RequestedDurationMS || actual.RequestLimit != want.RequestLimit || actual.PacingMS != want.PacingMS || len(actual.Stages) != len(want.Stages) {
 		return false
 	}
@@ -162,6 +171,18 @@ func testLoadScheduleMatches(actual *testLoadEvidence, cfg *testLoadConfig) bool
 func validateTestBenchmarkLoad(load *testLoadEvidence, scenario testScenario) error {
 	if load.IterationsInterrupted != 0 || load.IterationsCompleted != load.IterationsStarted || load.IterationsStarted <= 0 || (load.Arrival != nil && (load.Arrival.Dropped != 0 || load.Arrival.Scheduled != load.Arrival.Planned || load.IterationsStarted != load.Arrival.Planned)) {
 		return errors.New("load run was incomplete or dropped arrivals")
+	}
+	if len(load.Streams) > 0 {
+		planned := 0
+		for _, stream := range load.Streams {
+			if stream.Arrival.Dropped != 0 || stream.Arrival.Scheduled != stream.Arrival.Planned {
+				return errors.New("load stream was incomplete or dropped arrivals")
+			}
+			planned += stream.Arrival.Planned
+		}
+		if planned != load.IterationsStarted {
+			return errors.New("load streams did not deliver the planned arrivals")
+		}
 	}
 	if load.IterationLimit > 0 && load.IterationsCompleted != load.IterationLimit {
 		return errors.New("load run did not complete its iteration budget")

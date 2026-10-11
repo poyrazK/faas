@@ -27,16 +27,50 @@ const (
 )
 
 type testLoadSpec struct {
-	VUs        int                   `yaml:"vus"`
-	Rate       int                   `yaml:"rate"`
-	Iterations int                   `yaml:"iterations"`
-	Duration   string                `yaml:"duration"`
-	Pacing     string                `yaml:"pacing"`
-	Stages     []testLoadStageSpec   `yaml:"stages"`
-	Thresholds testLoadThresholds    `yaml:"thresholds"`
-	Relative   *testLoadRelativeSpec `yaml:"relative,omitempty"`
-	Workload   string                `yaml:"workload,omitempty"`
-	Regression *testRegressionSpec   `yaml:"regression,omitempty"`
+	FaultCampaign    *testFaultCampaignSpec `yaml:"fault_campaign,omitempty" json:"fault_campaign,omitempty"`
+	campaignExpanded bool
+	OutageCycles     *testOutageCyclesSpec `yaml:"outage_cycles,omitempty" json:"outage_cycles,omitempty"`
+	cyclesExpanded   bool
+	Streams          []testLoadStreamSpec     `yaml:"streams,omitempty" json:"Streams,omitempty"`
+	VUs              int                      `yaml:"vus"`
+	Rate             int                      `yaml:"rate"`
+	Iterations       int                      `yaml:"iterations"`
+	Duration         string                   `yaml:"duration"`
+	Pacing           string                   `yaml:"pacing"`
+	Stages           []testLoadStageSpec      `yaml:"stages"`
+	Thresholds       testLoadThresholds       `yaml:"thresholds"`
+	Relative         *testLoadRelativeSpec    `yaml:"relative,omitempty"`
+	Workload         string                   `yaml:"workload,omitempty"`
+	Regression       *testRegressionSpec      `yaml:"regression,omitempty"`
+	ChaosSchedule    []testLoadChaosPhaseSpec `yaml:"chaos_schedule,omitempty"`
+}
+
+type testLoadChaosPhaseSpec struct {
+	Cycle              int                                  `yaml:"-" json:"cycle,omitempty"`
+	StepRecovery       map[string]*testLoadRecoverySpec     `yaml:"step_recovery,omitempty" json:"StepRecovery,omitempty"`
+	StepThresholds     map[string]testLoadStepThresholdSpec `yaml:"step_thresholds,omitempty" json:"StepThresholds,omitempty"`
+	CircuitBreaker     *testCircuitBreakerSpec              `yaml:"circuit_breaker,omitempty" json:"CircuitBreaker,omitempty"`
+	ConnectionAttempts *testRetryAmplificationSpec          `yaml:"connection_attempts,omitempty" json:"ConnectionAttempts,omitempty"`
+	RetryAmplification *testRetryAmplificationSpec          `yaml:"retry_amplification,omitempty" json:"RetryAmplification,omitempty"`
+	Recovery           *testLoadRecoverySpec                `yaml:"recovery,omitempty"`
+	Name               string                               `yaml:"name"`
+	Duration           string                               `yaml:"duration"`
+	Rules              []testChaosRule                      `yaml:"rules,omitempty"`
+	Thresholds         testLoadStepThresholdSpec            `yaml:"thresholds,omitempty"`
+}
+
+type testLoadChaosPhase struct {
+	Cycle              int
+	StepRecovery       map[string]*testLoadRecoveryConfig
+	StepThresholds     map[string]testLoadStepThresholdConfig
+	CircuitBreaker     *testCircuitBreakerSpec
+	ConnectionAttempts *testRetryAmplificationSpec
+	RetryAmplification *testRetryAmplificationSpec
+	Recovery           *testLoadRecoveryConfig
+	Name               string
+	Duration           time.Duration
+	Rules              []testChaosRule
+	Thresholds         testLoadStepThresholdConfig
 }
 
 type testLoadRelativeSpec struct {
@@ -107,6 +141,9 @@ type testLoadOverrides struct {
 }
 
 type testLoadConfig struct {
+	FaultCampaign                       *testFaultCampaignSpec
+	OutageCycles                        *testOutageCyclesSpec
+	Streams                             []testLoadStreamSpec
 	VUs, Iterations, Rate, RequestLimit int
 	Duration, P95, P99, Pacing          time.Duration
 	ErrorRate                           float64
@@ -114,6 +151,9 @@ type testLoadConfig struct {
 	SuccessRate                         *float64
 	MinSamples                          int
 	Stages                              []testLoadStage
+	ChaosSchedule                       []testLoadChaosPhase
+	ChaosPhaseClock                     *testLoadPhaseClock
+	OnStart                             func(time.Time)
 	StepThresholds                      map[string]testLoadStepThresholdConfig
 	Progress                            func(testLoadProgress)
 	Regression                          testRegressionConfig
@@ -156,33 +196,65 @@ type testLoadThresholdEvidence struct {
 }
 
 type testLoadEvidence struct {
-	Mode                  string  `json:"mode"`
-	Status                string  `json:"status"`
-	VUs                   int     `json:"vus"`
-	MaxVUs                int     `json:"max_vus"`
-	PeakVUs               int     `json:"peak_vus"`
-	IterationLimit        int     `json:"iteration_limit,omitempty"`
-	RequestedDurationMS   int64   `json:"requested_duration_ms,omitempty"`
-	RequestLimit          int     `json:"request_limit"`
-	IterationsStarted     int     `json:"iterations_started"`
-	IterationsCompleted   int     `json:"iterations_completed"`
-	IterationsFailed      int     `json:"iterations_failed"`
-	IterationsInterrupted int     `json:"iterations_interrupted"`
-	DurationMS            float64 `json:"duration_ms"`
-	RequestsPerSecond     float64 `json:"requests_per_second"`
-	StopReason            string  `json:"stop_reason,omitempty"`
-	PacingMS              float64 `json:"pacing_ms,omitempty"`
+	OutageCycles          *testOutageCyclesEvidence `json:"outage_cycles,omitempty"`
+	Streams               []testLoadStreamEvidence  `json:"streams,omitempty"`
+	Mode                  string                    `json:"mode"`
+	Status                string                    `json:"status"`
+	VUs                   int                       `json:"vus"`
+	MaxVUs                int                       `json:"max_vus"`
+	PeakVUs               int                       `json:"peak_vus"`
+	IterationLimit        int                       `json:"iteration_limit,omitempty"`
+	RequestedDurationMS   int64                     `json:"requested_duration_ms,omitempty"`
+	RequestLimit          int                       `json:"request_limit"`
+	IterationsStarted     int                       `json:"iterations_started"`
+	IterationsCompleted   int                       `json:"iterations_completed"`
+	IterationsFailed      int                       `json:"iterations_failed"`
+	IterationsInterrupted int                       `json:"iterations_interrupted"`
+	DurationMS            float64                   `json:"duration_ms"`
+	RequestsPerSecond     float64                   `json:"requests_per_second"`
+	StopReason            string                    `json:"stop_reason,omitempty"`
+	PacingMS              float64                   `json:"pacing_ms,omitempty"`
+	testLoadMetrics
+	Steps       []testLoadStepEvidence       `json:"steps,omitempty"`
+	Thresholds  []testLoadThresholdEvidence  `json:"thresholds,omitempty"`
+	Stages      []testLoadStageEvidence      `json:"stages,omitempty"`
+	Arrival     *testLoadArrivalEvidence     `json:"arrival,omitempty"`
+	Workload    *testLoadWorkload            `json:"workload,omitempty"`
+	ChaosPhases []testLoadChaosPhaseEvidence `json:"chaos_phases,omitempty"`
+}
+
+type testLoadChaosPhaseEvidence struct {
+	Cycle              int                                  `json:"cycle,omitempty"`
+	StepRecovery       map[string]*testLoadRecoveryEvidence `json:"step_recovery,omitempty"`
+	CircuitRequests    []testCircuitIncomingSample          `json:"-"`
+	CircuitBreaker     *testCircuitBreakerEvidence          `json:"circuit_breaker,omitempty"`
+	ConnectionAttempts *testRetryAmplificationEvidence      `json:"connection_attempts,omitempty"`
+	RetryAmplification *testRetryAmplificationEvidence      `json:"retry_amplification,omitempty"`
+	Recovery           *testLoadRecoveryEvidence            `json:"recovery,omitempty"`
+	Name               string                               `json:"name"`
+	PlannedStartMS     int64                                `json:"planned_start_ms"`
+	PlannedEndMS       int64                                `json:"planned_end_ms"`
+	ActualDurationMS   int64                                `json:"actual_duration_ms,omitempty"`
+	StartedAt          time.Time                            `json:"started_at,omitempty"`
+	FinishedAt         time.Time                            `json:"finished_at,omitempty"`
+	Chaos              *testChaosEvidence                   `json:"chaos,omitempty"`
 	testLoadMetrics
 	Steps      []testLoadStepEvidence      `json:"steps,omitempty"`
 	Thresholds []testLoadThresholdEvidence `json:"thresholds,omitempty"`
-	Stages     []testLoadStageEvidence     `json:"stages,omitempty"`
-	Arrival    *testLoadArrivalEvidence    `json:"arrival,omitempty"`
-	Workload   *testLoadWorkload           `json:"workload,omitempty"`
 }
 
 func validateTestLoadSpec(spec *testLoadSpec) error {
+	if spec != nil && (spec.OutageCycles != nil || spec.FaultCampaign != nil) {
+		_, err := expandTestOutageCycleLoad(spec)
+		if err != nil || (!spec.cyclesExpanded && !spec.campaignExpanded) {
+			return err
+		}
+	}
 	if spec == nil {
 		return nil
+	}
+	if err := validateTestLoadStreams(spec); err != nil {
+		return err
 	}
 	if spec.VUs < 0 || spec.VUs > testLoadMaxVUs {
 		return fmt.Errorf("load.vus must be between 1 and %d when supplied", testLoadMaxVUs)
@@ -239,6 +311,81 @@ func validateTestLoadSpec(spec *testLoadSpec) error {
 		}
 		if total > testLoadMaxDuration {
 			return errors.New("load stages must total at most 5m")
+		}
+	}
+	if len(spec.ChaosSchedule) > 0 {
+		if len(spec.ChaosSchedule) < 3 || len(spec.ChaosSchedule) > testLoadMaxStages {
+			return fmt.Errorf("load.chaos_schedule needs between 3 and %d phases", testLoadMaxStages)
+		}
+		var loadDuration time.Duration
+		if spec.Duration != "" {
+			loadDuration, _ = time.ParseDuration(spec.Duration)
+		} else {
+			for _, stage := range spec.Stages {
+				duration, _ := time.ParseDuration(stage.Duration)
+				loadDuration += duration
+			}
+		}
+		if loadDuration <= 0 {
+			return errors.New("load.chaos_schedule requires a duration-based load or load stages")
+		}
+		seen := make(map[string]bool, len(spec.ChaosSchedule))
+		var scheduleDuration time.Duration
+		faulted := false
+		for i, phase := range spec.ChaosSchedule {
+			if err := validateTestEndpointRecovery(phase, i > 0 && (len(spec.ChaosSchedule[i-1].Rules) > 0 || (spec.campaignExpanded && spec.ChaosSchedule[i-1].Cycle > 0))); err != nil {
+				return err
+			}
+			if err := validateTestPhaseStepBudgets(phase); err != nil {
+				return err
+			}
+			if err := validateTestCircuitBreaker(spec.ChaosSchedule, i); err != nil {
+				return err
+			}
+			if err := validateTestConnectionAttempts(phase); err != nil {
+				return err
+			}
+			if err := validateTestRetryAmplification(phase); err != nil {
+				return err
+			}
+			budget := phase.Thresholds
+			if err := validateTestLoadThresholds(budget.P95, budget.P99, budget.ErrorRate, budget.SuccessRate, budget.MinSamples); err != nil {
+				return fmt.Errorf("load.chaos_schedule phase %q thresholds: %w", phase.Name, err)
+			}
+			if !testHTTPNamePattern.MatchString(phase.Name) || seen[phase.Name] {
+				return fmt.Errorf("load.chaos_schedule phase %d has an invalid or duplicate name %q", i+1, phase.Name)
+			}
+			seen[phase.Name] = true
+			duration, err := time.ParseDuration(phase.Duration)
+			if err != nil || duration < time.Second || duration > testLoadMaxDuration || duration%time.Millisecond != 0 {
+				return fmt.Errorf("load.chaos_schedule phase %q duration must be between 1s and 5m and a whole millisecond", phase.Name)
+			}
+			if err := validateTestLoadRecovery(phase, i > 0 && (len(spec.ChaosSchedule[i-1].Rules) > 0 || (spec.campaignExpanded && spec.ChaosSchedule[i-1].Cycle > 0)), duration); err != nil {
+				return err
+			}
+			if testPhaseNeedsRecoveryBaseline(testLoadChaosPhase{Recovery: resolveTestLoadRecovery(phase.Recovery), StepRecovery: resolveTestEndpointRecovery(phase.StepRecovery)}) && (i < 2 || len(spec.ChaosSchedule[i-2].Rules) > 0) {
+				return fmt.Errorf("load.chaos_schedule phase %q relative recovery requires a fault-free phase immediately before the fault", phase.Name)
+			}
+			scheduleDuration += duration
+			faulted = faulted || len(phase.Rules) > 0
+			if (i == 0 || i == len(spec.ChaosSchedule)-1) && len(phase.Rules) > 0 {
+				return errors.New("load.chaos_schedule must start and end with a phase that has no rules")
+			}
+			if i > 0 && len(phase.Rules) > 0 && len(spec.ChaosSchedule[i-1].Rules) > 0 {
+				return errors.New("load.chaos_schedule fault phases must be separated by a phase with no rules")
+			}
+		}
+		if scheduleDuration > testLoadMaxDuration {
+			return errors.New("load.chaos_schedule phases must total at most 5m")
+		}
+		if !faulted {
+			return errors.New("load.chaos_schedule must include at least one fault phase")
+		}
+		if scheduleDuration != loadDuration {
+			return fmt.Errorf("load.chaos_schedule phases total %s; they must equal the load scheduling duration %s", scheduleDuration, loadDuration)
+		}
+		if spec.Relative != nil && spec.Relative.Retry != nil {
+			return errors.New("load.chaos_schedule cannot be combined with relative retry_until_passes")
 		}
 	}
 	if err := validateTestLoadRelativeSpec(spec.Relative); err != nil {
@@ -396,6 +543,18 @@ func validateTestLoadStepThresholds(scenario testScenario) error {
 			return fmt.Errorf("load.thresholds.steps references undeclared HTTP step %q", name)
 		}
 	}
+	for _, phase := range scenario.Load.ChaosSchedule {
+		for name := range phase.StepRecovery {
+			if !names[name] {
+				return fmt.Errorf("load.chaos_schedule phase %q step_recovery references undeclared HTTP step %q", phase.Name, name)
+			}
+		}
+		for name := range phase.StepThresholds {
+			if !names[name] {
+				return fmt.Errorf("load.chaos_schedule phase %q step_thresholds references undeclared HTTP step %q", phase.Name, name)
+			}
+		}
+	}
 	if scenario.Load.Regression != nil {
 		for name := range scenario.Load.Regression.Steps {
 			if !names[name] {
@@ -417,6 +576,14 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 	if scenario.Load != nil {
 		spec = *scenario.Load
 	}
+	if len(spec.Streams) > 0 && (overrides.VUsSet || overrides.RateSet || overrides.IterationsSet || overrides.PacingSet) {
+		return nil, errors.New("load streams cannot use VU, rate, iteration, or pacing overrides")
+	}
+	expanded, err := expandTestOutageCycleLoad(&spec)
+	if err != nil {
+		return nil, err
+	}
+	spec = *expanded
 	if overrides.IterationsSet && overrides.DurationSet {
 		return nil, errors.New("choose --iterations or --duration, not both")
 	}
@@ -459,9 +626,15 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 	if err := validateTestLoadStepThresholds(scenario); err != nil {
 		return nil, err
 	}
-	cfg := &testLoadConfig{VUs: spec.VUs, Iterations: spec.Iterations, Rate: spec.Rate, RequestLimit: testLoadMaxRequests}
+	cfg := &testLoadConfig{FaultCampaign: spec.FaultCampaign, OutageCycles: spec.OutageCycles, VUs: spec.VUs, Iterations: spec.Iterations, Rate: spec.Rate, RequestLimit: testLoadMaxRequests}
+	cfg.Streams = append([]testLoadStreamSpec(nil), spec.Streams...)
+	if err := validateTestLoadStreamRequests(cfg, append(append([]testHTTPRequest(nil), scenario.Requests...), scenario.Checks...)); err != nil {
+		return nil, err
+	}
 	cfg.Regression = resolveTestRegressionConfig(spec.Regression)
-	if cfg.VUs == 0 {
+	if len(cfg.Streams) > 0 {
+		cfg.VUs = cfg.maxVUs()
+	} else if cfg.VUs == 0 {
 		cfg.VUs = 1
 	}
 	if len(spec.Stages) > 0 {
@@ -474,6 +647,25 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 		cfg.Duration, _ = time.ParseDuration(spec.Duration)
 	} else if cfg.Iterations == 0 {
 		cfg.Iterations = 100
+	}
+	if len(cfg.Streams) > 0 {
+		planned := 0
+		for _, stream := range cfg.Streams {
+			sc := testLoadConfig{Rate: stream.Rate, Duration: cfg.Duration}
+			planned += sc.plannedArrivals() * len(stream.Requests)
+		}
+		if planned > testLoadMaxRequests {
+			return nil, fmt.Errorf("stream schedules would exceed %d HTTP steps", testLoadMaxRequests)
+		}
+	}
+	for _, phase := range spec.ChaosSchedule {
+		duration, _ := time.ParseDuration(phase.Duration)
+		p95, _ := time.ParseDuration(phase.Thresholds.P95)
+		p99, _ := time.ParseDuration(phase.Thresholds.P99)
+		cfg.ChaosSchedule = append(cfg.ChaosSchedule, testLoadChaosPhase{Cycle: phase.Cycle,
+			StepRecovery: resolveTestEndpointRecovery(phase.StepRecovery), StepThresholds: resolveTestPhaseStepBudgets(phase.StepThresholds), CircuitBreaker: phase.CircuitBreaker, ConnectionAttempts: phase.ConnectionAttempts, RetryAmplification: phase.RetryAmplification, Name: phase.Name, Duration: duration, Rules: append([]testChaosRule(nil), phase.Rules...), Recovery: resolveTestLoadRecovery(phase.Recovery),
+			Thresholds: testLoadStepThresholdConfig{P95: p95, P99: p99, ErrorRate: phase.Thresholds.ErrorRate, SuccessRate: phase.Thresholds.SuccessRate, MinSamples: phase.Thresholds.MinSamples},
+		})
 	}
 	if cfg.Iterations > testLoadMaxRequests/(len(scenario.Requests)+len(scenario.Checks)) {
 		return nil, fmt.Errorf("load journey would exceed %d HTTP steps; select fewer iterations", testLoadMaxRequests)
@@ -511,6 +703,33 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 			return nil, errors.New("load scheduling duration exceeds the scenario timeout")
 		}
 	}
+	for _, phase := range cfg.ChaosSchedule {
+		if phase.CircuitBreaker != nil {
+			count := 0
+			for _, request := range append(append([]testHTTPRequest(nil), scenario.Requests...), scenario.Checks...) {
+				if request.Name == phase.CircuitBreaker.Request {
+					count++
+				}
+			}
+			if count != 1 {
+				return nil, fmt.Errorf("phase %q circuit_breaker request must name exactly one load request", phase.Name)
+			}
+		}
+		for _, budget := range []*testRetryAmplificationSpec{phase.RetryAmplification, phase.ConnectionAttempts} {
+			if budget == nil {
+				continue
+			}
+			count := 0
+			for _, request := range append(append([]testHTTPRequest(nil), scenario.Requests...), scenario.Checks...) {
+				if request.Name == budget.Request {
+					count++
+				}
+			}
+			if count != 1 {
+				return nil, fmt.Errorf("phase %q attempt budget request %q must identify exactly one load request", phase.Name, budget.Request)
+			}
+		}
+	}
 	return cfg, nil
 }
 
@@ -525,9 +744,16 @@ func newTestLoadEvidence(cfg *testLoadConfig) *testLoadEvidence {
 	if cfg.Rate > 0 {
 		mode = "arrival-rate"
 	}
+	if len(cfg.Streams) > 0 {
+		mode = "streams"
+	}
 	report := &testLoadEvidence{Mode: mode, Status: "not_started", VUs: cfg.VUs, MaxVUs: cfg.maxVUs(), IterationLimit: cfg.Iterations, RequestedDurationMS: cfg.Duration.Milliseconds(), RequestLimit: cfg.RequestLimit, PacingMS: loadMilliseconds(cfg.Pacing)}
 	if cfg.Rate > 0 {
 		report.Arrival = &testLoadArrivalEvidence{TargetRate: cfg.Rate, Planned: cfg.plannedArrivals()}
+	}
+	for _, stream := range cfg.Streams {
+		sc := testLoadConfig{Rate: stream.Rate, Duration: cfg.Duration}
+		report.Streams = append(report.Streams, testLoadStreamEvidence{Name: stream.Name, Requests: append([]string(nil), stream.Requests...), VUs: stream.VUs, Arrival: testLoadArrivalEvidence{TargetRate: stream.Rate, Planned: sc.plannedArrivals()}})
 	}
 	startVUs := cfg.VUs
 	for i, stage := range cfg.Stages {
@@ -550,11 +776,22 @@ type testLoadCollector struct {
 	reservedRequests   int
 	budgetExceeded     bool
 	steps              []testLoadStepSamples
+	chaosPhases        []testLoadPhaseSamples
+	phaseClock         *testLoadPhaseClock
+	loadStartedAt      time.Time
 	stageStarts        []int
 	arrivalsScheduled  int
 	droppedCapacity    int
 	droppedLate        int
 	schedulingDuration time.Duration
+}
+
+type testLoadPhaseSamples struct {
+	collectCircuit  bool
+	circuitSamples  []testCircuitIncomingSample
+	collectRecovery bool
+	recoverySamples []testLoadRecoverySample
+	steps           []testLoadStepSamples
 }
 
 func (c *testLoadCollector) next(ctx context.Context, cfg *testLoadConfig, started time.Time, vu int, readyAt time.Time) (int, time.Duration, bool) {
@@ -607,9 +844,32 @@ func (c *testLoadCollector) reserve(ctx context.Context, limit int) bool {
 }
 
 func (c *testLoadCollector) record(index int, result testHTTPRequestEvidence, duration time.Duration) {
+	c.recordAt(index, result, duration, time.Now())
+}
+
+func (c *testLoadCollector) recordAt(index int, result testHTTPRequestEvidence, duration time.Duration, startedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	step := &c.steps[index]
+	addTestLoadSample(&c.steps[index], result, duration)
+	if phase := c.phaseIndex(startedAt); phase >= 0 && phase < len(c.chaosPhases) {
+		addTestLoadSample(&c.chaosPhases[phase].steps[index], result, duration)
+		if c.chaosPhases[phase].collectCircuit {
+			c.chaosPhases[phase].circuitSamples = append(c.chaosPhases[phase].circuitSamples, testCircuitIncomingSample{At: startedAt, Name: c.steps[index].evidence.Name})
+		}
+		if c.chaosPhases[phase].collectRecovery {
+			c.chaosPhases[phase].recoverySamples = append(c.chaosPhases[phase].recoverySamples, testLoadRecoverySample{Name: c.steps[index].evidence.Name, StartedAt: startedAt, Duration: duration, Passed: result.Passed})
+		}
+	}
+}
+
+func (c *testLoadCollector) phaseIndex(startedAt time.Time) int {
+	if c.phaseClock == nil {
+		return -1
+	}
+	return c.phaseClock.phaseAt(startedAt)
+}
+
+func addTestLoadSample(step *testLoadStepSamples, result testHTTPRequestEvidence, duration time.Duration) {
 	step.evidence.Requests++
 	step.evidence.Statuses[strconv.Itoa(result.Status)]++
 	step.samples = append(step.samples, duration)
@@ -659,16 +919,34 @@ func runTestLoadWithCaptures(parent context.Context, baseURL, runID string, cons
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: testLoadDrainTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	consumerKeys := testHTTPConsumerKeys(consumerEnv)
-	collector := &testLoadCollector{steps: make([]testLoadStepSamples, len(steps)), stageStarts: make([]int, len(cfg.Stages))}
+	collector := &testLoadCollector{
+		steps: make([]testLoadStepSamples, len(steps)), stageStarts: make([]int, len(cfg.Stages)),
+		phaseClock: cfg.ChaosPhaseClock, loadStartedAt: started,
+	}
 	for i, step := range steps {
 		collector.steps[i].evidence = testLoadStepEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0], testLoadMetrics: testLoadMetrics{Statuses: map[string]int{}}}
+	}
+	for phaseIndex, scheduledPhase := range cfg.ChaosSchedule {
+		collectBaseline := phaseIndex+2 < len(cfg.ChaosSchedule) && testPhaseNeedsRecoveryBaseline(cfg.ChaosSchedule[phaseIndex+2])
+		collectCircuit := scheduledPhase.CircuitBreaker != nil || (phaseIndex > 0 && cfg.ChaosSchedule[phaseIndex-1].CircuitBreaker != nil) || (phaseIndex+1 < len(cfg.ChaosSchedule) && cfg.ChaosSchedule[phaseIndex+1].CircuitBreaker != nil)
+		phase := testLoadPhaseSamples{collectCircuit: collectCircuit, collectRecovery: scheduledPhase.Recovery != nil || len(scheduledPhase.StepRecovery) > 0 || collectBaseline, steps: make([]testLoadStepSamples, len(steps))}
+		for i, step := range steps {
+			phase.steps[i].evidence = testLoadStepEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0], testLoadMetrics: testLoadMetrics{Statuses: map[string]int{}}}
+		}
+		collector.chaosPhases = append(collector.chaosPhases, phase)
 	}
 	journey := testLoadJourney{
 		Client: client, BaseURL: baseURL, RunID: runID, ConsumerKeys: consumerKeys, Steps: steps, Data: data, InitialCaptures: captures,
 	}
+	if cfg.OnStart != nil {
+		cfg.OnStart(started)
+	}
 	runJourney := func(iteration int) { journey.run(ctx, collector, cfg, iteration) }
 	stopProgress := monitorTestLoadProgress(ctx, collector, cfg, started)
-	if cfg.Rate > 0 {
+	var streamEvidence []testLoadStreamEvidence
+	if len(cfg.Streams) > 0 {
+		streamEvidence = runTestLoadStreams(ctx, collector, cfg, started, journey)
+	} else if cfg.Rate > 0 {
 		runTestArrivalLoad(ctx, collector, cfg, started, runJourney)
 	} else {
 		runTestConcurrencyLoad(ctx, collector, cfg, started, runJourney)
@@ -676,6 +954,7 @@ func runTestLoadWithCaptures(parent context.Context, baseURL, runID string, cons
 	stopProgress()
 	duration := time.Since(started)
 	report := collector.report(cfg, duration)
+	report.Streams = streamEvidence
 	var executionError error
 	switch {
 	case errors.Is(parent.Err(), context.Canceled):
@@ -699,8 +978,17 @@ func runTestLoadWithCaptures(parent context.Context, baseURL, runID string, cons
 		executionError = errors.New("load generated no HTTP steps")
 	}
 	if executionError == nil {
+		for _, stream := range streamEvidence {
+			if stream.Arrival.Dropped > 0 {
+				report.StopReason = "dropped_arrivals"
+				executionError = fmt.Errorf("load stream %q dropped %d arrivals", stream.Name, stream.Arrival.Dropped)
+				break
+			}
+		}
+	}
+	if executionError == nil {
 		if !testLoadThresholdsPassed(report) {
-			executionError = errors.New("load thresholds failed")
+			executionError = testLoadThresholdFailure(report)
 		}
 	}
 	report.Status = "passed"
@@ -763,7 +1051,77 @@ func (c *testLoadCollector) report(cfg *testLoadConfig, duration time.Duration) 
 	}
 	report.Thresholds = testLoadThresholdEvidenceFor(report.testLoadMetrics,
 		cfg.P95, cfg.P99, errorRateThreshold, cfg.SuccessRate, cfg.MinSamples)
+	report.ChaosPhases = c.reportChaosPhases(cfg)
 	return report
+}
+
+func (c *testLoadCollector) reportChaosPhases(cfg *testLoadConfig) []testLoadChaosPhaseEvidence {
+	if len(cfg.ChaosSchedule) == 0 {
+		return nil
+	}
+	phases := make([]testLoadChaosPhaseEvidence, 0, len(cfg.ChaosSchedule))
+	var plannedStart time.Duration
+	for i, phase := range cfg.ChaosSchedule {
+		entry := testLoadChaosPhaseEvidence{Cycle: phase.Cycle,
+			CircuitRequests: append([]testCircuitIncomingSample(nil), c.chaosPhases[i].circuitSamples...), Name: phase.Name, PlannedStartMS: plannedStart.Milliseconds(),
+			PlannedEndMS:    (plannedStart + phase.Duration).Milliseconds(),
+			testLoadMetrics: testLoadMetrics{Statuses: map[string]int{}},
+		}
+		window := c.phaseClock.window(i)
+		entry.StartedAt, entry.FinishedAt = window.StartedAt, window.FinishedAt
+		if !window.StartedAt.IsZero() && !window.FinishedAt.IsZero() {
+			entry.ActualDurationMS = window.FinishedAt.Sub(window.StartedAt).Milliseconds()
+		}
+		var allSamples []time.Duration
+		for _, sample := range c.chaosPhases[i].steps {
+			step := sample.evidence
+			step.Latency = testLoadLatencySummary(sample.samples)
+			if step.Requests > 0 {
+				step.ErrorRate = float64(step.Failures) / float64(step.Requests)
+				step.SuccessRate = 1 - step.ErrorRate
+			}
+			if budget, ok := phase.StepThresholds[step.Name]; ok {
+				step.Thresholds = testLoadThresholdEvidenceFor(step.testLoadMetrics, budget.P95, budget.P99, budget.ErrorRate, budget.SuccessRate, budget.MinSamples)
+			}
+			entry.Steps = append(entry.Steps, step)
+			entry.Requests += step.Requests
+			entry.Failures += step.Failures
+			for status, count := range step.Statuses {
+				entry.Statuses[status] += count
+			}
+			allSamples = append(allSamples, sample.samples...)
+		}
+		entry.Latency = testLoadLatencySummary(allSamples)
+		if entry.Requests > 0 {
+			entry.ErrorRate = float64(entry.Failures) / float64(entry.Requests)
+			entry.SuccessRate = 1 - entry.ErrorRate
+		}
+		budget := phase.Thresholds
+		entry.Thresholds = testLoadThresholdEvidenceFor(entry.testLoadMetrics,
+			budget.P95, budget.P99, budget.ErrorRate, budget.SuccessRate, budget.MinSamples)
+		recoveryWindow := window
+		if recoveryWindow.FinishedAt.IsZero() {
+			recoveryWindow.FinishedAt = time.Now()
+		}
+		var baseline *testLoadRecoveryBaseline
+		if phase.Recovery != nil && phase.Recovery.Relative != nil && i >= 2 {
+			baseline = testLoadRecoveryBaselineFor(cfg.ChaosSchedule[i-2].Name, c.phaseClock.window(i-2), c.chaosPhases[i-2].recoverySamples, phase.Recovery.Relative.BaselineMinSamples)
+		}
+		entry.Recovery = evaluateTestLoadRecovery(phase.Recovery, recoveryWindow, c.chaosPhases[i].recoverySamples, baseline)
+		if len(phase.StepRecovery) > 0 {
+			entry.StepRecovery = make(map[string]*testLoadRecoveryEvidence, len(phase.StepRecovery))
+		}
+		for name, budget := range phase.StepRecovery {
+			var endpointBaseline *testLoadRecoveryBaseline
+			if budget.Relative != nil && i >= 2 {
+				endpointBaseline = testLoadRecoveryBaselineFor(cfg.ChaosSchedule[i-2].Name, c.phaseClock.window(i-2), testEndpointRecoverySamples(c.chaosPhases[i-2].recoverySamples, name), budget.Relative.BaselineMinSamples)
+			}
+			entry.StepRecovery[name] = evaluateTestLoadRecovery(budget, recoveryWindow, testEndpointRecoverySamples(c.chaosPhases[i].recoverySamples, name), endpointBaseline)
+		}
+		phases = append(phases, entry)
+		plannedStart += phase.Duration
+	}
+	return phases
 }
 
 func testLoadThresholdEvidenceFor(metrics testLoadMetrics, p95, p99 time.Duration, errorRate, successRate *float64, minSamples int) []testLoadThresholdEvidence {
@@ -787,6 +1145,28 @@ func testLoadThresholdEvidenceFor(metrics testLoadMetrics, p95, p99 time.Duratio
 }
 
 func testLoadThresholdsPassed(report *testLoadEvidence) bool {
+	for _, phase := range report.ChaosPhases {
+		for _, r := range phase.StepRecovery {
+			if r == nil || !r.Passed {
+				return false
+			}
+		}
+		if phase.Recovery != nil && !phase.Recovery.Passed {
+			return false
+		}
+		for _, step := range phase.Steps {
+			for _, threshold := range step.Thresholds {
+				if !threshold.Passed {
+					return false
+				}
+			}
+		}
+		for _, threshold := range phase.Thresholds {
+			if !threshold.Passed {
+				return false
+			}
+		}
+	}
 	for _, threshold := range report.Thresholds {
 		if !threshold.Passed {
 			return false
@@ -800,6 +1180,39 @@ func testLoadThresholdsPassed(report *testLoadEvidence) bool {
 		}
 	}
 	return true
+}
+
+func testLoadThresholdFailure(report *testLoadEvidence) error {
+	var failures []string
+	for _, phase := range report.ChaosPhases {
+		for _, name := range testEndpointRecoveryNames(phase.StepRecovery) {
+			r := phase.StepRecovery[name]
+			if r == nil {
+				failures = append(failures, fmt.Sprintf("chaos phase %q HTTP step %q recovery evidence missing", phase.Name, name))
+			} else if !r.Passed {
+				failures = append(failures, fmt.Sprintf("chaos phase %q HTTP step %q recovery failed: %s", phase.Name, name, r.Error))
+			}
+		}
+		if phase.Recovery != nil && !phase.Recovery.Passed {
+			failures = append(failures, fmt.Sprintf("chaos phase %q recovery failed: %s", phase.Name, phase.Recovery.Error))
+		}
+		for _, step := range phase.Steps {
+			for _, threshold := range step.Thresholds {
+				if !threshold.Passed {
+					failures = append(failures, fmt.Sprintf("chaos phase %q HTTP step %q: %s %s %.4g, observed %.4g", phase.Name, step.Name, threshold.Metric, threshold.Operator, threshold.Limit, threshold.Actual))
+				}
+			}
+		}
+		for _, threshold := range phase.Thresholds {
+			if !threshold.Passed {
+				failures = append(failures, fmt.Sprintf("chaos phase %q: %s %s %.4g, observed %.4g", phase.Name, threshold.Metric, threshold.Operator, threshold.Limit, threshold.Actual))
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("load thresholds failed: %s", strings.Join(failures, "; "))
+	}
+	return errors.New("load thresholds failed")
 }
 
 func testLoadLatencySummary(samples []time.Duration) testLoadLatency {
@@ -823,6 +1236,9 @@ func loadMilliseconds(duration time.Duration) float64 {
 }
 
 func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
+	for _, stream := range report.Streams {
+		_, _ = fmt.Fprintf(out, "  stream %s: target %d journeys/s, %d VUs; %d/%d arrivals scheduled, %d dropped\n", stream.Name, stream.Arrival.TargetRate, stream.VUs, stream.Arrival.Scheduled, stream.Arrival.Planned, stream.Arrival.Dropped)
+	}
 	if report.Status == "not_started" {
 		_, _ = fmt.Fprintln(out, "  load: not started")
 		return
@@ -834,6 +1250,104 @@ func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
 		report.IterationsCompleted, report.IterationsStarted, report.Requests,
 		report.SuccessRate*100, report.ErrorRate*100, report.RequestsPerSecond,
 		report.Latency.P95MS, report.Latency.P99MS, report.VUs, report.MaxVUs, report.PeakVUs)
+	if report.OutageCycles != nil {
+		e := report.OutageCycles
+		if e.Campaign != nil {
+			fmt.Fprintf(out, "  fault campaign: seed %d (%s)\n", e.Campaign.Seed, e.Campaign.Algorithm)
+		}
+		fmt.Fprintf(out, "  outage cycles: %s; %d/%d completed\n", e.Status, e.Completed, e.Count)
+		if e.FirstRecoveryFailedCycle > 0 {
+			fmt.Fprintf(out, "    first failed recovery comparison: cycle %d\n", e.FirstRecoveryFailedCycle)
+		}
+		for _, cycle := range e.Cycles {
+			fmt.Fprintf(out, "    cycle %d (%s → %s): %s %s\n", cycle.Number, cycle.FaultPhase, cycle.RecoveryPhase, cycle.Status, cycle.Error)
+			for _, check := range cycle.RecoveryChecks {
+				target := check.Request
+				if target == "" {
+					target = "aggregate"
+				}
+				if check.BaselineMS != nil && check.CurrentMS != nil && check.LimitMS != nil {
+					status := "failed"
+					if check.Passed {
+						status = "passed"
+					}
+					fmt.Fprintf(out, "      %s recovery: %.3fms; cycle 1 %.3fms, limit %.3fms (%s)\n", target, *check.CurrentMS, *check.BaselineMS, *check.LimitMS, status)
+				} else {
+					fmt.Fprintf(out, "      %s recovery: %s\n", target, check.Error)
+				}
+			}
+		}
+	}
+	for _, phase := range report.ChaosPhases {
+		_, _ = fmt.Fprintf(out, "  chaos phase %q: %d HTTP steps, %.2f%% success, p95 %.3fms, p99 %.3fms (%dms actual)\n",
+			phase.Name, phase.Requests, phase.SuccessRate*100, phase.Latency.P95MS, phase.Latency.P99MS, phase.ActualDurationMS)
+		for _, threshold := range phase.Thresholds {
+			status := "failed"
+			if threshold.Passed {
+				status = "passed"
+			}
+			_, _ = fmt.Fprintf(out, "    %s %s %.4g: %.4g (%s)\n", threshold.Metric, threshold.Operator, threshold.Limit, threshold.Actual, status)
+		}
+		for _, step := range phase.Steps {
+			if len(step.Thresholds) > 0 {
+				_, _ = fmt.Fprintf(out, "    HTTP step %q: %d samples, p95 %.3fms, p99 %.3fms, %.2f%% errors\n", step.Name, step.Requests, step.Latency.P95MS, step.Latency.P99MS, step.ErrorRate*100)
+				for _, threshold := range step.Thresholds {
+					status := "failed"
+					if threshold.Passed {
+						status = "passed"
+					}
+					_, _ = fmt.Fprintf(out, "      %s %s %.4g: %.4g (%s)\n", threshold.Metric, threshold.Operator, threshold.Limit, threshold.Actual, status)
+				}
+			}
+		}
+		if breaker := phase.CircuitBreaker; breaker != nil {
+			stopped, resumed := "unconfirmed", "unconfirmed"
+			if breaker.StoppedMS != nil {
+				stopped = fmt.Sprintf("%dms", *breaker.StoppedMS)
+			}
+			if breaker.ResumedMS != nil {
+				resumed = fmt.Sprintf("%dms", *breaker.ResumedMS)
+			}
+			_, _ = fmt.Fprintf(out, "    circuit breaker %s -> %s: stopped %s (within %dms), resumed %s (within %dms); probes <= %d / %dms; recovery >= %d / window; passed %t %s\n", breaker.From, breaker.To, stopped, breaker.StopWithinMS, resumed, breaker.ResumeWithinMS, breaker.MaxProbes, breaker.WindowMS, breaker.ResumeMinAttempts, breaker.Passed, breaker.Error)
+		}
+		if attempts := phase.ConnectionAttempts; attempts != nil {
+			_, _ = fmt.Fprintf(out, "    TCP connection attempts %s -> %s:%d: %d attempts / %d %s requests = %.4g (limit %.4g, passed %t) %s\n", attempts.From, attempts.To, attempts.Port, attempts.Attempts, attempts.Requests, attempts.Request, attempts.AttemptsPerRequest, attempts.MaxAttemptsPerRequest, attempts.Passed, attempts.Error)
+		}
+		if retry := phase.RetryAmplification; retry != nil {
+			_, _ = fmt.Fprintf(out, "    retry amplification %s -> %s: %d attempts / %d %s requests = %.4g (limit %.4g, passed %t) %s\n", retry.From, retry.To, retry.Attempts, retry.Requests, retry.Request, retry.AttemptsPerRequest, retry.MaxAttemptsPerRequest, retry.Passed, retry.Error)
+		}
+		for _, name := range testEndpointRecoveryNames(phase.StepRecovery) {
+			r := phase.StepRecovery[name]
+			if r == nil {
+				continue
+			}
+			observed := "unconfirmed"
+			if r.RecoveryMS != nil {
+				observed = fmt.Sprintf("%.3fms", *r.RecoveryMS)
+			}
+			_, _ = fmt.Fprintf(out, "    HTTP step %q recovery: passed=%t, observed=%s, within=%dms, sustain=%dms; %s\n", name, r.Passed, observed, r.WithinMS, r.SustainMS, r.Error)
+			printTestRecoveryStability(out, r)
+		}
+		if phase.Recovery != nil {
+			observed := "unconfirmed"
+			if phase.Recovery.RecoveryMS != nil {
+				observed = fmt.Sprintf("%.3fms", *phase.Recovery.RecoveryMS)
+			}
+			_, _ = fmt.Fprintf(out, "    recovery: passed=%t, observed=%s, within=%dms, sustain=%dms; %s\n", phase.Recovery.Passed, observed, phase.Recovery.WithinMS, phase.Recovery.SustainMS, phase.Recovery.Error)
+			printTestRecoveryStability(out, phase.Recovery)
+			if phase.Recovery.Baseline != nil {
+				_, _ = fmt.Fprintf(out, "      baseline %q: %d completed samples\n", phase.Recovery.Baseline.Phase, phase.Recovery.Baseline.Requests)
+			}
+			for _, check := range phase.Recovery.Relative {
+				_, _ = fmt.Fprintf(out, "      relative %s: baseline %.4g, limit %s %.4g, observed %.4g (passed=%t)\n", check.Metric, check.Baseline, check.Operator, check.Limit, check.Actual, check.Passed)
+			}
+		}
+		if phase.Chaos != nil {
+			for _, match := range phase.Chaos.Matches {
+				_, _ = fmt.Fprintf(out, "    %s to %s: %d match(es)\n", match.Rule.Kind, match.Rule.To, match.Matches)
+			}
+		}
+	}
 	for _, threshold := range report.Thresholds {
 		status := "failed"
 		if threshold.Passed {
@@ -866,5 +1380,16 @@ func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
 	}
 	if remaining > 0 {
 		_, _ = fmt.Fprintf(out, "  %d more steps failed; use --report to save all step metrics\n", remaining)
+	}
+}
+
+func printTestRecoveryStability(out io.Writer, r *testLoadRecoveryEvidence) {
+	if r == nil || r.Stability == nil {
+		return
+	}
+	s := r.Stability
+	_, _ = fmt.Fprintf(out, "      stability: observed=%d/%dms, windows=%d, passed=%t\n", s.ObservedMS, s.DurationMS, s.WindowsChecked, s.Passed)
+	if s.RelapseMS != nil {
+		_, _ = fmt.Fprintf(out, "      relapse at %.3fms after fault removal\n", *s.RelapseMS)
 	}
 }

@@ -48,14 +48,17 @@ func (r *testPhaseRecorder) finishCurrent(status string) {
 }
 
 type testValidationResult struct {
-	Suite               string `json:"suite,omitempty"`
-	Engine              string `json:"engine,omitempty"`
-	Scenario            string `json:"scenario"`
-	Project             string `json:"project"`
-	Workloads           int    `json:"workloads"`
-	Buckets             int    `json:"buckets"`
-	Consumers           int    `json:"consumers"`
-	SimulationAvailable bool   `json:"simulation_available"`
+	CampaignRecoveryRegression *testCampaignRecoveryRegressionSpec `json:"campaign_recovery_regression,omitempty"`
+	CampaignRegression         *testCampaignCoverageRegressionSpec `json:"campaign_coverage_regression,omitempty"`
+	CampaignSelection          *testCampaignSeedPreview            `json:"campaign_seed_selection,omitempty"`
+	Suite                      string                              `json:"suite,omitempty"`
+	Engine                     string                              `json:"engine,omitempty"`
+	Scenario                   string                              `json:"scenario"`
+	Project                    string                              `json:"project"`
+	Workloads                  int                                 `json:"workloads"`
+	Buckets                    int                                 `json:"buckets"`
+	Consumers                  int                                 `json:"consumers"`
+	SimulationAvailable        bool                                `json:"simulation_available"`
 }
 
 // Real-VM validation checks deployable app shapes. Local validation checks the
@@ -72,6 +75,24 @@ func validateTestManifestForEngine(scenarios map[string]testScenario, manifestDi
 		return 0
 	}
 	for _, result := range results {
+		if reg := result.CampaignRecoveryRegression; reg != nil {
+			fmt.Fprintf(osStdout, "%s: recovery regression baseline %s (%s); %d checks; report SHA256 %s\n", result.Scenario, reg.RunID, reg.Baseline.Coverage.Profile, len(reg.Checks), reg.Baseline.Coverage.ReportSHA256)
+		}
+		if reg := result.CampaignRegression; reg != nil {
+			fmt.Fprintf(osStdout, "%s: coverage regression baseline %s (%s); minimum exercised-event rate %.2f%%; report SHA256 %s\n", result.Scenario, reg.Baseline.RunID, reg.Baseline.Profile, 100*reg.MinExercisedRate, reg.Baseline.ReportSHA256)
+			if len(reg.MaxDropPercentagePoints) > 0 {
+				fmt.Fprintf(osStdout, "  per-choice drop allowances (percentage points): %v; minimum %d planned events\n", reg.MaxDropPercentagePoints, reg.MinPlannedEvents)
+			}
+		}
+		if result.CampaignSelection != nil {
+			if g := result.CampaignSelection.Guidance; g != nil {
+				fmt.Fprintln(osStdout, result.Scenario+": "+printTestCampaignGuidance(g))
+				for _, batch := range g.Contributions {
+					fmt.Fprintf(osStdout, "  batch %s: observed %v; seeds %v; report SHA256 %s\n", batch.RunID, batch.Observed, batch.Seeds, batch.ReportSHA256)
+				}
+			}
+			fmt.Fprintf(osStdout, "%s: selected seeds %v after %d candidates; planned events by choice %v (traffic matches still required)\n", result.Scenario, result.CampaignSelection.Seeds, result.CampaignSelection.Candidates, result.CampaignSelection.Planned)
+		}
 		if engine == "local" {
 			_, _ = fmt.Fprintf(osStdout, "%s: valid (local HTTP scenario)\n", result.Scenario)
 			continue
@@ -133,8 +154,15 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 				}
 			}
 		}
+		var preview *testCampaignSeedPreview
+		if scenario.Resilience != nil && scenario.Resilience.CampaignCoverage != nil {
+			preview = scenario.Resilience.CampaignCoverage.Preview
+		}
 		results = append(results, testValidationResult{
-			Scenario: name, Project: scenario.Project, Workloads: 1 + len(scenario.Services),
+			CampaignSelection:          preview,
+			CampaignRegression:         testCampaignRegressionSpecForScenario(scenario),
+			CampaignRecoveryRegression: testCampaignRecoveryRegressionSpecForScenario(scenario),
+			Scenario:                   name, Project: scenario.Project, Workloads: 1 + len(scenario.Services),
 			Buckets: len(scenario.Buckets), Consumers: len(scenario.Consumers),
 			SimulationAvailable: len(scenario.Simulation) > 0,
 		})

@@ -15,8 +15,8 @@ from ..models.api_consumer_rate_card_response_unit import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
     from ..models.api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
+    from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
 
 
 T = TypeVar("T", bound="APIConsumerRateCardResponse")
@@ -36,6 +36,7 @@ class APIConsumerRateCardResponse:
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     route_weights: APIConsumerRateCardResponseRouteWeights | Unset = UNSET
+    """Units charged per request on a listed route; unlisted routes count 1."""
     plan_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -96,8 +97,8 @@ class APIConsumerRateCardResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
         from ..models.api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
+        from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))

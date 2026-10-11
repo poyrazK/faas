@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ScenarioTestChaosMatch")
 
 @_attrs_define
 class ScenarioTestChaosMatch:
+    """Count of matches for one fault rule in the scenario run."""
+
     rule_id: str
     count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

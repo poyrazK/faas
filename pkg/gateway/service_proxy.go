@@ -267,6 +267,7 @@ type ServiceProxyConfig struct {
 	ValidateDeployment ServiceProxyDeploymentValidator
 	ResolveChaos       ServiceProxyChaosResolver
 	ObserveChaosMatch  ServiceProxyChaosObserver
+	ObserveTCPAttempt  ServiceProxyChaosObserver
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
@@ -321,6 +322,7 @@ type ServiceProxy struct {
 	validateDeployment    ServiceProxyDeploymentValidator
 	resolveChaos          ServiceProxyChaosResolver
 	observeChaosMatch     ServiceProxyChaosObserver
+	observeTCPAttempt     ServiceProxyChaosObserver
 	observeRequest        func(*http.Request, ServiceRequestObservation)
 	metrics               *Metrics
 	endpointTTL           time.Duration
@@ -422,6 +424,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		validateDeployment:    cfg.ValidateDeployment,
 		resolveChaos:          cfg.ResolveChaos,
 		observeChaosMatch:     cfg.ObserveChaosMatch,
+		observeTCPAttempt:     cfg.ObserveTCPAttempt,
 		observeRequest:        cfg.ObserveRequest,
 		metrics:               cfg.Metrics,
 		endpointTTL:           ttl,
@@ -809,7 +812,7 @@ func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is invalid")
 			return true
 		}
-		if rule.IsTCP() {
+		if rule.IsTCP() || rule.IsDNS() {
 			continue
 		}
 		if !chaos.Select(rule, p.chaosOrdinal.Add(1), traceID) {

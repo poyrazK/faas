@@ -1886,6 +1886,10 @@ type Store interface {
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
 	ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error
 	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	// ScenarioTestDNSChaosByHostIP returns an active run policy only when a
+	// live guest address belongs to a registered test member and the target is
+	// in that same run. The source identity is checked in the same lookup.
+	ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, hostIP, targetWorkload string) (ScenarioTestDNSChaosPolicy, error)
 	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
 	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.

@@ -20,19 +20,21 @@ type testSuiteMember struct {
 }
 
 type testSuiteOptions struct {
-	Engine             string
-	EngineSet          bool
-	Profile            string
-	ProfileSet         bool
-	BaseURL            string
-	Repeat             int
-	Load               bool
-	LoadOverrides      testLoadOverrides
-	Progress           bool
-	BaselinePath       string
-	MaxWorkloadMinutes int
-	Validate           bool
-	Preflight          bool
+	Engine               string
+	EngineSet            bool
+	Profile              string
+	ProfileSet           bool
+	BaseURL              string
+	Repeat               int
+	Load                 bool
+	LoadOverrides        testLoadOverrides
+	Progress             bool
+	BaselinePath         string
+	RecoveryBaselinePath string
+	SweepBaselinePath    string
+	MaxWorkloadMinutes   int
+	Validate             bool
+	Preflight            bool
 }
 
 var testSuiteNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
@@ -84,6 +86,11 @@ func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, re
 	if options.Validate {
 		return validatePreparedTestSuite(name, scenarios)
 	}
+	for _, s := range scenarios {
+		if err := validateTestCampaignGuidanceOptions(s.Scenario, s.Name, s.Profiles, []string{reportPath, junitPath, htmlPath}); err != nil {
+			return printErr("Invalid campaign guidance", err)
+		}
+	}
 	var client *Client
 	if testSuiteHasEngine(scenarios, "real-vm") {
 		client, err = authedClient()
@@ -94,7 +101,7 @@ func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, re
 	if options.Preflight {
 		return runTestSuitePreflight(context.Background(), client, scenarios, options.Repeat)
 	}
-	return executePreparedTests(client, name, scenarios, options.Repeat, failFast, reportPath, junitPath, htmlPath, options.BaselinePath)
+	return executePreparedTests(client, name, scenarios, options.Repeat, failFast, reportPath, junitPath, htmlPath, options.BaselinePath, options.RecoveryBaselinePath, options.SweepBaselinePath)
 }
 
 func prepareTestSuite(path, name string, options testSuiteOptions) ([]testPreparedScenario, error) {
@@ -243,6 +250,16 @@ func validateTestSuiteOptions(scenarios []testPreparedScenario, options testSuit
 		for _, scenario := range scenarios {
 			if scenario.Engine != "real-vm" {
 				return errors.New("--preflight requires every suite member to use real-vm")
+			}
+		}
+	}
+	for _, scenario := range scenarios {
+		if scenario.Engine == "real-vm" {
+			if err := validateTestCampaignGuidanceOptions(scenario.Scenario, scenario.Name, scenario.Profiles, nil); err != nil {
+				return err
+			}
+			if err := validateTestCampaignCoverageBatch(scenario.Scenario, len(scenario.Profiles)*options.Repeat); err != nil {
+				return err
 			}
 		}
 	}

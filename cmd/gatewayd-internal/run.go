@@ -3688,6 +3688,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
 			ObserveChaosMatch: chaosMatchRecorder.Observe,
+			ObserveTCPAttempt: chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:           deps.nodeCache.Forwarding(),
 			RawForward:        deps.nodeCache.RawForwarding(),
 			ObserveRequest:    handler.RecordServiceRequest,
@@ -3970,6 +3971,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
+			}
+			if chaosMatchRecorder != nil {
+				dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
 			}
 			// ADR-373: refuse abuse infrastructure at the pinned resolver.
 			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the

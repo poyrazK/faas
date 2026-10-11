@@ -11,6 +11,7 @@ export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageCompletenessResponse } from './APIConsumerUsageCompletenessResponse.js';
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';

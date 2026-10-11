@@ -38,6 +38,7 @@ type testManifest struct {
 }
 
 type testScenario struct {
+	Resilience       *testResilienceSpec    `yaml:"resilience,omitempty"`
 	Project          string                 `yaml:"project"`
 	Source           string                 `yaml:"source"`
 	Secrets          map[string]string      `yaml:"secrets"`
@@ -189,41 +190,52 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
-	Suite        string                             `json:"suite,omitempty"`
-	Scenario     string                             `json:"scenario"`
-	Profile      string                             `json:"profile"`
-	Engine       string                             `json:"engine"`
-	Case         string                             `json:"case,omitempty"`
-	Attempt      int                                `json:"attempt"`
-	StartedAt    time.Time                          `json:"started_at"`
-	FinishedAt   time.Time                          `json:"finished_at"`
-	DurationMS   int64                              `json:"duration_ms"`
-	Phases       []testPhaseEvidence                `json:"phases,omitempty"`
-	RunID        string                             `json:"run_id,omitempty"`
-	AppSlug      string                             `json:"app_slug,omitempty"`
-	DeploymentID string                             `json:"deployment_id,omitempty"`
-	SourceSHA256 string                             `json:"source_sha256,omitempty"`
-	Services     map[string]string                  `json:"services,omitempty"`
-	AsyncRoutes  map[string][]string                `json:"async_routes,omitempty"`
-	ServiceWake  map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
-	ServiceHot   map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
-	Status       string                             `json:"status"`
-	SkipReason   string                             `json:"skip_reason,omitempty"`
-	Error        string                             `json:"error,omitempty"`
-	CleanupError string                             `json:"cleanup_error,omitempty"`
-	Buckets      []string                           `json:"buckets,omitempty"`
-	Evidence     *testWakeEvidence                  `json:"evidence,omitempty"`
-	Outputs      []testOutputEvidence               `json:"outputs,omitempty"`
-	Invocations  []testInvocationEvidence           `json:"invocations,omitempty"`
-	Deliveries   []testDeliveryEvidence             `json:"deliveries,omitempty"`
-	QueueIdle    bool                               `json:"queue_idle,omitempty"`
-	Diagnostics  map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
-	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
-	Steps        []testScenarioStepEvidence         `json:"steps,omitempty"`
-	Load         *testLoadEvidence                  `json:"load,omitempty"`
-	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
-	Chaos        *testChaosEvidence                 `json:"chaos,omitempty"`
-	Baseline     *testBaselineEvidence              `json:"baseline,omitempty"`
+	CampaignSeed           *testCampaignSeedSetting           `json:"campaign_seed,omitempty"`
+	Minimization           *testFaultMinimizationEvidence     `json:"minimization,omitempty"`
+	Replay                 *testReplayManifest                `json:"replay,omitempty"`
+	ReplayOf               string                             `json:"replay_of,omitempty"`
+	FailureDiagnostics     *testRecoveryFailureDiagnostics    `json:"failure_diagnostics,omitempty"`
+	RecoveryRegression     *testRecoveryRegressionEvidence    `json:"recovery_regression,omitempty"`
+	RecoveryWorkloadSHA256 string                             `json:"recovery_workload_sha256,omitempty"`
+	SweepRegression        *testSweepRegressionEvidence       `json:"sweep_regression,omitempty"`
+	Sweep                  *testFaultSweepSetting             `json:"sweep,omitempty"`
+	FaultMatrix            *testFaultMatrixEvidence           `json:"fault_matrix,omitempty"`
+	Resilience             *testResilienceEvidence            `json:"resilience,omitempty"`
+	Suite                  string                             `json:"suite,omitempty"`
+	Scenario               string                             `json:"scenario"`
+	Profile                string                             `json:"profile"`
+	Engine                 string                             `json:"engine"`
+	Case                   string                             `json:"case,omitempty"`
+	Attempt                int                                `json:"attempt"`
+	StartedAt              time.Time                          `json:"started_at"`
+	FinishedAt             time.Time                          `json:"finished_at"`
+	DurationMS             int64                              `json:"duration_ms"`
+	Phases                 []testPhaseEvidence                `json:"phases,omitempty"`
+	RunID                  string                             `json:"run_id,omitempty"`
+	AppSlug                string                             `json:"app_slug,omitempty"`
+	DeploymentID           string                             `json:"deployment_id,omitempty"`
+	SourceSHA256           string                             `json:"source_sha256,omitempty"`
+	Services               map[string]string                  `json:"services,omitempty"`
+	AsyncRoutes            map[string][]string                `json:"async_routes,omitempty"`
+	ServiceWake            map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
+	ServiceHot             map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
+	Status                 string                             `json:"status"`
+	SkipReason             string                             `json:"skip_reason,omitempty"`
+	Error                  string                             `json:"error,omitempty"`
+	CleanupError           string                             `json:"cleanup_error,omitempty"`
+	Buckets                []string                           `json:"buckets,omitempty"`
+	Evidence               *testWakeEvidence                  `json:"evidence,omitempty"`
+	Outputs                []testOutputEvidence               `json:"outputs,omitempty"`
+	Invocations            []testInvocationEvidence           `json:"invocations,omitempty"`
+	Deliveries             []testDeliveryEvidence             `json:"deliveries,omitempty"`
+	QueueIdle              bool                               `json:"queue_idle,omitempty"`
+	Diagnostics            map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
+	Requests               []testHTTPRequestEvidence          `json:"requests,omitempty"`
+	Steps                  []testScenarioStepEvidence         `json:"steps,omitempty"`
+	Load                   *testLoadEvidence                  `json:"load,omitempty"`
+	LocalApp               *testLocalAppEvidence              `json:"local_app,omitempty"`
+	Chaos                  *testChaosEvidence                 `json:"chaos,omitempty"`
+	Baseline               *testBaselineEvidence              `json:"baseline,omitempty"`
 }
 
 type testScenarioStepEvidence struct {
@@ -285,9 +297,10 @@ type testChaosEvidence struct {
 }
 
 type testChaosRuleEvidence struct {
-	Rule       chaos.Rule `json:"rule"`
-	Matches    int64      `json:"matches"`
-	MinMatches int64      `json:"min_matches,omitempty"`
+	Rule        chaos.Rule `json:"rule"`
+	Matches     int64      `json:"matches"`
+	TCPAttempts *int64     `json:"tcp_attempts,omitempty"`
+	MinMatches  int64      `json:"min_matches,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -295,6 +308,32 @@ func cmdTest(args []string) int {
 }
 
 func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
+	if len(args) > 0 && args[0] == "recovery-trend" {
+		if chaosOverride != nil {
+			return printErr("Invalid trend options", errors.New("recovery trends cannot override chaos"))
+		}
+		return cmdTestRecoveryTrend(args[1:])
+	}
+	if len(args) > 0 && args[0] == "coverage-trend" {
+		if chaosOverride != nil {
+			return printErr("Invalid trend options", errors.New("coverage trends cannot override chaos"))
+		}
+		return cmdTestCoverageTrend(args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "minimize" {
+		if chaosOverride != nil {
+			return printErr("Invalid minimization", errors.New("minimization cannot override chaos"))
+		}
+		return cmdTestMinimize(args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "replay" {
+		if chaosOverride != nil {
+			return printErr("Invalid replay", errors.New("replay cannot override chaos"))
+		}
+		return cmdTestReplay(args[1:])
+	}
 	if len(args) > 0 && args[0] == "init" {
 		if chaosOverride != nil {
 			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
@@ -335,6 +374,8 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	duration := fs.String("duration", "", "schedule journeys for this duration with --load (1s..5m)")
 	pacing := fs.String("pacing", "", "pause between each user's load journeys (0s..1m)")
 	progress := fs.Bool("progress", false, "print live load progress to stderr")
+	sweepBaselinePath := fs.String("sweep-baseline", "", "compare resilience sweeps with a saved JSON report")
+	recoveryBaselinePath := fs.String("recovery-baseline", "", "compare resilience recovery with a saved successful JSON report")
 	baselinePath := fs.String("baseline", "", "compare local load with a saved successful JSON report")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
 	repeat := fs.Int("repeat", 1, "runs per lifecycle profile or local case (1..20)")
@@ -347,7 +388,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH] [--html PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--recovery-baseline PATH] [--sweep-baseline PATH] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH] [--html PATH]", "test")
 		return 1
 	}
 	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {
@@ -370,6 +411,12 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	})
 	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.RateSet || loadOverrides.DurationSet || loadOverrides.PacingSet || *progress) {
 		return printErr("Invalid load options", errors.New("--vus, --iterations, --rate, --duration, --pacing, and --progress require --load"))
+	}
+	if *sweepBaselinePath != "" && (*validateOnly || *preflightOnly || *baselinePath != "" || *recoveryBaselinePath != "") {
+		return printErr("Invalid sweep baseline options", errors.New("--sweep-baseline requires execution and cannot combine baseline types"))
+	}
+	if *recoveryBaselinePath != "" && (*validateOnly || *preflightOnly || *baselinePath != "") {
+		return printErr("Invalid recovery baseline options", errors.New("--recovery-baseline requires execution and cannot be combined with --baseline"))
 	}
 	if *baselinePath != "" && (!*load || *validateOnly || *preflightOnly) {
 		return printErr("Invalid baseline options", errors.New("--baseline requires --load and test execution"))
@@ -402,7 +449,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		options := testSuiteOptions{
 			Engine: *engine, Profile: *profile, BaseURL: *baseURL, Repeat: *repeat,
 			Load: *load, LoadOverrides: loadOverrides, Progress: *progress,
-			BaselinePath:       *baselinePath,
+			BaselinePath: *baselinePath, RecoveryBaselinePath: *recoveryBaselinePath, SweepBaselinePath: *sweepBaselinePath,
 			MaxWorkloadMinutes: *maxWorkloadMinutes, Validate: *validateOnly, Preflight: *preflightOnly,
 		}
 		fs.Visit(func(selected *flag.Flag) {
@@ -508,6 +555,14 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if len(scenario.Steps) > 0 && *engine != "real-vm" {
 		return printErr("Invalid staged scenario engine", errors.New("staged scenarios require --engine real-vm"))
 	}
+	if *engine == "real-vm" {
+		if err := validateTestCampaignGuidanceOptions(scenario, *scenarioName, profiles, []string{*reportPath, *junitPath, *htmlPath}); err != nil {
+			return printErr("Invalid campaign guidance", err)
+		}
+		if err := validateTestCampaignCoverageBatch(scenario, len(profiles)*(*repeat)); err != nil {
+			return printErr("Campaign resource guard exceeded", err)
+		}
+	}
 	if *engine == "real-vm" && *maxWorkloadMinutes > 0 {
 		estimate := estimateTestWorkloadMinutes(scenario, len(profiles)*(*repeat))
 		if estimate > *maxWorkloadMinutes {
@@ -537,7 +592,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		Name: *scenarioName, Scenario: scenario, ManifestDir: sourceDir,
 		Engine: *engine, Profiles: profiles, Cases: cases, BaseURL: *baseURL, Load: loadConfigs[*scenarioName],
 	}
-	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath, *htmlPath, *baselinePath)
+	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath, *htmlPath, *baselinePath, *recoveryBaselinePath, *sweepBaselinePath)
 }
 
 func selectedTestProfiles(profile string) ([]string, error) {
@@ -594,6 +649,19 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 		return testManifest{}, "", err
 	}
 	for name, scenario := range manifest.Scenarios {
+		scenario = resolveTestCampaignGuidancePath(scenario, filepath.Dir(absolute))
+		scenario, err = expandTestOutageCycles(scenario)
+		if err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		scenario, err = expandTestFaultSweep(scenario)
+		if err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestCampaignGuidanceOptions(scenario, name, nil, nil); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		manifest.Scenarios[name] = scenario
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a valid project slug", name)
 		}
@@ -609,6 +677,9 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 		if len(scenario.Command) > 0 && scenario.Command[0] == "" {
 			return testManifest{}, "", fmt.Errorf("scenario %q has an empty assertion command", name)
 		}
+		if err := validateTestResilience(scenario); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
 		fields := fieldsForScenario(name, scenario)
 		if err := validateTestHTTPRequestsWithData(scenario, fields); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
@@ -618,6 +689,9 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 		}
 		if scenario.Load != nil && scenario.Load.Relative != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: load.relative is only valid on a staged step", name)
+		}
+		if scenario.Load != nil && len(scenario.Load.ChaosSchedule) > 0 {
+			return testManifest{}, "", fmt.Errorf("scenario %q: load.chaos_schedule is only valid on a staged step load", name)
 		}
 		if err := validateTestLoadSpec(scenario.Load); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
@@ -1023,6 +1097,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			}
 		}
 	}()
+	diagnosticSecrets := append(testDiagnosticScenarioSecrets(scenario), client.Token(), runSecret)
 	defer func() {
 		if receipt.Error == "" && receipt.CleanupError == "" {
 			return
@@ -1033,7 +1108,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		for _, workload := range workloads {
 			slugs[workload.name] = workload.session.App.Slug
 		}
-		receipt.Diagnostics = collectTestDiagnostics(diagnosticCtx, client, slugs)
+		collectTestRecoveryFailureDiagnostics(diagnosticCtx, client, &receipt, slugs, diagnosticSecrets)
+		receipt.Diagnostics = collectTestDiagnostics(diagnosticCtx, client, slugs, diagnosticSecrets)
 	}()
 	serviceNames := make([]string, 0, len(scenario.Services))
 	for name := range scenario.Services {
@@ -1064,6 +1140,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				return
 			}
 			fixtureTokens[serviceName] = hex.EncodeToString(secret)
+			diagnosticSecrets = append(diagnosticSecrets, fixtureTokens[serviceName])
 		}
 		serviceConfig, err := resolveDevSourceConfig(serviceDir)
 		if err != nil {
@@ -1189,6 +1266,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				values["GREGALE_TEST_TCP_UPSTREAM"] = fixture.Upstream
 			}
 			for key, value := range values {
+				diagnosticSecrets = append(diagnosticSecrets, value)
 				if err := client.SetSecret(ctx, workload.session.App.Slug, key, value); err != nil {
 					receipt.Error = fmt.Sprintf("set TCP fixture configuration for %s: %v", workload.name, err)
 					return
@@ -1206,6 +1284,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				receipt.Error = fmt.Sprintf("resolve secret %s for %s: %v", key, workload.name, err)
 				return
 			}
+			diagnosticSecrets = append(diagnosticSecrets, value)
 			if err := client.SetSecret(ctx, workload.session.App.Slug, key, value); err != nil {
 				receipt.Error = fmt.Sprintf("set secret %s for %s: %v", key, workload.name, err)
 				return
@@ -1213,6 +1292,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	consumerEnv, createdIDs, err := provisionTestConsumers(ctx, client, session.App.Slug, scenario.Consumers, receipt.RunID, timeout)
+	for _, entry := range consumerEnv {
+		if _, value, ok := strings.Cut(entry, "="); ok {
+			diagnosticSecrets = append(diagnosticSecrets, value)
+		}
+	}
 	consumerIDs = append(consumerIDs, createdIDs...)
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create test consumers: %v", err)
@@ -1584,7 +1668,7 @@ func runTestScenarioSteps(ctx context.Context, client *Client, sourceDir, baseUR
 			}
 			if step.Load != nil {
 				var err error
-				evidence.Load, evidence.Relative, err = runTestScenarioStepLoad(ctx, baseURL, runID,
+				evidence.Load, evidence.Relative, err = runTestScenarioStepLoad(ctx, client, baseURL, runID,
 					consumerEnv, step, captures, loadEvidenceByStep)
 				if err != nil {
 					return err
@@ -1627,7 +1711,82 @@ func runTestScenarioSteps(ctx context.Context, client *Client, sourceDir, baseUR
 	return nil
 }
 
-func runTestScenarioStepLoad(ctx context.Context, baseURL, runID string, consumerEnv []string, step testScenarioStep, captures map[string]string, priorLoads map[string]*testLoadEvidence) (*testLoadEvidence, *testStagedLoadComparisonEvidence, error) {
+func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID string, consumerEnv []string, steps []testHTTPRequest, captures map[string]string, load *testLoadConfig) (*testLoadEvidence, error) {
+	if len(load.ChaosSchedule) == 0 {
+		return runTestLoadWithCaptures(ctx, baseURL, runID, consumerEnv, steps, nil, captures, load)
+	}
+	if client == nil {
+		return nil, errors.New("load.chaos_schedule requires the real-vm engine")
+	}
+	loadWithSchedule := *load
+	clock := newTestLoadPhaseClock(len(load.ChaosSchedule))
+	loadWithSchedule.ChaosPhaseClock = clock
+	started := make(chan time.Time, 1)
+	loadWithSchedule.OnStart = func(at time.Time) {
+		clock.start(at)
+		started <- at
+	}
+	monitorCtx, cancelMonitor := context.WithCancel(ctx)
+	defer cancelMonitor()
+	monitorDone := make(chan []testCircuitObservation, 1)
+	scheduleCtx, cancelSchedule := context.WithCancel(ctx)
+	type scheduleOutcome struct {
+		result testChaosScheduleResult
+		err    error
+	}
+	scheduleDone := make(chan scheduleOutcome, 1)
+	go func() {
+		var at time.Time
+		select {
+		case at = <-started:
+		case <-scheduleCtx.Done():
+			monitorDone <- nil
+			scheduleDone <- scheduleOutcome{err: scheduleCtx.Err()}
+			return
+		}
+		go func() { monitorDone <- monitorTestCircuitBreakers(monitorCtx, baseURL, consumerEnv, load, clock) }()
+		result, err := runTestChaosSchedule(scheduleCtx, client, runID, load.ChaosSchedule, clock, at)
+		if err != nil {
+			cancelSchedule()
+		}
+		scheduleDone <- scheduleOutcome{result: result, err: err}
+	}()
+
+	report, loadErr := runTestLoadWithCaptures(scheduleCtx, baseURL, runID, consumerEnv, steps, nil, captures, &loadWithSchedule)
+	if report == nil || report.DurationMS+1 < float64(load.Duration.Milliseconds()) {
+		cancelSchedule()
+	}
+	outcome := <-scheduleDone
+	cancelSchedule()
+	cancelMonitor()
+	observations := <-monitorDone
+	if report != nil {
+		for i, fault := range outcome.result.Phases {
+			if i < len(report.ChaosPhases) {
+				phase := &report.ChaosPhases[i]
+				phase.Chaos = fault
+				window := clock.window(i)
+				phase.StartedAt, phase.FinishedAt = window.StartedAt, window.FinishedAt
+				if !window.StartedAt.IsZero() && !window.FinishedAt.IsZero() {
+					phase.ActualDurationMS = window.FinishedAt.Sub(window.StartedAt).Milliseconds()
+				}
+			}
+		}
+	}
+	if report != nil {
+		loadErr = errors.Join(loadErr, applyTestRetryAmplification(report, load, outcome.err), applyTestConnectionAttempts(report, load, outcome.err), applyTestCircuitBreakers(report, load, clock, observations, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestOutageCycles(report, load, outcome.err))
+	}
+	if outcome.err != nil && !errors.Is(outcome.err, context.Canceled) {
+		if report != nil {
+			report.Status = "failed"
+		}
+		return report, fmt.Errorf("chaos schedule: %w", outcome.err)
+	}
+	return report, loadErr
+}
+
+func runTestScenarioStepLoad(ctx context.Context, client *Client, baseURL, runID string, consumerEnv []string, step testScenarioStep, captures map[string]string, priorLoads map[string]*testLoadEvidence) (*testLoadEvidence, *testStagedLoadComparisonEvidence, error) {
 	loadScenario := testScenario{Requests: step.Requests, Checks: step.Checks, Load: step.Load}
 	load, err := resolveTestLoadConfig(loadScenario, testLoadOverrides{})
 	if err != nil {
@@ -1636,7 +1795,7 @@ func runTestScenarioStepLoad(ctx context.Context, baseURL, runID string, consume
 	httpSteps := append(append([]testHTTPRequest{}, step.Requests...), step.Checks...)
 	relative := step.Load.Relative
 	if relative == nil {
-		report, err := runTestLoadWithCaptures(ctx, baseURL, runID, consumerEnv, httpSteps, nil, captures, load)
+		report, err := runTestScenarioLoadOnce(ctx, client, baseURL, runID, consumerEnv, httpSteps, captures, load)
 		if err != nil {
 			return report, nil, fmt.Errorf("SLO load: %w", err)
 		}
@@ -1679,7 +1838,7 @@ func runTestScenarioStepLoad(ctx context.Context, baseURL, runID string, consume
 		}
 		attemptLoad := *load
 		attemptLoad.RequestLimit = testLoadMaxRequests - totalRequests
-		report, loadErr := runTestLoadWithCaptures(attemptCtx, baseURL, attemptRunID, consumerEnv, httpSteps, nil, captures, &attemptLoad)
+		report, loadErr := runTestScenarioLoadOnce(attemptCtx, client, baseURL, attemptRunID, consumerEnv, httpSteps, captures, &attemptLoad)
 		cancel()
 		if report == nil {
 			return nil, comparison, errors.New("SLO load returned no evidence")
