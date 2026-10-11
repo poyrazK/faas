@@ -52,7 +52,11 @@ func (s *server) inspectEntityRetirement(w http.ResponseWriter, r *http.Request,
 		writeEntityRetirementProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"entity": preview, "quota": quota, "ready_to_retire": preview.Ready && quota.Ready && preview.ProjectedRecoveryBytes <= quota.ReservedBytes, "projected_reclaimable_bytes": max(int64(0), quota.ReservedBytes-preview.ProjectedRecoveryBytes)})
+	reclaimable := quota.ReservedBytes - preview.ProjectedRecoveryBytes
+	if reclaimable < 0 {
+		reclaimable = 0
+	}
+	writeJSON(w, 200, map[string]any{"entity": preview, "quota": quota, "ready_to_retire": preview.Ready && quota.Ready && preview.ProjectedRecoveryBytes <= quota.ReservedBytes, "projected_reclaimable_bytes": reclaimable})
 }
 func (s *server) startEntityRetirement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, ok := s.entityRetirementScope(w, r, acct, false)
