@@ -416,3 +416,6 @@ func CommitRecoveryStatusSettled(out CommitRecoveryStatusResult) bool {
 
 // CommitRecoveryMonitoring describes a bounded watch invocation.
 type CommitRecoveryMonitoring = api.CommitRecoveryMonitoring
+
+// CommitRecoveryWatchOptions controls retries and optional observation freshness.
+type CommitRecoveryWatchOptions = api.CommitRecoveryWatchOptions

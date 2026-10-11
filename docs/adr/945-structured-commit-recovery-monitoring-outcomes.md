@@ -38,6 +38,7 @@ Acknowledged_executions_terminal uses the existing conservative settled
 predicate: complete coverage and matching terminal evidence for every queued
 attempt, with unknown/read-error attempts preventing settlement. Rejected,
 skipped and not_attempted attempts have no acknowledged execution to monitor.
+ADR-946 optionally adds a freshness requirement and corresponding counts.
 The predicate can be true when no queued attempt exists; these outcomes stay
 explicit in rows. Terminal failures can settle monitoring but are not delivery
 success. A timeout/callback/checkpoint failure can coexist with terminal

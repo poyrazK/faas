@@ -20,6 +20,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
+	maxAge := fs.Duration("max-observation-age", 0, "maximum watch evidence age (100ms-24h; default disabled)")
 	readRetries := fs.Int("read-retries", 0, "total transient watch read retries (0..20; default 0)")
 	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
 	interval := fs.Duration("interval", api.CommitRecoveryWatchIntervalDefault, "watch polling interval (100ms-1m)")
@@ -28,7 +29,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) {
+	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) || *maxAge < 0 || *maxAge > api.CommitRecoveryWatchObservationAgeMax || (*maxAge > 0 && (*maxAge < api.CommitRecoveryWatchObservationAgeMin || !*watch)) {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -108,13 +109,22 @@ func cmdCommitRecoveryStatus(args []string) int {
 				}
 				lastRows[key] = string(rawRow)
 			}
-			raw, _ := json.Marshal(rows)
+			terminal := api.CommitRecoveryStatusSettled(status)
+			var freshness map[string]int
+			if status.Monitoring != nil {
+				terminal = status.Monitoring.AcknowledgedExecutionsTerminal
+				freshness = status.Monitoring.Freshness
+			}
+			raw, _ := json.Marshal([]any{rows, freshness})
 			if string(raw) != last {
 				last = string(raw)
-				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, api.CommitRecoveryStatusSettled(status))
+				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, terminal)
+				if freshness != nil {
+					_, _ = fmt.Fprintf(os.Stderr, "Recovery freshness: %v\n", freshness)
+				}
 			}
 		}
-		out, err = client.WatchCommitRecoveryStatusWithRetry(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, *readRetries)
+		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge})
 	}
 	var validation *api.Problem
 	invalidSelection := errors.As(err, &validation) && validation.Code == api.CodeValidation

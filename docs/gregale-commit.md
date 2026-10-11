@@ -1385,3 +1385,72 @@ Final successful checkpoint saves include the final summary. If saving fails,
 stdout reports checkpoint_failure; the checkpoint may still contain the last
 running snapshot. Plain status reads/resume/refresh omit monitoring metadata.
 See [ADR-945](adr/945-structured-commit-recovery-monitoring-outcomes.md).
+
+
+### Require recent recovery observations
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --resume recovery-checkpoint.json \
+  --watch --max-observation-age 2m --timeout 10m \
+  --checkpoint recovery-checkpoint.json > recovery-final.json
+~~~
+
+The optional age limit accepts 100ms..24h. Zero/default disables it. With the
+policy enabled, monitoring cannot settle using stale, missing-timestamp or
+future-timestamp evidence. Unread rows and failed reads keep priority; other
+rows requiring a reread follow, with stale observations ordered oldest first.
+Reads remain bounded and output retains the original selection order. Complete
+coverage with stale evidence triggers selective resume rather than restarting
+a refresh from the first item. Rereads preserve the comparison baseline and
+clear old current evidence before reading. Unknown attempts remain unknown.
+
+Monitoring includes max_observation_age_ms and freshness counts:
+
+~~~json
+{
+  "freshness": {
+    "fresh": 45,
+    "stale": 3,
+    "missing_timestamp": 1,
+    "future_timestamp": 0,
+    "unobserved": 1
+  }
+}
+~~~
+
+These five counts classify current rows; failed reads are unobserved even if
+a partial timestamp exists. A timestamp exactly at the age limit is fresh.
+Malformed saved timestamps still fail validation. Freshness does not imply
+delivery success. Complete remains coverage, while the monitoring terminal
+flag also requires every row to be fresh when the policy is enabled.
+
+~~~go
+final, err := client.WatchCommitRecoveryStatusWithOptions(
+    ctx, plan, applied, &previous, false, 50, 5, time.Second, onProgress,
+    api.CommitRecoveryWatchOptions{ReadRetries: 5, MaxObservationAge: 2*time.Minute},
+)
+~~~
+
+~~~ts
+const final = await watchCommitRecoveryStatus(source, plan, applied, {
+  resume: previous, maxObservationAgeMs: 120000, timeoutMs: 600000,
+});
+~~~
+
+~~~python
+final = await awatch_commit_recovery_status(
+    client, source, plan, applied, resume=previous,
+    max_observation_age=120, timeout=600,
+)
+~~~
+
+Node/Python status-read helpers also accept the age option for selective
+bounded rereads. Checkpoints retain the freshness summary, but restarting
+requires the desired age option again; saved counts and policy metadata are
+historical and never trusted for scheduling. Evidence may age while saved or
+after return. Very small age limits with large selections can prevent fresh
+completion and reach the overall timeout. Client wall-clock skew can produce
+future timestamps; observations are not an atomic snapshot.
+
+See [ADR-946](adr/946-freshness-aware-commit-recovery-monitoring.md).

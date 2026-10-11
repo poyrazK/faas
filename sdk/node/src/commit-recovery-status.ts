@@ -25,6 +25,7 @@ export interface CommitRecoveryStatusItem {
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryMonitoring {
+  max_observation_age_ms?: number; freshness?: Record<string, number>;
   stop_reason: string; passes: number; retries_consumed: number; elapsed_ms: number; acknowledged_executions_terminal: boolean;
 }
 export interface CommitRecoveryStatusResult {
@@ -60,8 +61,9 @@ function observe(row: CommitRecoveryStatusItem, evidence?: CommitDeliveryReportI
 }
 /** Read guarded evidence only. An unknown attempt remains unknown even when delivery advances. */
 export async function getCommitRecoveryStatus(source: string, reviewed: CommitRecoveryPlan, applied: CommitRecoveryApplyResult,
-  options: { limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
-  const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal } = options;
+  options: { maxObservationAgeMs?: number; limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
+  const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal, maxObservationAgeMs = 0 } = options;
+  validateObservationAge(maxObservationAgeMs);
   if (options.resume && options.refresh) throw new TypeError('choose resume or refresh');
   const plan = structuredClone(reviewed), result = structuredClone(applied), previous = options.resume || options.refresh ? structuredClone(options.resume ?? options.refresh!) : undefined;
   const out: CommitRecoveryStatusResult = { source_id: source, subscription_id: plan.report.subscription_id, remaining: 0, items: [], counts: Object.create(null), complete: false };
@@ -109,6 +111,13 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
   }
   recount(out);
   const pending = ['not_observed', 'read_error'].flatMap(status => out.items.map((row, index) => row.status === status ? index : -1).filter(index => index >= 0));
+  if (maxObservationAgeMs > 0) {
+    const now = Date.now();
+    const stale = out.items.map((row, index) => ({ row, index })).filter(({row}) => !['not_observed', 'read_error'].includes(row.status) && freshnessKind(row, now, maxObservationAgeMs) !== 'fresh');
+    const priority = (row: CommitRecoveryStatusItem) => { const value = Date.parse(row.observed_at ?? ''); return Number.isFinite(value) && value <= now ? value : -Infinity; };
+    stale.sort((a, b) => priority(a.row) - priority(b.row));
+    for (const item of stale) pending.push(item.index);
+  }
   const controller = new AbortController(), abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
   const timer = setTimeout(abort, timeoutMs);
@@ -208,11 +217,13 @@ export function commitRecoveryStatusSettled(out: CommitRecoveryStatusResult): bo
 
 /** Poll a fixed selection; errors retain the last/partial result. */
 export async function watchCommitRecoveryStatus(source: string, plan: CommitRecoveryPlan, applied: CommitRecoveryApplyResult, options: {
-  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; readRetries?: number; signal?: AbortSignal;
+  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
   resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult;
   onProgress?: (status: CommitRecoveryStatusResult) => void;
 } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit, recipientPages, onProgress, signal } = options;
+  const maxObservationAgeMs = options.maxObservationAgeMs ?? 0;
+  validateObservationAge(maxObservationAgeMs);
   const readRetries = options.readRetries ?? 0;
   if (!Number.isInteger(readRetries) || readRetries < 0 || readRetries > 20) throw new TypeError('invalid recovery watch read retry budget');
   const intervalMs = options.intervalMs ?? 1000, timeoutMs = options.timeoutMs ?? 120000;
@@ -227,10 +238,14 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   let out: CommitRecoveryStatusResult = { source_id: source, items: [], counts: {}, remaining: 0, complete: false };
   let usedRetries = 0, passes = 0;
   let reason = 'read_failure', phase = 'read';
-  const summarize = (stop_reason: string): CommitRecoveryMonitoring => ({
-    stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
-    acknowledged_executions_terminal: commitRecoveryStatusSettled(out),
-  });
+  const summarize = (stop_reason: string): CommitRecoveryMonitoring => {
+    const freshness = maxObservationAgeMs > 0 ? freshnessCounts(out, maxObservationAgeMs) : undefined;
+    return {
+      stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
+      acknowledged_executions_terminal: commitRecoveryStatusSettled(out) && (!freshness || freshness.fresh === out.items.length),
+      ...(freshness ? { max_observation_age_ms: maxObservationAgeMs, freshness } : {}),
+    };
+  };
   try {
     for (;;) {
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
@@ -238,7 +253,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
       passes++;
       try {
         out = await getCommitRecoveryStatus(source, fixedPlan, fixedApplied, {
-          limit, recipientPages,
+          limit, recipientPages, maxObservationAgeMs,
           timeoutMs: Math.max(1, timeoutMs - (performance.now() - started)), signal: controller.signal,
           ...(previous ? refresh ? { refresh: previous } : { resume: previous } : {}),
         });
@@ -258,8 +273,8 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
       onProgress?.(structuredClone(out));
       phase = 'read';
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
-      if (!failed && commitRecoveryStatusSettled(out)) { out.monitoring = summarize('settled'); return out; }
-      previous = out; refresh = !failed && out.remaining === 0;
+      if (!failed && commitRecoveryStatusSettled(out) && observationsFresh(out, maxObservationAgeMs)) { out.monitoring = summarize('settled'); return out; }
+      previous = out; refresh = !failed && out.remaining === 0 && observationsFresh(out, maxObservationAgeMs);
       await new Promise<void>(resolve => {
         const done = () => { clearTimeout(poll); controller.signal.removeEventListener('abort', done); resolve(); };
         const poll = setTimeout(done, Math.min(delay, Math.max(1, timeoutMs - (performance.now() - started))));
@@ -311,4 +326,24 @@ function recoveryValidationFailure(error: unknown): boolean {
   if (error instanceof AggregateError) return error.errors.some(recoveryValidationFailure);
   if (error instanceof CommitRecoveryStatusError || error instanceof CommitDeliveryReportError) return recoveryValidationFailure(error.cause);
   return false;
+}
+
+function validateObservationAge(age: number): void {
+  if (!Number.isFinite(age) || age < 0 || age > 86400000 || (age > 0 && age < 100)) throw new TypeError('invalid maximum observation age');
+}
+function freshnessKind(row: CommitRecoveryStatusItem, now: number, age: number): string {
+  if (['not_observed', 'read_error'].includes(row.status)) return 'unobserved';
+  const observed = Date.parse(row.observed_at ?? '');
+  if (!Number.isFinite(observed)) return 'missing_timestamp';
+  if (observed > now) return 'future_timestamp';
+  return now - observed > age ? 'stale' : 'fresh';
+}
+function freshnessCounts(out: CommitRecoveryStatusResult, age: number): Record<string, number> {
+  const counts: Record<string, number> = { fresh: 0, stale: 0, missing_timestamp: 0, future_timestamp: 0, unobserved: 0 };
+  const now = Date.now();
+  for (const row of out.items) { const kind = freshnessKind(row, now, age); counts[kind] = (counts[kind] ?? 0) + 1; }
+  return counts;
+}
+function observationsFresh(out: CommitRecoveryStatusResult, age: number): boolean {
+  return age === 0 || freshnessCounts(out, age).fresh === out.items.length;
 }

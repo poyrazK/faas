@@ -2420,3 +2420,6 @@ Opt into transient recovery-watch read retries with `readRetries`. The total bud
 
 
 Recovery watch results include `monitoring` with stop reason, started passes, consumed retries, elapsed milliseconds and conservative terminal coverage. Progress snapshots report running; final results and attached errors report the outcome. Counters restart on resume. See [structured outcomes](../../docs/gregale-commit.md#structured-monitoring-outcomes).
+
+
+Optionally require recent recovery evidence with `maxObservationAgeMs` (default disabled; 100ms..24h). Stale and missing/future-timestamp observations are reread within existing budgets before settlement. Monitoring includes freshness counts. See [freshness policy](../../docs/gregale-commit.md#require-recent-recovery-observations).

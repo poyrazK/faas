@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
@@ -39,11 +40,13 @@ type CommitRecoveryStatusChange struct {
 
 // CommitRecoveryMonitoring describes this watch invocation, not delivery success.
 type CommitRecoveryMonitoring struct {
-	StopReason                     string `json:"stop_reason"`
-	Passes                         int    `json:"passes"`
-	RetriesConsumed                int    `json:"retries_consumed"`
-	ElapsedMS                      int64  `json:"elapsed_ms"`
-	AcknowledgedExecutionsTerminal bool   `json:"acknowledged_executions_terminal"`
+	MaxObservationAgeMS            int64          `json:"max_observation_age_ms,omitempty"`
+	Freshness                      map[string]int `json:"freshness,omitempty"`
+	StopReason                     string         `json:"stop_reason"`
+	Passes                         int            `json:"passes"`
+	RetriesConsumed                int            `json:"retries_consumed"`
+	ElapsedMS                      int64          `json:"elapsed_ms"`
+	AcknowledgedExecutionsTerminal bool           `json:"acknowledged_executions_terminal"`
 }
 
 // CommitRecoveryStatusResult samples delivery evidence without submitting recovery.
@@ -91,6 +94,10 @@ func (c *Client) RefreshCommitRecoveryStatus(ctx context.Context, reviewed Commi
 }
 
 func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int) (CommitRecoveryStatusResult, error) {
+	return c.getCommitRecoveryStatusWithAge(ctx, reviewed, applied, previous, refresh, limit, pages, 0)
+}
+
+func (c *Client) getCommitRecoveryStatusWithAge(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, maxAge time.Duration) (CommitRecoveryStatusResult, error) {
 	out := CommitRecoveryStatusResult{SourceID: reviewed.Report.SourceID, Items: []CommitRecoveryStatusItem{}, Counts: map[string]int{}}
 	raw, err := json.Marshal(struct {
 		Plan     CommitRecoveryPlan
@@ -217,6 +224,28 @@ func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRec
 				pending = append(pending, i)
 			}
 		}
+	}
+	if maxAge > 0 {
+		now := time.Now()
+		stale := []int{}
+		for i, row := range out.Items {
+			if row.Status != "not_observed" && row.Status != "read_error" && commitRecoveryFreshness(row, now, maxAge) != "fresh" {
+				stale = append(stale, i)
+			}
+		}
+		sort.SliceStable(stale, func(i, j int) bool {
+			a, b := out.Items[stale[i]], out.Items[stale[j]]
+			invalidA := a.ObservedAt == nil || a.ObservedAt.IsZero() || a.ObservedAt.After(now)
+			invalidB := b.ObservedAt == nil || b.ObservedAt.IsZero() || b.ObservedAt.After(now)
+			if invalidA != invalidB {
+				return invalidA
+			}
+			if invalidA {
+				return false
+			}
+			return a.ObservedAt.Before(*b.ObservedAt)
+		})
+		pending = append(pending, stale...)
 	}
 	var firstErr error
 	for used, index := range pending {

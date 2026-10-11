@@ -102,12 +102,14 @@ async def aget_commit_recovery_status(
     limit: int = 50,
     recipient_pages: int = 1,
     timeout: float = 120,
+    max_observation_age: float = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read guarded evidence only; never resolve an unknown write from delivery advancement."""
     if resume is not None and refresh is not None:
         raise ValueError("choose resume or refresh")
+    _validate_observation_age(max_observation_age)
     source = str(UUID(str(source)))
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
     previous = copy.deepcopy(resume if resume is not None else refresh)
@@ -247,6 +249,20 @@ async def aget_commit_recovery_status(
         for index, row in enumerate(out["items"])
         if row["status"] == status
     ]
+    if max_observation_age > 0:
+        now = datetime.now(UTC).timestamp()
+        stale = [
+            index
+            for index, row in enumerate(out["items"])
+            if row["status"] not in {"not_observed", "read_error"}
+            and _freshness_kind(row, now, max_observation_age) != "fresh"
+        ]
+
+        def priority(index: int) -> float:
+            value = _observation_timestamp(out["items"][index])
+            return value if value is not None and value <= now else -math.inf
+
+        pending.extend(sorted(stale, key=priority))
     cause: BaseException | None = None
     reading_index: int | None = None
     try:
@@ -453,6 +469,7 @@ async def awatch_commit_recovery_status(
     timeout: float = 120,
     interval: float = 1,
     read_retries: int = 0,
+    max_observation_age: float = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -465,6 +482,7 @@ async def awatch_commit_recovery_status(
         or not 0 < timeout <= 86400
     ):
         raise ValueError("invalid recovery watch options")
+    _validate_observation_age(max_observation_age)
     if type(read_retries) is not int or not 0 <= read_retries <= 20:
         raise ValueError("invalid recovery watch read retry budget")
     if resume is not None and refresh is not None:
@@ -481,12 +499,22 @@ async def awatch_commit_recovery_status(
     reason, phase = "read_failure", "read"
 
     def summarize(stop_reason: str) -> dict[str, Any]:
+        freshness = _freshness_counts(out, max_observation_age) if max_observation_age > 0 else None
         return {
             "stop_reason": stop_reason,
             "passes": passes,
             "retries_consumed": used_retries,
             "elapsed_ms": max(0, int((loop.time() - (deadline - timeout)) * 1000)),
-            "acknowledged_executions_terminal": commit_recovery_status_settled(out),
+            "acknowledged_executions_terminal": commit_recovery_status_settled(out)
+            and (freshness is None or freshness["fresh"] == len(out["items"])),
+            **(
+                {
+                    "max_observation_age_ms": max_observation_age * 1000,
+                    "freshness": freshness,
+                }
+                if max_observation_age > 0
+                else {}
+            ),
         }
 
     timeout_scope = asyncio.timeout(timeout)
@@ -504,6 +532,7 @@ async def awatch_commit_recovery_status(
                         limit=limit,
                         recipient_pages=recipient_pages,
                         timeout=max(0.001, deadline - loop.time()),
+                        max_observation_age=max_observation_age,
                         resume=previous if not refreshing else None,
                         refresh=previous if refreshing else None,
                     )
@@ -524,10 +553,13 @@ async def awatch_commit_recovery_status(
                 phase = "read"
                 if loop.time() >= deadline:
                     raise TimeoutError("watch deadline exceeded")
-                if not failed and commit_recovery_status_settled(out):
+                if not failed and commit_recovery_status_settled(out) and _observations_fresh(out, max_observation_age):
                     out["monitoring"] = summarize("settled")
                     return out
-                previous, refreshing = out, not failed and out["remaining"] == 0
+                previous, refreshing = (
+                    out,
+                    not failed and out["remaining"] == 0 and _observations_fresh(out, max_observation_age),
+                )
                 await asyncio.sleep(delay)
     except (Exception, asyncio.CancelledError) as error:
         if isinstance(error, CommitRecoveryStatusError):
@@ -589,3 +621,42 @@ def _watch_validation_failure(error: BaseException | None) -> bool:
     if isinstance(error, _CommitRecoveryReadErrors):
         return any(_watch_validation_failure(cause) for cause in error.errors)
     return error is not None and _watch_validation_failure(error.__cause__)
+
+
+def _validate_observation_age(age: float) -> None:
+    if type(age) not in {int, float} or not math.isfinite(age) or age < 0 or age > 86400 or (age > 0 and age < 0.1):
+        raise ValueError("invalid maximum observation age")
+
+
+def _observation_timestamp(row: dict[str, Any]) -> float | None:
+    value = row.get("observed_at")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.timestamp() if parsed.tzinfo is not None else None
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _freshness_kind(row: dict[str, Any], now: float, age: float) -> str:
+    if row["status"] in {"not_observed", "read_error"}:
+        return "unobserved"
+    observed = _observation_timestamp(row)
+    if observed is None:
+        return "missing_timestamp"
+    if observed > now:
+        return "future_timestamp"
+    return "stale" if now - observed > age else "fresh"
+
+
+def _freshness_counts(out: dict[str, Any], age: float) -> dict[str, int]:
+    counts = dict.fromkeys(("fresh", "stale", "missing_timestamp", "future_timestamp", "unobserved"), 0)
+    now = datetime.now(UTC).timestamp()
+    for row in out["items"]:
+        counts[_freshness_kind(row, now, age)] += 1
+    return counts
+
+
+def _observations_fresh(out: dict[str, Any], age: float) -> bool:
+    return age == 0 or _freshness_counts(out, age)["fresh"] == len(out["items"])

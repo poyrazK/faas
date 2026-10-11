@@ -9652,3 +9652,9 @@ const (
 
 // Total automatic transient retries across a recovery watch.
 const CommitRecoveryWatchReadRetriesMax = 20
+
+// Optional recovery evidence age bounds; zero disables freshness enforcement.
+const (
+	CommitRecoveryWatchObservationAgeMin = 100 * time.Millisecond
+	CommitRecoveryWatchObservationAgeMax = 24 * time.Hour
+)

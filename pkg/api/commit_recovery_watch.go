@@ -17,13 +17,26 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 	return c.WatchCommitRecoveryStatusWithRetry(ctx, plan, applied, previous, refresh, limit, pages, interval, progress, 0)
 }
 
+// CommitRecoveryWatchOptions controls optional retry and evidence-age policies.
+type CommitRecoveryWatchOptions struct {
+	ReadRetries       int
+	MaxObservationAge time.Duration
+}
+
 // WatchCommitRecoveryStatusWithRetry permits a bounded total number of transient read retries.
-func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (out CommitRecoveryStatusResult, err error) {
+func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (CommitRecoveryStatusResult, error) {
+	return c.WatchCommitRecoveryStatusWithOptions(ctx, plan, applied, previous, refresh, limit, pages, interval, progress, CommitRecoveryWatchOptions{ReadRetries: readRetries})
+}
+
+// WatchCommitRecoveryStatusWithOptions enforces optional evidence freshness before settlement.
+func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), options CommitRecoveryWatchOptions) (out CommitRecoveryStatusResult, err error) {
+	readRetries, maxAge := options.ReadRetries, options.MaxObservationAge
 	started := time.Now()
 	passes, usedRetries := 0, 0
 	reason := "read_failure"
 	summary := func(stopReason string) *CommitRecoveryMonitoring {
-		return &CommitRecoveryMonitoring{StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out)}
+		freshness, fresh := commitRecoveryFreshnessCounts(out, maxAge)
+		return &CommitRecoveryMonitoring{StopReason: stopReason, Passes: passes, RetriesConsumed: usedRetries, ElapsedMS: time.Since(started).Milliseconds(), AcknowledgedExecutionsTerminal: CommitRecoveryStatusSettled(out) && fresh, MaxObservationAgeMS: maxAge.Milliseconds(), Freshness: freshness}
 	}
 	defer func() {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -38,7 +51,7 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 		}
 		out.Monitoring = summary(reason)
 	}()
-	if _, ok := ctx.Deadline(); !ok || interval < CommitRecoveryWatchIntervalMin || interval > CommitRecoveryWatchIntervalMax || readRetries < 0 || readRetries > CommitRecoveryWatchReadRetriesMax {
+	if _, ok := ctx.Deadline(); !ok || interval < CommitRecoveryWatchIntervalMin || interval > CommitRecoveryWatchIntervalMax || readRetries < 0 || readRetries > CommitRecoveryWatchReadRetriesMax || maxAge < 0 || maxAge > CommitRecoveryWatchObservationAgeMax || (maxAge > 0 && maxAge < CommitRecoveryWatchObservationAgeMin) {
 		return out, ErrValidation("watch requires a deadline and a valid polling interval")
 	}
 	// Freeze caller-owned inputs across polling passes and progress callbacks.
@@ -58,7 +71,7 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 	}
 	for {
 		passes++
-		out, err = c.getCommitRecoveryStatus(ctx, plan, applied, previous, refresh, limit, pages)
+		out, err = c.getCommitRecoveryStatusWithAge(ctx, plan, applied, previous, refresh, limit, pages, maxAge)
 		delay := interval
 		if err != nil {
 			retryAfter, retryable := commitRecoveryReadRetry(err)
@@ -91,14 +104,15 @@ func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan Co
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
-		if err == nil && CommitRecoveryStatusSettled(out) {
+		_, fresh := commitRecoveryFreshnessCounts(out, maxAge)
+		if err == nil && CommitRecoveryStatusSettled(out) && fresh {
 			reason = "settled"
 			return out, nil
 		}
 		previous = &out
 		// Complete observation passes refresh; partial passes resume without
 		// restarting at the first subscriber.
-		refresh = err == nil && out.Remaining == 0
+		refresh = err == nil && out.Remaining == 0 && fresh
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -201,4 +215,32 @@ func commitRecoveryReadRetry(err error) (time.Duration, bool) {
 	}
 	var network net.Error
 	return 0, errors.As(err, &network)
+}
+
+func commitRecoveryFreshness(row CommitRecoveryStatusItem, now time.Time, maxAge time.Duration) string {
+	if row.Status == "not_observed" || row.Status == "read_error" {
+		return "unobserved"
+	}
+	if row.ObservedAt == nil || row.ObservedAt.IsZero() {
+		return "missing_timestamp"
+	}
+	if row.ObservedAt.After(now) {
+		return "future_timestamp"
+	}
+	if now.Sub(*row.ObservedAt) > maxAge {
+		return "stale"
+	}
+	return "fresh"
+}
+
+func commitRecoveryFreshnessCounts(out CommitRecoveryStatusResult, maxAge time.Duration) (map[string]int, bool) {
+	if maxAge == 0 {
+		return nil, true
+	}
+	counts := map[string]int{"fresh": 0, "stale": 0, "missing_timestamp": 0, "future_timestamp": 0, "unobserved": 0}
+	now := time.Now()
+	for _, row := range out.Items {
+		counts[commitRecoveryFreshness(row, now, maxAge)]++
+	}
+	return counts, counts["fresh"] == len(out.Items)
 }
