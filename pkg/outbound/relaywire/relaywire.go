@@ -1,5 +1,5 @@
 // Package relaywire is the preamble vmmd writes at the start of an app relay
-// connection to outboundd (ADR-981). After the preamble the connection
+// connection to outboundd (ADR-982). After the preamble the connection
 // carries the guest's HTTP bytes unchanged, so this is the only framing
 // either side owns.
 package relaywire

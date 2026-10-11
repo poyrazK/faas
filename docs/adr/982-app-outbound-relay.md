@@ -1,4 +1,4 @@
-# ADR-981 · App access to managed outbound integrations through a guest relay
+# ADR-982 · App access to managed outbound integrations through a guest relay
 
 - **Status:** accepted
 - **Date:** 2026-10-11

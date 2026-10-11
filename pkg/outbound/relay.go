@@ -13,7 +13,7 @@ import (
 )
 
 // RelayIdentityVerifier authenticates the connection-scoped assertion vmmd
-// attaches to an app relay connection (ADR-981).
+// attaches to an app relay connection (ADR-982).
 type RelayIdentityVerifier interface {
 	VerifyRelay(rawToken string) (WorkloadIdentity, error)
 }

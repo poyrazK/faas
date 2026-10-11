@@ -513,7 +513,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
 	if identity, ok := relayIdentityFromContext(r.Context()); ok {
-		// ADR-981: the relay connection's platform identity is the caller.
+		// ADR-982: the relay connection's platform identity is the caller.
 		// Token-authenticated integrations stay unreachable through it.
 		if integration.ProviderAuthMode != ProviderAuthManaged {
 			writeProblem(w, http.StatusForbidden, "outbound_relay_not_supported", "This outbound integration is not available through the app relay", "")

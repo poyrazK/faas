@@ -29,7 +29,7 @@ type Config struct {
 	Integrations             map[string]IntegrationConfig `toml:"integrations"`
 	WorkloadIdentityJWKSPath string                       `toml:"workload_identity_jwks_path"`
 	WorkloadIdentityIssuer   string                       `toml:"workload_identity_issuer"`
-	// RelayListen enables the app relay listener for vmmd (ADR-981):
+	// RelayListen enables the app relay listener for vmmd (ADR-982):
 	// "unix:///run/faas/outboundd-relay.sock" on a single box, or
 	// "tcp://host:port" with the relay_tls_* mTLS material on a split box.
 	RelayListen      string `toml:"relay_listen"`

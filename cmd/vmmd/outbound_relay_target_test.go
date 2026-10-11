@@ -1,6 +1,6 @@
 package main
 
-// adr: 981 — the app relay never dials outboundd in plaintext over TCP.
+// adr: 982 — the app relay never dials outboundd in plaintext over TCP.
 
 import (
 	"context"

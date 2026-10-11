@@ -10,7 +10,7 @@ vmmd_apid_client_tls_cert_path: /etc/faas/tls/vmmd/apid-client.crt
 vmmd_apid_client_tls_key_path: /etc/faas/tls/vmmd/apid-client.key
 vmmd_apid_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 
-# ADR-981 app outbound relay. The manifest sets the split-box target to
+# ADR-982 app outbound relay. The manifest sets the split-box target to
 # tcp://outboundd.faas:8096; single-box hosts may set
 # unix:///run/faas/outboundd-relay.sock to match outboundd's relay_listen.
 faas_vmmd_outbound_relay_target: ""

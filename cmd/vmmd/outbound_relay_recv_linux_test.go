@@ -2,7 +2,7 @@
 
 package main
 
-// adr: 981 — vmmd splices relay bytes without interpreting them.
+// adr: 982 — vmmd splices relay bytes without interpreting them.
 
 import (
 	"io"

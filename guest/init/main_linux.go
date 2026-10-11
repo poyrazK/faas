@@ -147,7 +147,7 @@ func boot() error {
 		if err := startEventPublishProxy(slog.Default()); err != nil {
 			slog.Default().Warn("event publish proxy unavailable", "err", err)
 		}
-		// ADR-981: managed outbound integrations (including the AI gateway)
+		// ADR-982: managed outbound integrations (including the AI gateway)
 		// through GREGALE_OUTBOUND_URL. vmmd binds the identity; no token or
 		// provider key is staged in the guest.
 		if err := startOutboundRelay(slog.Default()); err != nil {

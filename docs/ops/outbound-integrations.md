@@ -454,7 +454,7 @@ Every app VM has `GREGALE_OUTBOUND_URL=http://127.0.0.1:2774`. Requests to
 `$GREGALE_OUTBOUND_URL/i/<integration-id>/<provider path>` reach `outboundd` as
 the calling app, with no network route, gateway token or identity header.
 Streaming works in both directions. See
-[ADR-981](../adr/981-app-outbound-relay.md).
+[ADR-982](../adr/982-app-outbound-relay.md).
 
 How a request travels:
 

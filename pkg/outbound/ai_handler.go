@@ -73,7 +73,7 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 // applyManagedCredential sets the provider credential header. Anthropic
 // expects API keys in x-api-key, so an Anthropic AI integration sends the
 // stored value there (without a "Bearer " prefix) and drops any
-// caller-supplied Authorization or x-api-key (ADR-981). Every other managed
+// caller-supplied Authorization or x-api-key (ADR-982). Every other managed
 // integration keeps replacing Authorization only.
 func applyManagedCredential(header http.Header, integration Integration, credential string) {
 	if integration.AIProvider == api.OutboundAIProviderAnthropic {

@@ -86,7 +86,7 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 		t.Errorf("compute host vars missing source-ref mTLS target:\n%s", computeVars)
 	}
 	if !strings.Contains(computeVars, `faas_vmmd_outbound_relay_target: "tcp://outboundd.faas:8096"`) {
-		t.Errorf("compute host vars missing ADR-981 outbound relay target:\n%s", computeVars)
+		t.Errorf("compute host vars missing ADR-982 outbound relay target:\n%s", computeVars)
 	}
 	if !strings.Contains(computeVars, `faas_vmmd_schedd_target: "tcp://10.42.0.2:7100"`) {
 		t.Errorf("compute host vars missing scheduler target:\n%s", computeVars)

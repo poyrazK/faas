@@ -22,7 +22,7 @@ metrics_addr = "127.0.0.1:9108"
 # write_timeout = "2m"
 # idle_timeout = "2m"
 
-# ADR-981 app relay. Apps call GREGALE_OUTBOUND_URL (http://127.0.0.1:2774)
+# ADR-982 app relay. Apps call GREGALE_OUTBOUND_URL (http://127.0.0.1:2774)
 # inside the VM; vmmd splices those connections here with a relay assertion,
 # so apps need no route, token or provider key. Requires the workload
 # identity JWKS below. Single box (vmmd sets

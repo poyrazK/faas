@@ -1344,7 +1344,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer identityRecv.Close()
 	}
-	// ADR-981: apps reach managed outbound integrations through a loopback
+	// ADR-982: apps reach managed outbound integrations through a loopback
 	// relay. An unset target, or one whose mTLS material is missing (for
 	// example before the outboundd-client leaf is issued), leaves the relay
 	// closed instead of failing VM hosting; plaintext TCP is never used.

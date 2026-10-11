@@ -39,7 +39,7 @@ const (
 	DefaultTokenTTL = 5 * time.Minute
 	maxAudienceLen  = 512
 	// OutboundRelayAudience authenticates one vmmd-to-outboundd relay
-	// connection for an app instance (ADR-981). Only vmmd mints it; the guest
+	// connection for an app instance (ADR-982). Only vmmd mints it; the guest
 	// identity endpoint refuses it so the audience stays host-internal.
 	OutboundRelayAudience = "gregale:outbound:relay"
 )

@@ -17,7 +17,7 @@ import (
 )
 
 // VsockOutboundRelayHostPort is the host endpoint guest-init's loopback
-// outbound relay connects to (ADR-981).
+// outbound relay connects to (ADR-982).
 const VsockOutboundRelayHostPort uint32 = fcvm.VsockOutboundRelayHostPort
 
 // OutboundRelayReceiver splices an app's relay connection to outboundd. The

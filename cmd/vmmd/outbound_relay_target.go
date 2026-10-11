@@ -21,7 +21,7 @@ const outboundRelayDialTimeout = 5 * time.Second
 // outboundRelayDialer opens one connection to outboundd's relay listener.
 type outboundRelayDialer func(context.Context) (net.Conn, error)
 
-// outboundRelayTarget resolves the ADR-981 relay target. Single-box hosts
+// outboundRelayTarget resolves the ADR-982 relay target. Single-box hosts
 // use outboundd's local Unix socket. A split-box TCP target needs vmmd's
 // node-identity outboundd-client leaf; plaintext TCP is refused. An empty
 // target disables the relay, and guest connections are closed at once.

@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// outboundRelayHostPort mirrors fcvm.VsockOutboundRelayHostPort (ADR-981).
+// outboundRelayHostPort mirrors fcvm.VsockOutboundRelayHostPort (ADR-982).
 const outboundRelayHostPort = 1032
 
 // startOutboundRelay exposes GREGALE_OUTBOUND_URL on loopback. It fails soft
