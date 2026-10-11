@@ -364,15 +364,15 @@ func TestRegistryCleanupCheckpointMergesConcurrentQuotaMutations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		lease, err = other.AcquireConnection(t.Context(), fresh)
-		if err != nil {
-			t.Fatal(err)
-		}
 		reader := retirementReader{status: &durableentity.RetirementStatus{Request: durableentity.RetirementRequest{OperationID: uuid.NewString()}, Actor: "operator", At: now, Revision: 1, Phase: "complete", RetainedBytes: 128}}
 		if _, err := other.TrackRetirement(t.Context(), id, reader.status.Request.OperationID, reader); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := other.ReclaimRetirement(t.Context(), id, reader.status.Request.OperationID, reader); err != nil {
+			t.Fatal(err)
+		}
+		lease, err = other.AcquireConnection(t.Context(), fresh)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}}, CleanupStore: b}
