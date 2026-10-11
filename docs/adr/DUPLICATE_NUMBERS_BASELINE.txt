@@ -109,8 +109,13 @@
 
 
 # Existing collisions inherited from main at 195c48c80.
-933
-967
 
 # Existing collision inherited from merged main at 375203115 (2026-10-11).
 968
+
+# Existing collisions inherited from merged main at 820481b7a (2026-10-11).
+829
+830
+831
+971
+972
