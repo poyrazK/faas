@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	probesql "github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery/sqlc"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -85,13 +86,19 @@ func openPool(ctx context.Context, uri string) (*pgxpool.Pool, error) {
 func (p *PoolWorkload) readMarker(ctx context.Context) error {
 	id, _ := p.config.key()
 	queries := probesql.New()
+	group, readCtx := errgroup.WithContext(ctx)
+	// Independent read-only checks share one hook deadline. Reconnecting
+	// serially needlessly adds the writer and reader connection latencies (ADR-348).
 	for _, pool := range []*pgxpool.Pool{p.writer, p.reader} {
-		row, err := queries.ReadQualificationMarker(ctx, pool, id)
-		if err != nil || row.Marker != p.config.marker() {
-			return ErrProbe
-		}
+		group.Go(func() error {
+			row, err := queries.ReadQualificationMarker(readCtx, pool, id)
+			if err != nil || row.Marker != p.config.marker() {
+				return ErrProbe
+			}
+			return nil
+		})
 	}
-	return nil
+	return group.Wait()
 }
 
 // Restore is a readiness barrier: discard the snapshot's sockets, authenticate

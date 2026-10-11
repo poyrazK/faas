@@ -25,6 +25,7 @@ type proxyState struct {
 	mu                  sync.Mutex
 	connections         map[net.Conn]struct{}
 	closed, unavailable bool
+	connectDelay        time.Duration
 }
 
 // Disconnect retires existing sessions while allowing new TLS sessions.
@@ -34,6 +35,14 @@ func (p Proxy) Disconnect() {
 	for conn := range p.state.connections {
 		_ = conn.Close()
 	}
+}
+
+// SetConnectDelay delays new upstream connections without interrupting existing
+// TLS sessions. It models provider connection latency within restore deadlines.
+func (p Proxy) SetConnectDelay(delay time.Duration) {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	p.state.connectDelay = max(delay, 0)
 }
 
 // SetAvailable controls an explicit SQL outage; it never changes the cluster.
@@ -77,12 +86,22 @@ func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16
 				_ = client.Close()
 				continue
 			}
+			delay := state.connectDelay
 			state.connections[client] = struct{}{}
 			state.mu.Unlock()
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				defer func() { _ = client.Close(); state.mu.Lock(); delete(state.connections, client); state.mu.Unlock() }()
+				if delay > 0 {
+					timer := time.NewTimer(delay)
+					defer timer.Stop()
+					select {
+					case <-timer.C:
+					case <-ctx.Done():
+						return
+					}
+				}
 				upstream, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", target)
 				if err != nil {
 					return

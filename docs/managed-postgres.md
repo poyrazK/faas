@@ -149,6 +149,8 @@ restore and cleanup using a disposable PostgreSQL fixture. Run
 `make test-managed-postgres-native` on a designated isolated acceptance host.
 Provider management is simulated; a nested-node run remains diagnostic and
 does not replace fresh provider v8 and supported native-host qualification.
+The probe verifies writer and reader readiness in parallel within the bounded
+restore callback; both must succeed before it accepts traffic.
 
 Save the JSON output as an operator-owned artifact and verify it without making
 provider calls:

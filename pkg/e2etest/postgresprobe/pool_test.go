@@ -147,6 +147,30 @@ func TestPoolProbeRetainsIdleSessionsAndRestoresAfterDisconnect(t *testing.T) {
 	}
 }
 
+// Both independent credentials must reconnect within one bounded callback,
+// including provider latency. Neither readiness check may write (ADR-348).
+func TestPoolProbeRestoresConcurrentFreshSessions(t *testing.T) {
+	f := newPoolFixture(t)
+	first, err := f.workload.Check(t.Context())
+	if err != nil || first.Counter != 1 {
+		t.Fatal("initial pooled workload failed")
+	}
+	// Two serial connections exceed the 1.5-second callback budget.
+	f.proxy.SetConnectDelay(800 * time.Millisecond)
+	f.proxy.Disconnect()
+	if response := poolHook(f.workload, "127.0.0.1:12345", "1"); response.Code != http.StatusNoContent {
+		t.Fatal("independent reconnects exhausted the shared restore budget")
+	}
+	if f.counter(t) != 1 {
+		t.Fatal("readiness callback changed data")
+	}
+	f.proxy.SetConnectDelay(0)
+	second, err := f.workload.Check(t.Context())
+	if err != nil || second.Counter != 2 || second.Marker != first.Marker || second.PoolGeneration != 2 || second.WriterConnections <= first.WriterConnections || second.ReaderConnections <= first.ReaderConnections {
+		t.Fatal("delayed restore did not replace both sessions and preserve data")
+	}
+}
+
 func TestPoolProbeConcurrentRequestsAndCanceledWrite(t *testing.T) {
 	f := newPoolFixture(t)
 	const count = 16
