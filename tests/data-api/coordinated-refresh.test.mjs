@@ -80,6 +80,7 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   await eventually(async () => Number((await owner.query("SELECT count(*) FROM pg_stat_activity WHERE application_name='gregale-refresh-control-test' AND wait_event='advisory'")).rows[0].count) === 1)
   assert.equal(paused, false, 'pause must wait for admitted transactions')
   const queued = request(old)
+  await eventually(async () => Number((await owner.query("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'")).rows[0].count) >= 2)
   await held.query('COMMIT'); await drain
   assert.equal((await queued).status, 503, 'queued requests must see the pause before application SQL')
   await held.end(); held = null
