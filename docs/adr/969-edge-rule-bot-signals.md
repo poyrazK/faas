@@ -1,4 +1,4 @@
-# ADR-968: Bot signals in edge-rule conditions
+# ADR-969: Bot signals in edge-rule conditions
 
 - **Status:** accepted
 - **Date:** 2026-10-10

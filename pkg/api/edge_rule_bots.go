@@ -1,6 +1,6 @@
 package api
 
-// ADR-968: bot signals for edge-rule conditions. ua_family classifies the
+// ADR-969: bot signals for edge-rule conditions. ua_family classifies the
 // User-Agent header; verified_bot names a known crawler whose claim was
 // confirmed against the client IP by forward-confirmed reverse DNS.
 
@@ -21,7 +21,7 @@ const (
 // UAFamilies lists every ua_family value, for validation and docs.
 var UAFamilies = []string{UAFamilyBrowser, UAFamilyMobile, UAFamilyBot, UAFamilyTool, UAFamilyOther}
 
-// Bounds on verified-bot lookups (ADR-968 §3). A lookup that misses its
+// Bounds on verified-bot lookups (ADR-969 §3). A lookup that misses its
 // deadline, or finds the in-flight budget spent, leaves the bot unverified.
 const (
 	EdgeRuleBotVerifyTimeout     = 300 * time.Millisecond

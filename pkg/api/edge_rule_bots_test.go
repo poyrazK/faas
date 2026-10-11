@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adr: 968 — the User-Agent classifier sorts common clients into families.
+// adr: 969 — the User-Agent classifier sorts common clients into families.
 func TestClassifyUserAgent(t *testing.T) {
 	for ua, want := range map[string]string{
 		"":    "",
@@ -31,7 +31,7 @@ func TestClassifyUserAgent(t *testing.T) {
 	}
 }
 
-// adr: 968 — a User-Agent claims a known crawler by token; the claim alone
+// adr: 969 — a User-Agent claims a known crawler by token; the claim alone
 // is not verification.
 func TestClaimedEdgeRuleBot(t *testing.T) {
 	for ua, want := range map[string]string{
@@ -56,7 +56,7 @@ func TestClaimedEdgeRuleBot(t *testing.T) {
 	}
 }
 
-// adr: 968 — ua_family and verified_bot match over closed value sets;
+// adr: 969 — ua_family and verified_bot match over closed value sets;
 // verified_bot is only resolved when evaluated, and unknown values fail
 // to compile.
 func TestEdgeRuleMatchBotFields(t *testing.T) {

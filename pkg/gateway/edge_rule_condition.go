@@ -95,7 +95,7 @@ type EdgeRuleMatchContext struct {
 	asnLookup func(net.IP) uint32
 	asn       uint32
 
-	// ADR-968: verified crawler, resolved at most once and only when a
+	// ADR-969: verified crawler, resolved at most once and only when a
 	// verified_bot condition is evaluated.
 	verifiedBot func() string
 	botOnce     sync.Once
