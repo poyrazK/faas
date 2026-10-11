@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/realtime"
 )
 
@@ -219,7 +220,7 @@ func TestManagedRealtimeConnectionDrainAllSelectsEveryMatchingConnection(t *test
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.All || response.Limit != managedRealtimeDrainAllMax || response.Matched != 2 || response.Truncated || len(response.Results) != 2 {
+	if !response.All || response.Limit != managedrealtime.ManagedRealtimeDrainAllMax || response.Matched != 2 || response.Truncated || len(response.Results) != 2 {
 		t.Fatalf("all drain response: %+v", response)
 	}
 	waitForManagedRealtimeDrainOperation(t, e, "/v1/apps/rt-actions/realtime/endpoints/"+endpointID+"/connections/drain/"+response.OperationID)
@@ -235,7 +236,7 @@ func TestManagedRealtimeConnectionDrainAllRejectsSafetyCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connections := make([]realtime.ConnectionInfo, managedRealtimeDrainAllMax+1)
+	connections := make([]realtime.ConnectionInfo, managedrealtime.ManagedRealtimeDrainAllMax+1)
 	for i := range connections {
 		connections[i] = realtime.ConnectionInfo{
 			ID: fmt.Sprintf("conn-%05d", i), EndpointID: endpointID, AppID: app.ID,

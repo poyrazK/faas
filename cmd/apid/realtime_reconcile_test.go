@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 type reconcileRealtimeRegistrar struct {
@@ -23,96 +21,6 @@ type reconcileRealtimeRegistrar struct {
 	removed    []string
 	fail       map[string]error
 	inventory  []string
-}
-
-func TestNodeChannelRouteSnapshotUsesCompactEndpoint(t *testing.T) {
-	op := &fakeRealtimeNode{
-		connections:   []realtime.ConnectionInfo{{EndpointID: "endpoint", Channels: []string{"connection-snapshot"}}},
-		channelRoutes: []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "compact-snapshot"}},
-	}
-
-	routes, err := nodeChannelRouteSnapshot(context.Background(), op)
-	if err != nil {
-		t.Fatalf("nodeChannelRouteSnapshot: %v", err)
-	}
-	want := []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "compact-snapshot"}}
-	if len(routes) != len(want) || routes[0] != want[0] {
-		t.Fatalf("routes = %+v, want %+v", routes, want)
-	}
-	if op.routeReads != 1 || op.connReads != 0 {
-		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 0)", op.routeReads, op.connReads)
-	}
-}
-
-func TestNodeChannelRouteSnapshotFallsBackForOlderNode(t *testing.T) {
-	op := &fakeRealtimeNode{
-		connections:      []realtime.ConnectionInfo{{EndpointID: "endpoint", Channels: []string{"updates"}}},
-		channelRoutesErr: &realtime.ManagementError{StatusCode: http.StatusNotFound},
-	}
-
-	routes, err := nodeChannelRouteSnapshot(context.Background(), op)
-	if err != nil {
-		t.Fatalf("nodeChannelRouteSnapshot: %v", err)
-	}
-	want := []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "updates"}}
-	if len(routes) != len(want) || routes[0] != want[0] {
-		t.Fatalf("routes = %+v, want fallback %+v", routes, want)
-	}
-	if op.routeReads != 1 || op.connReads != 1 {
-		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 1)", op.routeReads, op.connReads)
-	}
-}
-
-type revisionedRealtimeNode struct {
-	*fakeRealtimeNode
-	revision realtime.ChannelRouteRevision
-}
-
-func (n *revisionedRealtimeNode) ChannelRouteRevision(context.Context) (realtime.ChannelRouteRevision, error) {
-	return n.revision, nil
-}
-
-func TestReconcileManagedRealtimeChannelRouteRevisionRepairsMissedReport(t *testing.T) {
-	ctx := context.Background()
-	store := state.NewMemStore()
-	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-	if err != nil {
-		t.Fatalf("find local compute node: %v", err)
-	}
-	generation, err := store.CurrentManagedRealtimeChannelRouteGeneration(ctx)
-	if err != nil {
-		t.Fatalf("read initial route generation: %v", err)
-	}
-	if err := store.ReplaceManagedRealtimeChannelRoutesWithRevision(ctx, node.ID, generation, nil,
-		&state.ManagedRealtimeChannelRouteSnapshotRevision{InstanceID: "realtimed-process", Revision: 0}); err != nil {
-		t.Fatalf("store initial empty snapshot: %v", err)
-	}
-	local := &revisionedRealtimeNode{
-		fakeRealtimeNode: &fakeRealtimeNode{channelRoutes: []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "updates"}}},
-		revision:         realtime.ChannelRouteRevision{InstanceID: "realtimed-process", Revision: 1},
-	}
-	owner := newLeasedRealtimeOwner(store, store, node.ID, local, discardLogger())
-	owner.channelRoutes = store
-	owner.channelRouteMetrics = newManagedRealtimeChannelRouteMetrics(prometheus.NewRegistry(), "apid")
-	owner.clientFor = func(state.ComputeNode) (realtimeNodeOperator, error) { return local, nil }
-
-	if err := reconcileManagedRealtimeChannelRouteRevisions(ctx, owner, []state.ComputeNode{node}); err != nil {
-		t.Fatalf("reconcile changed route revision: %v", err)
-	}
-	view, err := store.ListManagedRealtimeChannelRouteView(ctx, "endpoint", "updates")
-	if err != nil {
-		t.Fatalf("list repaired route view: %v", err)
-	}
-	if len(view.NodeIDs) != 1 || view.NodeIDs[0] != node.ID {
-		t.Fatalf("repaired route nodes = %v, want [%s]", view.NodeIDs, node.ID)
-	}
-	revisions, err := store.ListManagedRealtimeChannelRouteSnapshotRevisions(ctx, []string{node.ID})
-	if err != nil {
-		t.Fatalf("list repaired snapshot revision: %v", err)
-	}
-	if got := revisions[node.ID]; got.InstanceID != "realtimed-process" || got.Revision != 1 {
-		t.Fatalf("repaired snapshot revision = %+v, want process revision 1", got)
-	}
 }
 
 func (r *reconcileRealtimeRegistrar) ListEndpointInventory(context.Context) (realtime.EndpointInventory, error) {
@@ -165,9 +73,9 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 	registrarErr := errors.New("realtime node unavailable")
 	registrar := &reconcileRealtimeRegistrar{fail: map[string]error{"enabled-endpoint": registrarErr}}
 	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.realtimeRegistrar = registrar
+	srv.realtime.Registrar = registrar
 
-	err = srv.reconcileManagedRealtimeEndpoints(ctx)
+	err = srv.realtime.ReconcileManagedRealtimeEndpoints(ctx)
 	if !errors.Is(err, registrarErr) || !strings.Contains(err.Error(), "enabled-endpoint") {
 		t.Fatalf("reconcile error = %v, want endpoint error", err)
 	}
@@ -181,7 +89,7 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 
 func TestReconcileManagedRealtimeEndpointsNoRegistrarIsNoop(t *testing.T) {
 	srv := newServer(state.NewMemStore(), discardLogger(), "gregale.dev", noopNotifier{})
-	if err := srv.reconcileManagedRealtimeEndpoints(context.Background()); err != nil {
+	if err := srv.realtime.ReconcileManagedRealtimeEndpoints(context.Background()); err != nil {
 		t.Fatalf("reconcile without registrar = %v, want nil", err)
 	}
 }
@@ -209,8 +117,8 @@ func TestReconcileManagedRealtimeEndpointsRemovesDeletedRegistration(t *testing.
 	}
 	registrar := &reconcileRealtimeRegistrar{inventory: []string{row.ID}}
 	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.realtimeRegistrar = registrar
-	if err := srv.reconcileManagedRealtimeEndpoints(ctx); err != nil {
+	srv.realtime.Registrar = registrar
+	if err := srv.realtime.ReconcileManagedRealtimeEndpoints(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(registrar.removed) != 1 || registrar.removed[0] != row.ID {
@@ -230,7 +138,7 @@ func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T)
 	time.Sleep(50 * time.Millisecond)
 
 	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	removed, err := srv.reapManagedRealtimeConnectionOwners(ctx)
+	removed, err := srv.realtime.ReapManagedRealtimeConnectionOwners(ctx)
 	if err != nil {
 		t.Fatalf("reap owners: %v", err)
 	}
@@ -288,8 +196,8 @@ func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
 
 	registrar := &reconcileRealtimeRegistrar{}
 	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.realtimeRegistrar = registrar
-	if err := srv.reconcileManagedRealtimeEndpoints(ctx); err != nil {
+	srv.realtime.Registrar = registrar
+	if err := srv.realtime.ReconcileManagedRealtimeEndpoints(ctx); err != nil {
 		t.Fatal(err)
 	}
 	registered := map[string]bool{}
