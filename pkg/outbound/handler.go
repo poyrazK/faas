@@ -61,6 +61,8 @@ type Handler struct {
 	responseCache        *outboundResponseCache
 	// vertexTokens caches exchanged Google access tokens (ADR-984).
 	vertexTokens vertexTokenCache
+	// keyPools holds local key cooldowns and round-robin positions.
+	keyPools keyPoolState
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -244,6 +246,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var managedAuthorization string
+	var poolKeys []ManagedKey
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
 		managedAuthorization = h.managedAuthorization[integration.ID]
 		if !ValidManagedAuthorization(managedAuthorization) {
@@ -350,8 +353,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
-		managedAuthorization, err = h.CredentialResolver.Authorization(ctx, integration.ID)
-		if err != nil || !ValidManagedAuthorization(managedAuthorization) {
+		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok {
+			// ADR-984: a pool of keys rotates per call and on 429s.
+			keys, poolErr := pool.Authorizations(ctx, integration.ID)
+			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
+				poolKeys = h.keyPools.order(integration.ID, keys, time.Now())
+				managedAuthorization = poolKeys[0].Value
+			}
+		} else {
+			managedAuthorization, err = h.CredentialResolver.Authorization(ctx, integration.ID)
+			if err != nil {
+				managedAuthorization = ""
+			}
+		}
+		if !ValidManagedAuthorization(managedAuthorization) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
@@ -478,12 +493,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		maxRetries := integration.MaxRetries
 		client := h.Client
+		var keys *credentialRing
 		if workflowIdentity != nil {
 			maxRetries = 0
 			client = h.workflowClient
+		} else if len(poolKeys) > 1 {
+			keys = &credentialRing{
+				integrationID: integration.ID, metricIntegrationID: metricIntegrationID, keys: poolKeys, pools: &h.keyPools, metrics: h.Metrics,
+				apply: func(req *http.Request, credential string) error {
+					return h.applyProviderCredential(dependencyCtx, req, integration, credential, cacheBody)
+				},
+			}
 		}
 		resp, attempts, err = h.doWithRetries(dependencyCtx, client, upstreamReq, integration.ID, metricIntegrationID,
-			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute)
+			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {

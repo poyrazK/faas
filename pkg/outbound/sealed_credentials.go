@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"filippo.io/age"
 	"github.com/google/uuid"
@@ -82,4 +83,66 @@ func (r *PostgresSealedCredentialResolver) Authorization(ctx context.Context, in
 	return value, nil
 }
 
+// Authorizations returns the primary credential and every extra key of the
+// integration's pool (ADR-984), primary first, then extra keys by age. Like
+// Authorization it reads the database on every call, so a removed key stops
+// being used at once.
+func (r *PostgresSealedCredentialResolver) Authorizations(ctx context.Context, integrationID string) ([]ManagedKey, error) {
+	id, err := uuid.Parse(integrationID)
+	if err != nil {
+		return nil, errors.New("outbound credential integration ID is invalid")
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT 'primary', credential.authorization_sealed, 0, credential.updated_at
+		  FROM outbound_integration_credentials credential
+		  JOIN outbound_integrations integration ON integration.id = credential.integration_id
+		 WHERE credential.integration_id = $1 AND credential.account_id = integration.account_id
+		   AND integration.enabled AND integration.provider_auth_mode = 'managed'
+		   AND integration.credential_source = 'customer_sealed'
+		   AND (integration.owner_kind = 'customer' OR integration.id::text = ANY($2::text[]))
+		UNION ALL
+		SELECT pool.id::text, pool.authorization_sealed, 1, pool.created_at
+		  FROM outbound_integration_credential_keys pool
+		  JOIN outbound_integrations integration ON integration.id = pool.integration_id
+		 WHERE pool.integration_id = $1 AND pool.account_id = integration.account_id
+		   AND integration.enabled AND integration.provider_auth_mode = 'managed'
+		   AND integration.credential_source = 'customer_sealed'
+		   AND (integration.owner_kind = 'customer' OR integration.id::text = ANY($2::text[]))
+		 ORDER BY 3, 4, 1`, id, r.configuredIDs)
+	if err != nil {
+		return nil, fmt.Errorf("outbound credential unavailable: %w", err)
+	}
+	defer rows.Close()
+	var keys []ManagedKey
+	for rows.Next() {
+		var keyID string
+		var sealed []byte
+		var position int
+		var created time.Time
+		if err := rows.Scan(&keyID, &sealed, &position, &created); err != nil {
+			return nil, fmt.Errorf("outbound credential unavailable: %w", err)
+		}
+		namespace, plaintext, err := secretbox.OpenBytesMulti(r.identities, sealed)
+		if err != nil {
+			return nil, fmt.Errorf("outbound credential cannot be opened: %w", err)
+		}
+		value := string(plaintext)
+		for i := range plaintext {
+			plaintext[i] = 0
+		}
+		if namespace != ManagedAuthorizationSealNamespace || !ValidManagedAuthorization(value) {
+			return nil, errors.New("outbound credential namespace or value is invalid")
+		}
+		keys = append(keys, ManagedKey{ID: keyID, Value: value})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("outbound credential unavailable: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil, errors.New("outbound credential unavailable: no keys")
+	}
+	return keys, nil
+}
+
 var _ ManagedCredentialResolver = (*PostgresSealedCredentialResolver)(nil)
+var _ ManagedKeyPoolResolver = (*PostgresSealedCredentialResolver)(nil)
