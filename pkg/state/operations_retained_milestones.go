@@ -266,7 +266,7 @@ func evaluateRetainedMilestoneGroup(instance *api.OperationWorkflowInstanceSnaps
 				if planned.Milestone != path.Decision.Milestone {
 					continue
 				}
-				reported := planned.Decision
+				reported := api.CloneOperationBusinessDecision(planned.Decision)
 				d.Reported = &reported
 				d.Satisfied = api.OperationWorkflowPolicyMatches(*path.Decision, planned.Milestone, req.Workflow, req.InstanceID, planned.Decision) && plannedMilestonePresent(req.Milestones, planned.Milestone)
 			}

@@ -261,7 +261,7 @@ export {
 } from './realtime-activity-summary.js';
 export { CustomerOperationReadinessError, type CustomerOperationReadinessGuard } from './customer-operation-readiness.js';
 
-export { businessDecisionPayload, type OperationBusinessDecision, type OperationBusinessDecisionPayload } from './customer-operation-decisions.js';
+export { businessDecisionPayload, type OperationBusinessDecision, type OperationBusinessDecisionPayload, type OperationBusinessConditionResult, type OperationBusinessConditionDefinition } from './customer-operation-decisions.js';
 
 export type { OperationWorkflowPolicyRequirement } from './customer-operations.js';
 

@@ -56,7 +56,7 @@ export async function guardedWorkflowTransition(
     tx.workflowTransition(request.workflow, request.instance_id, request.from_state, request.to_state, request.selected_paths);
     const stagedReports = reports.slice(), stagedStates = states.slice();
     reports.splice(0, reports.length, ...priorReports); states.splice(0, states.length, ...priorStates);
-    const response = await check({...request, decisions: request.decisions.map(p => ({...p,decision:{...p.decision}})), milestones: [...request.milestones], selected_paths: canonicalWorkflowPaths(request.selected_paths)});
+    const response = await check({...request, decisions: request.decisions.map(p => ({...p,decision:businessDecisionPayload(p.decision).decision})), milestones: [...request.milestones], selected_paths: canonicalWorkflowPaths(request.selected_paths)});
     if (!isOpen()) throw new TypeError('Readiness guard must be awaited inside the callback');
     if (reports.length !== priorReports.length || states.length !== priorStates.length) throw new TypeError('Do not queue evidence concurrently with a readiness guard');
     const r = response.readiness;
@@ -108,7 +108,7 @@ export async function guardedWorkflowTransition(
           let matchesRule = !!planned && request.milestones.includes(rule.milestone) && planned.workflow === request.workflow && planned.instance_id === request.instance_id && planned.code === rule.code && planned.rule_id === rule.rule_id && planned.rule_version === rule.rule_version;
           const selection = request.selected_paths.find(p => p.group_id === expected.id && p.path_id === path.id);
           if (selection?.decision_milestone_id) matchesRule &&= selection.decision_code === rule.code && selection.decision_rule_id === rule.rule_id && selection.decision_rule_version === rule.rule_version;
-          if (!!d.reported !== !!planned || planned && (['workflow','instance_id','code','description','rule_id','rule_version'] as const).some(key => d.reported?.[key] !== planned[key]) || d.satisfied !== matchesRule) return true;
+          if (!!d.reported !== !!planned || planned && (['workflow','instance_id','code','description','rule_id','rule_version'] as const).some(key => d.reported?.[key] !== planned[key]) || JSON.stringify(d.reported?.conditions) !== JSON.stringify(planned?.conditions) || d.satisfied !== matchesRule) return true;
           result.usable &&= matchesRule;
         }
         if (!result.complete || path.satisfied !== result.usable) return true;
@@ -125,7 +125,7 @@ export async function guardedWorkflowTransition(
       const matches = stagedReports.filter(f => f.name === path.decision!.milestone);
       if (matches.length !== 1) throw new TypeError('Path decision requires exactly one staged fact');
       const fact = matches[0]!, d = (fact.payload as {decision: OperationBusinessDecision}).decision;
-      const linked = canonicalWorkflowPaths([{group_id:group.id,path_id:path.id,decision_milestone_id:fact.id,decision_code:d.code,decision_description:d.description,decision_rule_id:d.rule_id,decision_rule_version:d.rule_version}])[0]!;
+      const linked = canonicalWorkflowPaths([{group_id:group.id,path_id:path.id,decision_milestone_id:fact.id,decision_code:d.code,decision_description:d.description,decision_rule_id:d.rule_id,decision_rule_version:d.rule_version,decision_conditions:d.conditions}])[0]!;
       if (linkedChoices[index]!.decision_milestone_id && JSON.stringify(linkedChoices[index]) !== JSON.stringify(linked)) throw new TypeError('Path decision reference differs from staged evidence');
       linkedChoices[index] = linked;
     }

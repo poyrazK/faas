@@ -1935,6 +1935,9 @@ from .operation_business_compensation import OperationBusinessCompensation
 from .operation_business_compensation_payload import OperationBusinessCompensationPayload
 from .operation_business_compensation_payload_kind import OperationBusinessCompensationPayloadKind
 from .operation_business_compensation_status import OperationBusinessCompensationStatus
+from .operation_business_condition_definition import OperationBusinessConditionDefinition
+from .operation_business_condition_result import OperationBusinessConditionResult
+from .operation_business_condition_result_result import OperationBusinessConditionResultResult
 from .operation_business_decision import OperationBusinessDecision
 from .operation_business_decision_payload import OperationBusinessDecisionPayload
 from .operation_business_decision_payload_kind import OperationBusinessDecisionPayloadKind
@@ -5389,6 +5392,9 @@ __all__ = (
     "OperationBusinessCompensationPayload",
     "OperationBusinessCompensationPayloadKind",
     "OperationBusinessCompensationStatus",
+    "OperationBusinessConditionDefinition",
+    "OperationBusinessConditionResult",
+    "OperationBusinessConditionResultResult",
     "OperationBusinessDecision",
     "OperationBusinessDecisionPayload",
     "OperationBusinessDecisionPayloadKind",

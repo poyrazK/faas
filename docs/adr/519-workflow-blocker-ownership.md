@@ -648,3 +648,30 @@ Go, Node and Python expose these additive fields and DTOs through the existing
 summary and contributor APIs. Existing owner boundaries, cohort tokens, refresh
 behavior, sample limits, and version/outcome truncation rules remain in force.
 No endpoint or migration is added.
+
+
+### Application-reported decision conditions
+
+A workflow milestone step may declare `decision_conditions`, a list of unique
+condition IDs and public descriptions pinned to that workflow contract version.
+Typed `gregale.business-decision.v1` decisions may optionally report `conditions`
+with the same ID and exact description and a `pass`, `fail`, or `unknown` result.
+Each declaration and report is bounded to 16 conditions; IDs are lowercase slugs
+of at most 64 bytes and descriptions are nonempty UTF-8 text of at most 1024 bytes
+without control characters. Results are optional; omission means unreported,
+not passing, failing, or unknown. They do not become transition prerequisites.
+
+Milestone publication validates each reported condition against the pinned step.
+Change reasons and selected-path snapshots retain the complete condition evidence
+and require equality with the referenced transaction-backed fact. SDK receipt
+validation includes these snapshots before acknowledging the outbox. Go copies
+nested condition slices at mutable boundaries; SDK canonical snapshots sort by
+condition ID. Existing declarations and decisions omit these optional fields,
+keeping their serialized shape and retained reports compatible. The existing JSON
+payload and snapshot columns carry the data; no migration or new endpoint is needed.
+
+History, decision facts, revision decision snapshots, and contributor views show
+the application-reported results. Rule cohort identity and outcome grouping remain
+contract/version/decision/rule/path based, so conditions do not split a cohort or
+imply causation. Applications own predicate evaluation, authorization, and actions.
+Public explanations must not contain private input values or secrets.

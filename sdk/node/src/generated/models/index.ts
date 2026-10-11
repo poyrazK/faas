@@ -996,6 +996,8 @@ export type { OperationArtifactUploadRequest } from './OperationArtifactUploadRe
 export type { OperationArtifactUploadResponse } from './OperationArtifactUploadResponse.js';
 export type { OperationBusinessCompensation } from './OperationBusinessCompensation.js';
 export type { OperationBusinessCompensationPayload } from './OperationBusinessCompensationPayload.js';
+export type { OperationBusinessConditionDefinition } from './OperationBusinessConditionDefinition.js';
+export type { OperationBusinessConditionResult } from './OperationBusinessConditionResult.js';
 export type { OperationBusinessDecision } from './OperationBusinessDecision.js';
 export type { OperationBusinessDecisionPayload } from './OperationBusinessDecisionPayload.js';
 export type { OperationBusinessEffect } from './OperationBusinessEffect.js';

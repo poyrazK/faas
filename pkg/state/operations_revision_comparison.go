@@ -83,7 +83,7 @@ func compareWorkflowRevisions(previous *api.OperationWorkflowStateHistoryEntry, 
 		} else if before.PathID != after.PathID {
 			add("path_changed", after.GroupID, before.PathID, after.PathID, "Application reported a different business path for group "+after.GroupID+".")
 		}
-		if (!exists && after.DecisionMilestoneID != "") || exists && (before.DecisionCode != after.DecisionCode || before.DecisionRuleID != after.DecisionRuleID || before.DecisionRuleVersion != after.DecisionRuleVersion || before.DecisionDescription != after.DecisionDescription) {
+		if (!exists && after.DecisionMilestoneID != "") || exists && (before.DecisionCode != after.DecisionCode || before.DecisionRuleID != after.DecisionRuleID || before.DecisionRuleVersion != after.DecisionRuleVersion || before.DecisionDescription != after.DecisionDescription || revisionDecisionSnapshot(before) != revisionDecisionSnapshot(after)) {
 			beforeDecision := ""
 			if exists && before.DecisionMilestoneID != "" {
 				beforeDecision = revisionDecisionSnapshot(before)
@@ -151,9 +151,10 @@ func revisionSnapshot(value any) string {
 }
 func revisionDecisionSnapshot(p api.OperationWorkflowPathSelection) string {
 	return revisionSnapshot(struct {
-		Code        string `json:"code"`
-		Description string `json:"description"`
-		RuleID      string `json:"rule_id"`
-		RuleVersion string `json:"rule_version"`
-	}{p.DecisionCode, p.DecisionDescription, p.DecisionRuleID, p.DecisionRuleVersion})
+		Conditions  []api.OperationBusinessConditionResult `json:"conditions,omitempty"`
+		Code        string                                 `json:"code"`
+		Description string                                 `json:"description"`
+		RuleID      string                                 `json:"rule_id"`
+		RuleVersion string                                 `json:"rule_version"`
+	}{p.DecisionConditions, p.DecisionCode, p.DecisionDescription, p.DecisionRuleID, p.DecisionRuleVersion})
 }

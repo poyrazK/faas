@@ -52,9 +52,9 @@ func validateWorkflowPolicyEvidence(def OperationDefinition, report api.Operatio
 		}
 	}
 
-	reasonSelections := append([]api.OperationWorkflowPathSelection(nil), report.SelectedPaths...)
+	reasonSelections := api.CloneOperationWorkflowPathSelections(report.SelectedPaths)
 	if reason := report.ChangeReason; reason != nil {
-		reasonSelections = append(reasonSelections, api.OperationWorkflowPathSelection{DecisionMilestoneID: reason.MilestoneID, DecisionCode: reason.Decision.Code, DecisionDescription: reason.Decision.Description, DecisionRuleID: reason.Decision.RuleID, DecisionRuleVersion: reason.Decision.RuleVersion})
+		reasonSelections = append(reasonSelections, api.OperationWorkflowPathSelection{DecisionConditions: reason.Decision.Conditions, DecisionMilestoneID: reason.MilestoneID, DecisionCode: reason.Decision.Code, DecisionDescription: reason.Decision.Description, DecisionRuleID: reason.Decision.RuleID, DecisionRuleVersion: reason.Decision.RuleVersion})
 	}
 	for _, selection := range reasonSelections {
 		if selection.DecisionMilestoneID == "" {
@@ -86,7 +86,7 @@ func validateWorkflowPolicyEvidence(def OperationDefinition, report api.Operatio
 			}
 		}
 		decision, err := api.ParseOperationBusinessDecision(payloads[selection.DecisionMilestoneID])
-		if !referenced || !versionMatched || err != nil || decision == nil || decision.Workflow != report.Workflow || decision.InstanceID != report.InstanceID || decision.Code != selection.DecisionCode || decision.Description != selection.DecisionDescription || decision.RuleID != selection.DecisionRuleID || decision.RuleVersion != selection.DecisionRuleVersion {
+		if !referenced || !versionMatched || err != nil || decision == nil || decision.Workflow != report.Workflow || decision.InstanceID != report.InstanceID || (report.ChangeReason != nil && selection.DecisionMilestoneID == report.ChangeReason.MilestoneID && !api.SameOperationBusinessDecision(*decision, report.ChangeReason.Decision)) || !api.SameOperationBusinessDecision(*decision, api.OperationBusinessDecision{Workflow: report.Workflow, InstanceID: report.InstanceID, Code: selection.DecisionCode, Description: selection.DecisionDescription, RuleID: selection.DecisionRuleID, RuleVersion: selection.DecisionRuleVersion, Conditions: selection.DecisionConditions}) || decision.Code != selection.DecisionCode || decision.Description != selection.DecisionDescription || decision.RuleID != selection.DecisionRuleID || decision.RuleVersion != selection.DecisionRuleVersion {
 			if report.ChangeReason != nil && selection.DecisionMilestoneID == report.ChangeReason.MilestoneID {
 				return fmt.Errorf("%w: workflow change reason requires matching decision evidence in the same workflow instance and contract version", ErrInvalidArgument)
 			}

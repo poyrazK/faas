@@ -31,6 +31,7 @@ from ._operation_contract import (
 from .models.operation_milestone_request import OperationMilestoneRequest
 from .models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
 from .models.operation_workflow_path_selection import OperationWorkflowPathSelection
+from .models.operation_business_condition_result import OperationBusinessConditionResult
 from .models.operation_workflow_change_reason import OperationWorkflowChangeReason
 from .models.operation_workflow_state_report import OperationWorkflowStateReport
 from .models.operation_workflow_dependency import OperationWorkflowDependency
@@ -436,7 +437,7 @@ class CustomerOperationTransaction:
         return _canonical_workflow_paths([OperationWorkflowPathSelection(
             group_id=group, path_id=path, decision_milestone_id=fact.id,
             decision_code=decision.code, decision_description=decision.description,
-            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version)])[0]
+            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version, decision_conditions=([OperationBusinessConditionResult.from_dict(c) for c in decision.to_payload()["decision"].get("conditions", [])] or UNSET))])[0]
 
     def workflow_transition(self, workflow: str, instance_id: str, from_state: str, to_state: str, *, selected_paths: Sequence[OperationWorkflowPathSelection] = ()) -> None:
         selected = _canonical_workflow_paths(selected_paths)
@@ -576,6 +577,7 @@ class CustomerOperationTransaction:
                             matches_rule = matches_rule and selection.decision_code == rule.code and selection.decision_rule_id == rule.rule_id and selection.decision_rule_version == rule.rule_version
                         if ((d.reported is not UNSET) != (planned is not None)
                             or planned is not None and any(getattr(d.reported, key, None) != getattr(planned, key) for key in ("workflow", "instance_id", "code", "description", "rule_id", "rule_version"))
+                            or planned is not None and (d.reported is UNSET or d.reported.to_dict().get("conditions", []) != planned.to_dict().get("conditions", []))
                             or d.satisfied != matches_rule):
                             groups_missing = True
                         valid = valid and matches_rule
@@ -605,7 +607,7 @@ class CustomerOperationTransaction:
                         linked = _canonical_workflow_paths([OperationWorkflowPathSelection(
                             group_id=group.id, path_id=path.id, decision_milestone_id=fact.id,
                             decision_code=decision.code, decision_description=decision.description,
-                            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version)])[0]
+                            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version, decision_conditions=([OperationBusinessConditionResult.from_dict(c) for c in decision.to_payload()["decision"].get("conditions", [])] or UNSET))])[0]
                         if selection.decision_milestone_id is not UNSET and selection.to_dict() != linked.to_dict():
                             raise ValueError("path decision reference differs from staged evidence")
                         linked_choices[i] = linked
@@ -1101,6 +1103,8 @@ def _canonical_workflow_paths(input: Sequence[OperationWorkflowPathSelection]) -
             or not _STATE.fullmatch(p.path_id) or p.group_id in seen):
             raise ValueError("selected paths require valid IDs and unique groups")
         seen.add(p.group_id)
+        if p.decision_conditions is not UNSET and p.decision_milestone_id is UNSET:
+            raise ValueError("Condition results require a decision milestone")
         fields = (p.decision_code, p.decision_description, p.decision_rule_id, p.decision_rule_version)
         if p.decision_milestone_id is UNSET:
             if any(f is not UNSET for f in fields):
@@ -1110,8 +1114,11 @@ def _canonical_workflow_paths(input: Sequence[OperationWorkflowPathSelection]) -
                 raise ValueError("path decision requires a canonical UUID")
             OperationBusinessDecision(workflow="path", instance_id="path", code=p.decision_code,
                 description=p.decision_description, rule_id=p.decision_rule_id,
-                rule_version=p.decision_rule_version).to_payload()
-        result.append(evolve(p))
+                rule_version=p.decision_rule_version, conditions=None if p.decision_conditions is UNSET else [c.to_dict() for c in p.decision_conditions]).to_payload()
+        copy = OperationWorkflowPathSelection.from_dict(p.to_dict())
+        if copy.decision_conditions is not UNSET:
+            copy.decision_conditions = sorted(copy.decision_conditions, key=lambda c: c.id) or UNSET
+        result.append(copy)
     return sorted(result, key=lambda p: p.group_id)
 
 def _canonical_workflow_change_reason(input):
@@ -1119,5 +1126,6 @@ def _canonical_workflow_change_reason(input):
         return UNSET
     if not isinstance(input, OperationWorkflowChangeReason) or not isinstance(input.milestone_id, UUID) or input.milestone_id.int == 0:
         raise ValueError("change reason requires a canonical fact UUID")
-    OperationBusinessDecision(**input.decision.to_dict()).to_payload()
-    return OperationWorkflowChangeReason.from_dict(input.to_dict())
+    value = input.to_dict()
+    value["decision"] = OperationBusinessDecision(**value["decision"]).to_payload()["decision"]
+    return OperationWorkflowChangeReason.from_dict(value)

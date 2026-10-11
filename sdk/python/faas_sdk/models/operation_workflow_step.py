@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_business_condition_definition import OperationBusinessConditionDefinition
     from ..models.operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
     from ..models.operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
     from ..models.operation_workflow_step_state_sla_warning_percent import OperationWorkflowStepStateSlaWarningPercent
@@ -34,6 +35,9 @@ class OperationWorkflowStep:
     blocker_escalations: OperationWorkflowStepBlockerEscalations | Unset = UNSET
     """Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend
     escalation for active workflows with known blocker age."""
+    decision_conditions: list[OperationBusinessConditionDefinition] | Unset = UNSET
+    """Optional unique condition definitions for decisions reported on this milestone step. Definitions are pinned
+    by workflow contract version; reporting all conditions is optional."""
     allow_reconciliation: bool | Unset = UNSET
     """Explicit permission for evidence-backed state reconciliation snapshots."""
     version: int | Unset = UNSET
@@ -77,6 +81,13 @@ class OperationWorkflowStep:
         blocker_escalations: dict[str, Any] | Unset = UNSET
         if not isinstance(self.blocker_escalations, Unset):
             blocker_escalations = self.blocker_escalations.to_dict()
+
+        decision_conditions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.decision_conditions, Unset):
+            decision_conditions = []
+            for decision_conditions_item_data in self.decision_conditions:
+                decision_conditions_item = decision_conditions_item_data.to_dict()
+                decision_conditions.append(decision_conditions_item)
 
         allow_reconciliation = self.allow_reconciliation
 
@@ -129,6 +140,8 @@ class OperationWorkflowStep:
         )
         if blocker_escalations is not UNSET:
             field_dict["blocker_escalations"] = blocker_escalations
+        if decision_conditions is not UNSET:
+            field_dict["decision_conditions"] = decision_conditions
         if allow_reconciliation is not UNSET:
             field_dict["allow_reconciliation"] = allow_reconciliation
         if version is not UNSET:
@@ -156,6 +169,7 @@ class OperationWorkflowStep:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_business_condition_definition import OperationBusinessConditionDefinition
         from ..models.operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
         from ..models.operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
         from ..models.operation_workflow_step_state_sla_warning_percent import (
@@ -185,6 +199,15 @@ class OperationWorkflowStep:
             blocker_escalations = UNSET
         else:
             blocker_escalations = OperationWorkflowStepBlockerEscalations.from_dict(_blocker_escalations)
+
+        _decision_conditions = d.pop("decision_conditions", UNSET)
+        decision_conditions: list[OperationBusinessConditionDefinition] | Unset = UNSET
+        if _decision_conditions is not UNSET:
+            decision_conditions = []
+            for decision_conditions_item_data in _decision_conditions:
+                decision_conditions_item = OperationBusinessConditionDefinition.from_dict(decision_conditions_item_data)
+
+                decision_conditions.append(decision_conditions_item)
 
         allow_reconciliation = d.pop("allow_reconciliation", UNSET)
 
@@ -242,6 +265,7 @@ class OperationWorkflowStep:
             milestone=milestone,
             position=position,
             blocker_escalations=blocker_escalations,
+            decision_conditions=decision_conditions,
             allow_reconciliation=allow_reconciliation,
             version=version,
             states=states,

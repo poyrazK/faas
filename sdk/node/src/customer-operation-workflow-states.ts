@@ -14,7 +14,7 @@ export interface OperationWorkflowBlocker { priority?: 'low' | 'normal' | 'high'
 export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 
 export interface OperationWorkflowDependency { subject_type: string; subject_id: string; workflow: string; instance_id: string; required_outcome_code?: string }
-export interface OperationWorkflowPathSelection { group_id: string; path_id: string; decision_milestone_id?: string; decision_code?: string; decision_description?: string; decision_rule_id?: string; decision_rule_version?: string }
+export interface OperationWorkflowPathSelection { decision_conditions?: import("./customer-operation-decisions.js").OperationBusinessConditionResult[]; group_id: string; path_id: string; decision_milestone_id?: string; decision_code?: string; decision_description?: string; decision_rule_id?: string; decision_rule_version?: string }
 export interface OperationWorkflowStateReport {
  change_reason?: import("./customer-operation-decisions.js").OperationWorkflowChangeReason;
  selected_paths?: OperationWorkflowPathSelection[];
@@ -362,10 +362,11 @@ export function canonicalWorkflowPaths(input: unknown): OperationWorkflowPathSel
   const keys = ['decision_code','decision_description','decision_rule_id','decision_rule_version'] as const;
   if (p.decision_milestone_id !== undefined) {
    if (typeof p.decision_milestone_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p.decision_milestone_id) || p.decision_milestone_id === '00000000-0000-0000-0000-000000000000') throw new TypeError('Path decision requires a canonical UUID');
-   businessDecisionPayload({workflow:'path',instance_id:'path',code:p.decision_code,description:p.decision_description,rule_id:p.decision_rule_id,rule_version:p.decision_rule_version});
+   const decision=businessDecisionPayload({conditions:p.decision_conditions,workflow:'path',instance_id:'path',code:p.decision_code,description:p.decision_description,rule_id:p.decision_rule_id,rule_version:p.decision_rule_version});
+   if (decision.decision.conditions) result.decision_conditions=decision.decision.conditions;
    result.decision_milestone_id = p.decision_milestone_id;
    for (const key of keys) result[key] = p[key];
-  } else if (keys.some(key => p[key] !== undefined)) throw new TypeError('Path explanation requires a decision milestone');
+  } else if (p.decision_conditions !== undefined || keys.some(key => p[key] !== undefined)) throw new TypeError('Path explanation requires a decision milestone');
   return result;
  }).sort((a,b) => a.group_id < b.group_id ? -1 : a.group_id > b.group_id ? 1 : 0);
  if (result.some((p,i) => i > 0 && result[i-1]!.group_id === p.group_id)) throw new TypeError('Selected paths require unique groups');

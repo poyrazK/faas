@@ -77,6 +77,11 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	workflowVersions := make(map[string]int)
 	workflowRetainedRequirements := make(map[string]map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
 	for i := range spec.WorkflowSteps {
+		conditions, err := api.CanonicalOperationBusinessConditions(spec.WorkflowSteps[i].DecisionConditions)
+		if err != nil {
+			return err
+		}
+		spec.WorkflowSteps[i].DecisionConditions = conditions
 		if spec.WorkflowSteps[i].Version < 0 || spec.WorkflowSteps[i].Version > api.OperationWorkflowContractVersionMax {
 			return fmt.Errorf("operation workflow contract version is invalid")
 		}
@@ -531,6 +536,9 @@ func WorkflowStepsForMilestone(spec api.OperationDefinitionSpec, name string, pa
 func ResolveWorkflowInstanceIDs(steps []api.OperationWorkflowSpec, payload []byte) ([]api.OperationWorkflowSpec, error) {
 	resolved := append([]api.OperationWorkflowSpec(nil), steps...)
 	for i := range resolved {
+		resolved[i].DecisionConditions = append([]api.OperationBusinessConditionDefinition(nil), resolved[i].DecisionConditions...)
+	}
+	for i := range resolved {
 		// Previously pinned definitions had no instance selector. Preserve their
 		// workflow grouping while new source declarations provide an explicit ID.
 		if resolved[i].InstanceIDFrom == "" {
@@ -589,6 +597,9 @@ func (c *Contract) CanonicalMilestone(report api.OperationMilestoneRequest) (api
 		matched := false
 		for _, step := range steps {
 			if step.Workflow == decision.Workflow && step.InstanceID == decision.InstanceID {
+				if err := api.ValidateOperationBusinessConditionContract(step.DecisionConditions, *decision); err != nil {
+					return report, err
+				}
 				matched = true
 			}
 		}

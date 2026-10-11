@@ -77,13 +77,14 @@ type OperationWorkflowTransitionSource struct {
 }
 
 type OperationWorkflowStepSource struct {
-	Reconciliation bool   `yaml:"reconciliation,omitempty" toml:"reconciliation"`
-	Name           string `yaml:"name" toml:"name"`
-	Label          string `yaml:"label" toml:"label"`
-	Operation      string `yaml:"operation" toml:"operation"`
-	Milestone      string `yaml:"milestone" toml:"milestone"`
-	InstanceIDFrom string `yaml:"instance_id_from" toml:"instance_id_from"`
-	Position       int    `yaml:"position" toml:"position"`
+	DecisionConditions []api.OperationBusinessConditionDefinition `yaml:"decision_conditions,omitempty" toml:"decision_conditions"`
+	Reconciliation     bool                                       `yaml:"reconciliation,omitempty" toml:"reconciliation"`
+	Name               string                                     `yaml:"name" toml:"name"`
+	Label              string                                     `yaml:"label" toml:"label"`
+	Operation          string                                     `yaml:"operation" toml:"operation"`
+	Milestone          string                                     `yaml:"milestone" toml:"milestone"`
+	InstanceIDFrom     string                                     `yaml:"instance_id_from" toml:"instance_id_from"`
+	Position           int                                        `yaml:"position" toml:"position"`
 }
 
 func (m *Manifest) validateOperations(plan api.Plan) error {
@@ -451,7 +452,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
 				Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateSLABudgetSeconds: stateSLABudgets, StateSLAWarningPercent: stateSLAWarnings, StateStaleAfterSeconds: stateStaleAfter, BlockerEscalations: workflow.BlockerEscalations,
 				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0, Step: step.Name, Label: step.Label,
-				AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
+				DecisionConditions: step.DecisionConditions, AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})
 		}
 	}

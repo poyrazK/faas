@@ -96,8 +96,11 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 	}
 	checkRequest := request
 	checkRequest.Decisions = append([]OperationWorkflowPlannedDecision(nil), request.Decisions...)
+	for i := range checkRequest.Decisions {
+		checkRequest.Decisions[i].Decision = api.CloneOperationBusinessDecision(checkRequest.Decisions[i].Decision)
+	}
 	checkRequest.Milestones = append([]string(nil), request.Milestones...)
-	checkRequest.SelectedPaths = append([]OperationWorkflowPathSelection(nil), request.SelectedPaths...)
+	checkRequest.SelectedPaths = api.CloneOperationWorkflowPathSelections(request.SelectedPaths)
 	response, err = check(ctx, checkRequest)
 	if err != nil {
 		return response, err
@@ -196,7 +199,7 @@ func (tx *CustomerOperationTransaction) GuardedWorkflowTransition(ctx context.Co
 				if linkErr != nil {
 					return response, linkErr
 				}
-				if selection.DecisionMilestoneID != "" && selection != linked {
+				if selection.DecisionMilestoneID != "" && !sameCustomerWorkflowPaths([]OperationWorkflowPathSelection{selection}, []OperationWorkflowPathSelection{linked}) {
 					return response, errors.New("faas: path decision reference does not match queued evidence")
 				}
 				staged.workflowStates[len(staged.workflowStates)-1].SelectedPaths[i] = linked
@@ -365,6 +368,6 @@ func pathDecisionUsable(expected *OperationWorkflowPolicyRequirement, actual *Op
 			satisfied = satisfied && selection.DecisionCode == expected.Code && selection.DecisionRuleID == expected.RuleID && selection.DecisionRuleVersion == expected.RuleVersion
 		}
 	}
-	same := actual.Reported == nil && reported == nil || actual.Reported != nil && reported != nil && *actual.Reported == *reported
+	same := actual.Reported == nil && reported == nil || actual.Reported != nil && reported != nil && api.SameOperationBusinessDecision(*actual.Reported, *reported)
 	return same && actual.Satisfied == satisfied, satisfied
 }

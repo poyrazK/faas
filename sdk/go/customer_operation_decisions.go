@@ -5,6 +5,8 @@ import (
 	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 
+type OperationBusinessConditionDefinition = api.OperationBusinessConditionDefinition
+type OperationBusinessConditionResult = api.OperationBusinessConditionResult
 type OperationBusinessDecision = api.OperationBusinessDecision
 type OperationBusinessDecisionPayload = api.OperationBusinessDecisionPayload
 
@@ -36,7 +38,7 @@ func (tx *CustomerOperationTransaction) WorkflowPathDecision(group, path, milest
 			return selection, errors.New("faas: path reference requires a business decision milestone")
 		}
 		count++
-		selection = OperationWorkflowPathSelection{GroupID: group, PathID: path, DecisionMilestoneID: fact.ID, DecisionCode: decision.Code, DecisionDescription: decision.Description, DecisionRuleID: decision.RuleID, DecisionRuleVersion: decision.RuleVersion}
+		selection = OperationWorkflowPathSelection{GroupID: group, PathID: path, DecisionConditions: decision.Conditions, DecisionMilestoneID: fact.ID, DecisionCode: decision.Code, DecisionDescription: decision.Description, DecisionRuleID: decision.RuleID, DecisionRuleVersion: decision.RuleVersion}
 	}
 	if count != 1 {
 		return selection, errors.New("faas: path reference requires exactly one queued decision milestone")
@@ -97,5 +99,5 @@ func (tx *CustomerOperationTransaction) WorkflowChangeReason(milestone string) e
 	return nil
 }
 func sameCustomerWorkflowChangeReason(a, b *OperationWorkflowChangeReason) bool {
-	return a == nil && b == nil || a != nil && b != nil && *a == *b
+	return a == nil && b == nil || a != nil && b != nil && a.MilestoneID == b.MilestoneID && api.SameOperationBusinessDecision(a.Decision, b.Decision)
 }

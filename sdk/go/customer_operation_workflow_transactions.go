@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"net/http"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -819,9 +820,10 @@ func canonicalCustomerWorkflowPaths(input []OperationWorkflowPathSelection) ([]O
 	if len(input) > operationWorkflowPathSelections {
 		return nil, errors.New("faas: too many selected workflow paths")
 	}
-	out := append([]OperationWorkflowPathSelection(nil), input...)
+	out := api.CloneOperationWorkflowPathSelections(input)
 	sort.Slice(out, func(i, j int) bool { return out[i].GroupID < out[j].GroupID })
 	for i, p := range out {
+		out[i].DecisionConditions, _ = api.CanonicalOperationBusinessConditionResults(p.DecisionConditions)
 		if err := api.ValidateOperationWorkflowPathDecision(p); err != nil {
 			return nil, err
 		}
@@ -839,7 +841,7 @@ func sameCustomerWorkflowPaths(a, b []OperationWorkflowPathSelection) bool {
 		return false
 	}
 	for i := range left {
-		if left[i] != right[i] {
+		if !reflect.DeepEqual(left[i], right[i]) {
 			return false
 		}
 	}

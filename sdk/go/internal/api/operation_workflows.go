@@ -5,6 +5,7 @@ package api
 // name matches. Source manifests pin the milestone and instance ID pointer;
 // reads populate InstanceID from the retained public payload.
 type OperationWorkflowSpec struct {
+	DecisionConditions     []OperationBusinessConditionDefinition              `json:"decision_conditions,omitempty"`
 	StateSLAWarningPercent map[string]int64                                    `json:"state_sla_warning_percent,omitempty"`
 	StateSLABudgetSeconds  map[string]int64                                    `json:"state_sla_budget_seconds,omitempty"`
 	BlockerEscalations     map[string]OperationWorkflowBlockerEscalationPolicy `json:"blocker_escalations,omitempty"`

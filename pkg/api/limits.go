@@ -20,6 +20,10 @@ import (
 	"time"
 )
 
+// Business condition evidence is bounded independently of milestone payload bytes.
+const OperationBusinessConditionsMax = 16
+const OperationBusinessConditionDescriptionMaxBytes = 1024
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (

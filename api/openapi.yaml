@@ -38558,6 +38558,23 @@ components:
       properties:
         milestone_id: {type: string, format: uuid}
         decision: {$ref: '#/components/schemas/OperationBusinessDecision'}
+    OperationBusinessConditionDefinition:
+      description: Public condition vocabulary declared on a pinned workflow milestone step. A definition does not evaluate a predicate.
+      type: object
+      additionalProperties: false
+      required: [id, description]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        description: {type: string, minLength: 1, maxLength: 1024, description: Public UTF-8 explanation without control characters; byte bound.}
+    OperationBusinessConditionResult:
+      description: Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain unreported; unknown is explicit. No execution authority or causal inference.
+      type: object
+      additionalProperties: false
+      required: [id, description, result]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        description: {type: string, minLength: 1, maxLength: 1024, description: Exact public description from the pinned milestone declaration; UTF-8 byte bound.}
+        result: {type: string, enum: [pass, fail, unknown]}
     OperationBusinessDecision:
       description: "Application-reported business decision with a public explanation and optional exact policy rule identity."
       type: object
@@ -38570,6 +38587,11 @@ components:
       - rule_id
       - rule_version
       properties:
+        conditions:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationBusinessConditionResult'}
+          description: Optional unique condition IDs declared by the pinned milestone step. Canonical order is by ID; existing decisions omit this field.
         workflow:
           type: string
           minLength: 1
@@ -38674,6 +38696,11 @@ components:
           propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
           additionalProperties: {$ref: '#/components/schemas/OperationWorkflowBlockerEscalationPolicy'}
           description: Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend escalation for active workflows with known blocker age.
+        decision_conditions:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationBusinessConditionDefinition'}
+          description: Optional unique condition definitions for decisions reported on this milestone step. Definitions are pinned by workflow contract version; reporting all conditions is optional.
         allow_reconciliation: {type: boolean, description: Explicit permission for evidence-backed state reconciliation snapshots.}
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
         title: {type: string, minLength: 1, maxLength: 128}
@@ -38750,6 +38777,11 @@ components:
       additionalProperties: false
       required: [group_id, path_id]
       properties:
+        decision_conditions:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationBusinessConditionResult'}
+          description: Optional application condition snapshot; requires a decision fact reference and exact equality with that fact. Omitted for legacy decisions.
         group_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         path_id: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
         decision_milestone_id: {type: string, format: uuid, description: 'Optional business decision milestone in this report evidence list and application transaction. When present all decision fields are required and must match its payload.'}

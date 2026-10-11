@@ -130,7 +130,7 @@ func visitWorkflowDecisionOutcomeReports(instance workflowPerformanceInstance, v
 			decision.RuleVersion = reason.Decision.RuleVersion
 			fact := evidence
 			fact.MilestoneID = reason.MilestoneID
-			value := reason.Decision
+			value := api.CloneOperationBusinessDecision(reason.Decision)
 			fact.Decision = &value
 			if !visit(decision, fact) {
 				return
@@ -147,7 +147,7 @@ func visitWorkflowDecisionOutcomeReports(instance workflowPerformanceInstance, v
 			fact := evidence
 			if p.DecisionMilestoneID != "" {
 				fact.MilestoneID = p.DecisionMilestoneID
-				fact.Decision = &api.OperationBusinessDecision{Workflow: h.Workflow, InstanceID: h.InstanceID, Code: p.DecisionCode, Description: p.DecisionDescription, RuleID: p.DecisionRuleID, RuleVersion: p.DecisionRuleVersion}
+				fact.Decision = &api.OperationBusinessDecision{Conditions: append([]api.OperationBusinessConditionResult(nil), p.DecisionConditions...), Workflow: h.Workflow, InstanceID: h.InstanceID, Code: p.DecisionCode, Description: p.DecisionDescription, RuleID: p.DecisionRuleID, RuleVersion: p.DecisionRuleVersion}
 			}
 			if !visit(path, fact) {
 				return

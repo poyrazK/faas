@@ -74,7 +74,7 @@ export function milestoneTransaction(tx: OperationTransaction, request: Customer
     const payload = fact.payload as {kind?: string; decision?: OperationBusinessDecision};
     if (payload?.kind !== 'gregale.business-decision.v1' || !payload.decision) throw new TypeError('Path reference requires a business decision milestone');
     const d = businessDecisionPayload(payload.decision).decision;
-    return canonicalWorkflowPaths([{group_id:group,path_id:path,decision_milestone_id:fact.id,decision_code:d.code,decision_description:d.description,decision_rule_id:d.rule_id,decision_rule_version:d.rule_version}])[0]!;
+    return canonicalWorkflowPaths([{group_id:group,path_id:path,decision_milestone_id:fact.id,decision_code:d.code,decision_description:d.description,decision_rule_id:d.rule_id,decision_rule_version:d.rule_version,decision_conditions:d.conditions}])[0]!;
   },businessCompensation(name,compensation) {transaction.milestone(name,businessCompensationPayload(compensation));},businessEffect(name,effect) {transaction.milestone(name,businessEffectPayload(effect));},reportBusinessInvariant(name,input,current) {
     try {
       const payload=businessInvariantPayload(input), blockers=applyBusinessInvariant(payload.invariant,current);

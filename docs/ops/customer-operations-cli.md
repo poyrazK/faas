@@ -646,3 +646,53 @@ Go, Node and Python expose these additive fields and DTOs through the existing
 summary and contributor APIs. Existing owner boundaries, cohort tokens, refresh
 behavior, sample limits, and version/outcome truncation rules remain in force.
 No endpoint or migration is added.
+
+
+### Explain a decision with reported conditions
+
+Declare vocabulary on the decision milestone's workflow step:
+
+```yaml
+decision_conditions:
+  - id: credit-limit-exceeded
+    description: Order total exceeded the customer credit limit
+  - id: customer-verified
+    description: Customer verification passed
+```
+
+Then attach results to the typed business decision in the same application
+transaction as the business write:
+
+```json
+{
+  "kind": "gregale.business-decision.v1",
+  "decision": {
+    "workflow": "order-review",
+    "instance_id": "order-123",
+    "code": "manual-review",
+    "description": "Selected manual review",
+    "rule_id": "credit-review",
+    "rule_version": "2026-10",
+    "conditions": [
+      {"id": "credit-limit-exceeded", "description": "Order total exceeded the customer credit limit", "result": "pass"},
+      {"id": "customer-verified", "description": "Customer verification passed", "result": "pass"}
+    ]
+  }
+}
+```
+
+Use Go `OperationBusinessConditionResult` values, Node's `conditions` array, or
+Python's `conditions` list of dictionaries with the existing business decision
+helper. The milestone's payload schema must also allow this optional field.
+IDs must be unique and descriptions must match the pinned step exactly. There are
+at most 16 conditions per declaration/report, each with a 64-byte slug ID and a
+1024-byte public description. `pass` means the named condition held according to
+the application; it does not mean the decision approved the business operation.
+`fail` and explicit `unknown` are also supported. An omitted result is unreported.
+Changing the vocabulary requires a new workflow contract version.
+
+Existing history and contributor APIs retain conditions in change reasons and
+selected-path decision snapshots. The dashboard displays them alongside decision
+facts and explanations. Existing reports without conditions remain compatible;
+no migration is needed for this extension. Gregale never evaluates these predicates
+or infers actions or causation from their reported results.

@@ -1002,6 +1002,8 @@ export type { OperationArtifactUploadRequest } from './models/OperationArtifactU
 export type { OperationArtifactUploadResponse } from './models/OperationArtifactUploadResponse.js';
 export type { OperationBusinessCompensation } from './models/OperationBusinessCompensation.js';
 export type { OperationBusinessCompensationPayload } from './models/OperationBusinessCompensationPayload.js';
+export type { OperationBusinessConditionDefinition } from './models/OperationBusinessConditionDefinition.js';
+export type { OperationBusinessConditionResult } from './models/OperationBusinessConditionResult.js';
 export type { OperationBusinessDecision } from './models/OperationBusinessDecision.js';
 export type { OperationBusinessDecisionPayload } from './models/OperationBusinessDecisionPayload.js';
 export type { OperationBusinessEffect } from './models/OperationBusinessEffect.js';

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationBusinessConditionDefinition } from './OperationBusinessConditionDefinition.js';
 import type { OperationWorkflowBlockerEscalationPolicy } from './OperationWorkflowBlockerEscalationPolicy.js';
 import type { OperationWorkflowTransition } from './OperationWorkflowTransition.js';
 /**
@@ -12,6 +13,10 @@ export type OperationWorkflowStep = {
    * Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend escalation for active workflows with known blocker age.
    */
   blocker_escalations?: Record<string, OperationWorkflowBlockerEscalationPolicy>;
+  /**
+   * Optional unique condition definitions for decisions reported on this milestone step. Definitions are pinned by workflow contract version; reporting all conditions is optional.
+   */
+  decision_conditions?: Array<OperationBusinessConditionDefinition>;
   /**
    * Explicit permission for evidence-backed state reconciliation snapshots.
    */
