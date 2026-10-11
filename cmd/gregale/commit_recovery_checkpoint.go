@@ -8,12 +8,16 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/gofrs/flock"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type commitRecoveryCheckpoint struct {
 	path      string
 	protected []string
+	guard     *flock.Flock
+	guardInfo os.FileInfo
 }
 
 func newCommitRecoveryCheckpoint(path string, protected ...string) (*commitRecoveryCheckpoint, error) {
@@ -44,6 +48,12 @@ func newCommitRecoveryCheckpoint(path string, protected ...string) (*commitRecov
 }
 
 func (c *commitRecoveryCheckpoint) validate() error {
+	if c.guard != nil {
+		info, err := os.Lstat(c.path + ".lock")
+		if !c.guard.Locked() || err != nil || !info.Mode().IsRegular() || !os.SameFile(info, c.guardInfo) {
+			return errors.New("recovery checkpoint lock file changed or ownership was lost; stop other writers before restarting")
+		}
+	}
 	info, err := os.Lstat(c.path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -70,6 +80,9 @@ func (c *commitRecoveryCheckpoint) validate() error {
 }
 
 func (c *commitRecoveryCheckpoint) save(status api.CommitRecoveryStatusResult) error {
+	if c.guard == nil || !c.guard.Locked() {
+		return errors.New("recovery checkpoint ownership is not held")
+	}
 	data, err := json.Marshal(status)
 	if err != nil {
 		return err
@@ -109,4 +122,74 @@ func (c *commitRecoveryCheckpoint) save(status api.CommitRecoveryStatusResult) e
 		return fmt.Errorf("persist recovery checkpoint: %w", err)
 	}
 	return nil
+}
+
+// lock holds a stable sidecar inode across checkpoint replacements. Never unlink
+// that sidecar: another process could otherwise acquire a different lock inode.
+func (c *commitRecoveryCheckpoint) lock(statusInputs ...string) error {
+	lockPath := c.path + ".lock"
+	info, err := os.Lstat(lockPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil && (!info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0)) {
+		return errors.New("recovery checkpoint lock must be a private regular file, not a symlink")
+	}
+	protected := append([]string{c.path}, c.protected...)
+	for _, input := range statusInputs {
+		if input == "" {
+			continue
+		}
+		resolved, resolveErr := filepath.EvalSymlinks(input)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		resolved, resolveErr = filepath.Abs(resolved)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		protected = append(protected, resolved)
+	}
+	for _, input := range protected {
+		if input == lockPath {
+			return errors.New("recovery checkpoint lock must not overwrite an input")
+		}
+		target, statErr := os.Stat(input)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		if info != nil && target != nil && os.SameFile(info, target) {
+			return errors.New("recovery checkpoint lock must not alias an input")
+		}
+	}
+	if stdout, statErr := os.Stdout.Stat(); statErr == nil && info != nil && os.SameFile(info, stdout) {
+		return errors.New("recovery checkpoint lock must be separate from stdout")
+	}
+	guard := flock.New(lockPath, flock.SetPermissions(0600))
+	locked, err := guard.TryLock()
+	if err != nil || !locked {
+		_ = guard.Close()
+		if err != nil {
+			return fmt.Errorf("acquire recovery checkpoint ownership: %w", err)
+		}
+		return errors.New("recovery checkpoint is owned by another Gregale watch; use a different path or wait for it to exit")
+	}
+	info, err = os.Lstat(lockPath)
+	if err != nil || !info.Mode().IsRegular() {
+		_ = guard.Close()
+		return errors.New("recovery checkpoint lock changed while acquiring ownership")
+	}
+	c.guard, c.guardInfo = guard, info
+	if err = c.validate(); err != nil {
+		_ = guard.Close()
+		return err
+	}
+	return nil
+}
+
+func (c *commitRecoveryCheckpoint) close() error {
+	if c.guard == nil {
+		return nil
+	}
+	return c.guard.Close()
 }

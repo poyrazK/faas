@@ -1269,7 +1269,8 @@ uses the existing 64 MiB input limit. The directory must already exist.
 Symlink/nonregular destinations and aliases of the plan/apply result are
 rejected. The checkpoint can replace its own resume/refresh input after it is
 loaded. Keep stdout in a separate file: shell redirection occurs before the
-CLI can check paths. Use only one watch per checkpoint path.
+CLI can check paths. The CLI holds exclusive ownership of the canonical checkpoint path throughout
+the watch. A second writer fails immediately before polling.
 
 Saving failure stops monitoring with an explicit error and nonzero exit;
 final JSON still goes to stdout. The preceding checkpoint remains intact if
@@ -1280,3 +1281,16 @@ An abrupt kill can leave a private temporary file; resume only the named
 checkpoint. Files remain editable local observations, not signed evidence.
 
 See [ADR-942](adr/942-commit-recovery-watch-checkpoints.md).
+
+
+Checkpoint ownership uses a private persistent sidecar named PATH.lock.
+Directory aliases resolve to the same ownership path. An existing sidecar is
+normal after exit or a crash: the OS releases the lock automatically, so the
+next watch can acquire it. Do not delete or replace the sidecar while a watch
+is running. If its identity changes, saving stops with an explicit error.
+Lock sidecars cannot alias input files, the checkpoint or stdout; symlinks,
+nonregular files and nonprivate permissions on non-Windows systems are rejected.
+
+These are advisory OS locks for cooperating Gregale processes. Use a filesystem
+with supported locking and atomic rename semantics. Processes that bypass the
+lock are not coordinated. See [ADR-943](adr/943-exclusive-commit-recovery-checkpoint-ownership.md).

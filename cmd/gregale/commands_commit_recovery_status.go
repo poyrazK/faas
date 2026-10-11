@@ -50,6 +50,10 @@ func cmdCommitRecoveryStatus(args []string) int {
 		if checkpointErr != nil {
 			return printErr("Cannot use recovery checkpoint", checkpointErr)
 		}
+		if checkpointErr = checkpoint.lock(*resumePath, *refreshPath); checkpointErr != nil {
+			return printErr("Cannot own recovery checkpoint", checkpointErr)
+		}
+		defer func() { _ = checkpoint.close() }()
 	}
 	client, err := authedClient()
 	if err != nil {

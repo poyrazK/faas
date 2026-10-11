@@ -28,7 +28,8 @@ links. Recheck those protections before replacement. Reject an existing
 checkpoint that aliases stdout. Use separate stdout output: shell redirection
 can truncate files before the CLI starts. These checks protect ordinary path
 mistakes, not hostile concurrent filesystem changes. One writer should own a
-checkpoint path; concurrent watches are not coordinated.
+checkpoint path; concurrent watches were not coordinated by this decision.
+ADR-943 adds exclusive advisory ownership for cooperating Gregale watches.
 
 The checkpoint may intentionally replace the supplied resume/refresh status
 file after that file has been loaded and validated. A restart uses the same
