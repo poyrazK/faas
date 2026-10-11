@@ -1266,7 +1266,7 @@ type Handler struct {
 	geoReader CountryReader
 	// asnReader resolves the asn match field (ADR-966); nil = absent.
 	asnReader ASNReader
-	// botVerifier resolves the verified_bot match field (ADR-969); nil = absent.
+	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
 	botVerifier *BotVerifier
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder

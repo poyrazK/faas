@@ -59,7 +59,7 @@ func googlebotResolver() *fakeBotResolver {
 	}
 }
 
-// adr: 969 — a claimed crawler verifies only by forward-confirmed reverse
+// adr: 973 — a claimed crawler verifies only by forward-confirmed reverse
 // DNS into its own domain; spoofed names, mismatched forward records and
 // non-claims never verify.
 func TestBotVerifierForwardConfirmedReverseDNS(t *testing.T) {
@@ -97,7 +97,7 @@ func TestBotVerifierForwardConfirmedReverseDNS(t *testing.T) {
 	}
 }
 
-// adr: 969 — verdicts are cached per IP and bot until their TTL; transient
+// adr: 973 — verdicts are cached per IP and bot until their TTL; transient
 // DNS failures are not cached and fail closed.
 func TestBotVerifierCaching(t *testing.T) {
 	r := googlebotResolver()
@@ -134,7 +134,7 @@ func TestBotVerifierCaching(t *testing.T) {
 	}
 }
 
-// adr: 969 — concurrent requests for one IP share a lookup, and a spent
+// adr: 973 — concurrent requests for one IP share a lookup, and a spent
 // in-flight budget fails closed instead of queueing.
 func TestBotVerifierConcurrency(t *testing.T) {
 	r := googlebotResolver()
@@ -176,7 +176,7 @@ func TestBotVerifierConcurrency(t *testing.T) {
 	}
 }
 
-// adr: 969 — the gateway resolves verified_bot only for rules that read it,
+// adr: 973 — the gateway resolves verified_bot only for rules that read it,
 // at most once per request.
 func TestApplicableEdgeRulesVerifiedBotCondition(t *testing.T) {
 	r := googlebotResolver()

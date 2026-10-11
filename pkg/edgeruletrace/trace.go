@@ -53,7 +53,7 @@ type Input struct {
 	// (ADR-966); 0 means unknown.
 	ASN uint32
 	// VerifiedBot simulates a client IP that passes crawler verification
-	// (ADR-969): verified_bot is then the known crawler the User-Agent
+	// (ADR-973): verified_bot is then the known crawler the User-Agent
 	// header claims. The simulator does no DNS.
 	VerifiedBot bool
 	Headers     http.Header
@@ -2504,7 +2504,7 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	})
 }
 
-// traceVerifiedBot is the simulated verified_bot value (ADR-969).
+// traceVerifiedBot is the simulated verified_bot value (ADR-973).
 func traceVerifiedBot(verified bool, headers http.Header) func() string {
 	if !verified {
 		return nil

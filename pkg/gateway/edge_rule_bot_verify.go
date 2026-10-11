@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-969: verified crawlers. A request is a verified bot only when its
+// ADR-973: verified crawlers. A request is a verified bot only when its
 // User-Agent claims a known crawler AND the client IP's reverse DNS name
 // ends in that crawler's domain AND the name resolves back to the IP.
 // Lookups run only for claimed bots on rules that read verified_bot, are
@@ -189,14 +189,14 @@ func (v *BotVerifier) storeLocked(key string, verdict botVerdict) {
 	v.cache[key] = verdict
 }
 
-// WithBotVerifier arms the verified_bot match field (ADR-969). nil leaves
+// WithBotVerifier arms the verified_bot match field (ADR-973). nil leaves
 // it absent.
 func (h *Handler) WithBotVerifier(v *BotVerifier) *Handler {
 	h.botVerifier = v
 	return h
 }
 
-// SetBotVerifier installs crawler verification for the request (ADR-969).
+// SetBotVerifier installs crawler verification for the request (ADR-973).
 // Call before the context is attached to a request; nil leaves the
 // verified_bot field absent.
 func (m *EdgeRuleMatchContext) SetBotVerifier(ctx context.Context, v *BotVerifier) {

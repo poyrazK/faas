@@ -52,7 +52,7 @@ type EdgeRuleMatchInput struct {
 	// ASN is the client IP's autonomous system (ADR-966); 0 is absent.
 	ASN uint32
 	// VerifiedBot returns the known crawler the request was verified as
-	// (ADR-969), or "". It is called only when a verified_bot leaf is
+	// (ADR-973), or "". It is called only when a verified_bot leaf is
 	// evaluated, because verification can cost a DNS lookup; nil is absent.
 	VerifiedBot func() string
 }
@@ -536,7 +536,7 @@ func anyMatchValue(values []string, f func(string) bool) bool {
 	return false
 }
 
-// checkBotLeaf restricts ua_family and verified_bot (ADR-969) to equality
+// checkBotLeaf restricts ua_family and verified_bot (ADR-973) to equality
 // ops over their closed value sets, so a typo fails at write time instead of
 // never matching.
 func checkBotLeaf(kind matchFieldKind, op string, values []string) error {

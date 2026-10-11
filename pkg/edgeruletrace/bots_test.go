@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
 
-// adr: 969 — the simulator classifies the simulated User-Agent and treats
+// adr: 973 — the simulator classifies the simulated User-Agent and treats
 // verified_bot as the claimed crawler only when VerifiedBot is set.
 func TestSimulateEvaluatesBotConditions(t *testing.T) {
 	var cond api.EdgeRuleMatchExpr
