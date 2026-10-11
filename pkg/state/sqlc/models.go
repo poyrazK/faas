@@ -5848,6 +5848,17 @@ type ProjectEnvironmentClonePostgresWriteFence struct {
 	UpdatedAt                pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneWakeDispatch struct {
+	InstanceID    pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	WakeID        pgtype.UUID
+	RequestReason string
+	Method        string
+	DispatchedAt  pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneWorkload struct {
 	OperationID        pgtype.UUID
 	AppID              pgtype.UUID

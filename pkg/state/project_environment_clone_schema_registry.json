@@ -6738,6 +6738,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_wake_dispatches",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "dispatched_at",
+      "instance_id",
+      "method",
+      "node_id",
+      "request_reason",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_workload_cleanups",
     "columns": [
       "cleaned_at",

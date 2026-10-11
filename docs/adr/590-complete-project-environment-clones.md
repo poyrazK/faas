@@ -9853,3 +9853,29 @@ Destroy success or an instance state label. A future original host-proof protoco
 must close both source and destination producers before collecting this evidence.
 Ordinary wake RPC closure, migration host closure and public full-stage admission
 remain gated. Storage tests use no native VMs or live provider qualification.
+
+### Durable ordinary clone wake dispatch ownership
+
+Schedd's production VMM router now records original instance, app, deployment,
+node, wake ID, request namespace and boot method before sending ordinary clone
+cold boots, snapshot restores or paused warm-pool restores. The PostgreSQL
+recorder verifies current instance ownership and boot state under the deployment
+and instance writer locks, then rejects any requested or retired clone fence.
+Queued dispatch checks run after the fence commits; stale transaction snapshots
+cannot authorize dispatch. Unrelated source wakes acquire no clone journal row.
+
+The dispatch table has no cascading parent foreign keys. Its original identity
+survives instance and deployment deletion. Rows cannot be rewritten, deleted or
+truncated, and a duplicate dispatch is rejected rather than treating an unknown
+RPC outcome as permission to retry. Workload retirement and receipt replay check
+these original dispatch rows in addition to instances and qualification frames.
+Database downgrade refuses retained dispatches or requested/retired fences.
+
+This is dispatch admission and evidence retention, not native closure. Neither a
+successful wake response, a timeout, Destroy success nor a stopped instance
+collects the record. A subsequent protocol must bind independent host-generation
+and producer-closure evidence before releasing original wake authority. Existing
+pre-upgrade RPCs are not retroactively recorded. Migration source/destination
+closure, legacy wake qualification and public full-stage admission remain gated.
+The tests use PostgreSQL and controlled router clients; native metal and leak
+acceptance have not been run in this managed environment.

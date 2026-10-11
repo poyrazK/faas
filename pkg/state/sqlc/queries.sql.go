@@ -5297,7 +5297,9 @@ SELECT EXISTS(SELECT 1 FROM retirement) AND
  WHERE e.retired_at IS NULL AND (
  (coalesce(r.plan->>'EnvironmentID','')<>'' AND r.plan->>'EnvironmentID'=e.frame->>'environment_id') OR
  d.reason='environment-clone:'||r.operation_id::text OR
- r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AS closed
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AND NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_wake_dispatches w
+ WHERE w.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AS closed
 `
 
 // No instance state label proves native closure. Any remaining original row or
@@ -55152,6 +55154,30 @@ func (q *Queries) RecordCloneCheckpointRelease(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordCloneCheckpointWakeDispatch = `-- name: RecordCloneCheckpointWakeDispatch :exec
+SELECT record_clone_checkpoint_wake_dispatch($1::uuid,$2::uuid,
+ $3::uuid,$4::uuid,$5::text)
+`
+
+type RecordCloneCheckpointWakeDispatchParams struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       pgtype.UUID
+	Method       string
+}
+
+func (q *Queries) RecordCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, arg RecordCloneCheckpointWakeDispatchParams) error {
+	_, err := db.Exec(ctx, recordCloneCheckpointWakeDispatch,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.Method,
+	)
+	return err
 }
 
 const recordClonePostgresMaintenance = `-- name: RecordClonePostgresMaintenance :one

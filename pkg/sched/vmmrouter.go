@@ -230,6 +230,7 @@ type VMMRouter struct {
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
 	outboundRelay ExecutionOutboundRelay
+	wakeDispatch  func(context.Context, string, string, string, string, string) error
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →
@@ -263,6 +264,20 @@ func (r *VMMRouter) WithExecutionOutboundRelay(relay ExecutionOutboundRelay) *VM
 		r.outboundRelay = relay
 	}
 	return r
+}
+
+// WithCloneWakeDispatchRecorder installs the durable ordinary-wake admission gate.
+// Production wires PgStore; configure it before serving scheduler requests.
+func (r *VMMRouter) WithCloneWakeDispatchRecorder(record func(context.Context, string, string, string, string, string) error) *VMMRouter {
+	r.wakeDispatch = record
+	return r
+}
+
+func (r *VMMRouter) recordCloneWakeDispatch(ctx context.Context, nodeID, instance string, app AppSpec, method string) error {
+	if r.wakeDispatch == nil {
+		return nil
+	}
+	return r.wakeDispatch(ctx, instance, app.AppID, app.DeploymentID, nodeID, method)
 }
 
 // ComputeNodeInfo is the slim subset of state.ComputeNode the
@@ -431,6 +446,9 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string, app AppSpec) (*WakeOutcome, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.recordCloneWakeDispatch(ctx, nodeID, instance, app, "cold_boot"); err != nil {
 		return nil, err
 	}
 	return cli.CreateColdBoot(ctx, instance, app)
@@ -610,6 +628,12 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 	if err != nil {
 		return nil, err
 	}
+	if snap.DeploymentID != app.DeploymentID && r.wakeDispatch != nil {
+		return nil, fmt.Errorf("wake snapshot deployment ownership changed")
+	}
+	if err := r.recordCloneWakeDispatch(ctx, nodeID, instance, app, "restore"); err != nil {
+		return nil, err
+	}
 	return cli.CreateFromSnapshot(ctx, instance, app, snap)
 }
 
@@ -625,6 +649,12 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 	if !ok {
 		return nil, api.NewProblem(501, api.CodeNotImplemented,
 			"Warm-pool restore unavailable", "vmmd client does not support paused snapshot restore")
+	}
+	if snap.DeploymentID != app.DeploymentID && r.wakeDispatch != nil {
+		return nil, fmt.Errorf("wake snapshot deployment ownership changed")
+	}
+	if err := r.recordCloneWakeDispatch(ctx, nodeID, instance, app, "restore"); err != nil {
+		return nil, err
 	}
 	return paused.CreatePausedFromSnapshot(ctx, instance, app, snap)
 }

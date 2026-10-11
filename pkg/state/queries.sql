@@ -16044,7 +16044,13 @@ SELECT EXISTS(SELECT 1 FROM retirement) AND
  WHERE e.retired_at IS NULL AND (
  (coalesce(r.plan->>'EnvironmentID','')<>'' AND r.plan->>'EnvironmentID'=e.frame->>'environment_id') OR
  d.reason='environment-clone:'||r.operation_id::text OR
- r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AS closed;
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AND NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_wake_dispatches w
+ WHERE w.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AS closed;
 
 -- name: LockEnvironmentQualificationCleanupWriters :exec
 SELECT lock_environment_qualification_cleanup_writers();
+
+-- name: RecordCloneCheckpointWakeDispatch :exec
+SELECT record_clone_checkpoint_wake_dispatch(sqlc.arg(instance_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(deployment_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(method)::text);

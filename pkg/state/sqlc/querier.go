@@ -2535,6 +2535,7 @@ type Querier interface {
 	RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadSummaryParams) (int64, error)
 	RecordCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg RecordCloneCheckpointObjectTargetParams) (int64, error)
 	RecordCloneCheckpointRelease(ctx context.Context, db DBTX, arg RecordCloneCheckpointReleaseParams) (int64, error)
+	RecordCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, arg RecordCloneCheckpointWakeDispatchParams) error
 	RecordClonePostgresMaintenance(ctx context.Context, db DBTX, arg RecordClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
