@@ -9690,3 +9690,18 @@ This read does not mutate the operation, dispatch native work or enable the
 generic terminal transition. A dedicated terminal writer must still consume the
 complete authenticated report and close remaining ownership protocols. Public
 full-stage admission and native/provider qualification remain gated.
+
+### Fenced compensation reconciliation
+
+Reconciliation now acquires the deployment borrower writer fence followed by
+the environment scope borrower writer fence before reading any cleanup evidence.
+Both remain held through final lease validation and transaction commit, including
+soft-reference partition children. This prevents scope-only writers from entering
+between cleanup verification steps after the original rows have been removed.
+The writer pauses remain bounded by the compensation worker lease.
+
+The verification is a reusable transaction helper so a dedicated terminal writer
+can consume the complete report and persist its receipt in the same transaction.
+A returned report is still only evidence of the committed read: a subsequent
+borrower invalidates a later reconciliation. It grants no terminal mutation or
+native dispatch authority. The terminal receipt and writer remain pending.

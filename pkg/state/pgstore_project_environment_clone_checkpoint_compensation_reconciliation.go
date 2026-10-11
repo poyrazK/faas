@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ProjectEnvironmentCloneCheckpointCompensationReconciliationStore = (*PgStore)(nil)
@@ -15,27 +16,45 @@ var _ ProjectEnvironmentCloneCheckpointCompensationReconciliationStore = (*PgSto
 func (s *PgStore) ReconcileProjectEnvironmentCloneCheckpointCompensation(ctx context.Context, l ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointCompensationReconciliation, error) {
 	var out ProjectEnvironmentCloneCheckpointCompensationReconciliation
 	err := s.checkpointSourceCompensationTx(ctx, l, func(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) error {
-		in, err := readCheckpointCaptureRetirementTx(ctx, tx, op)
-		if err != nil {
-			return checkpointPgCompensationDependencyError(err)
-		}
-		if in.State != "retired" {
-			return ErrConflict
-		}
-		records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
-		if err != nil {
-			return err
-		}
-		out = checkpointCompensationReconciliation(op, in, records)
-		if err = reconcileCheckpointWorkloadCleanupTx(ctx, tx, op, records, &out); err != nil {
-			return err
-		}
-		sortCheckpointCompensationBlockers(&out)
-		return nil
+		var err error
+		out, err = reconcileCheckpointCompensationTx(ctx, tx, op)
+		return err
 	})
 	if err != nil {
 		return ProjectEnvironmentCloneCheckpointCompensationReconciliation{}, err
 	}
+	return out, nil
+}
+
+// Call only after the configuration clock and owned operation/app locks. Both
+// borrower fences precede evidence reads and stay held until the caller commits.
+// Keeping verification in this transaction allows a future terminal writer to
+// consume the report without opening a second transaction or a check/write gap.
+func reconcileCheckpointCompensationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneCheckpointCompensationReconciliation, error) {
+	var out ProjectEnvironmentCloneCheckpointCompensationReconciliation
+	q := sqlc.New()
+	if err := q.LockCloneDeploymentCleanupBorrowerWriters(ctx, tx); err != nil {
+		return out, mapErr(err)
+	}
+	if err := q.LockCloneEnvironmentCleanupScopeBorrowers(ctx, tx); err != nil {
+		return out, mapErr(err)
+	}
+	in, err := readCheckpointCaptureRetirementTx(ctx, tx, op)
+	if err != nil {
+		return out, checkpointPgCompensationDependencyError(err)
+	}
+	if in.State != "retired" {
+		return out, ErrConflict
+	}
+	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
+	if err != nil {
+		return out, err
+	}
+	out = checkpointCompensationReconciliation(op, in, records)
+	if err = reconcileCheckpointWorkloadCleanupTx(ctx, tx, op, records, &out); err != nil {
+		return ProjectEnvironmentCloneCheckpointCompensationReconciliation{}, err
+	}
+	sortCheckpointCompensationBlockers(&out)
 	return out, nil
 }
 

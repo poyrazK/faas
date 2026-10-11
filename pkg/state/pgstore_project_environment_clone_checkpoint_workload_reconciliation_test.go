@@ -4,6 +4,7 @@
 package state_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -189,5 +190,119 @@ func TestPgCheckpointCompensationReconciliationRejectsChangedWorkloadClosure(t *
 				t.Fatal("partial authority after changed proof", fault, report, err)
 			}
 		})
+	}
+}
+
+// Pause after both writer fences, before any reconciliation evidence is read.
+// Scope-only references need this fence even after their original environment
+// and deployments have been deleted; row/FK locks alone cannot protect them.
+func TestPgCheckpointCompensationReconciliationFencesBorrowers(t *testing.T) {
+	s, pool, l, native := deploymentCleanupFixture(t)
+	if err := s.CleanupProjectEnvironmentCloneDeploymentsForLease(t.Context(), l); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReserveProjectEnvironmentCloneCheckpointCaptureRetirement(t.Context(), l); err != nil {
+		t.Fatal(err)
+	}
+	capture, dispatch, err := s.ClaimProjectEnvironmentCloneCheckpointCaptureRetirement(t.Context(), l)
+	if err != nil || !dispatch {
+		t.Fatal(err)
+	}
+	if err = s.FinishProjectEnvironmentCloneCheckpointCaptureRetirement(t.Context(), l, pgCaptureRetirementProof(t, capture)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	gate, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gate.Rollback(context.WithoutCancel(ctx)) }()
+	var gatePID int32
+	if err = gate.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&gatePID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = gate.Exec(ctx, "SELECT pg_advisory_xact_lock(59012222)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `ALTER FUNCTION lock_clone_environment_cleanup_scope_borrowers() RENAME TO original_reconciliation_scope_fence;
+ CREATE FUNCTION lock_clone_environment_cleanup_scope_borrowers() RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+ PERFORM original_reconciliation_scope_fence();
+ PERFORM pg_advisory_xact_lock(59012222);
+ END $$;`); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		report state.ProjectEnvironmentCloneCheckpointCompensationReconciliation
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		report, e := s.ReconcileProjectEnvironmentCloneCheckpointCompensation(ctx, l)
+		done <- result{report, e}
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked bool
+		if err = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))", gatePID).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case r := <-done:
+			t.Fatal("reconciliation missed fence", r.err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	for _, borrower := range []string{"scope", "deployment", "partition"} {
+		tx, e := pool.Begin(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = tx.Exec(ctx, "SET LOCAL lock_timeout='150ms'"); e != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(e)
+		}
+		switch borrower {
+		case "scope":
+			_, e = tx.Exec(ctx, "INSERT INTO queue_bindings(account_id,app_id,name,queue_name,deployment_scope,environment_id) VALUES($1,$2,'racing','racing',$3,$4)", l.Operation.AccountID, native.Plan.Workloads[0].AppID, l.Operation.TargetEnvironment, native.Plan.EnvironmentID)
+		case "deployment":
+			_, e = tx.Exec(ctx, "INSERT INTO deployment_audit(deployment_id,kind,actor) VALUES($1,'deploy.created','racing')", native.Plan.Workloads[0].TargetDeploymentID)
+		case "partition":
+			_, e = tx.Exec(ctx, "INSERT INTO log_events_default(occurred_at,account_id,app_id,deployment_id,source,message) VALUES('2000-01-01',$1,$2,$3,'runtime','racing')", l.Operation.AccountID, native.Plan.Workloads[0].AppID, native.Plan.Workloads[0].TargetDeploymentID)
+		}
+		_ = tx.Rollback(ctx)
+		var pgerr *pgconn.PgError
+		if !errors.As(e, &pgerr) || pgerr.Code != "55P03" {
+			t.Fatal("borrower entered reconciliation window", borrower, e)
+		}
+	}
+	if err = gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-done:
+		if r.err != nil || len(r.report.Blockers) != 0 || len(r.report.WorkloadClosureSHA256) != 64 {
+			t.Fatal("fenced closure failed", r.report, r.err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	// Commit releases the fences: a new soft borrower can enter, but a later
+	// reconciliation must reject it rather than reuse the earlier report.
+	if _, err = pool.Exec(ctx, "INSERT INTO deployment_audit(deployment_id,kind,actor) VALUES($1,'deploy.created','late')", native.Plan.Workloads[0].TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	report, err := s.ReconcileProjectEnvironmentCloneCheckpointCompensation(ctx, l)
+	if !errors.Is(err, state.ErrConflict) || !reflect.DeepEqual(report, state.ProjectEnvironmentCloneCheckpointCompensationReconciliation{}) {
+		t.Fatal("late borrower reused closure", report, err)
 	}
 }
