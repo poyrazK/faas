@@ -10038,3 +10038,26 @@ neither permits resume replay nor proves native closure or evidence release.
 Host-generation correlation, native producer closure and proof-backed release
 still require a qualified native protocol. No native VM or live provider was
 exercised; public full-stage admission remains gated.
+
+### Read-only native launch incarnation evidence
+
+The native backend now exposes a locked read of the durable launch journal and
+an observation that requires an exact pinned instance, launch generation, kernel
+boot ID and PID/start-time incarnation. Missing, damaged, prior-boot and
+unconfigured journals fail without partial evidence. Reads preserve the original
+record and return independent values. Revocation, exit and resource removal are
+reported separately; no transition is inferred from another flag.
+
+This accessor supplies physical incarnation evidence only. The serving vmmd must
+still authenticate its node, and a qualified protocol must bind the original
+scheduler dispatch to that native generation. The existing physical journal does
+not authenticate app/deployment provenance. Observation does not close producers,
+authorize replay or cleanup, release retained evidence or admit public copies.
+Native actions must revalidate ownership under their own producer locks.
+
+Pure Go journal tests exercise original identity, caller mutation, pinned identity
+mismatches, revocation, canceled reads, missing/damaged records and kernel reboot.
+Launch and cleanup behavior is unchanged. Dedicated native KVM acceptance and
+live provider qualification were not performed; native correlation, producer
+closure and proof-backed release remain pending. Public full-stage admission
+remains gated.
