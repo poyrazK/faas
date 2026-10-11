@@ -91,7 +91,7 @@ func (j *nativeImageSourceJournal) captureSources(owner nativeLaunchRecord, perm
 // Lock order is incoming capture (Manager), physical VM, then source identities
 // in canonical order. All files close before any source or physical lock.
 func (j *nativeImageSourceJournal) withCaptureFiles(ctx context.Context, expected nativeLaunchRecord, permit nativeSnapshotCapturePermit, root, directory string, checkLocal func(context.Context) error, consume func(nativeSnapshotCaptureFiles) error) (err error) {
-	backend, ok := j.backend.(nativeSnapshotCaptureFileBackend)
+	_, ok := j.backend.(nativeSnapshotCaptureFileBackend)
 	if !ok || !filepath.IsAbs(root) || filepath.Clean(root) != root || filepath.Base(root) != "root" || filepath.Base(filepath.Dir(root)) != expected.Lease.Instance {
 		return errors.New("native snapshot files: original jail and complete descriptor backend are required")
 	}
@@ -100,6 +100,16 @@ func (j *nativeImageSourceJournal) withCaptureFiles(ctx context.Context, expecte
 		return err
 	}
 	defer func() { err = errors.Join(err, vmLock.Close()) }()
+	return j.withCaptureFilesLocked(ctx, expected, permit, root, directory, checkLocal, consume)
+}
+
+// The pinned native machine session owns the physical lock across create and
+// this boundary. Calling the ordinary wrapper here would reacquire that lock.
+func (j *nativeImageSourceJournal) withCaptureFilesLocked(ctx context.Context, expected nativeLaunchRecord, permit nativeSnapshotCapturePermit, root, directory string, checkLocal func(context.Context) error, consume func(nativeSnapshotCaptureFiles) error) (err error) {
+	backend, ok := j.backend.(nativeSnapshotCaptureFileBackend)
+	if !ok {
+		return errors.New("native snapshot files: complete descriptor backend is required")
+	}
 	check := func(ctx context.Context) error {
 		owner, err := j.owner.read(expected.Lease.Instance)
 		if err != nil {

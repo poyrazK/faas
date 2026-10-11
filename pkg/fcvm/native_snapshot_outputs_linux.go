@@ -81,3 +81,28 @@ func createNativeSnapshotOutput(ctx context.Context, directory string) (output *
 	err = errors.Join(output.Chmod(0o600), output.Sync(), ctx.Err())
 	return output, err
 }
+
+// Read-only preflight: no output is created before placement is proven against
+// the retained private-drive inode. TMPDIR must be its disk filesystem.
+func (linuxNativeImageSources) CheckSnapshotDirectory(ctx context.Context, input *os.File, directory string) (err error) {
+	if input == nil || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || directory == "/" {
+		return errors.New("native snapshot: original input and canonical disk directory are required")
+	}
+	if err := checkNativeEffectDirectory(directory); err != nil {
+		return err
+	}
+	parent, err := os.OpenFile(directory, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	var drive, dir unix.Stat_t
+	var filesystem unix.Statfs_t
+	if err := errors.Join(unix.Fstat(int(input.Fd()), &drive), unix.Fstat(int(parent.Fd()), &dir), unix.Fstatfs(int(parent.Fd()), &filesystem)); err != nil {
+		return err
+	}
+	if drive.Dev != dir.Dev || !nativeCloneFilesystemSupported(filesystem.Type) || dir.Uid != uint32(os.Geteuid()) || dir.Mode&0o022 != 0 {
+		return errors.New("native snapshot: output directory differs from original protected disk filesystem")
+	}
+	return ctx.Err()
+}

@@ -2994,6 +2994,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		return SnapshotInfo{}, effectErr
 	}
 	defer finishNativeEffects()
+	if v.nativeRecovery != nil {
+		info, retErr = v.nativeSnapshotKeepAlive(ctx, l, spec)
+		if retErr == nil {
+			v.preBoot.captured(l.Instance, spec.StorageKey)
+		}
+		return info, retErr
+	}
 	defer func() {
 		if retErr != nil {
 			v.cleanupFailedSnapshotCapture(ctx, spec)

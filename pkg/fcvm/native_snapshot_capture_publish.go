@@ -26,53 +26,59 @@ func (v *JailerVMM) publishNativeSnapshotCapture(ctx context.Context, lease Leas
 		return info, ErrSnapshotBackingUnverified
 	}
 	keys := qualificationSnapshotProof(permit.Incoming, SnapshotInfo{})
-	inputs := SnapshotInputs{Version: 1, FCVersion: version, Machine: machine,
-		Memory: SnapshotArtifactIdentity{Key: keys.StorageKey}, VMState: SnapshotArtifactIdentity{Key: keys.VMStateStorageKey},
-		Drive: SnapshotArtifactIdentity{Key: keys.DriveStorageKey}}
 	err = v.withNativeSnapshotCaptureFiles(ctx, lease, directory, func(files nativeSnapshotCaptureFiles) error {
-		descriptors := []*os.File{files.memory, files.vmstate, files.drive}
-		parts := []*SnapshotArtifactIdentity{&inputs.Memory, &inputs.VMState, &inputs.Drive}
-		var stamps [3]snapshotInputFileStamp
-		for i, file := range descriptors {
-			var measureErr error
-			*parts[i], stamps[i], measureErr = nativeSnapshotDescriptorIdentity(ctx, file, parts[i].Key)
-			if measureErr != nil {
-				return measureErr
-			}
-		}
-		if err := inputs.Validate(keys.StorageKey); err != nil {
-			return err
-		}
-		var stored int64
-		for _, part := range parts {
-			if stored > math.MaxInt64-part.Bytes {
-				return ErrSnapshotBackingUnverified
-			}
-			stored += part.Bytes
-		}
-		for i, file := range descriptors {
-			if err := files.check(ctx); err != nil {
-				return err
-			}
-			if err := checkNativeCaptureStamps(descriptors, stamps); err != nil {
-				return err
-			}
-			if err := v.putNativeSnapshotDescriptor(ctx, file, *parts[i], stamps[i]); err != nil {
-				return err
-			}
-		}
-		if err := errors.Join(files.check(ctx), checkNativeCaptureStamps(descriptors, stamps)); err != nil {
-			return err
-		}
-		// Logical bytes conservatively account for a backend whose destination
-		// allocation cannot be observed through this descriptor capability.
-		info = SnapshotInfo{Inputs: &inputs, MemBytes: inputs.Memory.Bytes, VMStateBytes: inputs.VMState.Bytes, StoredBytes: stored}
-		return nil
+		var publishErr error
+		info, publishErr = v.publishNativeSnapshotFiles(ctx, files, machine, version, keys.StorageKey, keys.VMStateStorageKey, keys.DriveStorageKey)
+		return publishErr
 	})
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
 	return info, nil
+}
+
+// Both callers derive these keys from the original capture permit. The native
+// adapter retains its pinned machine session as well as the source locks.
+func (v *JailerVMM) publishNativeSnapshotFiles(ctx context.Context, files nativeSnapshotCaptureFiles, machine Machine, version, memoryKey, stateKey, driveKey string) (SnapshotInfo, error) {
+	inputs := SnapshotInputs{Version: 1, FCVersion: version, Machine: machine,
+		Memory: SnapshotArtifactIdentity{Key: memoryKey}, VMState: SnapshotArtifactIdentity{Key: stateKey}, Drive: SnapshotArtifactIdentity{Key: driveKey}}
+	descriptors := []*os.File{files.memory, files.vmstate, files.drive}
+	parts := []*SnapshotArtifactIdentity{&inputs.Memory, &inputs.VMState, &inputs.Drive}
+	var stamps [3]snapshotInputFileStamp
+	for i, file := range descriptors {
+		var measureErr error
+		*parts[i], stamps[i], measureErr = nativeSnapshotDescriptorIdentity(ctx, file, parts[i].Key)
+		if measureErr != nil {
+			return SnapshotInfo{}, measureErr
+		}
+	}
+	if err := inputs.Validate(memoryKey); err != nil {
+		return SnapshotInfo{}, err
+	}
+	var stored int64
+	for _, part := range parts {
+		if stored > math.MaxInt64-part.Bytes {
+			return SnapshotInfo{}, ErrSnapshotBackingUnverified
+		}
+		stored += part.Bytes
+	}
+	for i, file := range descriptors {
+		if err := files.check(ctx); err != nil {
+			return SnapshotInfo{}, err
+		}
+		if err := checkNativeCaptureStamps(descriptors, stamps); err != nil {
+			return SnapshotInfo{}, err
+		}
+		if err := v.putNativeSnapshotDescriptor(ctx, file, *parts[i], stamps[i]); err != nil {
+			return SnapshotInfo{}, err
+		}
+	}
+	if err := errors.Join(files.check(ctx), checkNativeCaptureStamps(descriptors, stamps)); err != nil {
+		return SnapshotInfo{}, err
+	}
+	// Logical bytes conservatively account for a backend whose destination
+	// allocation cannot be observed through this descriptor capability.
+	return SnapshotInfo{Inputs: &inputs, MemBytes: inputs.Memory.Bytes, VMStateBytes: inputs.VMState.Bytes, StoredBytes: stored}, nil
 }
 
 func nativeSnapshotDescriptorIdentity(ctx context.Context, file *os.File, key string) (part SnapshotArtifactIdentity, stamp snapshotInputFileStamp, err error) {

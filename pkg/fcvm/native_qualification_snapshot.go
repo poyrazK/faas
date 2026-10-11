@@ -18,10 +18,9 @@ type environmentQualificationSnapshotBackend interface {
 	checkEnvironmentQualificationSnapshotSupport() error
 }
 
-// Native drive export still needs its durable producer adapter. Preserve the
-// existing freezeSnapshotDrive gate, and refuse before pause/snapshot effects.
+// Refuse unsupported producer sets before the Manager journals capture start.
 func (v *JailerVMM) checkEnvironmentQualificationSnapshotSupport() error {
-	return fmt.Errorf("native qualification: private-drive capture producer is unavailable: %w", state.ErrConflict)
+	return v.checkNativeSnapshotCaptureSupport()
 }
 
 // CaptureEnvironmentQualification captures exactly the original private VM.

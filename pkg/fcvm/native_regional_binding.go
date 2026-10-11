@@ -242,8 +242,11 @@ type snapshotCapturePreflighter interface {
 	preflightSnapshotKeepAlive(context.Context, Lease, SnapshotSpec) error
 }
 
-func (v *JailerVMM) preflightSnapshotKeepAlive(_ context.Context, _ Lease, spec SnapshotSpec) error {
-	if v.nativeRecovery != nil || spec.RegionalMigrationSource != nil {
+func (v *JailerVMM) preflightSnapshotKeepAlive(ctx context.Context, lease Lease, spec SnapshotSpec) error {
+	if v.nativeRecovery != nil {
+		return v.preflightNativeSnapshotCapture(ctx, lease, spec)
+	}
+	if spec.RegionalMigrationSource != nil {
 		return fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
 	return nil

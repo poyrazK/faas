@@ -81,7 +81,18 @@ func (f *nativeMachineFixture) ServeHTTP(w http.ResponseWriter, req *http.Reques
 				f.state = "Running"
 			}
 		case "PATCH /vm":
-			f.state = "Running"
+			var body struct {
+				State string `json:"state"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.State != "Paused" && body.State != "Resumed" {
+				f.mu.Unlock()
+				http.Error(w, "invalid fixture state", http.StatusBadRequest)
+				return
+			}
+			f.state = "Paused"
+			if body.State == "Resumed" {
+				f.state = "Running"
+			}
 		case "GET /":
 			if raw == "" {
 				raw = fmt.Sprintf(`{"id":%q,"app_name":"Firecracker","vmm_version":"1.7.0","state":%q}`, f.id, f.state)

@@ -4,10 +4,11 @@ ADR-730 introduces a gated directory identity API. A global app has one UUID
 and `all_selected_regions` as its serving policy. This slice attaches existing
 regional apps and resolves their identities. ADR-784 adds an opt-in signed route
 consumer; ADR-793 renders the managed quota transport and directory-owned ingress
-publisher configuration. Regional serving eligibility remains gated by unfinished
-runtime admission. Regional provisioning, global authorization and billing,
-data/secret replication, native capture integration and independent native KVM
-recovery acceptance remain required for the complete multi-region feature.
+publisher configuration. ADR-796 connects original native qualification capture
+through backing publication and durable completion. Regional serving eligibility
+remains gated by unfinished runtime admission. Regional provisioning, global
+authorization and billing, data/secret replication, and independent native KVM
+capture/recovery acceptance remain required for the complete multi-region feature.
 
 ## Organization directory identities
 

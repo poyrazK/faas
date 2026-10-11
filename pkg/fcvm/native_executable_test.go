@@ -242,7 +242,7 @@ func TestNativeMachineSessionPinsOriginalCopiedExecutable(t *testing.T) {
 				case "exit":
 					handle.setLiveError(errors.New("exited"))
 				}
-				_, err := s.request(t.Context(), http.MethodPatch, "/vm", nil, http.StatusNoContent)
+				_, err := s.request(t.Context(), http.MethodPatch, "/vm", map[string]any{"state": "Resumed"}, http.StatusNoContent)
 				return err
 			})
 			if (err == nil) != (scenario == "unchanged") {

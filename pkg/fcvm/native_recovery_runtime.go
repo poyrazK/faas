@@ -25,12 +25,14 @@ type nativeProcessRecoveryRuntime struct {
 	inventory func([]Lease) error
 	// Test wiring may model a credential-bound connection; production uses
 	// Linux SO_PEERCRED and the same pinned task as the journal/proc checks.
-	machineDial   nativeMachineDial
-	runtimeGroups nativeRuntimeCgroups
-	helperGroups  nativeHostHelperGroups
-	loopMounts    nativeLoopMountBackend
-	imageSources  nativeImageSourceBackend
-	tunBinds      nativeTunBindBackend
+	machineDial       nativeMachineDial
+	runtimeGroups     nativeRuntimeCgroups
+	snapshotMemory    nativeSnapshotMemoryBackend
+	snapshotDirectory string // empty uses vmmd's existing disk-backed TMPDIR
+	helperGroups      nativeHostHelperGroups
+	loopMounts        nativeLoopMountBackend
+	imageSources      nativeImageSourceBackend
+	tunBinds          nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -49,16 +51,17 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	images := newNativeImageSourceBackend(v.chrootBase)
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:       &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
-		retirer:       nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
-		owned:         make(map[string]string),
-		lockWait:      v.readyTimeout,
-		inventory:     nativeNetworkInventory,
-		helperGroups:  newNativeHostHelperGroups(),
-		loopMounts:    loops,
-		imageSources:  images,
-		tunBinds:      tun,
-		runtimeGroups: newNativeRuntimeCgroups(),
+		journal:        &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
+		retirer:        nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
+		owned:          make(map[string]string),
+		lockWait:       v.readyTimeout,
+		inventory:      nativeNetworkInventory,
+		helperGroups:   newNativeHostHelperGroups(),
+		loopMounts:     loops,
+		imageSources:   images,
+		tunBinds:       tun,
+		runtimeGroups:  newNativeRuntimeCgroups(),
+		snapshotMemory: newNativeSnapshotMemoryBackend(),
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
