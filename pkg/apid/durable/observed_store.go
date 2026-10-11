@@ -1,5 +1,5 @@
 // adr: 712
-package main
+package durable
 
 import (
 	"context"
@@ -12,12 +12,12 @@ import (
 
 // Forward every optional capability, keeping metrics out of customer code.
 // The callback follows WithOpsMetrics registry rebinding during server wiring.
-type durableEntityObservedStore struct {
+type observedStore struct {
 	durableentity.ObjectStore
-	metrics func() *durableEntityMetrics
+	metrics func() *Metrics
 }
 
-func (s durableEntityObservedStore) record(operation string, started time.Time, err error) {
+func (s observedStore) record(operation string, started time.Time, err error) {
 	if m := s.metrics(); m != nil {
 		outcome := durableEntityOutcome(err)
 		m.operations.WithLabelValues(operation, outcome).Inc()
@@ -25,14 +25,14 @@ func (s durableEntityObservedStore) record(operation string, started time.Time, 
 	}
 }
 
-func (s durableEntityObservedStore) Get(ctx context.Context, key string, maxBytes int64) ([]byte, string, error) {
+func (s observedStore) Get(ctx context.Context, key string, maxBytes int64) ([]byte, string, error) {
 	started := time.Now()
 	body, etag, err := s.ObjectStore.Get(ctx, key, maxBytes)
 	s.record("get", started, err)
 	return body, etag, err
 }
 
-func (s durableEntityObservedStore) Put(ctx context.Context, key string, body []byte, etag string) (string, error) {
+func (s observedStore) Put(ctx context.Context, key string, body []byte, etag string) (string, error) {
 	started := time.Now()
 	version, err := s.ObjectStore.Put(ctx, key, body, etag)
 	if err == nil && version == "" {
@@ -69,7 +69,7 @@ func durableEntityObjectKind(key string) string {
 	}
 }
 
-func (s durableEntityObservedStore) ListEntityPrefixes(ctx context.Context, prefix, cursor string, limit int32) (durableentity.EntityPrefixPage, error) {
+func (s observedStore) ListEntityPrefixes(ctx context.Context, prefix, cursor string, limit int32) (durableentity.EntityPrefixPage, error) {
 	started := time.Now()
 	lister, ok := s.ObjectStore.(durableentity.EntityPrefixLister)
 	if !ok {
@@ -81,7 +81,7 @@ func (s durableEntityObservedStore) ListEntityPrefixes(ctx context.Context, pref
 	return page, err
 }
 
-func (s durableEntityObservedStore) ListEntityObjects(ctx context.Context, prefix, cursor string, limit int32) (durableentity.CleanupObjects, error) {
+func (s observedStore) ListEntityObjects(ctx context.Context, prefix, cursor string, limit int32) (durableentity.CleanupObjects, error) {
 	started := time.Now()
 	store, ok := s.ObjectStore.(durableentity.EntityObjectLister)
 	if !ok {
@@ -93,7 +93,7 @@ func (s durableEntityObservedStore) ListEntityObjects(ctx context.Context, prefi
 	return page, err
 }
 
-func (s durableEntityObservedStore) DeleteEntityObject(ctx context.Context, key string) error {
+func (s observedStore) DeleteEntityObject(ctx context.Context, key string) error {
 	started := time.Now()
 	store, ok := s.ObjectStore.(durableentity.CleanupStore)
 	if !ok {

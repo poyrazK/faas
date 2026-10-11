@@ -1,5 +1,5 @@
 // adr: 937
-package main
+package durable
 
 import (
 	"time"
@@ -7,17 +7,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-type durableEntityHealthMetrics struct {
+type healthMetrics struct {
 	enabled, pollSuccess, lastRotation, entities *prometheus.GaugeVec
 	pending, exhausted, oldest, unknownAge       *prometheus.GaugeVec
 	scans                                        *prometheus.CounterVec
 }
 
-func newDurableEntityHealthMetrics(registry *prometheus.Registry, prefix string) *durableEntityHealthMetrics {
+func newHealthMetrics(registry *prometheus.Registry, prefix string) *healthMetrics {
 	gauge := func(name, help string, labels ...string) *prometheus.GaugeVec {
-		return registerMetricsDiscoveryGaugeVec(registry, prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_durable_entity_health_" + name, Help: help}, labels))
+		return registerCollector(registry, prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_durable_entity_health_" + name, Help: help}, labels))
 	}
-	m := &durableEntityHealthMetrics{
+	m := &healthMetrics{
 		enabled:      gauge("enabled", "Whether this replica runs the opt-in read-only health scanner."),
 		pollSuccess:  gauge("poll_success", "Whether health discovery is healthy; failed/partial rotations retain previous observations."),
 		lastRotation: gauge("last_success_timestamp_seconds", "Completion time of the last rotation with no listing or entity-read failures; zero until one completes."),
@@ -26,7 +26,7 @@ func newDurableEntityHealthMetrics(registry *prometheus.Registry, prefix string)
 		exhausted:    gauge("exhausted_entities", "Entities with exhausted selected work observed in the last successful rotation.", "target"),
 		oldest:       gauge("oldest_pending_timestamp_seconds", "Oldest observed saved alarm deadline or known outbox timestamp from the last successful rotation; zero when none known.", "target"),
 		unknownAge:   gauge("unknown_age_messages", "Pending outbox messages without a stored timestamp in the last successful rotation."),
-		scans:        registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_durable_entity_health_pages_total", Help: "Health pages by bounded success, partial or failed result; no entity labels."}, []string{"outcome"})),
+		scans:        registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_durable_entity_health_pages_total", Help: "Health pages by bounded success, partial or failed result; no entity labels."}, []string{"outcome"})),
 	}
 	for _, g := range []*prometheus.GaugeVec{m.enabled, m.pollSuccess, m.lastRotation, m.entities, m.unknownAge} {
 		g.WithLabelValues()
@@ -49,7 +49,7 @@ func healthTimestamp(at *time.Time) float64 {
 	return float64(at.Unix())
 }
 
-func (m *durableEntityHealthMetrics) publish(r durableEntityHealthRotation, now time.Time) {
+func (m *healthMetrics) publish(r HealthRotation, now time.Time) {
 	m.entities.WithLabelValues().Set(float64(r.entities))
 	m.pending.WithLabelValues("alarm").Set(float64(r.alarms))
 	m.pending.WithLabelValues("outbox").Set(float64(r.outbox))

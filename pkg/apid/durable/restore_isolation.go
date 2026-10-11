@@ -1,5 +1,5 @@
 // adr: 944
-package main
+package durable
 
 import (
 	"context"
@@ -13,10 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type durableEntityValidatorBundle = validatorbundle.Bundle
-
-func validatorBundleHash(b durableEntityValidatorBundle) string { return validatorbundle.Hash(b) }
-func loadDurableEntityValidatorBundles(path string) (map[string]durableEntityValidatorBundle, error) {
+func validatorBundleHash(b validatorbundle.Bundle) string { return validatorbundle.Hash(b) }
+func loadDurableEntityValidatorBundles(path string) (map[string]validatorbundle.Bundle, error) {
 	return validatorbundle.Load(path)
 }
 
@@ -24,9 +22,9 @@ func restoreIsolationUnavailable() *api.Problem {
 	return api.NewProblem(http.StatusServiceUnavailable, "durable_entity_restore_isolation_unavailable", "Isolated validation unavailable", "a registered validator bundle and disposable execution runtime are required")
 }
 
-func (s *server) enqueueIsolatedRestoreValidator(ctx context.Context, acct state.Account, app state.App, deploymentID, pin string, body json.RawMessage) (json.RawMessage, string, error) {
+func (s *Service) enqueueIsolatedRestoreValidator(ctx context.Context, acct state.Account, app state.App, deploymentID, pin string, body json.RawMessage) (json.RawMessage, string, error) {
 	b, bundleErr := s.resolveDurableEntityValidatorBundle(ctx, app.ID, deploymentID)
-	if bundleErr != nil || !s.executionAPIEnabled {
+	if bundleErr != nil || !s.executionAPIEnabled() {
 		return nil, "", restoreIsolationUnavailable()
 	}
 	if pin != "" && pin != b.SHA256 {
@@ -37,10 +35,7 @@ func (s *server) enqueueIsolatedRestoreValidator(ctx context.Context, acct state
 	if problem != nil {
 		return nil, "", problem
 	}
-	if setSecretRecipient == nil {
-		return nil, "", restoreIsolationUnavailable()
-	}
-	recipient := setSecretRecipient()
+	recipient := s.Host.SecretRecipient()
 	if recipient == nil {
 		return nil, "", restoreIsolationUnavailable()
 	}
@@ -53,7 +48,7 @@ func (s *server) enqueueIsolatedRestoreValidator(ctx context.Context, acct state
 	if parent, ok := ctx.Deadline(); ok && parent.Before(deadline) {
 		deadline = parent
 	}
-	row, err := s.store.CreateExecution(ctx, state.CreateExecutionParams{AccountID: acct.ID, Request: resolved, SourceBytes: resolved.SourceBytes(), InputBytes: len(body), AdmittedAt: now, DeadlineAt: deadline, SealedPayload: sealed, PayloadKID: recipient.String()})
+	row, err := s.Host.Store().CreateExecution(ctx, state.CreateExecutionParams{AccountID: acct.ID, Request: resolved, SourceBytes: resolved.SourceBytes(), InputBytes: len(body), AdmittedAt: now, DeadlineAt: deadline, SealedPayload: sealed, PayloadKID: recipient.String()})
 	if err != nil {
 		return nil, "", err
 	}
@@ -61,13 +56,13 @@ func (s *server) enqueueIsolatedRestoreValidator(ctx context.Context, acct state
 	return result, b.SHA256, err
 }
 
-func (s *server) waitIsolatedRestoreValidator(ctx context.Context, accountID, executionID string, deadline time.Time) (json.RawMessage, error) {
+func (s *Service) waitIsolatedRestoreValidator(ctx context.Context, accountID, executionID string, deadline time.Time) (json.RawMessage, error) {
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	ticker := time.NewTicker(api.DurableEntityResultPollInterval)
 	defer ticker.Stop()
 	for {
-		row, err := s.store.ExecutionByID(ctx, accountID, executionID)
+		row, err := s.Host.Store().ExecutionByID(ctx, accountID, executionID)
 		if err == nil && row.Status.Terminal() {
 			if row.Status != api.ExecutionStatusSucceeded || row.OutputTruncated {
 				return nil, api.NewProblem(http.StatusBadGateway, "durable_entity_restore_validator_failed", "Validator failed", "isolated execution did not produce a complete successful verdict")
@@ -87,17 +82,17 @@ func (s *server) waitIsolatedRestoreValidator(ctx context.Context, accountID, ex
 	}
 }
 
-func (s *server) cancelRestoreValidator(parent context.Context, accountID, executionID string) {
+func (s *Service) cancelRestoreValidator(parent context.Context, accountID, executionID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), api.DurableEntityReleaseTimeout)
 	defer cancel()
-	_, _ = s.store.RequestExecutionCancellation(ctx, accountID, executionID, time.Now().UTC())
+	_, _ = s.Host.Store().RequestExecutionCancellation(ctx, accountID, executionID, time.Now().UTC())
 }
 
-func (s *server) resolveDurableEntityValidatorBundle(ctx context.Context, appID, deploymentID string) (durableEntityValidatorBundle, error) {
-	if s.durableEntityValidatorArtifacts != nil {
-		return s.durableEntityValidatorArtifacts.Resolve(ctx, appID, deploymentID)
+func (s *Service) resolveDurableEntityValidatorBundle(ctx context.Context, appID, deploymentID string) (validatorbundle.Bundle, error) {
+	if s.ValidatorArtifacts != nil {
+		return s.ValidatorArtifacts.Resolve(ctx, appID, deploymentID)
 	}
-	b, ok := s.durableEntityValidatorBundles[deploymentID]
+	b, ok := s.ValidatorBundles[deploymentID]
 	if !ok || b.AppID != appID || b.DeploymentID != deploymentID || validatorbundle.Validate(b) != nil {
 		return b, validatorbundle.ErrArtifactUnavailable
 	}

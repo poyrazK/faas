@@ -1,5 +1,5 @@
 // adr: 936
-package main
+package durable
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) retryDurableEntity(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) Retry(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -22,7 +23,7 @@ func (s *server) retryDurableEntity(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	var request api.DurableEntityRetryRequest
-	if !decodeJSONLimit(w, r, &request, int64(api.MaxDurableEntityManifestBytes)) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, int64(api.MaxDurableEntityManifestBytes)) {
 		return
 	}
 	if request.Target != "alarm" && request.Target != "outbox" || request.Target == "alarm" && (request.AlarmAt == nil || request.HeadID != "") || request.Target == "outbox" && (request.HeadID == "" || request.AlarmAt != nil) {
@@ -31,25 +32,25 @@ func (s *server) retryDurableEntity(w http.ResponseWriter, r *http.Request, acct
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
-	id, _, problem := s.durableEntityIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID})
+	id, _, problem := s.Identity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID})
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	started := time.Now()
-	err := s.durableEntities.RetryExhausted(ctx, id, durableentity.Recovery{Version: request.ExpectedVersion, Revision: request.ExpectedRecoveryRevision, MessageID: request.HeadID, AlarmAt: request.AlarmAt})
-	s.durableEntityMetrics.observeResult("retry_"+request.Target, durableentity.Result{}, err)
-	s.durableEntityMetrics.observeDuration("retry_"+request.Target, started)
+	err := s.Engine.RetryExhausted(ctx, id, durableentity.Recovery{Version: request.ExpectedVersion, Revision: request.ExpectedRecoveryRevision, MessageID: request.HeadID, AlarmAt: request.AlarmAt})
+	s.Metrics.observeResult("retry_"+request.Target, durableentity.Result{}, err)
+	s.Metrics.observeDuration("retry_"+request.Target, started)
 	if err != nil {
 		writeDurableEntityRetryProblem(w, err)
 		return
 	}
-	s.audit.Emit(ctx, "durable_entity.retry_rearmed", &acct.ID, map[string]any{"app_id": app.ID, "environment_id": id.EnvironmentID, "platform_tenant_id": id.TenantID, "target": request.Target, "state_version": request.ExpectedVersion, "recovery_revision": request.ExpectedRecoveryRevision, "head_id": request.HeadID, "alarm_at": request.AlarmAt})
-	writeJSON(w, http.StatusOK, api.DurableEntityRetryResponse{Version: request.ExpectedVersion, Target: request.Target, Rearmed: true})
+	s.Host.EmitAudit(ctx, "durable_entity.retry_rearmed", &acct.ID, map[string]any{"app_id": app.ID, "environment_id": id.EnvironmentID, "platform_tenant_id": id.TenantID, "target": request.Target, "state_version": request.ExpectedVersion, "recovery_revision": request.ExpectedRecoveryRevision, "head_id": request.HeadID, "alarm_at": request.AlarmAt})
+	httpkit.WriteJSON(w, http.StatusOK, api.DurableEntityRetryResponse{Version: request.ExpectedVersion, Target: request.Target, Rearmed: true})
 }
 
-func (s *server) durableEntityRetryAvailable(w http.ResponseWriter, acct state.Account, app state.App) bool {
-	if s.durableEntities == nil || !s.durableEntityApps[app.ID] {
+func (s *Service) durableEntityRetryAvailable(w http.ResponseWriter, acct state.Account, app state.App) bool {
+	if s.Engine == nil || !s.Apps[app.ID] {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entities_unavailable", "Durable entities unavailable", "this app is not enabled for the durable entity preview"))
 		return false
 	}

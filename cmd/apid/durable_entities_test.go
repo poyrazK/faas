@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -231,7 +232,7 @@ func entityAPIFixture(t *testing.T, project bool) (entityHTTPEnv, state.App, *en
 		t.Fatal(err)
 	}
 	dispatch := &entityDispatchFixture{MemStore: e.store, t: t, guest: http.HandlerFunc(entityCounterGuest)}
-	e.s.store, e.s.durableEntities, e.s.durableEntityOwner, e.s.durableEntityApps = dispatch, engine, uuid.NewString(), map[string]bool{app.ID: true}
+	e.s.store, e.s.durable.Engine, e.s.durable.Owner, e.s.durable.Apps = dispatch, engine, uuid.NewString(), map[string]bool{app.ID: true}
 	return e, app, dispatch, bucket
 }
 
@@ -272,7 +273,7 @@ func TestDurableEntityAPIConcurrentCallsAndRestartReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durableEntities, e.s.durableEntityOwner = restarted, uuid.NewString()
+	e.s.durable.Engine, e.s.durable.Owner = restarted, uuid.NewString()
 	// Make deployment selection fail: receipts must replay before selecting code.
 	e.s.store = &entityNoExecutionStore{MemStore: e.store}
 	replayed := entityAPIResult(t, e.do(t, http.MethodPost, path, entityRequest("first"), nil))
@@ -432,11 +433,6 @@ func TestDurableEntityPreviewDisabledAndConfigValidation(t *testing.T) {
 	res := e.do(t, http.MethodPost, "/v1/apps/disabled/entities/invoke", entityRequest("one"), nil)
 	if res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("disabled = %d", res.Code)
-	}
-	for _, raw := range []string{"", "*", "not-an-id", uuid.Nil.String()} {
-		if _, err := durableEntityAppAllowlist(raw); err == nil {
-			t.Fatalf("accepted preview allowlist %q", raw)
-		}
 	}
 	if err := e.s.configureDurableEntities(t.Context(), func(string) string { return "" }); err != nil {
 		t.Fatal(err)

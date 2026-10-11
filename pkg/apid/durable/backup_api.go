@@ -1,5 +1,5 @@
 // adr: 942
-package main
+package durable
 
 import (
 	"context"
@@ -7,17 +7,18 @@ import (
 	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) durableEntityBackupIdentity(w http.ResponseWriter, r *http.Request, acct state.Account, extra string) (durableentity.ID, string, bool) {
+func (s *Service) durableEntityBackupIdentity(w http.ResponseWriter, r *http.Request, acct state.Account, extra string) (durableentity.ID, string, bool) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return durableentity.ID{}, "", false
 	}
-	if s.durableEntities == nil || !s.durableEntityApps[app.ID] {
+	if s.Engine == nil || !s.Apps[app.ID] {
 		writeDurableEntityProblem(w, durableentity.ErrUnsupported)
 		return durableentity.ID{}, "", false
 	}
@@ -41,48 +42,48 @@ func (s *server) durableEntityBackupIdentity(w http.ResponseWriter, r *http.Requ
 	return id, value, true
 }
 
-func (s *server) listDurableEntityBackups(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) ListBackups(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
 	id, cursor, ok := s.durableEntityBackupIdentity(w, r.WithContext(ctx), acct, "cursor")
 	if !ok {
 		return
 	}
-	out, err := s.durableEntities.ListBackups(ctx, id, cursor)
+	out, err := s.Engine.ListBackups(ctx, id, cursor)
 	if err != nil {
 		writeDurableEntityRestoreProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
-func (s *server) getDurableEntityBackup(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) GetBackup(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
 	id, name, ok := s.durableEntityBackupIdentity(w, r.WithContext(ctx), acct, "backup_id")
 	if !ok {
 		return
 	}
-	out, err := s.durableEntities.ReadBackup(ctx, id, name)
+	out, err := s.Engine.ReadBackup(ctx, id, name)
 	if err != nil {
 		writeDurableEntityRestoreProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
-func (s *server) previewDurableEntityRestore(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) PreviewRestore(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if s.durableEntities == nil || !s.durableEntityApps[app.ID] {
+	if s.Engine == nil || !s.Apps[app.ID] {
 		writeDurableEntityProblem(w, durableentity.ErrUnsupported)
 		return
 	}
 	var request api.DurableEntityRestoreRequest
-	if !decodeJSONLimit(w, r, &request, int64(api.MaxDurableEntityInvocationBytes)) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, int64(api.MaxDurableEntityInvocationBytes)) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
@@ -92,12 +93,12 @@ func (s *server) previewDurableEntityRestore(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, problem)
 		return
 	}
-	out, err := s.durableEntities.PreviewRestore(ctx, id, request.ExpectedVersion, durableEntityExportFromAPI(request.Export))
+	out, err := s.Engine.PreviewRestore(ctx, id, request.ExpectedVersion, durableEntityExportFromAPI(request.Export))
 	if err != nil {
 		writeDurableEntityRestoreProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 func durableEntityExportFromAPI(e api.DurableEntityStateExport) durableentity.StateExport {

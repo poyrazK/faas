@@ -1,5 +1,5 @@
 // adr: 712
-package main
+package durable
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -15,7 +16,7 @@ import (
 
 type entityConfigProvider struct {
 	objectstorage.Provider
-	*entityTestBucket
+	*testBucket
 	denyDelete bool
 	denyWrite  bool
 	deletes    int
@@ -73,7 +74,7 @@ func TestDurableEntityBackgroundWorkersCheckDeleteOnlyWhenEnabled(t *testing.T) 
 		for _, enabled := range []bool{false, true} {
 			for _, failure := range []string{"none", "delete", "write"} {
 				t.Run(strings.Join([]string{feature, boolLabel(enabled), failure}, "/"), func(t *testing.T) {
-					provider := &entityConfigProvider{entityTestBucket: &entityTestBucket{objects: map[string]entityTestObject{}}, denyDelete: failure == "delete", denyWrite: failure == "write"}
+					provider := &entityConfigProvider{testBucket: newTestBucket(), denyDelete: failure == "delete", denyWrite: failure == "write"}
 					registry, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "private"}, Backends: []objectstorage.BackendConfig{{ID: "private", Driver: "s3", Region: "us-east-1", Namespace: "entities", Endpoint: "https://private.example.test", S3Region: "us-east-1"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{
 						"s3": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
 							return provider, nil
@@ -93,13 +94,13 @@ func TestDurableEntityBackgroundWorkersCheckDeleteOnlyWhenEnabled(t *testing.T) 
 							config["FAAS_DURABLE_ENTITY_OUTBOX_ENABLED"] = "1"
 						}
 					}
-					s := &server{objectStorage: registry, store: state.NewMemStore()}
-					err = s.configureDurableEntities(t.Context(), func(key string) string { return config[key] })
+					s := &Service{Host: fakeHost{store: state.NewMemStore()}}
+					err = s.Configure(t.Context(), func(key string) string { return config[key] }, registry)
 					if enabled && provider.denyDelete || provider.denyWrite {
-						if err == nil || strings.Contains(err.Error(), "private-provider-secret") || s.durableEntities != nil {
+						if err == nil || strings.Contains(err.Error(), "private-provider-secret") || s.Engine != nil {
 							t.Fatal("failed probe leaked details or enabled the engine", err)
 						}
-					} else if err != nil || s.durableEntities == nil || s.durableEntityMaintenanceEnabled != (enabled && feature == "MAINTENANCE") || s.durableEntityAlarmsEnabled != (enabled && feature == "ALARMS") || s.durableEntityOutboxEnabled != (enabled && (feature == "OUTBOX" || feature == "OUTBOX_HANDLERS")) || s.durableEntityOutboxHandlersEnabled != (enabled && feature == "OUTBOX_HANDLERS") || s.durableEntityBackupsEnabled != (enabled && feature == "BACKUPS") {
+					} else if err != nil || s.Engine == nil || s.MaintenanceEnabled != (enabled && feature == "MAINTENANCE") || s.AlarmsEnabled != (enabled && feature == "ALARMS") || s.OutboxEnabled != (enabled && (feature == "OUTBOX" || feature == "OUTBOX_HANDLERS")) || s.OutboxHandlersEnabled != (enabled && feature == "OUTBOX_HANDLERS") || s.BackupsEnabled != (enabled && feature == "BACKUPS") {
 						t.Fatal("configuration gates failed", err)
 					}
 					expectedDeletes := boolInt(enabled && !provider.denyWrite)
@@ -119,9 +120,9 @@ func TestDurableEntityOutboxHandlersRequireRelayBeforeProviderAccess(t *testing.
 		{"FAAS_DURABLE_ENTITIES_ENABLED": "1", "FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED": "1"},
 		{"FAAS_DURABLE_ENTITY_OUTBOX_ENABLED": "1", "FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED": "1"},
 	} {
-		s := &server{}
-		err := s.configureDurableEntities(t.Context(), func(key string) string { return config[key] })
-		if err == nil || s.durableEntities != nil || s.durableEntityOutboxHandlersEnabled {
+		s := &Service{}
+		err := s.Configure(t.Context(), func(key string) string { return config[key] }, nil)
+		if err == nil || s.Engine != nil || s.OutboxHandlersEnabled {
 			t.Fatal("unbacked guest messaging was enabled", err)
 		}
 	}
@@ -135,13 +136,13 @@ func boolLabel(value bool) string {
 }
 
 func TestRestoreValidationRequiresInvocationPreview(t *testing.T) {
-	s := &server{}
-	if err := s.configureDurableEntities(t.Context(), func(key string) string {
+	s := &Service{}
+	if err := s.Configure(t.Context(), func(key string) string {
 		if key == "FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED" {
 			return "1"
 		}
 		return ""
-	}); err == nil || s.durableEntityRestoreValidationEnabled || s.durableEntities != nil {
+	}, nil); err == nil || s.RestoreValidationEnabled || s.Engine != nil {
 		t.Fatal("application validation enabled without invocation preview")
 	}
 }

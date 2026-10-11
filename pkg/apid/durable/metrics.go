@@ -1,5 +1,5 @@
 // adr: 712
-package main
+package durable
 
 import (
 	"context"
@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
-type durableEntityMetrics struct {
+type Metrics struct {
 	registry        *prometheus.Registry
 	operations      *prometheus.CounterVec
 	storageDuration *prometheus.HistogramVec
@@ -27,51 +28,51 @@ type durableEntityMetrics struct {
 	committedBytes  *prometheus.HistogramVec
 	currentBytes    *prometheus.HistogramVec
 	outboxPending   *prometheus.HistogramVec
-	health          *durableEntityHealthMetrics
+	health          *healthMetrics
 }
 
-func newDurableEntityMetrics(registry *prometheus.Registry, prefix string) *durableEntityMetrics {
-	m := &durableEntityMetrics{registry: registry}
-	m.operations = registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
+func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
+	m := &Metrics{registry: registry}
+	m.operations = registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_durable_entity_storage_operations_total", Help: "Private entity storage calls by bounded operation and outcome; no entity identifiers.",
 	}, []string{"operation", "outcome"}))
-	m.storageDuration = registerRealtimeRouteHistogramVec(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	m.storageDuration = registerCollector(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_durable_entity_storage_duration_seconds", Help: "Elapsed private storage calls including failures; bounded operation labels, no object keys.", Buckets: append(append([]float64{}, prometheus.DefBuckets...), 25, 30, 60),
 	}, []string{"operation"}))
-	m.duration = registerRealtimeRouteHistogramVec(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	m.duration = registerCollector(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_durable_entity_operation_duration_seconds", Help: "Elapsed admitted engine operations including queue, ownership and cleanup where applicable. Samples overlap; not HTTP latency, an SLO or billing.", Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 30, 60},
 	}, []string{"operation"}))
-	m.uploadedBytes = registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.uploadedBytes = registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_durable_entity_uploaded_bytes_total", Help: "Encoded bytes in acknowledged uploads by object kind, including overwritten manifests. This measures upload volume, not retained or physical bucket bytes.",
 	}, []string{"kind"}))
-	m.outcomes = registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.outcomes = registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_durable_entity_operations_total", Help: "Engine operation and validator verdict outcomes; excludes HTTP admission failures. Busy and conditional conflicts remain retryable.",
 	}, []string{"operation", "outcome"}))
-	m.cleanup = registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.cleanup = registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_durable_entity_cleanup_objects_total", Help: "Cleanup candidates deleted, retained or failed. Deletion counts current keys, not versioned history or backups.",
 	}, []string{"outcome"}))
-	m.recoveries = registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.recoveries = registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_durable_entity_maintenance_recoveries_total", Help: "Maintenance visits recovering an expired checkpoint owner.",
 	}, []string{}))
-	m.lastSweep = registerMetricsDiscoveryGaugeVec(registry, prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	m.lastSweep = registerCollector(registry, prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_durable_entity_maintenance_last_sweep_timestamp_seconds", Help: "Last completed discovery rotation by this replica, including skipped/busy/failed entities. Zero until a rotation completes.",
 	}, []string{}))
-	m.alarmDelay = registerRealtimeRouteHistogramVec(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	m.alarmDelay = registerCollector(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_durable_entity_alarm_delay_seconds", Help: "Delay from a saved deadline to an allowlisted delivery attempt; no delivery latency guarantee.",
 		Buckets: prometheus.ExponentialBuckets(1, 4, 8),
 	}, []string{}))
-	m.inventory = registerRealtimeRouteCounterVec(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
+	m.inventory = registerCollector(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_durable_entity_inventory_samples_total", Help: "Bounded inventory visits by completion status; logical usage is proven through committed references, current-key bytes are observational.",
 	}, []string{"outcome"}))
-	m.committedBytes = registerRealtimeRouteHistogramVec(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	m.committedBytes = registerCollector(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_durable_entity_committed_bytes", Help: "Exact immutable bytes reachable from an entity snapshot in completed inventory samples. Repeated samples are not summed as storage inventory or billing.",
 		Buckets: prometheus.ExponentialBuckets(1024, 16, 7),
 	}, []string{}))
-	m.currentBytes = registerRealtimeRouteHistogramVec(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	m.currentBytes = registerCollector(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_durable_entity_current_key_bytes", Help: "Provider-reported current-key bytes in completed per-entity scans; includes orphans/metadata, excludes version history and backups, and is not a transactional snapshot.",
 		Buckets: prometheus.ExponentialBuckets(1024, 16, 7),
 	}, []string{}))
-	m.outboxPending = registerRealtimeRouteHistogramVec(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	m.outboxPending = registerCollector(registry, prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_durable_entity_outbox_pending_messages", Help: "Pending FIFO queue size in exact-entity inspection samples; repeated samples are not summed as a fleet backlog.",
 		Buckets: []float64{0, 1, 8, 16, 64, 128},
 	}, []string{}))
@@ -80,7 +81,7 @@ func newDurableEntityMetrics(registry *prometheus.Registry, prefix string) *dura
 			m.operations.WithLabelValues(operation, outcome)
 		}
 	}
-	m.health = newDurableEntityHealthMetrics(registry, prefix)
+	m.health = newHealthMetrics(registry, prefix)
 	for _, operation := range []string{"invoke", "alarm", "maintenance", "outbox", "retry_alarm", "retry_outbox", "restore", "validate_restore", "export"} {
 		for _, outcome := range []string{"success", "replay", "busy", "conflict", "stale", "uncertain", "invalid", "failed", "skipped", "limit", "pending", "backoff", "exhausted", "rejected", "cancelled", "timeout", "corrupt", "missing"} {
 			m.outcomes.WithLabelValues(operation, outcome)
@@ -150,7 +151,7 @@ func durableEntityOutcome(err error) string {
 	}
 }
 
-func (m *durableEntityMetrics) observeResult(operation string, result durableentity.Result, err error) {
+func (m *Metrics) observeResult(operation string, result durableentity.Result, err error) {
 	if m == nil {
 		return
 	}
@@ -161,7 +162,7 @@ func (m *durableEntityMetrics) observeResult(operation string, result durableent
 	m.outcomes.WithLabelValues(operation, outcome).Inc()
 }
 
-func (m *durableEntityMetrics) observeMaintenance(result durableentity.MaintenanceResult, err error) {
+func (m *Metrics) ObserveMaintenance(result durableentity.MaintenanceResult, err error) {
 	if m == nil {
 		return
 	}
@@ -202,7 +203,7 @@ func (m *durableEntityMetrics) observeMaintenance(result durableentity.Maintenan
 	}
 }
 
-func (m *durableEntityMetrics) observeAlarmDelay(at time.Time) {
+func (m *Metrics) observeAlarmDelay(at time.Time) {
 	if m != nil {
 		m.alarmDelay.WithLabelValues().Observe(max(0, time.Since(at).Seconds()))
 	}
@@ -210,7 +211,7 @@ func (m *durableEntityMetrics) observeAlarmDelay(at time.Time) {
 
 // observeDuration records only fixed, internal operation names. Identity must
 // never become a metric label, even when a caller passes an unexpected value.
-func (m *durableEntityMetrics) observeDuration(operation string, started time.Time) {
+func (m *Metrics) observeDuration(operation string, started time.Time) {
 	if m == nil {
 		return
 	}

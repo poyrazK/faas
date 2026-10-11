@@ -1,5 +1,5 @@
 // adr: 933
-package main
+package durable
 
 import (
 	"context"
@@ -13,13 +13,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type outboxSweepCursor struct{ index, entities string }
+type OutboxCursor struct{ index, entities string }
 
-func (s *server) runDurableEntityOutbox(ctx context.Context) {
-	if s.durableEntities == nil || !s.durableEntityOutboxEnabled {
+func (s *Service) RunOutbox(ctx context.Context) {
+	if s.Engine == nil || !s.OutboxEnabled {
 		return
 	}
-	cursor := outboxSweepCursor{}
+	cursor := OutboxCursor{}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -28,11 +28,11 @@ func (s *server) runDurableEntityOutbox(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		next, err := s.sweepDurableEntityOutbox(ctx, cursor)
+		next, err := s.SweepOutbox(ctx, cursor)
 		cursor = next
 		if err != nil && ctx.Err() == nil {
 			// Neither provider/SQL errors nor customer payloads enter logs.
-			s.log.Warn("durable entity outbox discovery deferred")
+			s.Host.Logger().Warn("durable entity outbox discovery deferred")
 		}
 		timer.Reset(api.DurableEntityOutboxPollInterval)
 	}
@@ -44,59 +44,59 @@ func scanDurableEntityOutboxPage(ctx context.Context, cursor string, scan func(c
 	return scan(scanCtx, cursor)
 }
 
-func (s *server) sweepDurableEntityOutbox(ctx context.Context, cursor outboxSweepCursor) (outboxSweepCursor, error) {
-	indexed, indexErr := scanDurableEntityOutboxPage(ctx, cursor.index, s.durableEntities.ScanIndexedDueOutbox)
-	reconciled, reconcileErr := scanDurableEntityOutboxPage(ctx, cursor.entities, s.durableEntities.ScanDueOutbox)
-	next := outboxSweepCursor{index: indexed.NextCursor, entities: reconciled.NextCursor}
+func (s *Service) SweepOutbox(ctx context.Context, cursor OutboxCursor) (OutboxCursor, error) {
+	indexed, indexErr := scanDurableEntityOutboxPage(ctx, cursor.index, s.Engine.ScanIndexedDueOutbox)
+	reconciled, reconcileErr := scanDurableEntityOutboxPage(ctx, cursor.entities, s.Engine.ScanDueOutbox)
+	next := OutboxCursor{index: indexed.NextCursor, entities: reconciled.NextCursor}
 	if failed := indexed.Failed + reconciled.Failed; failed > 0 {
-		s.log.Warn("durable entity outbox state unavailable", "entities", failed)
+		s.Host.Logger().Warn("durable entity outbox state unavailable", "entities", failed)
 	}
 	seen := map[durableentity.ID]bool{}
 	for _, work := range append(indexed.Work, reconciled.Work...) {
 		if ctx.Err() != nil {
 			return next, ctx.Err()
 		}
-		if seen[work.Entity] || !s.durableEntityApps[work.Entity.AppID] {
+		if seen[work.Entity] || !s.Apps[work.Entity.AppID] {
 			continue
 		}
 		seen[work.Entity] = true
-		if err := s.deliverDurableEntityOutbox(ctx, work); err != nil && ctx.Err() == nil {
+		if err := s.DeliverOutbox(ctx, work); err != nil && ctx.Err() == nil {
 			if !errors.Is(err, durableentity.ErrOutboxObsolete) && !errors.Is(err, durableentity.ErrOutboxBackoff) && !errors.Is(err, durableentity.ErrOutboxExhausted) && !errors.Is(err, durableentity.ErrBusy) && !errors.Is(err, durableentity.ErrConflict) {
-				s.log.Warn("durable entity outbox acceptance deferred")
+				s.Host.Logger().Warn("durable entity outbox acceptance deferred")
 			}
 		}
 	}
 	return next, errors.Join(indexErr, reconcileErr)
 }
 
-func (s *server) deliverDurableEntityOutbox(ctx context.Context, work durableentity.OutboxWork) (err error) {
-	if s.durableEntities == nil || !s.durableEntityOutboxEnabled || !s.durableEntityApps[work.Entity.AppID] {
+func (s *Service) DeliverOutbox(ctx context.Context, work durableentity.OutboxWork) (err error) {
+	if s.Engine == nil || !s.OutboxEnabled || !s.Apps[work.Entity.AppID] {
 		return durableentity.ErrInvalid
 	}
 	started := time.Now()
-	defer s.durableEntityMetrics.observeDuration("outbox", started)
-	defer func() { s.durableEntityMetrics.observeResult("outbox", durableentity.Result{}, err) }()
+	defer s.Metrics.observeDuration("outbox", started)
+	defer func() { s.Metrics.observeResult("outbox", durableentity.Result{}, err) }()
 	callCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
 	defer cancel()
-	if status, err := s.durableEntities.InspectOutbox(callCtx, work.Entity); err == nil && s.durableEntityMetrics != nil {
-		s.durableEntityMetrics.outboxPending.WithLabelValues().Observe(float64(status.Pending))
+	if status, err := s.Engine.InspectOutbox(callCtx, work.Entity); err == nil && s.Metrics != nil {
+		s.Metrics.outboxPending.WithLabelValues().Observe(float64(status.Pending))
 	}
 	// Established admission holds do not burn the relay retry budget. Recheck
 	// again under ownership before transport acceptance to cover changes here.
 	if _, _, err := s.durableEntityOutboxAdmission(callCtx, work.Entity); err != nil {
 		return err
 	}
-	return s.durableEntities.RelayOutbox(callCtx, work.Entity, work.MessageID, s.durableEntityOwner, func(ctx context.Context, message durableentity.OutboxMessage) error {
-		return s.acceptDurableEntityOutbox(ctx, work.Entity, message)
+	return s.Engine.RelayOutbox(callCtx, work.Entity, work.MessageID, s.Owner, func(ctx context.Context, message durableentity.OutboxMessage) error {
+		return s.AcceptOutbox(ctx, work.Entity, message)
 	})
 }
 
-func (s *server) acceptDurableEntityOutbox(ctx context.Context, entity durableentity.ID, message durableentity.OutboxMessage) error {
+func (s *Service) AcceptOutbox(ctx context.Context, entity durableentity.ID, message durableentity.OutboxMessage) error {
 	acct, app, err := s.durableEntityOutboxAdmission(ctx, entity)
 	if err != nil {
 		return err
 	}
-	store, ok := s.store.(state.EntityOutboxDeliveryStore)
+	store, ok := s.Host.Store().(state.EntityOutboxDeliveryStore)
 	if !ok {
 		return durableentity.ErrUnsupported
 	}
@@ -126,7 +126,7 @@ func (s *server) acceptDurableEntityOutbox(ctx context.Context, entity durableen
 	return nil
 }
 
-func (s *server) durableEntityOutboxAdmission(ctx context.Context, entity durableentity.ID) (state.Account, state.App, error) {
+func (s *Service) durableEntityOutboxAdmission(ctx context.Context, entity durableentity.ID) (state.Account, state.App, error) {
 	acct, app, request, err := s.durableEntityBackgroundSelection(ctx, entity)
 	if err != nil {
 		if errors.Is(err, durableentity.ErrAlarmObsolete) {
@@ -134,10 +134,10 @@ func (s *server) durableEntityOutboxAdmission(ctx context.Context, entity durabl
 		}
 		return acct, app, err
 	}
-	if acct.AbuseHeld() || acct.Plan.WebhookPerApp() <= 0 || !s.durableEntityApps[entity.AppID] || !s.durableEntityOutboxEnabled {
+	if acct.AbuseHeld() || acct.Plan.WebhookPerApp() <= 0 || !s.Apps[entity.AppID] || !s.OutboxEnabled {
 		return acct, app, durableentity.ErrInvalid
 	}
-	id, _, problem := s.durableEntityIdentity((&http.Request{}).WithContext(ctx), acct, app, request)
+	id, _, problem := s.Identity((&http.Request{}).WithContext(ctx), acct, app, request)
 	if problem != nil {
 		return acct, app, problem
 	}

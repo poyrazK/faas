@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -22,8 +23,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
-	"github.com/onebox-faas/faas/pkg/durableentity"
-	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -56,27 +55,13 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	profileBackend                           profiling.Backend
-	profileQuerySlots                        chan struct{}
-	guestTracingEnabled                      bool // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durableEntities                          *durableentity.Manager
-	durableEntityOwner                       string
-	durableEntityApps                        map[string]bool
-	durableEntityAlarmsEnabled               bool
-	durableEntityHealthEnabled               bool
-	durableEntityBackupsEnabled              bool
-	durableEntityRestoreValidationEnabled    bool
-	durableEntityRestoreIsolationEnabled     bool
-	durableEntityValidatorReleaseGateEnabled bool
-	durableEntityValidatorBundles            map[string]durableEntityValidatorBundle
-	durableEntityValidatorArtifacts          *validatorbundle.Artifacts
-	durableEntityOutboxEnabled               bool
-	durableEntityOutboxHandlersEnabled       bool
-	durableEntityMaintenanceEnabled          bool
-	durableEntityMetrics                     *durableEntityMetrics
-	devBridgeEnabled                         bool
-	devBridgeURL                             string
-	devBridgeObserver                        *devbridge.Observer
+	profileBackend      profiling.Backend
+	profileQuerySlots   chan struct{}
+	guestTracingEnabled bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durable             durable.Service // ADR-977; Host wired in newServer
+	devBridgeEnabled    bool
+	devBridgeURL        string
+	devBridgeObserver   *devbridge.Observer
 	// Private fixture fallback; startup always installs the scoped preview gate.
 	operationsAdmissionEnabled bool
 	operationsPreview          *operations.PreviewAdmission
@@ -527,7 +512,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.statusMetrics = nil
 		s.realtimeHistoryMetrics = nil
 		s.environmentGitSourceMetrics = nil
-		s.durableEntityMetrics = nil
+		s.durable.Metrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
@@ -536,8 +521,8 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
 	}
-	if ops != nil && (s.durableEntityMetrics == nil || s.durableEntityMetrics.registry != ops.Registry()) {
-		s.durableEntityMetrics = newDurableEntityMetrics(ops.Registry(), ops.MetricPrefix())
+	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
+		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.realtimeHistoryMetrics == nil || s.realtimeHistoryMetrics.registry != ops.Registry()) {
 		s.realtimeHistoryMetrics = newManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
@@ -1209,6 +1194,7 @@ func newServerWithDeps(
 	// required); the route is mounted via middleware.AuthLimit
 	// (no requireX chain) in cmd/apid/server.go:870 below.
 	s.oidcHandler = s.buildOIDCHandler()
+	s.durable.Host = durableHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -2876,15 +2862,15 @@ func (s *server) handler() http.Handler {
 	// they're the customer-facing event surface; the existing
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeDurableEntity))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/inspect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectDurableEntity))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDurableEntityBackups))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups/get", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDurableEntityBackup))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewDurableEntityRestore))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportDurableEntity))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore/validate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.validateDurableEntityRestore))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreDurableEntity))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryDurableEntity))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.Invoke))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/inspect", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.Inspect))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.ListBackups))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/backups/get", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.GetBackup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.PreviewRestore))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.Export))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore/validate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.ValidateRestore))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.Restore))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.Retry))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotent(s.queueSend))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotent(s.sendAppMessage))))))

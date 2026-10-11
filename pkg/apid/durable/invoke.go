@@ -1,4 +1,4 @@
-package main
+package durable
 
 import (
 	"context"
@@ -7,17 +7,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+func (s *Service) Invoke(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if s.durableEntities == nil || !s.durableEntityApps[app.ID] {
+	if s.Engine == nil || !s.Apps[app.ID] {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entities_unavailable", "Durable entities unavailable", "this app is not enabled for the durable entity preview"))
 		return
 	}
@@ -31,10 +33,10 @@ func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	var request api.DurableEntityInvokeRequest
-	if !decodeJSONLimit(w, r, &request, int64(limits.MaxSourceBytesPerInvocation)) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	id, scope, problem := s.durableEntityIdentity(r, acct, app, request)
+	id, scope, problem := s.Identity(r, acct, app, request)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -42,27 +44,27 @@ func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acc
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
 	started := time.Now()
-	result, err := s.durableEntities.Invoke(ctx, id, s.durableEntityOwner, durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
+	result, err := s.Engine.Invoke(ctx, id, s.Owner, durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.invokeDurableEntityHandler(ctx, acct, app, scope, id, request, view)
 	})
-	s.durableEntityMetrics.observeResult("invoke", result, err)
-	s.durableEntityMetrics.observeDuration("invoke", started)
+	s.Metrics.observeResult("invoke", result, err)
+	s.Metrics.observeDuration("invoke", started)
 	if err != nil {
 		writeDurableEntityProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.DurableEntityInvokeResponse{Value: result.Value, Version: result.Version, Replayed: result.Replayed})
+	httpkit.WriteJSON(w, http.StatusOK, api.DurableEntityInvokeResponse{Value: result.Value, Version: result.Version, Replayed: result.Replayed})
 }
 
-func (s *server) durableEntityIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest) (durableentity.ID, string, *api.Problem) {
+func (s *Service) Identity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest) (durableentity.ID, string, *api.Problem) {
 	return s.resolveDurableEntityIdentity(r, acct, app, request, false)
 }
 
 // Owner inspection can diagnose held tenant work without granting execution to
 // a suspended tenant or requiring its current plan to permit new invocations.
-func (s *server) resolveDurableEntityIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest, inspect bool) (durableentity.ID, string, *api.Problem) {
+func (s *Service) resolveDurableEntityIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest, inspect bool) (durableentity.ID, string, *api.Problem) {
 	id := durableentity.ID{AccountID: acct.ID, AppID: app.ID, Namespace: request.Namespace, Key: request.Key}
-	scope, env, problem := s.resolveQueueEnvironment(r.Context(), acct, app, request.Environment)
+	scope, env, problem := s.Host.ResolveQueueEnvironment(r.Context(), acct, app, request.Environment)
 	if problem != nil {
 		return id, scope, problem
 	}
@@ -79,7 +81,7 @@ func (s *server) resolveDurableEntityIdentity(r *http.Request, acct state.Accoun
 		if !inspect && acct.Plan.ConsumerKeysPerApp() <= 0 {
 			return id, scope, api.ErrPlanFeatureGated("platform_tenants", acct.Plan)
 		}
-		store, ok := s.store.(state.PlatformTenantStore)
+		store, ok := s.Host.Store().(state.PlatformTenantStore)
 		tenantID, parseErr := uuid.Parse(request.PlatformTenantID)
 		if !ok || parseErr != nil || tenantID == uuid.Nil {
 			return id, scope, api.ErrValidation("platform_tenant_id must identify a customer in this account")

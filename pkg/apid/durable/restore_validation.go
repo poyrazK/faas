@@ -1,5 +1,5 @@
 // adr: 943
-package main
+package durable
 
 import (
 	"context"
@@ -8,29 +8,30 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) validateDurableEntityRestore(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) ValidateRestore(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok || !s.durableEntityRestoreValidationAvailable(w) || !s.durableEntityRetryAvailable(w, acct, app) {
 		return
 	}
 	var request api.DurableEntityRestoreRequest
-	if !decodeJSONLimit(w, r, &request, int64(api.MaxDurableEntityInvocationBytes)) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, int64(api.MaxDurableEntityInvocationBytes)) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
-	id, scope, problem := s.durableEntityIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID})
+	id, scope, problem := s.Identity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID})
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	exported := durableEntityExportFromAPI(request.Export)
-	preview, err := s.durableEntities.PreviewRestore(ctx, id, request.ExpectedVersion, exported)
+	preview, err := s.Engine.PreviewRestore(ctx, id, request.ExpectedVersion, exported)
 	if err == nil && !preview.ExpectedVersionMatches {
 		err = durableentity.ErrRestoreObsolete
 	}
@@ -43,30 +44,30 @@ func (s *server) validateDurableEntityRestore(w http.ResponseWriter, r *http.Req
 		writeDurableEntityRestoreProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
-func (s *server) durableEntityRestoreValidationAvailable(w http.ResponseWriter) bool {
-	if !s.durableEntityRestoreValidationEnabled {
+func (s *Service) durableEntityRestoreValidationAvailable(w http.ResponseWriter) bool {
+	if !s.RestoreValidationEnabled {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entity_restore_validation_unavailable", "Restore validation unavailable", "the operator has not enabled application restore validation"))
 		return false
 	}
 	return true
 }
 
-func (s *server) dispatchDurableEntityRestoreValidation(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest, candidate json.RawMessage) (api.DurableEntityRestoreValidationResponse, error) {
+func (s *Service) dispatchDurableEntityRestoreValidation(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest, candidate json.RawMessage) (api.DurableEntityRestoreValidationResponse, error) {
 	started := time.Now()
 	out, err := s.executeDurableEntityRestoreValidation(ctx, acct, app, scope, id, request, candidate)
-	s.durableEntityMetrics.observeDuration("validate_restore", started)
+	s.Metrics.observeDuration("validate_restore", started)
 	outcomeErr := err
 	if err == nil && !out.Valid {
 		outcomeErr = durableentity.ErrRestoreRejected
 	}
-	s.durableEntityMetrics.observeResult("validate_restore", durableentity.Result{}, outcomeErr)
+	s.Metrics.observeResult("validate_restore", durableentity.Result{}, outcomeErr)
 	return out, err
 }
 
-func (s *server) executeDurableEntityRestoreValidation(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest, candidate json.RawMessage) (api.DurableEntityRestoreValidationResponse, error) {
+func (s *Service) executeDurableEntityRestoreValidation(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest, candidate json.RawMessage) (api.DurableEntityRestoreValidationResponse, error) {
 	var out api.DurableEntityRestoreValidationResponse
 	if request.RequestID == "" {
 		return out, durableentity.ErrInvalid
@@ -89,7 +90,7 @@ func (s *server) executeDurableEntityRestoreValidation(ctx context.Context, acct
 	}
 	var result json.RawMessage
 	var bundleHash string
-	if s.durableEntityRestoreIsolationEnabled {
+	if s.RestoreIsolationEnabled {
 		result, bundleHash, err = s.enqueueIsolatedRestoreValidator(ctx, acct, app, version.DeploymentID, request.ValidationBundleSHA256, body)
 	} else {
 		if request.ValidationBundleSHA256 != "" {
@@ -114,7 +115,7 @@ func (s *server) executeDurableEntityRestoreValidation(ctx context.Context, acct
 		return out, durableEntityValidationDeploymentProblem()
 	}
 	isolation := ""
-	if s.durableEntityRestoreIsolationEnabled {
+	if s.RestoreIsolationEnabled {
 		isolation = "networkless"
 	}
 	return api.DurableEntityRestoreValidationResponse{BundleSHA256: bundleHash, Isolation: isolation, Valid: valid, DeploymentID: version.DeploymentID, ExpectedVersion: request.ExpectedVersion, SourceVersion: request.Export.Version}, nil
@@ -124,18 +125,18 @@ func durableEntityValidationDeploymentProblem() *api.Problem {
 	return api.NewProblem(http.StatusConflict, "durable_entity_restore_validation_deployment_changed", "Validation deployment changed", "validate against the selected live deployment before starting a new restore operation")
 }
 
-func (s *server) performDurableEntityRestore(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest) (durableentity.Result, error) {
+func (s *Service) performDurableEntityRestore(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest) (durableentity.Result, error) {
 	exported := durableEntityExportFromAPI(request.Export)
 	if request.ValidationDeploymentID == "" {
 		if request.ValidationBundleSHA256 != "" {
 			return durableentity.Result{}, api.ErrValidation("validation bundle requires a deployment pin")
 		}
-		if s.durableEntityRestoreValidationEnabled {
+		if s.RestoreValidationEnabled {
 			return durableentity.Result{}, api.ErrValidation("application-validated restore requires validation_deployment_id")
 		}
-		return s.durableEntities.InvokeRestoreState(ctx, id, s.durableEntityOwner, request.RequestID, request.ExpectedVersion, exported)
+		return s.Engine.InvokeRestoreState(ctx, id, s.Owner, request.RequestID, request.ExpectedVersion, exported)
 	}
-	if !s.durableEntityRestoreValidationEnabled {
+	if !s.RestoreValidationEnabled {
 		return durableentity.Result{}, api.NewProblem(http.StatusServiceUnavailable, "durable_entity_restore_validation_unavailable", "Restore validation unavailable", "the operator has not enabled application restore validation")
 	}
 	validate := func(ctx context.Context, candidate json.RawMessage) error {
@@ -148,11 +149,11 @@ func (s *server) performDurableEntityRestore(ctx context.Context, acct state.Acc
 		}
 		return nil
 	}
-	if s.durableEntityRestoreIsolationEnabled {
-		return s.durableEntities.InvokeIsolatedValidatedRestoreState(ctx, id, s.durableEntityOwner, request.RequestID, request.ExpectedVersion, exported, request.ValidationDeploymentID, request.ValidationBundleSHA256, validate)
+	if s.RestoreIsolationEnabled {
+		return s.Engine.InvokeIsolatedValidatedRestoreState(ctx, id, s.Owner, request.RequestID, request.ExpectedVersion, exported, request.ValidationDeploymentID, request.ValidationBundleSHA256, validate)
 	}
 	if request.ValidationBundleSHA256 != "" {
 		return durableentity.Result{}, restoreIsolationUnavailable()
 	}
-	return s.durableEntities.InvokeValidatedRestoreState(ctx, id, s.durableEntityOwner, request.RequestID, request.ExpectedVersion, exported, request.ValidationDeploymentID, validate)
+	return s.Engine.InvokeValidatedRestoreState(ctx, id, s.Owner, request.RequestID, request.ExpectedVersion, exported, request.ValidationDeploymentID, validate)
 }

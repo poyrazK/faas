@@ -1,5 +1,5 @@
 // adr: 712
-package main
+package durable
 
 import (
 	"context"
@@ -12,11 +12,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) runDurableEntityAlarms(ctx context.Context) {
-	if s.durableEntities == nil || !s.durableEntityAlarmsEnabled {
+func (s *Service) RunAlarms(ctx context.Context) {
+	if s.Engine == nil || !s.AlarmsEnabled {
 		return
 	}
-	cursor := alarmSweepCursor{}
+	cursor := AlarmCursor{}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -25,17 +25,17 @@ func (s *server) runDurableEntityAlarms(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		next, err := s.sweepDurableEntityAlarms(ctx, cursor)
+		next, err := s.SweepAlarms(ctx, cursor)
 		cursor = next
 		if err != nil && ctx.Err() == nil {
 			// Provider errors can contain credentials or customer state.
-			s.log.Warn("durable entity alarm discovery failed")
+			s.Host.Logger().Warn("durable entity alarm discovery failed")
 		}
 		timer.Reset(api.DurableEntityAlarmPollInterval)
 	}
 }
 
-type alarmSweepCursor struct{ index, entities string }
+type AlarmCursor struct{ index, entities string }
 
 func scanDurableEntityAlarmPage(ctx context.Context, cursor string, scan func(context.Context, string) (durableentity.AlarmPage, error)) (durableentity.AlarmPage, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, api.DurableEntityAlarmScanTimeout)
@@ -43,75 +43,75 @@ func scanDurableEntityAlarmPage(ctx context.Context, cursor string, scan func(co
 	return scan(scanCtx, cursor)
 }
 
-func (s *server) sweepDurableEntityAlarms(ctx context.Context, cursor alarmSweepCursor) (alarmSweepCursor, error) {
-	indexed, indexErr := scanDurableEntityAlarmPage(ctx, cursor.index, s.durableEntities.ScanIndexedDueAlarms)
-	reconciled, reconcileErr := scanDurableEntityAlarmPage(ctx, cursor.entities, s.durableEntities.ScanDueAlarms)
+func (s *Service) SweepAlarms(ctx context.Context, cursor AlarmCursor) (AlarmCursor, error) {
+	indexed, indexErr := scanDurableEntityAlarmPage(ctx, cursor.index, s.Engine.ScanIndexedDueAlarms)
+	reconciled, reconcileErr := scanDurableEntityAlarmPage(ctx, cursor.entities, s.Engine.ScanDueAlarms)
 	// A failed/expired native cursor restarts only its own disposable scan. The
 	// other scan can keep delivering while the provider repairs its listing.
-	next := alarmSweepCursor{index: indexed.NextCursor, entities: reconciled.NextCursor}
+	next := AlarmCursor{index: indexed.NextCursor, entities: reconciled.NextCursor}
 	page := durableentity.AlarmPage{Failed: indexed.Failed + reconciled.Failed, Alarms: append(indexed.Alarms, reconciled.Alarms...)}
 	if page.Failed > 0 {
-		s.log.Warn("durable entity alarm state unavailable", "entities", page.Failed)
+		s.Host.Logger().Warn("durable entity alarm state unavailable", "entities", page.Failed)
 	}
 	seen := map[durableentity.ID]uint64{}
 	for _, alarm := range page.Alarms {
 		if ctx.Err() != nil {
 			return next, ctx.Err()
 		}
-		if seen[alarm.Entity] == alarm.Version || !s.durableEntityApps[alarm.Entity.AppID] {
+		if seen[alarm.Entity] == alarm.Version || !s.Apps[alarm.Entity.AppID] {
 			continue
 		}
 		seen[alarm.Entity] = alarm.Version
-		if err := s.deliverDurableEntityAlarm(ctx, alarm); err != nil && ctx.Err() == nil {
+		if err := s.DeliverAlarm(ctx, alarm); err != nil && ctx.Err() == nil {
 			if !errors.Is(err, durableentity.ErrAlarmObsolete) && !errors.Is(err, durableentity.ErrAlarmBackoff) && !errors.Is(err, durableentity.ErrAlarmExhausted) && !errors.Is(err, durableentity.ErrBusy) && !errors.Is(err, durableentity.ErrConflict) {
-				s.log.Warn("durable entity alarm delivery deferred")
+				s.Host.Logger().Warn("durable entity alarm delivery deferred")
 			}
 		}
 	}
 	return next, errors.Join(indexErr, reconcileErr)
 }
 
-func (s *server) deliverDurableEntityAlarm(ctx context.Context, alarm durableentity.Alarm) (err error) {
-	if s.durableEntities == nil || !s.durableEntityAlarmsEnabled || !s.durableEntityApps[alarm.Entity.AppID] {
+func (s *Service) DeliverAlarm(ctx context.Context, alarm durableentity.Alarm) (err error) {
+	if s.Engine == nil || !s.AlarmsEnabled || !s.Apps[alarm.Entity.AppID] {
 		return durableentity.ErrInvalid
 	}
-	s.durableEntityMetrics.observeAlarmDelay(alarm.At)
+	s.Metrics.observeAlarmDelay(alarm.At)
 	var result durableentity.Result
 	started := time.Now()
-	defer s.durableEntityMetrics.observeDuration("alarm", started)
-	defer func() { s.durableEntityMetrics.observeResult("alarm", result, err) }()
+	defer s.Metrics.observeDuration("alarm", started)
+	defer func() { s.Metrics.observeResult("alarm", result, err) }()
 	callCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
 	defer cancel()
 	acct, app, request, err := s.durableEntityAlarmSelection(callCtx, alarm)
 	if err != nil {
 		return err
 	}
-	id, scope, problem := s.durableEntityIdentity((&http.Request{}).WithContext(callCtx), acct, app, request)
+	id, scope, problem := s.Identity((&http.Request{}).WithContext(callCtx), acct, app, request)
 	if problem != nil {
 		return problem
 	}
 	if id != alarm.Entity {
 		return durableentity.ErrAlarmObsolete
 	}
-	result, err = s.durableEntities.InvokeAlarm(callCtx, alarm, s.durableEntityOwner, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
+	result, err = s.Engine.InvokeAlarm(callCtx, alarm, s.Owner, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.dispatchDurableEntityHandler(ctx, acct, app, scope, alarm.Entity, request, view, "alarm")
 	})
 	return err
 }
 
-func (s *server) durableEntityAlarmSelection(ctx context.Context, alarm durableentity.Alarm) (state.Account, state.App, api.DurableEntityInvokeRequest, error) {
+func (s *Service) durableEntityAlarmSelection(ctx context.Context, alarm durableentity.Alarm) (state.Account, state.App, api.DurableEntityInvokeRequest, error) {
 	acct, app, request, err := s.durableEntityBackgroundSelection(ctx, alarm.Entity)
 	work := durableentity.AlarmRequest(alarm)
 	request.RequestID, request.Payload = work.ID, work.Payload
 	return acct, app, request, err
 }
 
-func (s *server) durableEntityBackgroundSelection(ctx context.Context, entity durableentity.ID) (state.Account, state.App, api.DurableEntityInvokeRequest, error) {
-	acct, err := s.store.AccountByID(ctx, entity.AccountID)
+func (s *Service) durableEntityBackgroundSelection(ctx context.Context, entity durableentity.ID) (state.Account, state.App, api.DurableEntityInvokeRequest, error) {
+	acct, err := s.Host.Store().AccountByID(ctx, entity.AccountID)
 	if err != nil {
 		return acct, state.App{}, api.DurableEntityInvokeRequest{}, err
 	}
-	app, err := s.store.AppByID(ctx, entity.AppID)
+	app, err := s.Host.Store().AppByID(ctx, entity.AppID)
 	if err != nil {
 		return acct, app, api.DurableEntityInvokeRequest{}, err
 	}
@@ -126,7 +126,7 @@ func (s *server) durableEntityBackgroundSelection(ctx context.Context, entity du
 		}
 		return acct, app, request, nil
 	}
-	environments, err := s.store.ListProjectEnvironments(ctx, acct.ID, app.ProjectID)
+	environments, err := s.Host.Store().ListProjectEnvironments(ctx, acct.ID, app.ProjectID)
 	if err != nil {
 		return acct, app, request, err
 	}

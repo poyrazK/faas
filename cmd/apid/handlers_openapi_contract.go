@@ -98,7 +98,7 @@ func contractAdditions(diff openapidiff.SnapshotDiff) []api.OpenAPIContractAddit
 }
 
 func (s *server) contractTrafficContext(ctx context.Context, app state.App, d state.Deployment) (context.Context, *api.Problem) {
-	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, d); problem != nil {
+	if problem := s.durable.ValidatorReleaseProblem(ctx, app, d); problem != nil {
 		return ctx, problem
 	}
 	if !api.ApiContractDiffEnabled() || !strings.EqualFold(strings.TrimSpace(d.Scope), "prod") {

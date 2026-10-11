@@ -1,5 +1,5 @@
 // adr: 935
-package main
+package durable
 
 import (
 	"context"
@@ -9,17 +9,18 @@ import (
 	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) inspectDurableEntity(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) Inspect(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if s.durableEntities == nil || !s.durableEntityApps[app.ID] {
+	if s.Engine == nil || !s.Apps[app.ID] {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entities_unavailable", "Durable entities unavailable", "this app is not enabled for the durable entity preview"))
 		return
 	}
@@ -35,7 +36,7 @@ func (s *server) inspectDurableEntity(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, problem)
 		return
 	}
-	inspection, err := s.durableEntities.Inspect(ctx, id)
+	inspection, err := s.Engine.Inspect(ctx, id)
 	if errors.Is(err, durableentity.ErrNotFound) && !errors.Is(err, durableentity.ErrCorrupt) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Entity not found", "no entity exists in the selected scope"))
 		return
@@ -46,7 +47,7 @@ func (s *server) inspectDurableEntity(w http.ResponseWriter, r *http.Request, ac
 	}
 	out := durableEntityInspectionDTO(id, inspection)
 	out.Outbox.HeadDelivery = s.durableEntityHeadDelivery(ctx, id, inspection.Outbox.HeadID)
-	writeJSON(w, http.StatusOK, out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 func durableEntityInspectionQuery(raw string) (api.DurableEntityInspectRequest, error) {
@@ -80,12 +81,12 @@ func durableEntityInspectionDTO(id durableentity.ID, in durableentity.Inspection
 	return out
 }
 
-func (s *server) durableEntityHeadDelivery(ctx context.Context, id durableentity.ID, headID string) *api.DurableEntityHeadDelivery {
+func (s *Service) durableEntityHeadDelivery(ctx context.Context, id durableentity.ID, headID string) *api.DurableEntityHeadDelivery {
 	if headID == "" {
 		return nil
 	}
 	out := &api.DurableEntityHeadDelivery{Status: "unknown"}
-	row, err := s.store.AppWebhookDeliveryByID(ctx, headID)
+	row, err := s.Host.Store().AppWebhookDeliveryByID(ctx, headID)
 	if err != nil || row.ID != headID || row.AccountID != id.AccountID || row.AppID != id.AppID {
 		return out
 	}

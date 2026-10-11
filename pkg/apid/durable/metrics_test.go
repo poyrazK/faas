@@ -1,5 +1,5 @@
 // adr: 712
-package main
+package durable
 
 import (
 	"context"
@@ -8,28 +8,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/durableentity"
-	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
 func TestDurableEntityMetricsReuseCollectorsAndBoundLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	first := newDurableEntityMetrics(registry, "apid")
-	m := newDurableEntityMetrics(registry, "apid")
+	first := NewMetrics(registry, "apid")
+	m := NewMetrics(registry, "apid")
 	if first.operations != m.operations || first.alarmDelay != m.alarmDelay {
 		t.Fatal("collectors not reused")
 	}
-	var absent *durableEntityMetrics
+	var absent *Metrics
 	absent.observeResult("invoke", durableentity.Result{}, nil)
-	absent.observeMaintenance(durableentity.MaintenanceResult{}, nil)
+	absent.ObserveMaintenance(durableentity.MaintenanceResult{}, nil)
 	absent.observeAlarmDelay(time.Now())
 	m.observeResult("invoke", durableentity.Result{}, durableentity.ErrBusy)
 	m.observeResult("invoke", durableentity.Result{Replayed: true}, nil)
-	m.observeMaintenance(durableentity.MaintenanceResult{Busy: 1}, nil)
-	m.observeMaintenance(durableentity.MaintenanceResult{Failed: 1}, nil)
-	m.observeMaintenance(durableentity.MaintenanceResult{Recovered: true, SweepCompleted: true, Cleanup: durableentity.CleanupResult{Deleted: 3, Retained: 4, Failed: 1}}, nil)
+	m.ObserveMaintenance(durableentity.MaintenanceResult{Busy: 1}, nil)
+	m.ObserveMaintenance(durableentity.MaintenanceResult{Failed: 1}, nil)
+	m.ObserveMaintenance(durableentity.MaintenanceResult{Recovered: true, SweepCompleted: true, Cleanup: durableentity.CleanupResult{Deleted: 3, Retained: 4, Failed: 1}}, nil)
 	m.observeAlarmDelay(time.Now().Add(-time.Minute))
 	m.observeResult("outbox", durableentity.Result{}, durableentity.ErrOutboxBackoff)
 	m.observeResult("outbox", durableentity.Result{}, durableentity.ErrOutboxExhausted)
@@ -55,9 +55,9 @@ func TestDurableEntityMetricsReuseCollectorsAndBoundLabels(t *testing.T) {
 }
 
 func TestDurableEntityObservedStorePreservesCapabilitiesAndUnknownOutcomes(t *testing.T) {
-	m := newDurableEntityMetrics(prometheus.NewRegistry(), "apid")
-	bucket := &entityTestBucket{objects: map[string]entityTestObject{}}
-	store := durableEntityObservedStore{ObjectStore: bucket, metrics: func() *durableEntityMetrics { return m }}
+	m := NewMetrics(prometheus.NewRegistry(), "apid")
+	bucket := newTestBucket()
+	store := observedStore{ObjectStore: bucket, metrics: func() *Metrics { return m }}
 	key := "gregale/durable-entities/v1/entities/private/manifest.json"
 	body := []byte(`{"state_version":1}`)
 	if _, err := store.Put(t.Context(), key, body, ""); err != nil {
@@ -91,16 +91,7 @@ func TestDurableEntityObservedStorePreservesCapabilitiesAndUnknownOutcomes(t *te
 			t.Fatal(key, kind)
 		}
 	}
-	// Rebinding through the existing server hook changes the active registry.
-	s := &server{}
-	s.WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid"))
-	if s.durableEntityMetrics == nil {
-		t.Fatal("metrics hook did not bind collectors")
-	}
-	s.WithOpsMetrics(context.Background(), nil)
-	if s.durableEntityMetrics != nil {
-		t.Fatal("metrics hook did not clear collectors")
-	}
+	// Rebinding through apid's WithOpsMetrics hook is covered in cmd/apid.
 }
 
 func TestDurableEntityRecoveryOutcomesPreserveUncertainty(t *testing.T) {
@@ -130,16 +121,16 @@ func TestDurableEntityRecoveryOutcomesPreserveUncertainty(t *testing.T) {
 
 func TestDurableEntityLatencySamplesHaveNoIdentityLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	m := newDurableEntityMetrics(registry, "apid")
-	reused := newDurableEntityMetrics(registry, "apid")
+	m := NewMetrics(registry, "apid")
+	reused := NewMetrics(registry, "apid")
 	if m.duration != reused.duration || m.storageDuration != reused.storageDuration {
 		t.Fatal("latency collectors not reused")
 	}
-	var absent *durableEntityMetrics
+	var absent *Metrics
 	absent.observeDuration("restore", time.Now())
 	m.observeDuration("restore", time.Now().Add(-time.Second))
 	m.observeDuration("customer:secret-key", time.Now())
-	store := durableEntityObservedStore{ObjectStore: &entityTestBucket{objects: map[string]entityTestObject{}}, metrics: func() *durableEntityMetrics { return m }}
+	store := observedStore{ObjectStore: newTestBucket(), metrics: func() *Metrics { return m }}
 	if _, _, err := store.Get(t.Context(), "private/missing", 1024); !errors.Is(err, durableentity.ErrNotFound) {
 		t.Fatal(err)
 	}
@@ -172,8 +163,8 @@ func TestDurableEntityLatencySamplesHaveNoIdentityLabels(t *testing.T) {
 }
 
 func TestDurableEntityStorageMetricsKeepUnknownWritesUncertain(t *testing.T) {
-	m := newDurableEntityMetrics(prometheus.NewRegistry(), "apid")
-	store := durableEntityObservedStore{metrics: func() *durableEntityMetrics { return m }}
+	m := NewMetrics(prometheus.NewRegistry(), "apid")
+	store := observedStore{metrics: func() *Metrics { return m }}
 	store.record("put", time.Now(), errors.Join(durableentity.ErrUncertain, durableentity.ErrNotFound, context.DeadlineExceeded))
 	if got := testutil.ToFloat64(m.operations.WithLabelValues("put", "uncertain")); got != 1 {
 		t.Fatal("unknown write misclassified", got)

@@ -1,5 +1,5 @@
 // adr: 942
-package main
+package durable
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
-func (s *server) runDurableEntityBackups(ctx context.Context) {
-	if s.durableEntities == nil || !s.durableEntityBackupsEnabled {
+func (s *Service) RunBackups(ctx context.Context) {
+	if s.Engine == nil || !s.BackupsEnabled {
 		return
 	}
 	cursor := ""
@@ -23,17 +23,17 @@ func (s *server) runDurableEntityBackups(ctx context.Context) {
 		case <-timer.C:
 		}
 		scanCtx, cancel := context.WithTimeout(ctx, api.DurableEntityBackupScanTimeout)
-		page, err := s.durableEntities.ScanBackups(scanCtx, cursor, func(id durableentity.ID) bool { return s.durableEntityApps[id.AppID] })
+		page, err := s.Engine.ScanBackups(scanCtx, cursor, func(id durableentity.ID) bool { return s.Apps[id.AppID] })
 		cancel()
 		if err == nil {
 			cursor = page.NextCursor
 		}
-		if s.durableEntityMetrics != nil {
+		if s.Metrics != nil {
 			outcome := "success"
 			if err != nil || page.Failed > 0 {
 				outcome = "failed"
 			}
-			s.durableEntityMetrics.operations.WithLabelValues("backup_scan", outcome).Inc()
+			s.Metrics.operations.WithLabelValues("backup_scan", outcome).Inc()
 		}
 		timer.Reset(api.DurableEntityBackupPollInterval)
 	}

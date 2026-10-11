@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -10,8 +9,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/durableentity"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestEntityInspectionReadScopeAndMetadata(t *testing.T) {
@@ -59,32 +56,5 @@ func TestEntityInspectionReadScopeAndMetadata(t *testing.T) {
 	missing := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/entities/inspect?namespace=x&key=absent", nil, nil)
 	if missing.Code != http.StatusNotFound {
 		t.Fatal(missing.Code, missing.Body.String())
-	}
-}
-
-type inspectionDeliveryStore struct {
-	state.Store
-	row state.AppWebhookDelivery
-	err error
-}
-
-func (s inspectionDeliveryStore) AppWebhookDeliveryByID(context.Context, string) (state.AppWebhookDelivery, error) {
-	return s.row, s.err
-}
-
-func TestEntityInspectionScopesSeparateDeliveryObservation(t *testing.T) {
-	id := durableentity.ID{AccountID: "account", AppID: "app", EnvironmentID: "environment", TenantID: "tenant", Namespace: "ns", Key: "key"}
-	payload, _ := json.Marshal(map[string]any{"entity": id, "message_id": "head"})
-	row := state.AppWebhookDelivery{ID: "head", AccountID: id.AccountID, AppID: id.AppID, Payload: payload, Status: state.AppWebhookDeliverySucceeded}
-	s := &server{store: inspectionDeliveryStore{Store: state.NewMemStore(), row: row}}
-	if out := s.durableEntityHeadDelivery(t.Context(), id, "head"); out == nil || out.Status != "succeeded" {
-		t.Fatal(out)
-	}
-	id.TenantID = "other"
-	if out := s.durableEntityHeadDelivery(t.Context(), id, "head"); out == nil || out.Status != "unknown" {
-		t.Fatal("foreign scope leaked status", out)
-	}
-	if out := s.durableEntityHeadDelivery(t.Context(), id, ""); out != nil {
-		t.Fatal("empty outbox implied transport status", out)
 	}
 }

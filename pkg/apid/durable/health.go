@@ -1,5 +1,5 @@
 // adr: 937
-package main
+package durable
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
-type durableEntityHealthRotation struct {
+type HealthRotation struct {
 	cursor                                                                string
 	failed                                                                bool
 	entities, alarms, outbox, alarmExhausted, outboxExhausted, unknownAge int
@@ -24,7 +24,7 @@ func earlierHealthTime(old, value *time.Time) *time.Time {
 	return old
 }
 
-func (r *durableEntityHealthRotation) add(page durableentity.HealthPage) {
+func (r *HealthRotation) add(page durableentity.HealthPage) {
 	r.failed = r.failed || page.Failed > 0
 	r.cursor = page.NextCursor
 	for _, sample := range page.Samples {
@@ -45,14 +45,14 @@ func (r *durableEntityHealthRotation) add(page durableentity.HealthPage) {
 	}
 }
 
-func (s *server) runDurableEntityHealth(ctx context.Context) {
-	if s.durableEntities == nil || !s.durableEntityHealthEnabled {
+func (s *Service) RunHealth(ctx context.Context) {
+	if s.Engine == nil || !s.HealthEnabled {
 		return
 	}
-	if m := s.durableEntityMetrics; m != nil {
+	if m := s.Metrics; m != nil {
 		m.health.enabled.WithLabelValues().Set(1)
 	}
-	rotation := durableEntityHealthRotation{}
+	rotation := HealthRotation{}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -61,30 +61,30 @@ func (s *server) runDurableEntityHealth(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		s.pollDurableEntityHealth(ctx, &rotation)
+		s.PollHealth(ctx, &rotation)
 		timer.Reset(api.DurableEntityHealthPollInterval)
 	}
 }
 
-func (s *server) pollDurableEntityHealth(ctx context.Context, rotation *durableEntityHealthRotation) {
-	if m := s.durableEntityMetrics; m != nil {
+func (s *Service) PollHealth(ctx context.Context, rotation *HealthRotation) {
+	if m := s.Metrics; m != nil {
 		m.health.enabled.WithLabelValues().Set(1)
 	}
 	scanCtx, cancel := context.WithTimeout(ctx, api.DurableEntityHealthScanTimeout)
 	defer cancel()
-	page, err := s.durableEntities.ScanHealth(scanCtx, rotation.cursor, func(id durableentity.ID) bool { return s.durableEntityApps[id.AppID] })
+	page, err := s.Engine.ScanHealth(scanCtx, rotation.cursor, func(id durableentity.ID) bool { return s.Apps[id.AppID] })
 	if ctx.Err() != nil {
 		return
 	}
 	if err != nil {
-		if m := s.durableEntityMetrics; m != nil {
+		if m := s.Metrics; m != nil {
 			m.health.pollSuccess.WithLabelValues().Set(0)
 			m.health.scans.WithLabelValues("failed").Inc()
 		}
 		return
 	}
 	rotation.add(page)
-	if m := s.durableEntityMetrics; m != nil {
+	if m := s.Metrics; m != nil {
 		outcome := "success"
 		success := 1.0
 		if rotation.failed {
@@ -98,6 +98,6 @@ func (s *server) pollDurableEntityHealth(ctx context.Context, rotation *durableE
 		}
 	}
 	if rotation.cursor == "" {
-		*rotation = durableEntityHealthRotation{}
+		*rotation = HealthRotation{}
 	}
 }

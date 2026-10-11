@@ -1,5 +1,5 @@
 // adr: 712
-package main
+package durable
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
-func (s *server) runDurableEntityMaintenance(ctx context.Context) {
-	if s.durableEntities == nil || !s.durableEntityMaintenanceEnabled {
+func (s *Service) RunMaintenance(ctx context.Context) {
+	if s.Engine == nil || !s.MaintenanceEnabled {
 		return
 	}
 	timer := time.NewTimer(0)
@@ -23,12 +23,12 @@ func (s *server) runDurableEntityMaintenance(ctx context.Context) {
 		case <-timer.C:
 		}
 		started := time.Now()
-		result, err := s.durableEntities.MaintenanceStep(ctx, s.durableEntityOwner, s.durableEntityApps)
-		s.durableEntityMetrics.observeMaintenance(result, err)
-		s.durableEntityMetrics.observeDuration("maintenance", started)
+		result, err := s.Engine.MaintenanceStep(ctx, s.Owner, s.Apps)
+		s.Metrics.ObserveMaintenance(result, err)
+		s.Metrics.observeDuration("maintenance", started)
 		if ctx.Err() == nil && (result.Failed > 0 || result.Cleanup.Failed > 0 || err != nil && !errors.Is(err, durableentity.ErrBusy) && !errors.Is(err, durableentity.ErrConflict)) {
 			// Provider errors and storage paths may expose credentials or identities.
-			s.log.Warn("durable entity maintenance deferred")
+			s.Host.Logger().Warn("durable entity maintenance deferred")
 		}
 		timer.Reset(api.DurableEntityMaintenancePollInterval)
 	}

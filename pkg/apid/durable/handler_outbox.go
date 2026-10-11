@@ -1,5 +1,5 @@
 // adr: 934
-package main
+package durable
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 // This callback boundary runs before the engine uploads or publishes a state
 // candidate. Bucket CAS still fences ownership; admission is checked again at
 // relay acceptance, since SQL registration cannot share a bucket transaction.
-func (s *server) durableEntityHandlerTransition(ctx context.Context, id durableentity.ID, body []byte, protocol int) (durableentity.Transition, error) {
+func (s *Service) durableEntityHandlerTransition(ctx context.Context, id durableentity.ID, body []byte, protocol int) (durableentity.Transition, error) {
 	transition, err := durableentity.DecodeTransitionForProtocol(body, protocol)
 	if err != nil || len(transition.Outbox) == 0 {
 		return transition, err
 	}
-	if !s.durableEntityOutboxHandlersEnabled || !s.durableEntityOutboxEnabled {
+	if !s.OutboxHandlersEnabled || !s.OutboxEnabled {
 		return durableentity.Transition{}, durableentity.ErrInvalid
 	}
 	if _, _, err := s.durableEntityOutboxAdmission(ctx, id); err != nil {
@@ -37,8 +37,8 @@ func (s *server) durableEntityHandlerTransition(ctx context.Context, id durablee
 	return transition, nil
 }
 
-func (s *server) durableEntityHandlerDestination(ctx context.Context, id durableentity.ID, webhookID string) error {
-	hook, err := s.store.AppWebhookByID(ctx, webhookID)
+func (s *Service) durableEntityHandlerDestination(ctx context.Context, id durableentity.ID, webhookID string) error {
+	hook, err := s.Host.Store().AppWebhookByID(ctx, webhookID)
 	if errors.Is(err, state.ErrNotFound) {
 		return durableentity.ErrInvalid
 	}

@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
 func (b *entityTestBucket) ListEntityObjects(ctx context.Context, prefix, cursor string, limit int32) (durableentity.CleanupObjects, error) {
@@ -57,19 +58,20 @@ func TestDurableEntityMaintenanceRequiresPreviewAndStopsWorker(t *testing.T) {
 	}); err == nil {
 		t.Fatal("maintenance enabled without preview")
 	}
-	s.runDurableEntityMaintenance(t.Context()) // disabled returns immediately
+	s.durable.RunMaintenance(t.Context()) // disabled returns immediately
 	e, _, _, _ := entityAPIFixture(t, false)
-	e.s.durableEntityMaintenanceEnabled = true
-	e.s.durableEntityMetrics = newDurableEntityMetrics(prometheus.NewRegistry(), "apid")
+	e.s.durable.MaintenanceEnabled = true
+	registry := prometheus.NewRegistry()
+	e.s.durable.Metrics = durable.NewMetrics(registry, "apid")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan struct{})
-	go func() { e.s.runDurableEntityMaintenance(ctx); close(done) }()
+	go func() { e.s.durable.RunMaintenance(ctx); close(done) }()
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
 	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
-	for testutil.ToFloat64(e.s.durableEntityMetrics.lastSweep.WithLabelValues()) == 0 {
+	for durableMetric(t, registry, "apid_durable_entity_maintenance_last_sweep_timestamp_seconds") == 0 {
 		select {
 		case <-deadline.C:
 			t.Fatal("maintenance did not perform its initial rotation")
@@ -86,8 +88,9 @@ func TestDurableEntityMaintenanceRequiresPreviewAndStopsWorker(t *testing.T) {
 
 func TestDurableEntityAutomaticMaintenancePreservesRuntimeReplayAndAlarms(t *testing.T) {
 	e, _, dispatch, _ := entityAPIFixture(t, false)
-	e.s.durableEntityAlarmsEnabled = true
-	e.s.durableEntityMetrics = newDurableEntityMetrics(prometheus.NewRegistry(), "apid")
+	e.s.durable.AlarmsEnabled = true
+	registry := prometheus.NewRegistry()
+	e.s.durable.Metrics = durable.NewMetrics(registry, "apid")
 	alarm := scheduleAPIAlarm(t, e, entityRequest("first"))
 	for i := range 12 {
 		request := entityRequest(fmt.Sprintf("work-%d", i))
@@ -99,14 +102,14 @@ func TestDurableEntityAutomaticMaintenancePreservesRuntimeReplayAndAlarms(t *tes
 	}
 	deleted := 0
 	for range 10 {
-		result, err := e.s.durableEntities.MaintenanceStep(t.Context(), e.s.durableEntityOwner, e.s.durableEntityApps)
+		result, err := e.s.durable.Engine.MaintenanceStep(t.Context(), e.s.durable.Owner, e.s.durable.Apps)
 		if err != nil || result.Failed != 0 || result.Cleanup.Failed != 0 {
 			t.Fatal(result, err)
 		}
-		e.s.durableEntityMetrics.observeMaintenance(result, err)
+		e.s.durable.Metrics.ObserveMaintenance(result, err)
 		deleted += result.Cleanup.Deleted
 	}
-	if deleted == 0 || testutil.ToFloat64(e.s.durableEntityMetrics.cleanup.WithLabelValues("deleted")) != float64(deleted) {
+	if deleted == 0 || durableMetric(t, registry, "apid_durable_entity_cleanup_objects_total", "outcome", "deleted") != float64(deleted) {
 		t.Fatal("maintenance did not reclaim superseded runtime state", deleted)
 	}
 	before := dispatch.calls.Load()
@@ -119,17 +122,17 @@ func TestDurableEntityAutomaticMaintenancePreservesRuntimeReplayAndAlarms(t *tes
 	if !replayed.Replayed || replayed.Version != 2 || dispatch.calls.Load() != before {
 		t.Fatal("reclaimed original receipt", replayed)
 	}
-	page, err := e.s.durableEntities.ScanDueAlarms(t.Context(), "")
+	page, err := e.s.durable.Engine.ScanDueAlarms(t.Context(), "")
 	if err != nil || len(page.Alarms) != 1 || page.Alarms[0].Version != 13 {
 		t.Fatal("lost alarm", page, err)
 	}
-	if err := e.s.deliverDurableEntityAlarm(t.Context(), page.Alarms[0]); err != nil {
+	if err := e.s.durable.DeliverAlarm(t.Context(), page.Alarms[0]); err != nil {
 		t.Fatal(err)
 	}
-	if testutil.ToFloat64(e.s.durableEntityMetrics.outcomes.WithLabelValues("invoke", "replay")) != 1 || testutil.ToFloat64(e.s.durableEntityMetrics.outcomes.WithLabelValues("alarm", "success")) != 1 {
+	if durableMetric(t, registry, "apid_durable_entity_operations_total", "operation", "invoke", "outcome", "replay") != 1 || durableMetric(t, registry, "apid_durable_entity_operations_total", "operation", "alarm", "outcome", "success") != 1 {
 		t.Fatal("invocation or alarm outcome was not observed")
 	}
-	view, err := e.s.durableEntities.Read(t.Context(), alarm.Entity)
+	view, err := e.s.durable.Engine.Read(t.Context(), alarm.Entity)
 	if err != nil || view.Version != 14 || view.AlarmAt != nil {
 		t.Fatal(view, err)
 	}

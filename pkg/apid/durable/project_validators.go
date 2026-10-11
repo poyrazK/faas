@@ -1,5 +1,5 @@
 // adr: 948
-package main
+package durable
 
 import (
 	"context"
@@ -12,57 +12,57 @@ import (
 type validatorPromotionKey struct{}
 type validatorPromotionTransfer func(context.Context, state.Deployment, string) error
 
-func (s *server) validatorPromotionContext(ctx context.Context) context.Context {
+func (s *Service) PromotionContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, validatorPromotionKey{}, validatorPromotionTransfer(func(ctx context.Context, source state.Deployment, target string) error {
-		if !s.durableEntityValidatorReleaseGateEnabled || !s.durableEntityApps[source.AppID] {
+		if !s.ValidatorReleaseGateEnabled || !s.Apps[source.AppID] {
 			return nil
 		}
-		if s.durableEntityValidatorArtifacts == nil {
+		if s.ValidatorArtifacts == nil {
 			return validatorbundle.ErrArtifactUnavailable
 		}
-		return s.durableEntityValidatorArtifacts.Transfer(ctx, source.AppID, source.ID, target)
+		return s.ValidatorArtifacts.Transfer(ctx, source.AppID, source.ID, target)
 	}))
 }
-func transferPromotionValidator(ctx context.Context, source state.Deployment, target string) error {
+func TransferPromotionValidator(ctx context.Context, source state.Deployment, target string) error {
 	if transfer, ok := ctx.Value(validatorPromotionKey{}).(validatorPromotionTransfer); ok {
 		return transfer(ctx, source, target)
 	}
 	return nil
 }
-func (s *server) checkProjectValidatorMembers(ctx context.Context, members []state.ProjectReleaseMember) error {
-	if !s.durableEntityValidatorReleaseGateEnabled {
+func (s *Service) CheckProjectValidatorMembers(ctx context.Context, members []state.ProjectReleaseMember) error {
+	if !s.ValidatorReleaseGateEnabled {
 		return nil
 	}
 	for _, member := range members {
-		if !s.durableEntityApps[member.AppID] {
+		if !s.Apps[member.AppID] {
 			continue
 		}
-		app, err := s.store.AppByID(ctx, member.AppID)
+		app, err := s.Host.Store().AppByID(ctx, member.AppID)
 		if err != nil {
 			return err
 		}
-		deployment, err := s.store.DeploymentByID(ctx, member.DeploymentID)
+		deployment, err := s.Host.Store().DeploymentByID(ctx, member.DeploymentID)
 		if err != nil {
 			return err
 		}
-		if problem := s.durableEntityValidatorReleaseProblem(ctx, app, deployment); problem != nil {
+		if problem := s.ValidatorReleaseProblem(ctx, app, deployment); problem != nil {
 			return problem
 		}
 	}
 	return nil
 }
 
-func (s *server) deploymentValidatorInfo(ctx context.Context, d state.Deployment, app state.App) *api.DurableEntityValidatorDeploymentInfo {
-	if !s.durableEntityApps[app.ID] {
+func (s *Service) DeploymentValidatorInfo(ctx context.Context, d state.Deployment, app state.App) *api.DurableEntityValidatorDeploymentInfo {
+	if !s.Apps[app.ID] {
 		return nil
 	}
 	info := &api.DurableEntityValidatorDeploymentInfo{Status: "disabled"}
-	if !s.durableEntityRestoreIsolationEnabled {
+	if !s.RestoreIsolationEnabled {
 		return info
 	}
 	info.Status = "unavailable"
 	info.Source = "registry"
-	if s.durableEntityValidatorArtifacts != nil {
+	if s.ValidatorArtifacts != nil {
 		info.Source = "object_storage"
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.DurableEntityReleaseTimeout)
