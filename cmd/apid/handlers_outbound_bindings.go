@@ -117,6 +117,10 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, outboundAIPolicyInvalidDetail)
 		return
 	}
+	if req.AIProvider != "" && !s.aiGatewayEnabled {
+		writeAIGatewayUnavailable(w)
+		return
+	}
 	requestPolicy := api.DefaultOutboundRequestPolicy()
 	if req.RequestPolicy != nil {
 		requestPolicy = *req.RequestPolicy

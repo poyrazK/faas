@@ -369,6 +369,16 @@ status codes.
 
 ## AI gateway integrations
 
+> **Release gate.** The AI gateway is off until an operator enables it.
+>
+> - Set `ai_gateway_enabled = true` in both `apid.toml` and `outboundd.toml`, or set `FAAS_AI_GATEWAY_ENABLED=1` for both daemons.
+> - While it is off:
+>   - the AI endpoints return `403 outbound_ai_gateway_unavailable`;
+>   - integrations cannot set `ai_provider`;
+>   - outboundd refuses AI integrations (`503 outbound_ai_gateway_disabled`) and routes.
+>
+> See [ADR-984](../adr/984-ai-gateway-hard-caps-providers-visibility.md#release-gate).
+
 An integration in front of an LLM provider can declare `ai_provider`. Use
 `openai` for OpenAI and any provider that speaks its wire format, or
 `anthropic` for the Anthropic Messages API. The gateway then reads the response

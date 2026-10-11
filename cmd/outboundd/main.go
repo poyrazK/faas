@@ -122,6 +122,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := ValidateAIGateway(configured, cfg.AIGateway(os.Getenv)); err != nil {
+		return err
+	}
 	identityVerifier, err := cfg.IdentityVerifier(configured)
 	if err != nil {
 		return fmt.Errorf("outboundd: workload identity: %w", err)
@@ -198,6 +201,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
+	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
+	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled)
 	// ADR-983: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err

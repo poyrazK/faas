@@ -103,6 +103,7 @@ const (
 var EnvContract = []EnvVar{
 	{Name: "FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ADMIN_EMAILS", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
+	{Name: "FAAS_AI_GATEWAY_ENABLED", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Validate: EnvValidationInt, Note: "optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-984), any other value keeps it closed, unset preserves the TOML setting (default off)"},
 	{Name: "FAAS_ALERT_EVAL_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ADVISORY_SOCK", Owners: []string{"apid", "vmmd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_APID_APP_ERRORS_SOCKET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},

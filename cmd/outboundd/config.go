@@ -36,6 +36,36 @@ type Config struct {
 	RelayTLSCertPath string `toml:"relay_tls_cert_path"`
 	RelayTLSKeyPath  string `toml:"relay_tls_key_path"`
 	RelayTLSCAPath   string `toml:"relay_tls_ca_path"`
+	// AIGatewayEnabled is the AI gateway release gate (ADR-984). While it is
+	// off, AI integrations and routes are refused. FAAS_AI_GATEWAY_ENABLED
+	// overrides it: "1" turns it on, any other value turns it off.
+	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+}
+
+// AIGateway resolves the release gate from the TOML setting and the
+// environment override.
+func (c *Config) AIGateway(getenv func(string) string) bool {
+	if getenv != nil {
+		if value := getenv("FAAS_AI_GATEWAY_ENABLED"); value != "" {
+			return value == "1"
+		}
+	}
+	return c.AIGatewayEnabled
+}
+
+// ValidateAIGateway refuses an operator integration that declares an AI
+// provider while the AI gateway is off, so a configuration mistake fails at
+// startup instead of refusing that integration's traffic.
+func ValidateAIGateway(items []configuredIntegration, enabled bool) error {
+	if enabled {
+		return nil
+	}
+	for _, item := range items {
+		if item.Record.Policy.AIProvider != "" {
+			return fmt.Errorf("outboundd: integration %q sets ai_provider but the AI gateway is disabled; set ai_gateway_enabled or FAAS_AI_GATEWAY_ENABLED=1", item.Record.Policy.ID)
+		}
+	}
+	return nil
 }
 
 func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {

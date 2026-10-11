@@ -35,6 +35,11 @@ metrics_addr = "127.0.0.1:9108"
 # relay_tls_key_path = "/etc/faas/tls/outboundd/server.key"
 # relay_tls_ca_path = "/etc/faas/tls/ca/ca.crt"
 
+# ADR-984 AI gateway release gate. Off by default: integrations with an
+# ai_provider and AI routes are refused. Turn it on together with apid's
+# ai_gateway_enabled; FAAS_AI_GATEWAY_ENABLED=1 overrides this setting.
+# ai_gateway_enabled = false
+
 # Required for managed integrations, including integrations customers create
 # through the API. Install a
 # public JWKS published by vmmd (never its signing private key) at this path.

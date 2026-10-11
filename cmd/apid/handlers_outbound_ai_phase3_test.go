@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -142,6 +143,42 @@ func TestOutboundAIAlertsAndRequestLog(t *testing.T) {
 		t.Fatalf("second page = %s", second.Body.String())
 	}
 	assertProblem(t, e.do(t, http.MethodGet, "/v1/outbound/integrations/"+id+"/ai-requests?before=yesterday", nil, nil), http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestAIGatewayReleaseGateIsClosedByDefault(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	assertProblem(t, e.do(t, http.MethodGet, "/v1/outbound/ai-routes", nil, nil), http.StatusForbidden, "outbound_ai_gateway_unavailable")
+	assertProblem(t, e.do(t, http.MethodPost, "/v1/outbound/integrations", api.CreateOutboundIntegrationRequest{
+		Name: "llm", Origin: "https://api.openai.com", AllowedMethods: []string{"POST"}, AllowedPathPrefixes: []string{"/v1"},
+		AIProvider: api.OutboundAIProviderOpenAI,
+	}, nil), http.StatusForbidden, "outbound_ai_gateway_unavailable")
+	// Ordinary integrations are unaffected.
+	if plain := e.do(t, http.MethodPost, "/v1/outbound/integrations", api.CreateOutboundIntegrationRequest{
+		Name: "plain", Origin: "https://api.example.com", AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+	}, nil); plain.Code != http.StatusCreated {
+		t.Fatalf("plain integration = %d %s", plain.Code, plain.Body.String())
+	}
+	for _, path := range []string{"/ai", "/ai-usage", "/ai-prices", "/ai-alerts", "/ai-requests", "/credential-keys"} {
+		method := http.MethodGet
+		if path == "/ai" {
+			method = http.MethodPut
+		}
+		assertProblem(t, e.do(t, method, "/v1/outbound/integrations/"+uuid.NewString()+path, api.PutOutboundAIPolicyRequest{}, nil),
+			http.StatusForbidden, "outbound_ai_gateway_unavailable")
+	}
+	e.s.configureAIGateway(Config{}, func(name string) string {
+		if name == "FAAS_AI_GATEWAY_ENABLED" {
+			return "1"
+		}
+		return ""
+	})
+	if list := e.do(t, http.MethodGet, "/v1/outbound/ai-routes", nil, nil); list.Code != http.StatusOK {
+		t.Fatalf("routes after enabling = %d %s", list.Code, list.Body.String())
+	}
+	e.s.configureAIGateway(Config{AIGatewayEnabled: true}, func(string) string { return "0" })
+	if e.s.aiGatewayEnabled {
+		t.Fatal("FAAS_AI_GATEWAY_ENABLED=0 did not override the TOML setting")
+	}
 }
 
 func TestOutboundAIRouteFormats(t *testing.T) {

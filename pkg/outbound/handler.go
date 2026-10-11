@@ -63,6 +63,11 @@ type Handler struct {
 	vertexTokens vertexTokenCache
 	// keyPools holds local key cooldowns and round-robin positions.
 	keyPools keyPoolState
+	// AIGatewayEnabled is the AI gateway release gate (ADR-984). While it
+	// is off, AI integrations and routes are refused rather than served
+	// without their budgets and accounting. NewHandler turns it on; the
+	// daemon sets it from its configuration, where it defaults to off.
+	AIGatewayEnabled bool
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -150,6 +155,7 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		MaxResponseBytes:       defaultMaxResponseBytes,
 		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
 		MaxResponseHeaders:     defaultMaxResponseHeaders,
+		AIGatewayEnabled:       true,
 	}, nil
 }
 
@@ -196,6 +202,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
+	if integration.AIProvider != "" && !h.AIGatewayEnabled {
+		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
+		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
+		return
+	}
 	workflowIdentity, ok := h.callerWorkflowIdentity(w, r, integration, path)
 	if !ok {
 		return
@@ -353,7 +364,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
-		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok {
+		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.AIGatewayEnabled {
 			// ADR-984: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {

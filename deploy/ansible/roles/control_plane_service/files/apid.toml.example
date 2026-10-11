@@ -9,6 +9,12 @@
 # task guests and routed to outboundd. Omit to leave outbound probes unsupported.
 # outbound_probe_gateway_url = "https://outbound.example.com"
 
+# ADR-984 AI gateway release gate. Off by default: the AI gateway APIs return
+# 403 outbound_ai_gateway_unavailable and integrations cannot set ai_provider.
+# Turn it on together with outboundd's ai_gateway_enabled;
+# FAAS_AI_GATEWAY_ENABLED=1 overrides this setting.
+# ai_gateway_enabled = false
+
 # apps_domain: the wildcard suffix for app URLs.
 # Default: gregale.dev
 # apps_domain = "gregale.dev"

@@ -48,6 +48,8 @@ type Config struct {
 	FlagsEnabled            bool   `toml:"flags_enabled"`
 	FlagsWorkloadJWKSPath   string `toml:"flags_workload_jwks_path"`
 	FlagsWorkloadIssuer     string `toml:"flags_workload_issuer"`
+	// AIGatewayEnabled opens the AI gateway APIs (ADR-984); off by default.
+	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in

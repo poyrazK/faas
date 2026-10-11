@@ -148,7 +148,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	routeID, providerPath, ok := parseRoutePath(r.URL.EscapedPath())
-	if !ok || h.Routes == nil {
+	if !ok || h.Routes == nil || !h.AIGatewayEnabled {
 		writeProblem(w, http.StatusNotFound, "outbound_route_not_found", "AI route not found", "")
 		return
 	}

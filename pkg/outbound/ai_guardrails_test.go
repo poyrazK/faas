@@ -100,6 +100,27 @@ func TestGuardrailsAllowListAndOutputCeiling(t *testing.T) {
 	}
 }
 
+func TestAIGatewayGateRefusesAIIntegrationsAndRoutes(t *testing.T) {
+	f := newGuardrailFixture(t, api.OutboundAIProviderOpenAI, func(*Integration) {})
+	f.handler.AIGatewayEnabled = false
+	if got := f.post("app-1", "/v1/chat/completions", `{"model":"gpt-4o"}`); got.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(got.Body.String(), "outbound_ai_gateway_disabled") || f.lastBody() != "" {
+		t.Fatalf("gated AI call = %d %s (upstream %q)", got.Code, got.Body.String(), f.lastBody())
+	}
+	f.handler.Routes = StaticRouteResolver{"route-1": {ID: "route-1", AccountID: "account-1", Targets: []AIRouteTarget{{IntegrationID: "integration-1"}}}}
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:2774/r/route-1/v1/chat/completions", strings.NewReader(`{}`))
+	req = req.WithContext(withRelayIdentity(context.Background(), WorkloadIdentity{AccountID: "account-1", AppID: "app-1", InstanceID: "i-1"}))
+	recorder := httptest.NewRecorder()
+	f.handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("gated route = %d", recorder.Code)
+	}
+	f.handler.AIGatewayEnabled = true
+	if got := f.post("app-1", "/v1/chat/completions", `{"model":"gpt-4o"}`); got.Code != http.StatusOK {
+		t.Fatalf("enabled AI call = %d", got.Code)
+	}
+}
+
 func TestGuardrailOutputCeilingPerFormat(t *testing.T) {
 	for _, tc := range []struct {
 		provider, path, body, want string

@@ -14,6 +14,7 @@ import (
 
 func TestOutboundAIPolicyAndUsage(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.aiGatewayEnabled = true
 	id := uuid.NewString()
 	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: id, AccountID: e.acct.ID, Name: "llm", Origin: "https://api.anthropic.com",
@@ -88,6 +89,7 @@ func TestOutboundAIPolicyAndUsage(t *testing.T) {
 
 func TestCreateOutboundIntegrationRejectsInvalidAIPolicy(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.aiGatewayEnabled = true
 	limit := int64(1000)
 	for _, req := range []api.CreateOutboundIntegrationRequest{
 		{Name: "llm", Origin: "https://api.openai.com", AllowedMethods: []string{"POST"}, AllowedPathPrefixes: []string{"/v1"}, AIProvider: "cohere"},

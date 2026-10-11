@@ -23,6 +23,21 @@
   - **Share per-key cooldowns across replicas.** Keys rotate on the first 429, so a per-process cooldown is enough. The integration-wide shared cooldown still applies when every key is cooling.
   - **A Gregale-provided model key.** This needs its own pricing and billing decision.
 
+## Release gate
+
+The AI gateway from ADR-979, ADR-983 and this ADR ships behind one operator switch: `ai_gateway_enabled` in `apid.toml` and `outboundd.toml`. It is off by default. `FAAS_AI_GATEWAY_ENABLED` overrides it; `1` turns it on and any other value turns it off. The `ai-gateway` product capability names the switch.
+
+While the gate is off:
+
+- **apid** answers every AI gateway endpoint with `403 outbound_ai_gateway_unavailable`, and refuses to create an integration with an `ai_provider`. That covers the AI policy, usage, prices, per-app budget and guardrails, routes, key pools, alerts and the request log.
+- **outboundd:**
+  - refuses calls to an integration that has an `ai_provider` (`503 outbound_ai_gateway_disabled`), rather than serving them without budgets or accounting;
+  - answers `/r/` routes with `404`;
+  - uses only the primary credential;
+  - refuses to start when an operator integration in its configuration declares an `ai_provider`.
+
+The app relay (ADR-982) and integrations without an `ai_provider` are unaffected. Turning the gate off later stops AI traffic at once. Stored settings, usage and alerts stay and apply again when it is turned back on.
+
 ## Reservations (hard caps)
 
 For an AI call, the handler estimates a reservation before admission:
