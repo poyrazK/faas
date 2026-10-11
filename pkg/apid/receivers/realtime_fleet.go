@@ -1,4 +1,4 @@
-package main
+package receivers
 
 // RealtimeFleet is a private control-plane service for short-lived presence
 // leases and best-effort ephemeral delivery. Its bounded JSON payloads use the
@@ -14,12 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/realtime"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/realtimepush"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
@@ -33,17 +35,29 @@ type realtimeFleetNodeStore interface {
 	ComputeNodeByName(context.Context, string) (state.ComputeNode, error)
 }
 
-type realtimeEphemeralRouter interface {
+type RealtimeEphemeralRouter interface {
 	RelayEphemeral(context.Context, string, string, string, realtime.EphemeralFrame) error
 }
 
+// RealtimePushRegistration is a device's push provider and target, as sent by
+// the realtime fleet or the HTTP push API.
+type RealtimePushRegistration struct {
+	Provider string              `json:"provider"`
+	Target   realtimepush.Target `json:"target"`
+}
+
+// PushRegistrar validates, seals and stores a push device registration. apid
+// supplies it because sealing and egress checks use apid's host secrets.
+type PushRegistrar func(ctx context.Context, store state.ManagedRealtimePushStore, ep, principal, device string, registration RealtimePushRegistration) error
+
 type realtimeFleetReceiver struct {
-	store    realtimeHistoryReaderStore
-	nodes    realtimeFleetNodeStore
-	presence state.ManagedRealtimePresenceStore
-	receipts state.ManagedRealtimeDirectMessageReceiptStore
-	inbox    state.ManagedRealtimeInboxStore
-	router   realtimeEphemeralRouter
+	store        realtimeHistoryReaderStore
+	nodes        realtimeFleetNodeStore
+	presence     state.ManagedRealtimePresenceStore
+	receipts     state.ManagedRealtimeDirectMessageReceiptStore
+	inbox        state.ManagedRealtimeInboxStore
+	router       RealtimeEphemeralRouter
+	registerPush PushRegistrar
 }
 
 type realtimeFleetPresenceRequest struct {
@@ -412,7 +426,7 @@ var realtimeFleetServiceDesc = grpc.ServiceDesc{
 	},
 }
 
-func registerRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner any) {
+func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner any, registerPush PushRegistrar) {
 	if server == nil {
 		return
 	}
@@ -421,6 +435,6 @@ func registerRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 	presence, _ := store.(state.ManagedRealtimePresenceStore)
 	receipts, _ := store.(state.ManagedRealtimeDirectMessageReceiptStore)
 	inbox, _ := store.(state.ManagedRealtimeInboxStore)
-	router, _ := owner.(realtimeEphemeralRouter)
-	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router})
+	router, _ := owner.(RealtimeEphemeralRouter)
+	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush})
 }

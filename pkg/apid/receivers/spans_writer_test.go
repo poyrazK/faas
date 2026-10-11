@@ -9,7 +9,7 @@
 //   - DB UPDATE error → codes.Internal.
 //   - Rate-limited (bucket exhausted) → outcome=rate_limited, no UPDATE.
 
-package main
+package receivers
 
 import (
 	"context"
@@ -21,13 +21,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 )
 
 // fakeSpansWriterStore substitutes for spansWriterStore in tests.
@@ -76,7 +77,7 @@ func dialSpansWriterBufconn(t *testing.T, store spansWriterStore, ops spansWrite
 	const bufSize = 1 << 20
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	registerSpansWriterReceiver(srv, store, ops, limiter, enabled, nil)
+	RegisterSpansWriterReceiver(srv, store, ops, limiter, enabled, nil)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
 

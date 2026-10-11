@@ -1,5 +1,5 @@
 // apid-side gRPC handler for the SpansWriter service
-// (ADR-127 PR-D). Wired by registerSpansWriterReceiver in
+// (ADR-127 PR-D). Wired by RegisterSpansWriterReceiver in
 // main.go onto /run/faas/otel_spans_writer.sock.
 //
 // Direction: gatewayd-public → apid. gatewayd-public is the
@@ -12,7 +12,7 @@
 // rate-limit outcomes ride on the response stream (NOT gRPC
 // errors — gateway drops + retries next window).
 
-package main
+package receivers
 
 import (
 	"bytes"
@@ -23,13 +23,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/state"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // Outcome strings for the WriteSpansSummaryResponse stream.
@@ -74,7 +75,7 @@ type spansWriterStore interface {
 }
 
 // spansWriterReceiver is the in-package server implementation
-// of apidpb.SpansWriterServer. Wired by registerSpansWriterReceiver
+// of apidpb.SpansWriterServer. Wired by RegisterSpansWriterReceiver
 // onto a *grpc.Server.
 //
 // ops is the apid daemon's *wire.OpsMetrics; nil-safe.
@@ -93,7 +94,7 @@ type spansWriterReceiver struct {
 	limiter *peraccount.Limiter
 	enabled bool
 	// guest is the ADR-958 in-guest export ingester; nil disables it.
-	guest *guestSpansIngester
+	guest *GuestSpansIngester
 }
 
 // spansWriterMonitor is the metric surface the receiver uses.
@@ -103,8 +104,8 @@ type spansWriterMonitor interface {
 	IncrementSpansWriteOutcome(outcome string)
 }
 
-// newSpansWriterReceiver wires a production receiver.
-func newSpansWriterReceiver(store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool) *spansWriterReceiver {
+// NewSpansWriterReceiver wires a production receiver.
+func NewSpansWriterReceiver(store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool) *spansWriterReceiver {
 	if limiter == nil {
 		limiter = peraccount.NewLimiter()
 	}
@@ -221,10 +222,10 @@ func (r *spansWriterReceiver) observe(outcome string) {
 	r.ops.IncrementSpansWriteOutcome(outcome)
 }
 
-// registerSpansWriterReceiver binds the SpansWriterServer onto
+// RegisterSpansWriterReceiver binds the SpansWriterServer onto
 // a gRPC server. Called from runSpansWriterServer in main.go.
-func registerSpansWriterReceiver(s *grpc.Server, store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool, guest *guestSpansIngester) {
-	receiver := newSpansWriterReceiver(store, ops, limiter, enabled)
+func RegisterSpansWriterReceiver(s *grpc.Server, store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool, guest *GuestSpansIngester) {
+	receiver := NewSpansWriterReceiver(store, ops, limiter, enabled)
 	receiver.guest = guest
 	apidpb.RegisterSpansWriterServer(s, receiver)
 }

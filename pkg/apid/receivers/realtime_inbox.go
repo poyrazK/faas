@@ -1,15 +1,16 @@
-package main
+package receivers
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type realtimeInboxRequest struct {
@@ -85,11 +86,14 @@ func (r *realtimeFleetReceiver) InboxOperation(ctx context.Context, envelope *wr
 		if req.Action == "push_unregister" {
 			err = push.DeleteManagedRealtimePushDevice(ctx, req.EndpointID, req.Principal, req.Consumer)
 		} else {
-			var registration realtimePushRegistration
+			var registration RealtimePushRegistration
 			if decodeRealtimeFleetJSON(req.Device, &registration) != nil {
 				return nil, status.Error(codes.InvalidArgument, "invalid push registration")
 			}
-			err = registerRealtimePush(ctx, push, req.EndpointID, req.Principal, req.Consumer, registration)
+			if r.registerPush == nil {
+				return nil, status.Error(codes.Unavailable, "push unavailable")
+			}
+			err = r.registerPush(ctx, push, req.EndpointID, req.Principal, req.Consumer, registration)
 		}
 
 	case "read_state", "read_advance":

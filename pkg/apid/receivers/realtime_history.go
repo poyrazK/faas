@@ -1,4 +1,4 @@
-package main
+package receivers
 
 import (
 	"context"
@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/realtime"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // History reads and channel route reports are available only on apid's private
@@ -212,7 +213,7 @@ func (r *realtimeHistoryReceiver) ReportChannelRoute(ctx context.Context, req *a
 	return &apidpb.ReportChannelRouteResponse{Applied: true}, nil
 }
 
-func registerRealtimeHistoryReceiver(server *grpc.Server, store state.Store) {
+func RegisterRealtimeHistoryReceiver(server *grpc.Server, store state.Store) {
 	reader, _ := store.(realtimeHistoryReaderStore)
 	cursors, _ := store.(state.ManagedRealtimeDurableCursorStore)
 	nodes, _ := store.(realtimeHistoryNodeStore)

@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/realtime"
-	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/receivers"
+	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) managedRealtimeReadProgress(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -46,7 +48,7 @@ func (s *server) managedRealtimeReadProgress(w http.ResponseWriter, r *http.Requ
 		progress, err = store.AdvanceManagedRealtimeReadProgress(r.Context(), endpoint.ID, principal, channel, inbox, request.Sequence)
 		if err == nil {
 			reader, _ := state.ManagedRealtimeReadPrincipalKey(principal)
-			if router, ok := s.realtimeOwner.(realtimeEphemeralRouter); ok {
+			if router, ok := s.realtimeOwner.(receivers.RealtimeEphemeralRouter); ok {
 				route := channel
 				if inbox {
 					route = reader

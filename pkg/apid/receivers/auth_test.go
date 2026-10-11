@@ -11,7 +11,7 @@
 // The fakeStore substitutes for state.Store without spinning a real
 // Postgres pool — every test is hermetic.
 
-package main
+package receivers
 
 import (
 	"context"
@@ -20,13 +20,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // fakeAuthStore is a hand-rolled fake for the authStore interface
@@ -53,7 +54,7 @@ func dialAuthBufconn(t *testing.T, store authStore) apidpb.AuthClient {
 	const bufSize = 1 << 20
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	registerAuthReceiver(srv, store)
+	RegisterAuthReceiver(srv, store)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
 

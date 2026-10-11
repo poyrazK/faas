@@ -1,5 +1,5 @@
 // apid-side gRPC handler for the RequestTelemetry service
-// (ADR-127 PR-B). Wired by registerRequestTelemetryReceiver in
+// (ADR-127 PR-B). Wired by RegisterRequestTelemetryReceiver in
 // main.go onto the same *grpc.Server runAppErrorsServer uses (or
 // a sibling; the surface is independent).
 //
@@ -15,7 +15,7 @@
 // token bucket so a sustained-overflow customer gets
 // back-pressured without aborting the rest of the batch.
 
-package main
+package receivers
 
 import (
 	"context"
@@ -28,6 +28,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/flags"
@@ -35,9 +39,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // Outcome strings for the IncrementRequestTelemetryResponse
@@ -47,15 +48,15 @@ import (
 // must stay aligned (goconst-flagged so drift breaks the lint
 // gate).
 const (
-	rtOutcomeInserted    = "inserted"
+	RtOutcomeInserted    = "inserted"
 	rtOutcomeRateLimited = "rate_limited"
 	rtOutcomeDBError     = "db_error"
 )
 
-// requestTelemetryStore is the Store subset the receiver needs.
+// RequestTelemetryStore is the Store subset the receiver needs.
 // Declared as an interface here so unit tests can substitute a
 // fake without spinning a real Postgres pool.
-type requestTelemetryStore interface {
+type RequestTelemetryStore interface {
 	AccountByID(ctx context.Context, id string) (state.Account, error)
 	state.RequestTelemetryLogStore
 }
@@ -78,7 +79,7 @@ type telemetryRateLimiter = peraccount.Limiter
 
 // requestTelemetryReceiver is the in-package server implementation
 // of apidpb.RequestTelemetryServer. Wired by
-// registerRequestTelemetryReceiver onto a *grpc.Server.
+// RegisterRequestTelemetryReceiver onto a *grpc.Server.
 //
 // ops is the apid daemon's *wire.OpsMetrics; nil-safe.
 //
@@ -90,15 +91,15 @@ type telemetryRateLimiter = peraccount.Limiter
 // so the gateway stops sending.
 type requestTelemetryReceiver struct {
 	apidpb.UnimplementedRequestTelemetryServer
-	store   requestTelemetryStore
+	store   RequestTelemetryStore
 	ops     *wire.OpsMetrics
 	limiter *telemetryRateLimiter
 	enabled bool
-	gate    ingestGate
+	gate    IngestGate
 }
 
-// newRequestTelemetryReceiver wires a production receiver.
-func newRequestTelemetryReceiver(store requestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool) *requestTelemetryReceiver {
+// NewRequestTelemetryReceiver wires a production receiver.
+func NewRequestTelemetryReceiver(store RequestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool) *requestTelemetryReceiver {
 	if limiter == nil {
 		limiter = peraccount.NewLimiter()
 	}
@@ -252,7 +253,7 @@ func (r *requestTelemetryReceiver) IncrementRequestTelemetry(stream apidpb.Reque
 		if err != nil {
 			return err
 		}
-		out := r.handleOne(stream.Context(), req)
+		out := r.HandleOne(stream.Context(), req)
 		release()
 		if err := stream.Send(out); err != nil {
 			return err
@@ -264,7 +265,7 @@ func (r *requestTelemetryReceiver) IncrementRequestTelemetry(stream apidpb.Reque
 // outcome. Never returns an error — every failure path maps to
 // one of the closed outcome strings, with the matching metric
 // increment.
-func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.IncrementRequestTelemetryRequest) *apidpb.IncrementRequestTelemetryResponse {
+func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.IncrementRequestTelemetryRequest) *apidpb.IncrementRequestTelemetryResponse {
 	out := &apidpb.IncrementRequestTelemetryResponse{}
 
 	// ---- 1. Validate UUIDs ----
@@ -506,8 +507,8 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		return out
 	}
 
-	r.observe(rtOutcomeInserted)
-	out.Outcome = rtOutcomeInserted
+	r.observe(RtOutcomeInserted)
+	out.Outcome = RtOutcomeInserted
 	return out
 }
 
@@ -546,11 +547,11 @@ func (r *requestTelemetryReceiver) observe(outcome string) {
 	r.ops.IncrementRequestTelemetryRecorded(outcome)
 }
 
-// registerRequestTelemetryReceiver binds the RequestTelemetryServer
+// RegisterRequestTelemetryReceiver binds the RequestTelemetryServer
 // onto a gRPC server. Called from runRequestTelemetryServer in
 // main.go alongside the other gRPC services.
-func registerRequestTelemetryReceiver(s *grpc.Server, store requestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool, gate ...ingestGate) {
-	receiver := newRequestTelemetryReceiver(store, ops, limiter, enabled)
+func RegisterRequestTelemetryReceiver(s *grpc.Server, store RequestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool, gate ...IngestGate) {
+	receiver := NewRequestTelemetryReceiver(store, ops, limiter, enabled)
 	if len(gate) > 0 {
 		receiver.gate = gate[0]
 	}

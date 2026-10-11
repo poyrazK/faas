@@ -1,4 +1,4 @@
-package main
+package receivers
 
 // adr: 957 — a missing request row is a retryable outcome, not a delivery.
 
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/state"

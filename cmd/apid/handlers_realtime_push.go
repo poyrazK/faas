@@ -9,15 +9,17 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/realtimepush"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type realtimePushRegistration struct {
-	Provider string              `json:"provider"`
-	Target   realtimepush.Target `json:"target"`
-}
+type realtimePushRegistration = receivers.RealtimePushRegistration
+
+// registerRealtimePush satisfies receivers.PushRegistrar for the realtime
+// fleet's inbox operations.
+var _ receivers.PushRegistrar = registerRealtimePush
 
 func pushProviderLabel(ep, provider string) string {
 	return "realtime-push-provider:" + ep + ":" + provider

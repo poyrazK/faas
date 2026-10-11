@@ -1,5 +1,5 @@
 // apid-side gRPC handler for the AppErrors service (ADR-096).
-// Wired by registerAppErrorsReceiver in cmd/apid/main.go onto a
+// Wired by RegisterAppErrorsReceiver in cmd/apid/main.go onto a
 // *grpc.Server that runAppErrorsServer owns.
 //
 // Direction: gatewayd-internal → apid. gatewayd-internal is the
@@ -12,7 +12,7 @@
 // / Internal), per-record outcomes ride on the response stream,
 // transient DB failures do NOT abort the stream.
 
-package main
+package receivers
 
 import (
 	"context"
@@ -23,14 +23,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // Outcome strings ride on the IncrementAppErrorResponse stream
@@ -40,24 +41,24 @@ import (
 // constants in pkg/wire/metrics.go (goconst-flagged so any drift
 // breaks the lint gate).
 const (
-	outcomeInserted        = "inserted"
+	OutcomeInserted        = "inserted"
 	outcomeMerged          = "merged"
 	outcomeRedactionFailed = "redaction_failed"
 	outcomeRateLimited     = "rate_limited"
-	outcomeDBError         = "db_error"
+	OutcomeDBError         = "db_error"
 )
 
-// appErrorsStore is the subset of pkg/state.Store the receiver
+// AppErrorsStore is the subset of pkg/state.Store the receiver
 // needs (ADR-096 / IncrementAppError path). The interface is
 // declared here so unit tests can substitute a fake without
 // spinning a real Postgres pool.
-type appErrorsStore interface {
+type AppErrorsStore interface {
 	IncrementAppError(ctx context.Context, arg sqlc.IncrementAppErrorParams) (bool, error)
 	InsertAppErrorRequest(ctx context.Context, arg sqlc.InsertAppErrorRequestParams) error
 }
 
 // appErrorsReceiver is the in-package server implementation of
-// apidpb.AppErrorsServer. Wired by registerAppErrorsReceiver
+// apidpb.AppErrorsServer. Wired by RegisterAppErrorsReceiver
 // onto a *grpc.Server.
 //
 // ops is the apid daemon's *wire.OpsMetrics; nil-safe so a unit
@@ -69,14 +70,14 @@ type appErrorsStore interface {
 // false; PR-B flips it to true.
 type appErrorsReceiver struct {
 	apidpb.UnimplementedAppErrorsServer
-	store   appErrorsStore
+	store   AppErrorsStore
 	ops     *wire.OpsMetrics
 	enabled bool
-	gate    ingestGate
+	gate    IngestGate
 }
 
-// newAppErrorsReceiver wires a production receiver.
-func newAppErrorsReceiver(store appErrorsStore, ops *wire.OpsMetrics, enabled bool) *appErrorsReceiver {
+// NewAppErrorsReceiver wires a production receiver.
+func NewAppErrorsReceiver(store AppErrorsStore, ops *wire.OpsMetrics, enabled bool) *appErrorsReceiver {
 	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled}
 }
 
@@ -108,7 +109,7 @@ func (a *appErrorsReceiver) IncrementAppError(stream apidpb.AppErrors_IncrementA
 		if err != nil {
 			return err
 		}
-		out := a.handleOne(stream.Context(), req)
+		out := a.HandleOne(stream.Context(), req)
 		release()
 		if err := stream.Send(out); err != nil {
 			// Stream is broken; bail. The gateway will observe
@@ -125,7 +126,7 @@ func (a *appErrorsReceiver) IncrementAppError(stream apidpb.AppErrors_IncrementA
 //
 // Returns a non-nil IncrementAppErrorResponse for every record;
 // callers must Send() unconditionally.
-func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorResponse {
+func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorResponse {
 	out := &apidpb.IncrementAppErrorResponse{Fingerprint: req.GetFingerprint()}
 
 	// ---- 1. Validate ----
@@ -204,8 +205,8 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 	})
 	if incErr != nil {
 		if isConstraintViolation(incErr) {
-			a.observe(outcomeDBError)
-			out.Outcome = outcomeDBError
+			a.observe(OutcomeDBError)
+			out.Outcome = OutcomeDBError
 			return out
 		}
 		if isPgNotFound(incErr) {
@@ -216,8 +217,8 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 			out.Outcome = outcomeRedactionFailed
 			return out
 		}
-		a.observe(outcomeDBError)
-		out.Outcome = outcomeDBError
+		a.observe(OutcomeDBError)
+		out.Outcome = OutcomeDBError
 		return out
 	}
 
@@ -261,19 +262,19 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 		// app_errors row was committed but the request row
 		// failed. Count this as db_error; the next retention
 		// purge will reconcile the count drift.
-		a.observe(outcomeDBError)
-		out.Outcome = outcomeDBError
+		a.observe(OutcomeDBError)
+		out.Outcome = OutcomeDBError
 		return out
 	}
 
-	if err := recordHTTPIssue(ctx, a.store, req); err != nil {
+	if err := RecordHTTPIssue(ctx, a.store, req); err != nil {
 		// Preserve legacy publication and record a separate issue-ingest failure.
 		a.ops.ObserveIssueEvent("db_error")
 	}
 
 	a.observe("ok")
 	if inserted {
-		out.Outcome = outcomeInserted
+		out.Outcome = OutcomeInserted
 		out.DedupeMerged = false
 	} else {
 		out.Outcome = outcomeMerged
@@ -394,11 +395,11 @@ func isPgNotFound(err error) bool {
 	return false
 }
 
-// registerAppErrorsReceiver binds the AppErrorsServer onto a gRPC
+// RegisterAppErrorsReceiver binds the AppErrorsServer onto a gRPC
 // server. Called from runAppErrorsServer in main.go alongside the
 // other gRPC services (Advisory etc).
-func registerAppErrorsReceiver(s *grpc.Server, store appErrorsStore, ops *wire.OpsMetrics, enabled bool, gate ...ingestGate) {
-	receiver := newAppErrorsReceiver(store, ops, enabled)
+func RegisterAppErrorsReceiver(s *grpc.Server, store AppErrorsStore, ops *wire.OpsMetrics, enabled bool, gate ...IngestGate) {
+	receiver := NewAppErrorsReceiver(store, ops, enabled)
 	if len(gate) > 0 {
 		receiver.gate = gate[0]
 	}

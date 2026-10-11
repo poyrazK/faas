@@ -1,6 +1,6 @@
 // adr: 096 — gateway app-error ingestion shares apid's database pool.
 
-package main
+package receivers
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 // failed at its deadline. Telemetry writes now share at most
 // api.TelemetryIngestDBConcurrency connections.
 func TestIngestGateBoundsConcurrentWrites(t *testing.T) {
-	gate := newIngestGate(2)
+	gate := NewIngestGate(2)
 	var live, peak atomic.Int32
 	var wg sync.WaitGroup
 	for range 8 {
@@ -51,7 +51,7 @@ func TestIngestGateBoundsConcurrentWrites(t *testing.T) {
 }
 
 func TestIngestGateWaitStopsWithTheStream(t *testing.T) {
-	gate := newIngestGate(1)
+	gate := NewIngestGate(1)
 	hold, _ := gate.acquire(context.Background())
 	defer hold()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,7 +59,7 @@ func TestIngestGateWaitStopsWithTheStream(t *testing.T) {
 	if _, err := gate.acquire(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want the stream's cancellation", err)
 	}
-	if release, err := ingestGate(nil).acquire(ctx); err != nil || release == nil {
+	if release, err := IngestGate(nil).acquire(ctx); err != nil || release == nil {
 		t.Fatalf("nil gate: release=%v err=%v, want an admitted no-op", release != nil, err)
 	}
 }
@@ -78,12 +78,12 @@ func (s *gatedAppErrorsStream) Recv() (*apidpb.IncrementAppErrorRequest, error) 
 func (s *gatedAppErrorsStream) Send(*apidpb.IncrementAppErrorResponse) error { return nil }
 
 func TestAppErrorsStreamWaitsForTheIngestGate(t *testing.T) {
-	gate := newIngestGate(1)
+	gate := NewIngestGate(1)
 	hold, _ := gate.acquire(context.Background())
 	defer hold()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	receiver := newAppErrorsReceiver(nil, nil, true)
+	receiver := NewAppErrorsReceiver(nil, nil, true)
 	receiver.gate = gate
 	stream := &gatedAppErrorsStream{ctx: ctx}
 	if err := receiver.IncrementAppError(stream); !errors.Is(err, context.DeadlineExceeded) || stream.recv != 1 {

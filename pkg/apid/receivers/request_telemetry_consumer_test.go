@@ -1,4 +1,4 @@
-package main
+package receivers
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 type consumerTelemetryStore struct {
@@ -29,7 +30,7 @@ type consumerTelemetryStore struct {
 func TestRequestIDJournalPersistsIndependentlyOfTelemetryKillSwitch(t *testing.T) {
 	accountID, appID := uuid.NewString(), uuid.NewString()
 	store := &consumerTelemetryStore{account: state.Account{ID: accountID, Plan: api.PlanPro}}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	request := &apidpb.RecordRequestIDJournalRequest{
 		RecordId: uuid.NewString(), AccountId: accountID, AppId: appID,
@@ -54,7 +55,7 @@ func TestRequestIDJournalPersistsIndependentlyOfTelemetryKillSwitch(t *testing.T
 
 func TestRequestIDJournalFreePlanDoesNotPersist(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	receipt, err := receiver.RecordRequestIDJournal(context.Background(), &apidpb.RecordRequestIDJournalRequest{
 		RecordId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
 		RequestId: "free-request-id", ReceivedAtUnixMs: time.Now().UTC().UnixMilli(),
@@ -81,7 +82,7 @@ func TestRequestIDJournalRejectsMalformedIdentifiersAndFailsClosed(t *testing.T)
 	} {
 		request := proto.Clone(valid).(*apidpb.RecordRequestIDJournalRequest)
 		mutate(request)
-		receiver := newRequestTelemetryReceiver(&consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}, nil, nil, false)
+		receiver := NewRequestTelemetryReceiver(&consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}, nil, nil, false)
 		if _, err := receiver.RecordRequestIDJournal(context.Background(), request); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("malformed request error=%v, want InvalidArgument", err)
 		}
@@ -89,7 +90,7 @@ func TestRequestIDJournalRejectsMalformedIdentifiersAndFailsClosed(t *testing.T)
 
 	dbErr := errors.New("journal database unavailable")
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}, journalErr: dbErr}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	if _, err := receiver.RecordRequestIDJournal(context.Background(), valid); status.Code(err) != codes.Unavailable {
 		t.Fatalf("journal write error=%v, want Unavailable", err)
 	}
@@ -97,7 +98,7 @@ func TestRequestIDJournalRejectsMalformedIdentifiersAndFailsClosed(t *testing.T)
 
 func TestConsumerUsageReceiptIndependentOfDebuggerAndIdempotent(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	event := &apidpb.ConsumerUsageEvent{
 		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
 		ConsumerId: uuid.NewString(), PlatformTenantId: uuid.NewString(),
@@ -120,7 +121,7 @@ func TestConsumerUsageReceiptIndependentOfDebuggerAndIdempotent(t *testing.T) {
 // adr: 239
 func TestConsumerUsageReceiptSupportsAnonymousTenantSurface(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	event := &apidpb.ConsumerUsageEvent{EventId: uuid.NewString(), AccountId: uuid.NewString(),
 		AppId: uuid.NewString(), PlatformTenantId: uuid.NewString(), PlatformTenantSurfaceId: uuid.NewString(),
 		WindowStartUnixMs: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC).UnixMilli(),
@@ -139,7 +140,7 @@ func TestConsumerUsageReceiptSupportsAnonymousTenantSurface(t *testing.T) {
 
 func TestConsumerUsageRejectsMalformedEventWithoutAcknowledgement(t *testing.T) {
 	store := &consumerTelemetryStore{}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	_, err := receiver.RecordConsumerUsage(context.Background(), &apidpb.ConsumerUsageEvent{EventId: "not-a-uuid"})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("code=%v err=%v", status.Code(err), err)
@@ -151,7 +152,7 @@ func TestConsumerUsageRejectsMalformedEventWithoutAcknowledgement(t *testing.T) 
 
 func TestConsumerUsageAuditReceiptRequiresEvidence(t *testing.T) {
 	store := &consumerTelemetryStore{}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	event := &apidpb.ConsumerUsageEvent{
 		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
 		WindowStartUnixMs: time.Now().UTC().Truncate(time.Minute).UnixMilli(),
@@ -169,7 +170,7 @@ func TestConsumerUsageAuditReceiptRequiresEvidence(t *testing.T) {
 
 func TestConsumerUsageDiscoveryReceiptWithoutAudit(t *testing.T) {
 	store := &consumerTelemetryStore{}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, false)
 	now := time.Now().UTC()
 	event := &apidpb.ConsumerUsageEvent{
 		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
@@ -184,15 +185,15 @@ func TestConsumerUsageDiscoveryReceiptWithoutAudit(t *testing.T) {
 
 func TestOutboxedDebuggerRowDoesNotWriteSecondUsageFact(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, true)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, true)
 	req := &apidpb.IncrementRequestTelemetryRequest{
 		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
 		DeploymentId: uuid.NewString(), RouteTemplate: "GET /v1/items", Method: "GET",
 		HttpStatus: 200, LatencyMs: 10, ReceivedAtUnixMs: time.Now().UTC().UnixMilli(),
 		Count: 2, UsageOutboxed: true,
 	}
-	out := receiver.handleOne(context.Background(), req)
-	if out.GetOutcome() != rtOutcomeInserted {
+	out := receiver.HandleOne(context.Background(), req)
+	if out.GetOutcome() != RtOutcomeInserted {
 		t.Fatalf("outcome=%q", out.GetOutcome())
 	}
 	if len(store.usage) != 0 {
@@ -233,17 +234,17 @@ func (s *consumerTelemetryStore) RecordAPIConsumerUsage(_ context.Context, event
 
 func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
-	r := newRequestTelemetryReceiver(store, nil, nil, true)
+	r := NewRequestTelemetryReceiver(store, nil, nil, true)
 	accountID, appID, deploymentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	consumerID, tenantID := uuid.NewString(), uuid.NewString()
 
-	out := r.handleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
+	out := r.HandleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: accountID, AppId: appID, DeploymentId: deploymentID,
 		RouteTemplate: "GET /v1/usage", Method: "GET", HttpStatus: 200,
 		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: consumerID, PlatformTenantId: tenantID,
 	})
-	if out.GetOutcome() != rtOutcomeInserted {
-		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), rtOutcomeInserted)
+	if out.GetOutcome() != RtOutcomeInserted {
+		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), RtOutcomeInserted)
 	}
 	if len(store.inserted) != 1 {
 		t.Fatalf("insert count = %d, want 1", len(store.inserted))
@@ -261,8 +262,8 @@ func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 
 func TestRequestTelemetryReceiverRejectsMalformedConsumerID(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
-	r := newRequestTelemetryReceiver(store, nil, nil, true)
-	out := r.handleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
+	r := NewRequestTelemetryReceiver(store, nil, nil, true)
+	out := r.HandleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(),
 		RouteTemplate: "GET /v1/usage", Method: "GET", HttpStatus: 200,
 		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: "not-a-uuid",
@@ -277,7 +278,7 @@ func TestRequestTelemetryReceiverRejectsMalformedConsumerID(t *testing.T) {
 
 func TestRequestTelemetryReceiverRecordsDurableConsumerUsageBeforeTelemetryGate(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
-	r := newRequestTelemetryReceiver(store, nil, nil, true)
+	r := NewRequestTelemetryReceiver(store, nil, nil, true)
 	accountID, appID, deploymentID, eventID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	req := &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: accountID, AppId: appID, DeploymentId: deploymentID,
@@ -285,14 +286,14 @@ func TestRequestTelemetryReceiverRecordsDurableConsumerUsageBeforeTelemetryGate(
 		LatencyMs: 20, ReceivedAtUnixMs: time.Date(2026, 9, 11, 12, 34, 10, 0, time.UTC).UnixMilli(),
 		ConsumerId: consumerID, Count: 2, EventId: eventID,
 	}
-	first := r.handleOne(context.Background(), req)
+	first := r.HandleOne(context.Background(), req)
 	if first.GetOutcome() != rtOutcomeRateLimited {
 		t.Fatalf("first outcome = %q, want %q for Free debug telemetry", first.GetOutcome(), rtOutcomeRateLimited)
 	}
 	if len(store.usage) != 1 || store.usage[0].RequestCount != 2 || store.usage[0].ErrorCount != 2 || store.usage[0].ConsumerKey != consumerID {
 		t.Fatalf("usage = %#v, want one consumer event with 2 requests and 2 errors", store.usage)
 	}
-	second := r.handleOne(context.Background(), req)
+	second := r.HandleOne(context.Background(), req)
 	if second.GetOutcome() != rtOutcomeRateLimited || len(store.usage) != 1 {
 		t.Fatalf("retry outcome/usage = %q/%d, want rate_limited/1", second.GetOutcome(), len(store.usage))
 	}
@@ -300,7 +301,7 @@ func TestRequestTelemetryReceiverRecordsDurableConsumerUsageBeforeTelemetryGate(
 
 func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
-	r := newRequestTelemetryReceiver(store, nil, nil, true)
+	r := NewRequestTelemetryReceiver(store, nil, nil, true)
 	tenantID := uuid.NewString()
 	req := &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(),
@@ -308,7 +309,7 @@ func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
 		RouteTemplate: "GET /", Method: "GET", HttpStatus: 200,
 		LatencyMs: 1, ReceivedAtUnixMs: time.Now().UnixMilli(),
 	}
-	if got := r.handleOne(context.Background(), req).GetOutcome(); got != rtOutcomeRateLimited {
+	if got := r.HandleOne(context.Background(), req).GetOutcome(); got != rtOutcomeRateLimited {
 		t.Fatalf("outcome = %q, want rate_limited after durable usage", got)
 	}
 	if len(store.usage) != 1 || store.usage[0].PlatformTenantID != tenantID {
@@ -322,7 +323,7 @@ func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
 			invalid := proto.Clone(req).(*apidpb.IncrementRequestTelemetryRequest)
 			invalid.EventId = uuid.NewString()
 			invalid.ConsumerId, invalid.PlatformTenantId = tc.consumerID, tc.tenantID
-			if got := r.handleOne(context.Background(), invalid).GetOutcome(); got != rtOutcomeDBError || len(store.usage) != 1 {
+			if got := r.HandleOne(context.Background(), invalid).GetOutcome(); got != rtOutcomeDBError || len(store.usage) != 1 {
 				t.Fatalf("invalid attribution outcome=%q usage=%+v", got, store.usage)
 			}
 		})
@@ -331,16 +332,16 @@ func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
 
 func TestRequestTelemetryLegacyEventIDSeparatesTenantTransition(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
-	r := newRequestTelemetryReceiver(store, nil, nil, true)
+	r := NewRequestTelemetryReceiver(store, nil, nil, true)
 	req := &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(),
 		ConsumerId: uuid.NewString(), RouteTemplate: "GET /", Method: "GET", HttpStatus: 200,
 		LatencyMs: 1, ReceivedAtUnixMs: time.Now().UnixMilli(),
 	}
-	_ = r.handleOne(context.Background(), req)
+	_ = r.HandleOne(context.Background(), req)
 	linked := proto.Clone(req).(*apidpb.IncrementRequestTelemetryRequest)
 	linked.PlatformTenantId = uuid.NewString()
-	_ = r.handleOne(context.Background(), linked)
+	_ = r.HandleOne(context.Background(), linked)
 	if len(store.usage) != 2 || store.usage[0].EventID == store.usage[1].EventID ||
 		store.usage[0].PlatformTenantID != "" || store.usage[1].PlatformTenantID != linked.PlatformTenantId {
 		t.Fatalf("fallback event IDs conflated link transition: %+v", store.usage)

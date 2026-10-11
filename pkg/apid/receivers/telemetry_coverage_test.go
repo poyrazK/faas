@@ -1,4 +1,4 @@
-package main
+package receivers
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type coverageReceiverStore struct {
@@ -45,7 +46,7 @@ func TestTelemetryCoverageReceiver(t *testing.T) {
 			if tc.failure {
 				store.err = errors.New("database unavailable")
 			}
-			receiver := newRequestTelemetryReceiver(store, nil, nil, tc.enabled)
+			receiver := NewRequestTelemetryReceiver(store, nil, nil, tc.enabled)
 			if tc.missing {
 				receiver.store = store.MemStore
 			}

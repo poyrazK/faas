@@ -1,5 +1,5 @@
 // adr: 429
-package main
+package receivers
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -16,7 +17,7 @@ import (
 
 func TestInternalRequestEvidencePersistsExactTimeWithoutFinancialUsage(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
-	receiver := newRequestTelemetryReceiver(store, nil, nil, true)
+	receiver := NewRequestTelemetryReceiver(store, nil, nil, true)
 	recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{Enabled: true}, nil)
 	handler := &gateway.Handler{}
 	handler.WithRequestTelemetryRecorder(recorder)
@@ -35,12 +36,12 @@ func TestInternalRequestEvidencePersistsExactTimeWithoutFinancialUsage(t *testin
 		t.Fatalf("rows=%+v", rows)
 	}
 	for _, row := range rows {
-		out := receiver.handleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
+		out := receiver.HandleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
 			EventId: row.EventID.String(), AccountId: row.AccountID.String(), AppId: row.AppID.String(), DeploymentId: row.DeploymentID.String(),
 			RouteTemplate: row.Route, Method: row.Method, HttpStatus: int32(row.Status), Count: int32(row.Count),
 			ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(), InstanceId: row.InstanceID, NodeId: row.NodeID, UsageOutboxed: row.UsageOutboxed,
 		})
-		if out.GetOutcome() != rtOutcomeInserted {
+		if out.GetOutcome() != RtOutcomeInserted {
 			t.Fatalf("receiver=%+v", out)
 		}
 	}

@@ -7,7 +7,7 @@
 // summaries are flushed back through WriteSpansSummary so they share its
 // validation, rate limiting and outcome metrics with the other producers.
 
-package main
+package receivers
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -40,28 +41,28 @@ type guestSpansAccounts interface {
 	AccountByID(ctx context.Context, id string) (state.Account, error)
 }
 
-// guestSpansIngester is process-wide: both SpansWriter listeners (single-box
+// GuestSpansIngester is process-wide: both SpansWriter listeners (single-box
 // Unix socket and split-box mTLS) share one accumulator and flush loop.
-type guestSpansIngester struct {
+type GuestSpansIngester struct {
 	acc      *gateway.SpansAccumulator
 	accounts guestSpansAccounts
 	limiter  *peraccount.Limiter
 	log      *slog.Logger
 }
 
-func newGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limiter, log *slog.Logger) *guestSpansIngester {
+func NewGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limiter, log *slog.Logger) *GuestSpansIngester {
 	if limiter == nil {
 		limiter = peraccount.NewLimiter()
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &guestSpansIngester{acc: gateway.NewSpansAccumulator(), accounts: accounts, limiter: limiter, log: log}
+	return &GuestSpansIngester{acc: gateway.NewSpansAccumulator(), accounts: accounts, limiter: limiter, log: log}
 }
 
 // limitsFor returns the account's plan limits, caching them in the shared
 // limiter so steady-state exports avoid a database read.
-func (g *guestSpansIngester) limitsFor(ctx context.Context, accountID uuid.UUID) (api.Limits, error) {
+func (g *GuestSpansIngester) limitsFor(ctx context.Context, accountID uuid.UUID) (api.Limits, error) {
 	if limits, ok := g.limiter.CachedLimits(accountID); ok {
 		return limits, nil
 	}
@@ -74,7 +75,7 @@ func (g *guestSpansIngester) limitsFor(ctx context.Context, accountID uuid.UUID)
 	return limits, nil
 }
 
-func (g *guestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuestSpansRequest) *apidpb.IngestGuestSpansResponse {
+func (g *GuestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuestSpansRequest) *apidpb.IngestGuestSpansResponse {
 	accountID, err := uuid.Parse(req.GetAccountId())
 	if err != nil || req.GetAppId() == "" || req.GetDeploymentId() == "" {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
@@ -112,7 +113,7 @@ func (g *guestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuest
 }
 
 // run flushes coalesced summaries through write until ctx ends.
-func (g *guestSpansIngester) run(ctx context.Context, interval time.Duration, write func(context.Context, *apidpb.WriteSpansSummaryRequest) (*apidpb.WriteSpansSummaryResponse, error)) error {
+func (g *GuestSpansIngester) Run(ctx context.Context, interval time.Duration, write func(context.Context, *apidpb.WriteSpansSummaryRequest) (*apidpb.WriteSpansSummaryResponse, error)) error {
 	return g.acc.RunFlushLoop(ctx, gateway.FlushLoopConfig{
 		Interval: interval,
 		WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
@@ -141,9 +142,9 @@ func (r *spansWriterReceiver) IngestGuestSpans(ctx context.Context, req *apidpb.
 	return r.guest.ingest(ctx, req), nil
 }
 
-// otelFlushInterval mirrors the gateway producers' FAAS_OTEL_FLUSH_INTERVAL
+// OtelFlushInterval mirrors the gateway producers' FAAS_OTEL_FLUSH_INTERVAL
 // knob (default 30s).
-func otelFlushInterval(getenv func(string) string) time.Duration {
+func OtelFlushInterval(getenv func(string) string) time.Duration {
 	if value := getenv("FAAS_OTEL_FLUSH_INTERVAL"); value != "" {
 		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
 			return parsed

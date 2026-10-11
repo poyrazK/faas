@@ -1,4 +1,4 @@
-package main
+package receivers
 
 import (
 	"context"
@@ -7,15 +7,16 @@ import (
 	"testing"
 	"time"
 
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apidgrpc"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type fakeRealtimeHistoryStore struct {
@@ -126,7 +127,7 @@ func newRealtimeHistoryTestClient(t *testing.T, store state.Store, nodeName stri
 	t.Helper()
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
-	registerRealtimeHistoryReceiver(server, store)
+	RegisterRealtimeHistoryReceiver(server, store)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	conn, err := grpc.NewClient("passthrough://bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {

@@ -1,4 +1,4 @@
-package main
+package receivers
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/state"
-	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 type fakeGuestSpansAccounts struct {
@@ -54,7 +55,7 @@ func guestSpansRequest(account uuid.UUID, codec byte, payload []byte) *apidpb.In
 func TestGuestSpansIngestOutcomes(t *testing.T) {
 	pro, free := uuid.New(), uuid.New()
 	accounts := &fakeGuestSpansAccounts{plans: map[string]api.Plan{pro.String(): api.PlanPro, free.String(): api.PlanFree}}
-	g := newGuestSpansIngester(accounts, peraccount.NewLimiter(), discardLogger())
+	g := NewGuestSpansIngester(accounts, peraccount.NewLimiter(), discardLogger())
 	ctx := context.Background()
 
 	for _, tc := range []struct {
@@ -93,7 +94,7 @@ func TestGuestSpansIngestRateLimited(t *testing.T) {
 	acct := uuid.New()
 	accounts := &fakeGuestSpansAccounts{plans: map[string]api.Plan{acct.String(): api.PlanHobby}}
 	limiter := peraccount.NewLimiter()
-	g := newGuestSpansIngester(accounts, limiter, discardLogger())
+	g := NewGuestSpansIngester(accounts, limiter, discardLogger())
 	cap := api.MustLimitsFor(api.PlanHobby).DebugTelemetryRequestsPerMinute
 	for i := 0; i < cap; i++ {
 		limiter.Take(acct, cap)
@@ -105,7 +106,7 @@ func TestGuestSpansIngestRateLimited(t *testing.T) {
 }
 
 func TestGuestSpansReceiverWithoutIngesterIsUnavailable(t *testing.T) {
-	r := newSpansWriterReceiver(&fakeSpansWriterStore{}, nil, nil, true)
+	r := NewSpansWriterReceiver(&fakeSpansWriterStore{}, nil, nil, true)
 	resp, err := r.IngestGuestSpans(context.Background(), guestSpansRequest(uuid.New(), api.TraceCodecProtobuf, []byte("x")))
 	if err != nil || resp.GetOutcome() != guestSpansUnavailable {
 		t.Fatalf("resp=%+v err=%v", resp, err)
@@ -125,15 +126,15 @@ func TestGuestSpansFlushWritesThroughSpansWriter(t *testing.T) {
 		return nil
 	}
 	limiter := peraccount.NewLimiter()
-	g := newGuestSpansIngester(accounts, limiter, discardLogger())
-	writer := newSpansWriterReceiver(store, nil, limiter, true)
+	g := NewGuestSpansIngester(accounts, limiter, discardLogger())
+	writer := NewSpansWriterReceiver(store, nil, limiter, true)
 	writer.guest = g
 	if resp, _ := writer.IngestGuestSpans(context.Background(), guestSpansRequest(acct, api.TraceCodecProtobuf, guestSpansPayload(t, 7))); resp.GetOutcome() != guestSpansAccepted {
 		t.Fatalf("ingest outcome = %q", resp.GetOutcome())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = g.run(ctx, 10*time.Millisecond, writer.WriteSpansSummary) }()
+	go func() { _ = g.Run(ctx, 10*time.Millisecond, writer.WriteSpansSummary) }()
 	select {
 	case summary := <-written:
 		var decoded any
@@ -148,15 +149,15 @@ func TestGuestSpansFlushWritesThroughSpansWriter(t *testing.T) {
 func TestOTelFlushInterval(t *testing.T) {
 	env := map[string]string{}
 	getenv := func(k string) string { return env[k] }
-	if got := otelFlushInterval(getenv); got != 30*time.Second {
+	if got := OtelFlushInterval(getenv); got != 30*time.Second {
 		t.Fatalf("default = %v", got)
 	}
 	env["FAAS_OTEL_FLUSH_INTERVAL"] = "5s"
-	if got := otelFlushInterval(getenv); got != 5*time.Second {
+	if got := OtelFlushInterval(getenv); got != 5*time.Second {
 		t.Fatalf("override = %v", got)
 	}
 	env["FAAS_OTEL_FLUSH_INTERVAL"] = "-1s"
-	if got := otelFlushInterval(getenv); got != 30*time.Second {
+	if got := OtelFlushInterval(getenv); got != 30*time.Second {
 		t.Fatalf("invalid override = %v", got)
 	}
 }

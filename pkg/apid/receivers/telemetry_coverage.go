@@ -1,13 +1,14 @@
-package main
+package receivers
 
 import (
 	"context"
 	"time"
 
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Coverage bypasses debugger rate/plan gates, including when collection is disabled.

@@ -25,8 +25,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -846,16 +848,16 @@ func TestPGAppErrorsReceiverStoresRepeatOccurrenceWithoutHeaders(t *testing.T) {
 	ctx := context.Background()
 	app := seedPGApp(t, e, "errs-repeat")
 	dep := issueSeedDeployment(t, e, app, 1)
-	receiver := newAppErrorsReceiver(e.store, nil, true)
+	receiver := receivers.NewAppErrorsReceiver(e.store, nil, true)
 	fp := strings.Repeat("d", 64)
 	for i, headers := range []string{`{"Cf-Ray":"first"}`, "", ""} {
-		out := receiver.handleOne(ctx, &apidpb.IncrementAppErrorRequest{
+		out := receiver.HandleOne(ctx, &apidpb.IncrementAppErrorRequest{
 			AccountId: e.acct.ID, AppId: app.ID, DeploymentId: dep.ID, Fingerprint: fp,
 			RouteTemplate: "/x", HttpStatus: 504, ErrorClass: "unhandled",
 			HeadersSampleJson: headers, ReceivedAtUnixMs: time.Now().UnixMilli(),
 			RequestId: uuid.NewString(),
 		})
-		if out.GetOutcome() == outcomeDBError {
+		if out.GetOutcome() == receivers.OutcomeDBError {
 			t.Fatalf("occurrence %d with headers %q: outcome db_error", i, headers)
 		}
 	}
@@ -882,15 +884,15 @@ func TestPGAppErrorsReceiverStoresUnredactedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver := newAppErrorsReceiver(e.store, nil, true)
-	out := receiver.handleOne(ctx, &apidpb.IncrementAppErrorRequest{
+	receiver := receivers.NewAppErrorsReceiver(e.store, nil, true)
+	out := receiver.HandleOne(ctx, &apidpb.IncrementAppErrorRequest{
 		AccountId: e.acct.ID, AppId: app.ID, Fingerprint: strings.Repeat("c", 64),
 		RouteTemplate: "/boom", HttpStatus: 500, ErrorClass: "unhandled",
 		SampleMessage: "boom", HeadersSampleJson: "{}", ReceivedAtUnixMs: time.Now().UnixMilli(),
 		RequestId: uuid.NewString(),
 	})
-	if out.GetOutcome() != outcomeInserted {
-		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), outcomeInserted)
+	if out.GetOutcome() != receivers.OutcomeInserted {
+		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), receivers.OutcomeInserted)
 	}
 	var requests int
 	if err := e.pool.QueryRow(ctx, `select count(*) from app_error_requests where app_id = $1`, app.ID).Scan(&requests); err != nil {

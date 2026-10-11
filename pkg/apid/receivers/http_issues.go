@@ -1,10 +1,11 @@
-package main
+package receivers
 
 import (
 	"context"
 	"time"
 
 	"github.com/google/uuid"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
@@ -13,7 +14,7 @@ import (
 
 // HTTP grouping is a separate source kind: observing a 500 does not prove an
 // application exception. Ordinary client errors remain in the existing API.
-func recordHTTPIssue(ctx context.Context, store appErrorsStore, req *apidpb.IncrementAppErrorRequest) error {
+func RecordHTTPIssue(ctx context.Context, store AppErrorsStore, req *apidpb.IncrementAppErrorRequest) error {
 	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" {
 		return nil
 	}

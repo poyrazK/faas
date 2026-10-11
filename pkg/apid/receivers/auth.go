@@ -1,5 +1,5 @@
 // apid-side gRPC handler for the Auth service (ADR-127 PR-D).
-// Wired by registerAuthReceiver in main.go onto /run/faas/auth.sock.
+// Wired by RegisterAuthReceiver in main.go onto /run/faas/auth.sock.
 //
 // Direction: gatewayd-public → apid. gatewayd-public is the ONLY
 // caller — the OTel spans writer needs to translate the raw
@@ -16,7 +16,7 @@
 // envelope; it does NOT pollute PR-B's per-account caps cache
 // because the OTel writer has its own limiter in Stage 3).
 
-package main
+package receivers
 
 import (
 	"context"
@@ -24,12 +24,13 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // authStore is the Store subset the receiver needs. Declared as
@@ -40,7 +41,7 @@ type authStore interface {
 }
 
 // authReceiver is the in-package server implementation of
-// apidpb.AuthServer. Wired by registerAuthReceiver onto a
+// apidpb.AuthServer. Wired by RegisterAuthReceiver onto a
 // *grpc.Server. It is intentionally NOT kill-switched: gatewayd-public
 // dials only when its OTel handler is enabled, so the kill-switch
 // lives at the dial site (no point returning codes.Unavailable here).
@@ -103,9 +104,9 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 	}, nil
 }
 
-// registerAuthReceiver binds the AuthServer onto a gRPC server.
+// RegisterAuthReceiver binds the AuthServer onto a gRPC server.
 // Called from runAuthServer in main.go alongside the other gRPC
 // services.
-func registerAuthReceiver(s *grpc.Server, store authStore) {
+func RegisterAuthReceiver(s *grpc.Server, store authStore) {
 	apidpb.RegisterAuthServer(s, newAuthReceiver(store))
 }
