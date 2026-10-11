@@ -76,7 +76,7 @@ jobs:
           python3 scripts/gen-durable-entity-contract.py
           git diff --exit-code
       - name: Verify declared project artifacts and metadata diagnostics
-        run: go test -race ./pkg/durableentity ./pkg/durableentity/project ./pkg/durableentity/visibility ./pkg/durableentity/socket
+        run: go test -race ./pkg/durableentity ./pkg/durableentity/project ./pkg/durableentity/visibility ./pkg/durableentity/socket ./pkg/apid/durable
       - name: Verify CLI workflow, read-only inspection and generated reference
         run: go test -race ./cmd/gregale -run 'Test(DurableEntity|Entity|MarkdownReferenceFresh)' -count=1
 

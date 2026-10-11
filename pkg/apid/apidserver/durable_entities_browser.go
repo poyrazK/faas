@@ -26,22 +26,6 @@ func (s *server) sessionGrantAvailable(w http.ResponseWriter) bool {
 	}
 	return true
 }
-func grantProblem(w http.ResponseWriter, err error) {
-	if errors.Is(err, durableentity.ErrRetired) {
-		durable.WriteTenantQuotaProblem(w, err)
-		return
-	}
-	var quota *entitysocket.QuotaError
-	if errors.As(err, &quota) {
-		durable.WriteTenantQuotaProblem(w, err)
-		return
-	}
-	if errors.Is(err, entitysocket.ErrGrantDenied) {
-		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Session grant denied", "grant is invalid, expired or revoked"))
-	} else {
-		api.WriteProblem(w, api.ErrCapacity("session grant storage unavailable"))
-	}
-}
 func (s *server) mintEntitySessionGrant(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.sessionGrantAvailable(w) {
@@ -49,7 +33,7 @@ func (s *server) mintEntitySessionGrant(w http.ResponseWriter, r *http.Request, 
 	}
 	_, key, ok := middleware.AccountFromContext(r)
 	if !ok || key == nil || key.ID == "" || len(key.Hash) == 0 || key.PlatformTenantID != "" || key.AppID != "" {
-		grantProblem(w, entitysocket.ErrGrantDenied)
+		durable.WriteGrantProblem(w, entitysocket.ErrGrantDenied)
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -57,7 +41,7 @@ func (s *server) mintEntitySessionGrant(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !s.durable.Apps[app.ID] || !app.WebSocketEnabled || !acct.Plan.WebSocketResponseAllowed() || !app.AcceptsRequestInvocations() || !api.MustLimitsFor(acct.Plan).AsyncInvokeAllowed {
-		grantProblem(w, entitysocket.ErrGrantDenied)
+		durable.WriteGrantProblem(w, entitysocket.ErrGrantDenied)
 		return
 	}
 	var input struct {
@@ -75,7 +59,7 @@ func (s *server) mintEntitySessionGrant(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if input.TTLSeconds < 1 || input.TTLSeconds > 300 {
-		grantProblem(w, entitysocket.ErrGrantDenied)
+		durable.WriteGrantProblem(w, entitysocket.ErrGrantDenied)
 		return
 	}
 	id, _, problem := s.durable.Identity(r, acct, app, api.DurableEntityInvokeRequest{Namespace: input.Namespace, Key: input.Key, Environment: input.Environment, PlatformTenantID: input.PlatformTenantID})
@@ -85,7 +69,7 @@ func (s *server) mintEntitySessionGrant(w http.ResponseWriter, r *http.Request, 
 	}
 	grant, token, err := s.durable.SessionGrants.Mint(r.Context(), entitysocket.Grant{Entity: id, Environment: input.Environment, PlatformTenantID: input.PlatformTenantID, IssuerID: key.ID, SessionID: input.SessionID, Generation: input.Generation, Origin: input.Origin, Commands: input.Commands}, time.Duration(input.TTLSeconds)*time.Second)
 	if err != nil {
-		grantProblem(w, err)
+		durable.WriteGrantProblem(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"grant_id": grant.ID, "credential": token, "expires_at": grant.ExpiresAt, "connect_path": "/v1/apps/" + app.Slug + "/entities/session-connect", "protocol": entitysocket.BrowserProtocol})
@@ -99,7 +83,7 @@ func (s *server) revokeEntitySessionGrant(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.durable.SessionGrants.Revoke(r.Context(), r.PathValue("grant"), acct.ID, app.ID); err != nil {
-		grantProblem(w, err)
+		durable.WriteGrantProblem(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -123,23 +107,23 @@ func (s *server) connectEntityBrowserSession(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" || len(r.Header.Values("Origin")) != 1 || !entitysocket.ValidOrigin(r.Header.Get("Origin")) {
-		grantProblem(w, entitysocket.ErrGrantDenied)
+		durable.WriteGrantProblem(w, entitysocket.ErrGrantDenied)
 		return
 	}
 	protocols := websocket.Subprotocols(r)
 	if len(protocols) != 2 || protocols[0] != entitysocket.BrowserProtocol || !strings.HasPrefix(protocols[1], entitysocket.CredentialProtocol) {
-		grantProblem(w, entitysocket.ErrGrantDenied)
+		durable.WriteGrantProblem(w, entitysocket.ErrGrantDenied)
 		return
 	}
 	token := strings.TrimPrefix(protocols[1], entitysocket.CredentialProtocol)
 	grant, err := s.durable.SessionGrants.Authenticate(r.Context(), token, r.Header.Get("Origin"))
 	if err != nil {
-		grantProblem(w, err)
+		durable.WriteGrantProblem(w, err)
 		return
 	}
 	authenticated, acct, err := s.grantPrincipal(r, grant)
 	if err != nil {
-		grantProblem(w, err)
+		durable.WriteGrantProblem(w, err)
 		return
 	}
 	// Use the same scope and application admission at handshake and each frame.
@@ -149,7 +133,7 @@ func (s *server) connectEntityBrowserSession(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if app.ID != grant.Entity.AppID || !s.durable.Apps[app.ID] || !app.WebSocketEnabled || !acct.Plan.WebSocketResponseAllowed() || !app.AcceptsRequestInvocations() || !api.MustLimitsFor(acct.Plan).AsyncInvokeAllowed {
-			grantProblem(w, entitysocket.ErrGrantDenied)
+			durable.WriteGrantProblem(w, entitysocket.ErrGrantDenied)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

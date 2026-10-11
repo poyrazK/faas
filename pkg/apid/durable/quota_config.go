@@ -71,7 +71,7 @@ func WriteTenantQuotaProblem(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, entitysocket.ErrGrantDenied) {
-		grantProblem(w, err)
+		WriteGrantProblem(w, err)
 		return
 	}
 	if errors.Is(err, durableentity.ErrInvalid) {
@@ -83,3 +83,20 @@ func WriteTenantQuotaProblem(w http.ResponseWriter, err error) {
 
 // Connection reservations live longer than the transport's bounded lifetime
 // and in-flight invocation. A crashed node cannot immediately free its slot.
+
+func WriteGrantProblem(w http.ResponseWriter, err error) {
+	if errors.Is(err, durableentity.ErrRetired) {
+		WriteTenantQuotaProblem(w, err)
+		return
+	}
+	var quota *entitysocket.QuotaError
+	if errors.As(err, &quota) {
+		WriteTenantQuotaProblem(w, err)
+		return
+	}
+	if errors.Is(err, entitysocket.ErrGrantDenied) {
+		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Session grant denied", "grant is invalid, expired or revoked"))
+	} else {
+		api.WriteProblem(w, api.ErrCapacity("session grant storage unavailable"))
+	}
+}
