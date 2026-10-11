@@ -20,6 +20,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
+	readRetries := fs.Int("read-retries", 0, "total transient watch read retries (0..20; default 0)")
 	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
 	interval := fs.Duration("interval", api.CommitRecoveryWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	refreshPath := fs.String("refresh", "", "saved recovery status; reread selection and track changes")
@@ -27,7 +28,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) {
+	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax || (*checkpointPath != "" && !*watch) || *readRetries < 0 || *readRetries > api.CommitRecoveryWatchReadRetriesMax || (*readRetries != 0 && !*watch) {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -113,7 +114,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, api.CommitRecoveryStatusSettled(status))
 			}
 		}
-		out, err = client.WatchCommitRecoveryStatus(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress)
+		out, err = client.WatchCommitRecoveryStatusWithRetry(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, *readRetries)
 	}
 	var validation *api.Problem
 	invalidSelection := errors.As(err, &validation) && validation.Code == api.CodeValidation

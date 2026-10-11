@@ -1294,3 +1294,50 @@ nonregular files and nonprivate permissions on non-Windows systems are rejected.
 These are advisory OS locks for cooperating Gregale processes. Use a filesystem
 with supported locking and atomic rename semantics. Processes that bypass the
 lock are not coordinated. See [ADR-943](adr/943-exclusive-commit-recovery-checkpoint-ownership.md).
+
+
+### Retry transient monitoring reads
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --watch --read-retries 5 --timeout 10m \
+  --checkpoint recovery-checkpoint.json > recovery-final.json
+~~~
+
+Automatic retries are opt-in and accept 0..20 additional observation passes in total
+across the watch. The default remains zero. Network failures and HTTP 429,
+500, 502, 503 and 504 can retry; authentication, validation, malformed evidence
+and other failures stop immediately. Every failure in a partial pass must be
+transient. Unread rows remain ahead of failed reads when the watch resumes.
+
+Backoff starts at the polling interval, doubles per consumed retry and caps
+at one minute. Available Retry-After seconds/date values set a longer minimum
+wait. The overall timeout includes retry waits, so no request is sent early
+when Retry-After exceeds the remaining time. Retryable partial results reach
+progress callbacks and checkpoints before waiting; exhausted retries retain
+partial output. Checkpoint/callback failures are never retried. Unknown replay
+outcomes remain unknown and no replay is submitted.
+
+~~~go
+final, err := client.WatchCommitRecoveryStatusWithRetry(
+    ctx, plan, applied, nil, false, 50, 5, time.Second, onProgress, 5,
+)
+~~~
+
+~~~ts
+const final = await watchCommitRecoveryStatus(source, plan, applied, {
+  readRetries: 5, timeoutMs: 600000, onProgress,
+});
+~~~
+
+~~~python
+final = await awatch_commit_recovery_status(
+    client, source, plan, applied, read_retries=5, timeout=600, on_progress=on_progress,
+)
+~~~
+
+SDK retries honor Retry-After when retained by the HTTP error. Node Client
+preserves headers on typed errors; direct generated service calls can use
+only available body metadata. Python default detailed responses preserve
+headers, while raised generated UnexpectedStatus errors retain only status.
+See [ADR-944](adr/944-transient-commit-recovery-watch-read-retries.md).

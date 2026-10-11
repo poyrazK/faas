@@ -38,7 +38,8 @@ settled describes monitoring termination, not recovery success.
 Overall timeout and cancellation include reads and interval waits. Return the
 last sample if interrupted between calls; in-flight read failures return the
 partial status supplied by the existing reader. Stop on read/validation errors
-rather than concealing them behind automatic retries. Callers can resume the
+rather than concealing them behind automatic retries. ADR-944 adds explicit
+opt-in bounded transient read retries. Callers can resume the
 attached partial result. Progress callbacks receive detached snapshots after
 each successful bounded call; Node/Python callback errors attach the last
 result. CLI prints changed row summaries and counts to stderr while final

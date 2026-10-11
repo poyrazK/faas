@@ -7,12 +7,22 @@ import copy
 import json
 import math
 from collections.abc import Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 from uuid import UUID
+
+import httpx
 
 from .client import AuthenticatedClient
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
 from .commit_recovery_plan import _same_acceptance
+
+
+class _CommitRecoveryReadErrors(Exception):
+    def __init__(self, errors: list[Exception]):
+        self.errors = errors
+        super().__init__("recovery status reads failed")
 
 
 class CommitRecoveryStatusError(Exception):
@@ -276,7 +286,7 @@ async def aget_commit_recovery_status(
                         _observe(row, error.report["items"][0] if error.report["items"] else None)
                     row.update(status="read_error", reason="evidence_read_failed")
                     out["complete"] = False
-                    cause = cause or error
+                    cause = _CommitRecoveryReadErrors([cause, error]) if isinstance(cause, Exception) else error
                 reading_index = None
     except (Exception, asyncio.CancelledError) as error:
         out["complete"] = False
@@ -442,6 +452,7 @@ async def awatch_commit_recovery_status(
     recipient_pages: int = 1,
     timeout: float = 120,
     interval: float = 1,
+    read_retries: int = 0,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -454,6 +465,8 @@ async def awatch_commit_recovery_status(
         or not 0 < timeout <= 86400
     ):
         raise ValueError("invalid recovery watch options")
+    if type(read_retries) is not int or not 0 <= read_retries <= 20:
+        raise ValueError("invalid recovery watch read retry budget")
     if resume is not None and refresh is not None:
         raise ValueError("choose resume or refresh")
     plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
@@ -464,29 +477,71 @@ async def awatch_commit_recovery_status(
     out: dict[str, Any] = {"source_id": str(source), "items": [], "counts": {}, "remaining": 0, "complete": False}
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
+    used_retries = 0
     try:
         async with asyncio.timeout(timeout):
             while True:
-                out = await aget_commit_recovery_status(
-                    client,
-                    source,
-                    plan,
-                    result,
-                    limit=limit,
-                    recipient_pages=recipient_pages,
-                    timeout=max(0.001, deadline - loop.time()),
-                    resume=previous if not refreshing else None,
-                    refresh=previous if refreshing else None,
-                )
+                delay, failed = interval, False
+                try:
+                    out = await aget_commit_recovery_status(
+                        client,
+                        source,
+                        plan,
+                        result,
+                        limit=limit,
+                        recipient_pages=recipient_pages,
+                        timeout=max(0.001, deadline - loop.time()),
+                        resume=previous if not refreshing else None,
+                        refresh=previous if refreshing else None,
+                    )
+                except CommitRecoveryStatusError as error:
+                    out = error.result
+                    retry_after = _read_retry(error.__cause__)
+                    if retry_after is None or used_retries >= read_retries:
+                        raise
+                    used_retries += 1
+                    failed = True
+                    delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
                 if on_progress is not None:
                     on_progress(copy.deepcopy(out))
                 if loop.time() >= deadline:
                     raise TimeoutError("watch deadline exceeded")
-                if commit_recovery_status_settled(out):
+                if not failed and commit_recovery_status_settled(out):
                     return out
-                previous, refreshing = out, out["remaining"] == 0
-                await asyncio.sleep(interval)
+                previous, refreshing = out, not failed and out["remaining"] == 0
+                await asyncio.sleep(delay)
     except CommitRecoveryStatusError:
         raise
     except (Exception, asyncio.CancelledError) as error:
         raise CommitRecoveryStatusError(out) from error
+
+
+def _read_retry(error: BaseException | None) -> float | None:
+    if isinstance(error, _CommitRecoveryReadErrors):
+        delays = [_read_retry(cause) for cause in error.errors]
+        return (
+            None
+            if any(delay is None for delay in delays)
+            else max([0.0] + [float(delay) for delay in delays if delay is not None])
+        )
+    if isinstance(error, (CommitRecoveryStatusError, CommitDeliveryReportError)):
+        return _read_retry(error.__cause__)
+    status = getattr(error, "status_code", None)
+    if status is not None:
+        if status not in {429, 500, 502, 503, 504}:
+            return None
+        value = getattr(error, "retry_after", None)
+        if value:
+            try:
+                delay = (
+                    float(value)
+                    if str(value).isdigit()
+                    else (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
+                )
+                return max(0.0, delay) if math.isfinite(delay) else 86400.0
+            except (ValueError, TypeError, OverflowError):
+                pass
+        return 0.0
+    if isinstance(error, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)):
+        return 0.0
+    return None

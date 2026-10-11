@@ -9649,3 +9649,6 @@ const (
 	CommitRecoveryWatchIntervalMax     = time.Minute
 	CommitRecoveryWatchIntervalDefault = time.Second
 )
+
+// Total automatic transient retries across a recovery watch.
+const CommitRecoveryWatchReadRetriesMax = 20

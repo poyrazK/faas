@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -234,9 +235,7 @@ func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRec
 		if readErr != nil {
 			row.Status = "read_error"
 			row.Reason = "evidence_read_failed"
-			if firstErr == nil {
-				firstErr = readErr
-			}
+			firstErr = errors.Join(firstErr, readErr)
 		}
 		out.Items[index] = row
 	}

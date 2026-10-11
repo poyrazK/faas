@@ -3,14 +3,24 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"strconv"
 	"time"
 )
 
 // WatchCommitRecoveryStatus polls a fixed selection within the caller's deadline.
 // Progress receives detached snapshots; unknown attempts never prove recovery.
 func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult)) (CommitRecoveryStatusResult, error) {
+	return c.WatchCommitRecoveryStatusWithRetry(ctx, plan, applied, previous, refresh, limit, pages, interval, progress, 0)
+}
+
+// WatchCommitRecoveryStatusWithRetry permits a bounded total number of transient read retries.
+func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (CommitRecoveryStatusResult, error) {
 	var out CommitRecoveryStatusResult
-	if _, ok := ctx.Deadline(); !ok || interval < CommitRecoveryWatchIntervalMin || interval > CommitRecoveryWatchIntervalMax {
+	if _, ok := ctx.Deadline(); !ok || interval < CommitRecoveryWatchIntervalMin || interval > CommitRecoveryWatchIntervalMax || readRetries < 0 || readRetries > CommitRecoveryWatchReadRetriesMax {
 		return out, ErrValidation("watch requires a deadline and a valid polling interval")
 	}
 	// Freeze caller-owned inputs across polling passes and progress callbacks.
@@ -28,10 +38,26 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 			}
 		}
 	}
+	usedRetries := 0
 	for {
 		out, err = c.getCommitRecoveryStatus(ctx, plan, applied, previous, refresh, limit, pages)
+		delay := interval
 		if err != nil {
-			return out, err
+			retryAfter, retryable := commitRecoveryReadRetry(err)
+			if !retryable || usedRetries >= readRetries || ctx.Err() != nil {
+				return out, err
+			}
+			usedRetries++
+			delay = interval
+			for n := 1; n < usedRetries && delay < CommitRecoveryWatchIntervalMax; n++ {
+				delay *= 2
+			}
+			if delay > CommitRecoveryWatchIntervalMax {
+				delay = CommitRecoveryWatchIntervalMax
+			}
+			if retryAfter > delay {
+				delay = retryAfter
+			}
 		}
 		if progress != nil {
 			snapshot, copyErr := cloneCommitRecoveryWatchInputs(plan, applied, &out)
@@ -43,14 +69,14 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
-		if CommitRecoveryStatusSettled(out) {
+		if err == nil && CommitRecoveryStatusSettled(out) {
 			return out, nil
 		}
 		previous = &out
 		// Complete observation passes refresh; partial passes resume without
 		// restarting at the first subscriber.
-		refresh = out.Remaining == 0
-		timer := time.NewTimer(interval)
+		refresh = err == nil && out.Remaining == 0
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -97,7 +123,65 @@ func cloneCommitRecoveryWatchInputs(plan CommitRecoveryPlan, applied CommitRecov
 	return out, err
 }
 
+// Every error in a partial pass must be transient; never hide a permanent failure.
+func commitRecoveryReadRetry(err error) (time.Duration, bool) {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var longest time.Duration
+		for _, cause := range joined.Unwrap() {
+			delay, retryable := commitRecoveryReadRetry(cause)
+			if !retryable {
+				return 0, false
+			}
+			if delay > longest {
+				longest = delay
+			}
+		}
+		return longest, true
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Problem.Status {
+		case 429, 500, 502, 503, 504:
+		default:
+			return 0, false
+		}
+		var delay time.Duration
+		if seconds := apiErr.Problem.RetryAfterSeconds; seconds != nil && *seconds > 0 {
+			// A longer server delay waits for the caller's bounded deadline instead.
+			if *seconds > int64((1<<63-1)/time.Second) {
+				delay = time.Duration(1<<63 - 1)
+			} else {
+				delay = time.Duration(*seconds) * time.Second
+			}
+		}
+		for _, value := range []string{apiErr.Problem.RetryAfter} {
+			if seconds, parseErr := strconv.ParseInt(value, 10, 64); parseErr == nil && seconds > 0 {
+				if seconds > int64((1<<63-1)/time.Second) {
+					seconds = int64((1<<63 - 1) / time.Second)
+				}
+				if candidate := time.Duration(seconds) * time.Second; candidate > delay {
+					delay = candidate
+				}
+			} else if date, parseErr := http.ParseTime(value); parseErr == nil {
+				if candidate := time.Until(date); candidate > delay {
+					delay = candidate
+				}
+			}
+		}
+		return delay, true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return 0, false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return 0, true
+	}
+	var network net.Error
+	return 0, errors.As(err, &network)
+}
+
 const (
-	CommitRecoveryWatchIntervalMin = 100 * time.Millisecond
-	CommitRecoveryWatchIntervalMax = time.Minute
+	CommitRecoveryWatchIntervalMin    = 100 * time.Millisecond
+	CommitRecoveryWatchIntervalMax    = time.Minute
+	CommitRecoveryWatchReadRetriesMax = 20
 )

@@ -17,6 +17,13 @@ from .models.commit_publication_history_response import CommitPublicationHistory
 from .models.event_receipt_response import EventReceiptResponse
 
 
+class CommitDeliveryReadError(Exception):
+    def __init__(self, status_code: int, headers: Any):
+        self.status_code = status_code
+        self.retry_after = headers.get("Retry-After")
+        super().__init__(f"delivery evidence read failed: HTTP {status_code}")
+
+
 class CommitDeliveryReportError(Exception):
     """A read failed; report retains partial observations and unread items."""
 
@@ -104,11 +111,9 @@ async def aget_commit_delivery_report(
         async with asyncio.timeout(timeout):
             if saved is not None:
                 binding = await get_commit_source.asyncio_detailed(client=client, source=UUID(source))
-                if (
-                    binding.status_code != 200
-                    or not hasattr(binding.parsed, "app_id")
-                    or binding.parsed.destination != "event"
-                ):
+                if binding.status_code != 200:
+                    raise CommitDeliveryReadError(binding.status_code, binding.headers)
+                if not hasattr(binding.parsed, "app_id") or binding.parsed.destination != "event":
                     raise ValueError("saved report requires an accessible event source")
                 ids: set[str] = set()
                 for item in (baseline if baseline is not None else report)["items"]:
@@ -137,7 +142,7 @@ async def aget_commit_delivery_report(
                     kwargs["before"] = before
                 history = await list_commit_publications.asyncio_detailed(client=client, **kwargs)
                 if history.status_code != 200 or not isinstance(history.parsed, CommitPublicationHistoryResponse):
-                    raise RuntimeError(f"read publication history failed: HTTP {history.status_code}")
+                    raise CommitDeliveryReadError(history.status_code, history.headers)
                 data = history.parsed.to_dict()
                 if data.get("next_before"):
                     report["next_before"] = data["next_before"]
@@ -177,7 +182,7 @@ async def aget_commit_delivery_report(
                         )
                         break
                     if response.status_code != 200 or not isinstance(response.parsed, EventReceiptResponse):
-                        raise RuntimeError(f"read subscriber evidence failed: HTTP {response.status_code}")
+                        raise CommitDeliveryReadError(response.status_code, response.headers)
                     page = response.parsed.to_dict()
                     if (
                         page["event_source"] != publication["source"]
