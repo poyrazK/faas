@@ -39,7 +39,7 @@ func (v *JailerVMM) ObserveNativeLaunch(ctx context.Context, instanceID string) 
 // process incarnation. Results remain observations; an action must revalidate
 // ownership under its own native producer lock.
 func (v *JailerVMM) ObserveNativeLaunchGeneration(ctx context.Context, expected NativeLaunchIdentity) (NativeLaunchEvidence, error) {
-	if !validNativeInstanceName(expected.InstanceID) || !canonicalNativeHelperID(expected.Generation) || !canonicalNativeHelperID(expected.KernelBootID) || expected.PID < 0 || expected.PID == 1 || (expected.PID == 0) != (expected.StartTime == 0) {
+	if !validPinnedNativeLaunchIdentity(expected) {
 		return NativeLaunchEvidence{}, errors.New("native launch evidence: invalid pinned identity")
 	}
 	observed, err := v.ObserveNativeLaunch(ctx, expected.InstanceID)
@@ -70,6 +70,14 @@ func (j *nativeLaunchJournal) observeLaunch(ctx context.Context, instance string
 	if err = ctx.Err(); err != nil {
 		return out, err
 	}
-	out = NativeLaunchEvidence{Identity: NativeLaunchIdentity{InstanceID: record.Lease.Instance, Generation: record.Generation, KernelBootID: record.KernelBootID, PID: record.PID, StartTime: record.StartTime}, Authorized: record.Authorized, Revoked: record.Revoked, ExitConfirmed: record.ExitConfirmed, ResourcesRemoved: record.ResourcesRemoved}
+	out = nativeLaunchEvidenceFromRecord(record)
 	return out, nil
+}
+
+func nativeLaunchEvidenceFromRecord(record nativeLaunchRecord) NativeLaunchEvidence {
+	return NativeLaunchEvidence{Identity: NativeLaunchIdentity{InstanceID: record.Lease.Instance, Generation: record.Generation, KernelBootID: record.KernelBootID, PID: record.PID, StartTime: record.StartTime}, Authorized: record.Authorized, Revoked: record.Revoked, ExitConfirmed: record.ExitConfirmed, ResourcesRemoved: record.ResourcesRemoved}
+}
+
+func validPinnedNativeLaunchIdentity(expected NativeLaunchIdentity) bool {
+	return validNativeInstanceName(expected.InstanceID) && canonicalNativeHelperID(expected.Generation) && canonicalNativeHelperID(expected.KernelBootID) && expected.PID >= 0 && expected.PID != 1 && (expected.PID == 0) == (expected.StartTime == 0)
 }

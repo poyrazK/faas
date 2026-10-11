@@ -10061,3 +10061,28 @@ Launch and cleanup behavior is unchanged. Dedicated native KVM acceptance and
 live provider qualification were not performed; native correlation, producer
 closure and proof-backed release remain pending. Public full-stage admission
 remains gated.
+
+### Exact original archived native generation evidence
+
+The native backend now reads a retained launch archive by the exact pinned
+instance, generation, kernel boot ID and PID/start-time incarnation. It takes
+the same instance journal lock as replacement and validates the private archive
+path, strict record shape, current kernel boot and original retirement flags.
+It reads only the selected archive: a current or newer launch cannot substitute
+for missing original evidence. Current instance record absence does not erase an
+existing original archive. Daemon restart on the same kernel preserves access.
+
+Archive observations preserve exit and resource removal as separate fields.
+Fallback replacement may retain an exited generation whose resources were reused;
+reading that archive must not infer resource closure or authorize teardown of the
+new owner. Reads do not mutate archives or provide cleanup, replay or evidence
+release authority. Exact archived identity is a prerequisite for binding original
+scheduler requests to physical generations, not that binding itself.
+
+Pure Go tests cover actual journal replacement, daemon reconstruction, current
+metadata absence, original identity preservation, caller mismatches, canceled
+reads and missing, malformed, unretired, symlinked, public or prior-boot archives.
+Launch and cleanup behavior is unchanged. Native request provenance, producer
+closure and proof-backed release remain pending, as does dedicated native KVM
+qualification. No live provider qualification was performed; public full-stage
+admission remains gated.
