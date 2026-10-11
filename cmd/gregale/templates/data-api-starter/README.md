@@ -897,3 +897,8 @@ To update types, run `gregale data-api dev --port 0 --once` with the same
 This detects drift; use `--check-breaking` separately for compatibility checks.
 The workflow still creates local contract artifacts and runs configured setup
 and authorization steps; the types output alone is preserved by this flag.
+
+The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
+`cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
+timestamp/id validation remain the same, including PostgreSQL microseconds.
+Upgrade the installed SDK bundle alongside the starter to use these helpers.

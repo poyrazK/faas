@@ -1476,3 +1476,8 @@ requests: inserts after the cursor can appear, deleted rows disappear, and
 changing ordering values can move rows. Stop when a page is empty. Large integer
 keys must be represented without JavaScript precision loss by your application.
 Existing server row caps can return fewer rows than the requested page size.
+
+The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
+`cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
+timestamp/id validation remain the same, including PostgreSQL microseconds.
+Upgrade the installed SDK bundle alongside the starter to use these helpers.
