@@ -1,6 +1,6 @@
 //go:build metal
 
-// dev_watch_metal_test.go — ADR-970 developer watch mode on a real
+// dev_watch_metal_test.go — ADR-1170 developer watch mode on a real
 // Firecracker stack.
 //
 //	PUT /v1/dev/sessions {watch}  → developer app in watch mode
