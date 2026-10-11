@@ -1,9 +1,13 @@
 // Compile-only contract assertions; never invoke these calls at runtime.
-import {counter, reservation, session} from '../client.mjs';
+import {counter, reservation, session, room} from '../client.mjs';
 function checkTypes() {
   const count = counter({slug: 'app', key: 'customer:1'});
   const result: Promise<{value: {count: number}; version: number; replayed: boolean}> = count.invoke('one', {delta: 1});
   void result;
+  // @ts-expect-error room message delta is a number
+  room({slug:'app',key:'document:1'}).invoke('one',{kind:'message',session_id:'id',sequence:1,payload:'bad'});
+  // @ts-expect-error room messages require a payload
+  room({slug:'app',key:'document:1'}).invoke('one',{kind:'message',session_id:'id',sequence:1});
   // @ts-expect-error delta must be a number
   count.invoke('one', {delta: '1'});
   // @ts-expect-error stable request identity is required

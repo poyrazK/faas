@@ -3,7 +3,7 @@ import {defineDurableEntity} from './durable-entity-runtime.js';
 import {durableEntityJSON} from './durable-entity-handler.js';
 export const DURABLE_ENTITY_MAX_SESSIONS = 32;
 interface Session {id: string; sequence: number; closed: boolean}
-export type DurableSessionCommand = {kind: 'open'; session_id: string} | {kind: 'message' | 'close'; session_id: string; sequence: number; payload?: unknown};
+export type DurableSessionCommand<Payload = unknown> = {kind: 'open'; session_id: string} | {kind: 'message'; session_id: string; sequence: number; payload: Payload} | {kind: 'close'; session_id: string; sequence: number};
 export interface DurableSessionState<State> {application: State; sessions: Session[]}
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid session object');
@@ -19,7 +19,8 @@ export function decodeDurableSessionCommand(value: unknown): DurableSessionComma
   if (input.kind === 'open' && Object.keys(input).length === 2) return {kind: 'open', session_id: input.session_id};
   if ((input.kind === 'message' || input.kind === 'close') && Number.isSafeInteger(input.sequence) && (input.sequence as number)>0
     && Object.keys(input).length === (input.kind === 'message' ? 4 : 3) && (input.kind !== 'message' || Object.hasOwn(input, 'payload'))) {
-    return {kind: input.kind, session_id: input.session_id, sequence: input.sequence as number, ...(input.kind === 'message' ? {payload: input.payload} : {})};
+    if (input.kind === 'message') return {kind:'message', session_id:input.session_id, sequence:input.sequence as number, payload:input.payload};
+    return {kind:'close', session_id:input.session_id, sequence:input.sequence as number};
   }
   throw new TypeError('invalid ordered session command');
 }

@@ -25,7 +25,14 @@ export const sessionContract = defineDurableEntityClientContract({namespace: 'se
 });
 
 export const roomContract = defineDurableEntityClientContract({namespace: 'rooms',
-  decodePayload: decodeDurableSessionCommand,
+  decodePayload(value) {
+    const command=decodeDurableSessionCommand(value);
+    if (command.kind==='message') {
+      if (typeof command.payload!=='number' || !Number.isSafeInteger(command.payload)) throw new TypeError('integer room delta required');
+      return {...command,payload:command.payload};
+    }
+    return command;
+  },
   decodeResult(value) {
     const result=record(value);
     if (typeof result.session_id !== 'string' || !Number.isSafeInteger(result.sequence) || typeof result.closed !== 'boolean' || (result.value !== null && typeof result.value !== 'number')) throw new TypeError('invalid session result');
