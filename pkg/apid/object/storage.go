@@ -145,8 +145,11 @@ func validUploadContentType(value string) bool {
 	return parts[0] != "" && parts[1] != "" && parts[1] != "*" || strings.HasSuffix(value, "/*")
 }
 
+// ObjectStorageEnabled reports whether a backend is configured and the S3
+// runtime switch is on. A Service without a Host (a bare apid server in
+// tests) has no backend.
 func (s *Service) ObjectStorageEnabled() bool {
-	return s.Host.ObjectStorage() != nil && s.Host.S3RuntimeEnabled()
+	return s.Host != nil && s.Host.ObjectStorage() != nil && s.Host.S3RuntimeEnabled()
 }
 
 func (s *Service) ObjectStorageProvisioningReady() bool {

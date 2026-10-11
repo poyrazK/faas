@@ -74,7 +74,7 @@ func ObjectStorageBindingSecretValues(keys api.ObjectStorageComputeBindingSecret
 }
 
 func (s *Service) ObjectStorageSecretSealReady() bool {
-	if s.Host.SecretRecipient() == nil || len(s.Host.HostHMACKey()) == 0 {
+	if s.Host == nil || s.Host.SecretRecipient() == nil || len(s.Host.HostHMACKey()) == 0 {
 		return false
 	}
 	return len(s.Host.MFAIdentities()) > 0
