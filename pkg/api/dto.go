@@ -10455,9 +10455,9 @@ type ThrottleSuggestionsResponse struct {
 
 // ThrottlePreviewRow is one row of the dry-run preview
 // (ADR-104 amendment 5, issue #881 Phase 4 D1). For each
-// non-collapsed route we report the count of sub-windows where the
-// observed rate exceeded the candidate rps — a count of "would-have-
-// rejected" requests over the window. WindowStart / WindowEnd echo
+// non-collapsed route we report the count of 1-minute sub-windows where
+// the observed average rate exceeded the candidate rps (not a request
+// count; burst is not modelled). WindowStart / WindowEnd echo
 // the window edges so dashboards can render "N of M sub-windows" /
 // "X of Y minutes" without re-deriving from Range.
 //

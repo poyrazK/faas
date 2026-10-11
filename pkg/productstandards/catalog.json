@@ -102,7 +102,7 @@
       "scope": "Account-scoped FOCUS 1.4 Invoice Detail exports use durable provider facts and exactly reconciled, classified line snapshots when available. Authenticated Stripe, Paddle, and Polar history backfill discovers missing invoices page by page; refresh enriches known invoices. Stripe resolves opaque prices and paginates all lines. Per-record lifecycle tracks every exported column change. Aggregate fallbacks, missing facts, and historical lifecycle uncertainty are counted in metadata; ZIP binds CSV and metadata with a checksum.",
       "limitations": "Conformance remains partial. PaymentTerms, legal issuer and date coverage depend on provider payloads; unresolved classifications, partial lists, unallocated discounts, and adjusted totals can require aggregate fallback. Older invoices have incomplete historical record creation observations; coverage counts declare that uncertainty. Provider pagination is best effort and records without supported currency, explicit billing periods, or complete totals are skipped; historical plans remain unknown. Conditional FX/PO fields, correction links, separate credit/refund documents, and Cost and Usage allocation/historical prices remain unimplemented.",
       "docs_url": "https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/",
-      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/387-focus-invoice-projection.md; docs/adr/388-provider-invoice-facts.md; docs/adr/389-invoice-detail-lifecycle.md; pkg/billing/testdata/invoices; docs/adr/390-provider-invoice-refresh.md; cmd/apid/handlers_invoice_refresh.go; docs/adr/391-provider-invoice-history-backfill.md; cmd/apid/handlers_invoice_backfill.go",
+      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); pkg/apid/apidserver/handlers_billing_focus.go; docs/billing.md; docs/adr/387-focus-invoice-projection.md; docs/adr/388-provider-invoice-facts.md; docs/adr/389-invoice-detail-lifecycle.md; pkg/billing/testdata/invoices; docs/adr/390-provider-invoice-refresh.md; pkg/apid/apidserver/handlers_invoice_refresh.go; docs/adr/391-provider-invoice-history-backfill.md; pkg/apid/apidserver/handlers_invoice_backfill.go",
       "conformance": [
         {
           "fixture": "focus-invoice-column-contract",
@@ -117,7 +117,7 @@
         {
           "fixture": "focus-invoice-ownership",
           "tier": "unit",
-          "target": "cmd/apid/handlers_billing_focus_test.go::TestFOCUSExportAccountAndMonthIsolation"
+          "target": "pkg/apid/apidserver/handlers_billing_focus_test.go::TestFOCUSExportAccountAndMonthIsolation"
         },
         {
           "fixture": "focus-invoice-cli-download",
@@ -132,7 +132,7 @@
         {
           "fixture": "focus-invoice-ingestion",
           "tier": "unit",
-          "target": "cmd/apid/handlers_billing_invoice_details_test.go::TestFOCUSSignedInvoiceIngestion"
+          "target": "pkg/apid/apidserver/handlers_billing_invoice_details_test.go::TestFOCUSSignedInvoiceIngestion"
         },
         {
           "fixture": "focus-invoice-persistence",
@@ -172,7 +172,7 @@
         {
           "fixture": "focus-refresh-ownership",
           "tier": "unit",
-          "target": "cmd/apid/handlers_invoice_refresh_test.go::TestFOCUSInvoiceRefreshOwnershipAndCoverage"
+          "target": "pkg/apid/apidserver/handlers_invoice_refresh_test.go::TestFOCUSInvoiceRefreshOwnershipAndCoverage"
         },
         {
           "fixture": "focus-refresh-atomicity",
@@ -602,7 +602,7 @@
       "scope": "Google and GitHub dashboard authorization-code redirects generate an RFC 7636 S256 code verifier, bind its challenge to the consent request, and send the verifier to the provider token endpoint.",
       "limitations": "The separate GitHub App installation callback is unchanged; provider-side PKCE policy and support remain outside Gregale's control, and Gregale does not expose a general OAuth authorization server.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc7636",
-      "evidence": "pkg/oauthpkce/pkce.go; cmd/apid/handlers_google.go; cmd/apid/handlers_github.go; docs/auth.md",
+      "evidence": "pkg/oauthpkce/pkce.go; pkg/apid/apidserver/handlers_google.go; pkg/apid/apidserver/handlers_github.go; docs/auth.md",
       "conformance": [
         {
           "fixture": "oauth-pkce-s256",
@@ -640,12 +640,12 @@
       "scope": "Deprecated routes emit a standards-compliant Link header with successor-version and deprecation relations so clients can discover migration targets and documentation.",
       "limitations": "Gregale claims the Link syntax and registered relations used by the lifecycle headers; it does not claim a general link-relation registry or hypermedia API for every resource.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc8288",
-      "evidence": "cmd/apid/auth_facade.go; cmd/apid/handlers_source_tarball_test.go; api/openapi.yaml components.headers.Link",
+      "evidence": "pkg/apid/apidserver/auth_facade.go; pkg/apid/apidserver/handlers_source_tarball_test.go; api/openapi.yaml components.headers.Link",
       "conformance": [
         {
           "fixture": "web-linking-deprecation-relations",
           "tier": "unit",
-          "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+          "target": "pkg/apid/apidserver/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
         }
       ]
     },
@@ -678,12 +678,12 @@
       "scope": "Legacy deployment and operator routes advertise the scheduled removal date with an IMF-fixdate Sunset header.",
       "limitations": "Sunset dates are Gregale lifecycle commitments for the published routes; they do not imply that every endpoint has a sunset schedule or that removal is automatic.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc8594",
-      "evidence": "cmd/apid/auth_facade.go; cmd/apid/handlers_source_tarball_test.go; api/openapi.yaml components.headers.Sunset",
+      "evidence": "pkg/apid/apidserver/auth_facade.go; pkg/apid/apidserver/handlers_source_tarball_test.go; api/openapi.yaml components.headers.Sunset",
       "conformance": [
         {
           "fixture": "sunset-http-date",
           "tier": "unit",
-          "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+          "target": "pkg/apid/apidserver/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
         }
       ]
     },
@@ -783,17 +783,17 @@
       "scope": "Legacy deployment and operator routes emit the RFC 9745 Item Structured Field Date and a deprecation link, including on authentication failures.",
       "limitations": "The implementation covers route-level lifecycle signaling; Gregale does not yet expose a platform-wide deprecation registry or automated client notification service.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9745",
-      "evidence": "cmd/apid/auth_facade.go; cmd/apid/handlers_source_tarball_test.go; cmd/apid/handlers_admin_obs_pr3_test.go; api/openapi.yaml components.headers.Deprecation",
+      "evidence": "pkg/apid/apidserver/auth_facade.go; pkg/apid/apidserver/handlers_source_tarball_test.go; pkg/apid/apidserver/handlers_admin_obs_pr3_test.go; api/openapi.yaml components.headers.Deprecation",
       "conformance": [
         {
           "fixture": "deprecation-structured-date",
           "tier": "unit",
-          "target": "cmd/apid/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
+          "target": "pkg/apid/apidserver/handlers_source_tarball_test.go::TestSourceTarball_DeprecationHeadersOnAuthFailure"
         },
         {
           "fixture": "deprecation-admin-route",
           "tier": "unit",
-          "target": "cmd/apid/handlers_admin_obs_pr3_test.go::TestObsSecurity_DeprecationHeader_OnOldPath"
+          "target": "pkg/apid/apidserver/handlers_admin_obs_pr3_test.go::TestObsSecurity_DeprecationHeader_OnOldPath"
         }
       ]
     },

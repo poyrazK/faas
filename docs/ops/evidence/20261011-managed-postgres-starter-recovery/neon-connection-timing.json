@@ -1,0 +1,35 @@
+[
+  {
+    "label": "admin",
+    "families": [
+      4,
+      4,
+      4
+    ],
+    "connect_ms": 5637,
+    "query_ms": 92,
+    "ok": true
+  },
+  {
+    "label": "direct",
+    "families": [
+      4,
+      4,
+      4
+    ],
+    "connect_ms": 4583,
+    "query_ms": 85,
+    "ok": true
+  },
+  {
+    "label": "pooled",
+    "families": [
+      4,
+      4,
+      4
+    ],
+    "connect_ms": 3798,
+    "query_ms": 85,
+    "ok": true
+  }
+]

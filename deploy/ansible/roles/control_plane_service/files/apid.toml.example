@@ -60,24 +60,6 @@
 # name(s) missing. See cmd/gregale/commands_pki.go for the operator
 # CLI that issues /etc/faas/tls/<daemon>/<role>.{crt,key}.
 
-# Per-app cosign signature-enforcement (issue #472 / ADR-058).
-# apid reads the env var on startup; it points at the directory
-# where apid mirrors each (app_id, signer_name) row as a base64-DER
-# blob so imaged can read it directly. The directory is created
-# by the ansible role (mode 0755 root:root) and per-file perms
-# are 0444 root:root. Default location if unset:
-#
-#   /etc/faas/secrets/trusted-publishers
-#
-# Operator onboards a publisher via:
-#
-#   gregale trusted-publishers add <slug> <name> <pub.pem>
-#
-# which PUTs the base64(DER) blob to /v1/apps/{slug}/trusted_signers/{name}.
-# apid then writes the per-app mirror to this directory; imaged
-# picks it up via pg_notify('trusted_signer_changed') and
-# refreshes its in-memory trust cache on the next deploy.
-
 # [billing] block — provider config (PR-P2 + public-release billing). Every key
 # has a working default; missing block ⇒ Polar is selected and credentials
 # plus catalog IDs are required before the daemon starts.

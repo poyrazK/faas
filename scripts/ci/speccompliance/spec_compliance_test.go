@@ -875,8 +875,8 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// in tier-a7 PR-A); the applogs route is the only route the two
 	// daemons share today.
 	sources := []string{
-		filepath.Join(root, "cmd/apid", serverSrcPath),
-		filepath.Join(root, "cmd/apid", "handlers_issues.go"),
+		filepath.Join(root, "pkg/apid/apidserver", serverSrcPath),
+		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string

@@ -24,7 +24,7 @@
         "scale"
       ],
       "docs_url": "/docs/api-monetization",
-      "acceptance_test": "cmd/apid/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"
+      "acceptance_test": "pkg/apid/apidserver/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"
     },
     {
       "id": "application-messaging",
@@ -38,7 +38,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven#application-inbox",
-      "acceptance_test": "cmd/apid/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
+      "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
     },
     {
       "id": "circuit-breaking",
@@ -159,7 +159,7 @@
       ],
       "docs_url": "https://gregale.dev/docs/executions",
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
-      "acceptance_test": "cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
+      "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
     },
     {
       "id": "durable-inbound-webhooks",
@@ -173,7 +173,7 @@
         "scale"
       ],
       "docs_url": "/docs/inbound-webhooks",
-      "acceptance_test": "cmd/apid/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"
+      "acceptance_test": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"
     },
     {
       "id": "egress-circuit-breaking",
@@ -280,7 +280,7 @@
         "scale"
       ],
       "docs_url": "/docs/issues",
-      "acceptance_test": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
+      "acceptance_test": "pkg/apid/apidserver/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
     },
     {
       "id": "managed-exclusive-operations",
@@ -443,7 +443,7 @@
         "scale"
       ],
       "docs_url": "/docs/route-health",
-      "acceptance_test": "cmd/apid/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth"
+      "acceptance_test": "pkg/apid/apidserver/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth"
     },
     {
       "id": "route-lifecycle-review",
