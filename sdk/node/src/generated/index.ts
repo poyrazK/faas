@@ -1126,6 +1126,10 @@ export type { OperationWorkflowInstanceStep } from './models/OperationWorkflowIn
 export type { OperationWorkflowInstanceTransition } from './models/OperationWorkflowInstanceTransition.js';
 export type { OperationWorkflowInvariantRequirement } from './models/OperationWorkflowInvariantRequirement.js';
 export type { OperationWorkflowMissingConditionGroup } from './models/OperationWorkflowMissingConditionGroup.js';
+export type { OperationWorkflowMissingConditionProgress } from './models/OperationWorkflowMissingConditionProgress.js';
+export type { OperationWorkflowMissingConditionProgressChange } from './models/OperationWorkflowMissingConditionProgressChange.js';
+export type { OperationWorkflowMissingConditionProgressCount } from './models/OperationWorkflowMissingConditionProgressCount.js';
+export type { OperationWorkflowMissingConditionProgressInstance } from './models/OperationWorkflowMissingConditionProgressInstance.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';

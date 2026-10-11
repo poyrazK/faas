@@ -458,7 +458,7 @@ export interface OperationWorkflowBlockerDuration { contract_version: number; op
 export interface OperationWorkflowVerificationDuration { owner: string; observed_seconds: number; resolution_count: number; pending_count: number; unknown_start_count: number }
 
 export interface OperationWorkflowPerformanceOptions { baselineToken?: string; appID: string; scope: string; workflow: string }
-export interface OperationWorkflowPerformanceSummary { condition_coverage?: OperationWorkflowConditionCoverage; refresh_progress?: OperationWorkflowConditionRefreshProgress; active_conditions?: OperationWorkflowActiveConditionSummary; condition_outcomes?: OperationWorkflowConditionOutcomeSummary; decision_outcomes?: OperationWorkflowDecisionOutcomeSummary; cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
+export interface OperationWorkflowPerformanceSummary { missing_progress?: OperationWorkflowMissingConditionProgress; condition_coverage?: OperationWorkflowConditionCoverage; refresh_progress?: OperationWorkflowConditionRefreshProgress; active_conditions?: OperationWorkflowActiveConditionSummary; condition_outcomes?: OperationWorkflowConditionOutcomeSummary; decision_outcomes?: OperationWorkflowDecisionOutcomeSummary; cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
 export interface OperationWorkflowDurationDistribution { workflow_count: number; total_seconds: number; p50_seconds: number; p95_seconds: number }
 export interface OperationWorkflowPerformanceCoverageReason { reason: string; workflow_count: number }
 export interface OperationWorkflowPerformanceCohort { sla_configured_workflow_count: number; sla_evaluated_workflow_count: number; sla_breached_workflow_count: number; sla_unknown_workflow_count: number; matching_workflow_count: number; sampled_workflow_count: number; complete_history_workflow_count: number; excluded_incomplete_workflow_count: number; cohort_truncated: boolean; exclusions: OperationWorkflowPerformanceCoverageReason[]; state_time: OperationWorkflowDurationDistribution; blocked_time: OperationWorkflowDurationDistribution; verification_wait: OperationWorkflowDurationDistribution; states: OperationWorkflowStatePerformance[]; blockers: OperationWorkflowBlockerPerformance[]; verification_owners: OperationWorkflowVerificationPerformance[]; states_truncated: boolean; blockers_truncated: boolean; verification_owners_truncated: boolean }
@@ -532,3 +532,18 @@ export interface OperationWorkflowConditionCoverageEntry {
 }
 
 export interface OperationWorkflowMissingConditionGroup { contract_version: number; state: string; owner?: string; unassigned: boolean; missing_condition_count: number; blocked_time: OperationWorkflowDurationDistribution }
+
+export interface OperationWorkflowMissingConditionProgress {
+ baseline_at: string; evaluated_at: string; sampled_workflow_count: number; compared_workflow_count: number;
+ no_baseline_workflow_count: number; no_missing_baseline_workflow_count: number; excluded_incomplete_workflow_count: number;
+ excluded_ambiguous_workflow_count: number; excluded_condition_evidence_workflow_count: number; excluded_definition_workflow_count: number;
+ statuses: OperationWorkflowMissingConditionProgressCount[]; items: OperationWorkflowMissingConditionProgressInstance[];
+}
+export interface OperationWorkflowMissingConditionProgressCount { status: 'received_report'|'still_missing'|'expectation_changed'|'not_expected'|'contract_changed'; condition_count: number }
+export interface OperationWorkflowMissingConditionProgressInstance {
+ platform_tenant_id?: string; subject: OperationSubject; baseline_report: OperationWorkflowStateHistoryEntry; state: OperationWorkflowState; state_changed: boolean;
+ baseline_missing_condition_count: number; statuses: OperationWorkflowMissingConditionProgressCount[]; changes_truncated: boolean; changes: OperationWorkflowMissingConditionProgressChange[];
+}
+export interface OperationWorkflowMissingConditionProgressChange {
+ status: 'received_report'|'still_missing'|'expectation_changed'|'not_expected'|'contract_changed'; before: OperationWorkflowConditionCoverageEntry; after?: OperationWorkflowConditionCoverageEntry; explanation: string;
+}

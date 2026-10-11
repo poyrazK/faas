@@ -7,11 +7,13 @@ import type { OperationWorkflowConditionCoverage } from './OperationWorkflowCond
 import type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
 import type { OperationWorkflowConditionRefreshProgress } from './OperationWorkflowConditionRefreshProgress.js';
 import type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
+import type { OperationWorkflowMissingConditionProgress } from './OperationWorkflowMissingConditionProgress.js';
 import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
 /**
  * Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
  */
 export type OperationWorkflowPerformanceSummary = {
+  missing_progress?: OperationWorkflowMissingConditionProgress;
   condition_coverage?: OperationWorkflowConditionCoverage;
   refresh_progress?: OperationWorkflowConditionRefreshProgress;
   active_conditions?: OperationWorkflowActiveConditionSummary;

@@ -318,3 +318,5 @@ export type { OperationWorkflowConditionRefreshProgress, OperationWorkflowCondit
 export type { OperationWorkflowConditionCoverage, OperationWorkflowConditionCoverageInstance, OperationWorkflowConditionCoverageEntry } from './customer-operations.js';
 
 export type { OperationWorkflowMissingConditionGroup } from './customer-operations.js';
+
+export type { OperationWorkflowMissingConditionProgress, OperationWorkflowMissingConditionProgressCount, OperationWorkflowMissingConditionProgressInstance, OperationWorkflowMissingConditionProgressChange } from './customer-operations.js';

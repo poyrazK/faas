@@ -17977,3 +17977,14 @@ SELECT operation,milestone,id,operation_id,occurred_at,created_at,false AS occur
 UNION ALL
 SELECT operation,milestone,id,operation_id,occurred_at,created_at,true AS occurrence_ordered FROM ranked WHERE occurrence_rank=1 AND occurred_at<=sqlc.arg(now)::timestamptz
 ORDER BY operation,milestone,occurrence_ordered;
+
+-- name: ListCustomerOperationWorkflowProgressDefinitions :many
+SELECT o.id AS operation_id, COALESCE((SELECT jsonb_agg(step ORDER BY step->>'step')
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ WHERE step->>'workflow'=sqlc.arg(workflow_name)::text),'[]'::jsonb)::jsonb AS workflow_steps
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND d.scope=sqlc.arg(scope)::text AND o.id=ANY(sqlc.arg(operation_ids)::uuid[])
+ AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz);

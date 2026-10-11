@@ -1049,3 +1049,59 @@ workflow history. The previously misplaced schema text in the summary template
 is replaced by the actual expected-condition coverage card. These observations
 neither assign severity nor execute refreshes, business checks or application
 actions. No new SQL, migration or persistence is required.
+
+
+### Missing-report progress from a saved baseline
+
+The existing optional summary `baseline_token` now also returns
+`missing_progress`. Its query and evaluation time anchor reconstruction; the
+changed evidence fingerprint is intentionally accepted for comparisons. Current
+retained latest-100 completed and latest-100 ongoing samples are compared, not
+original saved cohort membership or every historical backlog item. Workflows
+outside today's sample never count as resolved.
+
+The last report published by baseline time supplies baseline state, contract and
+reporting Operation. One bounded, ownership-scoped SQLC batch reads those
+Operations' immutable workflow definitions; the memory store uses the same
+retained pins. The baseline declaration is never substituted with today's
+Operation definition. Missing historical definitions have an explicit exclusion
+count. Definition lookup is comparison-only and does not enter the contributor
+fingerprint, so snapshot-bound drilldowns still work from comparison summaries.
+No schema migration or new persistence is needed.
+
+Continuous baseline report history within one contract is required; today's
+history may have contract boundaries solely to classify `contract_changed`.
+Unknown publication timestamps, gaps and other report-history failures exclude
+comparison. Historical terminal reports produce no baseline missing gaps.
+Reporting conflicts and existing expectation/context/identity limits exclude
+comparison. Coverage explicitly partitions today's samples into compared,
+no-baseline, no-baseline-missing, incomplete, conflicting, over-limit and
+unavailable-definition workflows. This reconstructs report history and pinned
+expectations, not historical verification obligations or the original queue.
+
+Baseline missing entries retain declaring step, milestone and full condition
+definition. Current state expectations are found by step and condition ID:
+`received_report` requires identical declaration and milestone plus a current
+matching fact; `still_missing` retains the same expectation without evidence;
+`expectation_changed` includes changed vocabulary, expected states, budget,
+owner or guidance; `not_expected` means the condition left the current state's
+expectation set; `contract_changed` never compares facts across contracts.
+State changes are explicitly flagged and current terminal reports remain visible
+without implying resolution. Current evidence in changed declarations is shown
+separately and does not count as filling the old expectation.
+
+Any application result (pass, fail or unknown) counts as received evidence; its
+source-pinned freshness may be within budget, overdue or unconfigured. Received
+reporting does not mean successful verification. Metadata-only reports preserve
+explicit contexts, omitted conditions stay missing, and changing expectations
+does not manufacture a report. All five status counts include every baseline
+missing condition before the first-16 canonical step/condition preview, with an
+explicit truncation flag. Workflow items are ordered by stable identity.
+
+The dashboard's saved comparison link opens overdue and missing-report progress
+cards together, showing coverage/exclusions, baseline report publication time and
+pinned reporting Operation, current state, changed definitions, results, report
+age deadlines, reporting Operation links and workflow history. Customer
+projections omit tenant identifiers. API schemas and Go, Node and Python SDKs
+expose the optional comparison; execution and verification remain application
+responsibilities.

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
     from ..models.operation_workflow_condition_refresh_progress import OperationWorkflowConditionRefreshProgress
     from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
+    from ..models.operation_workflow_missing_condition_progress import OperationWorkflowMissingConditionProgress
     from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 
 
@@ -41,6 +42,15 @@ class OperationWorkflowPerformanceSummary:
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
    """
+    missing_progress: OperationWorkflowMissingConditionProgress | Unset = UNSET
+    """Optional baseline_token comparison of missing expectations reconstructed from retained reports and the
+    baseline reporting Operation's immutable definition in today's completed and ongoing samples. Publication
+    timestamps determine baseline visibility. This does not store original cohort membership or prove backlog
+    resolution. Missing historical definitions, incomplete report history, conflicts and evidence limits are
+    explicitly excluded. Baseline histories must be continuous within one contract; current contract boundaries
+    permit contract_changed classification. Prior terminal reports do not create baseline gaps. Counts precede
+    change preview limits. Conditions leaving the current state's expectation set, changed declarations and terminal
+    workflows do not imply successful verification."""
     condition_coverage: OperationWorkflowConditionCoverage | Unset = UNSET
     """Reporting coverage for current states in the bounded ongoing sample. Expectations come only from the latest
     reporting Operation's immutable definition, not a global registry or every Operation in the workflow. Missing
@@ -89,6 +99,10 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = self.ongoing.to_dict()
 
+        missing_progress: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.missing_progress, Unset):
+            missing_progress = self.missing_progress.to_dict()
+
         condition_coverage: dict[str, Any] | Unset = UNSET
         if not isinstance(self.condition_coverage, Unset):
             condition_coverage = self.condition_coverage.to_dict()
@@ -121,6 +135,8 @@ class OperationWorkflowPerformanceSummary:
                 "ongoing": ongoing,
             }
         )
+        if missing_progress is not UNSET:
+            field_dict["missing_progress"] = missing_progress
         if condition_coverage is not UNSET:
             field_dict["condition_coverage"] = condition_coverage
         if refresh_progress is not UNSET:
@@ -141,6 +157,7 @@ class OperationWorkflowPerformanceSummary:
         from ..models.operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
         from ..models.operation_workflow_condition_refresh_progress import OperationWorkflowConditionRefreshProgress
         from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
+        from ..models.operation_workflow_missing_condition_progress import OperationWorkflowMissingConditionProgress
         from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 
         d = dict(src_dict)
@@ -155,6 +172,13 @@ class OperationWorkflowPerformanceSummary:
         completed = OperationWorkflowPerformanceCohort.from_dict(d.pop("completed"))
 
         ongoing = OperationWorkflowPerformanceCohort.from_dict(d.pop("ongoing"))
+
+        _missing_progress = d.pop("missing_progress", UNSET)
+        missing_progress: OperationWorkflowMissingConditionProgress | Unset
+        if isinstance(_missing_progress, Unset):
+            missing_progress = UNSET
+        else:
+            missing_progress = OperationWorkflowMissingConditionProgress.from_dict(_missing_progress)
 
         _condition_coverage = d.pop("condition_coverage", UNSET)
         condition_coverage: OperationWorkflowConditionCoverage | Unset
@@ -198,6 +222,7 @@ class OperationWorkflowPerformanceSummary:
             cohort_limit=cohort_limit,
             completed=completed,
             ongoing=ongoing,
+            missing_progress=missing_progress,
             condition_coverage=condition_coverage,
             refresh_progress=refresh_progress,
             active_conditions=active_conditions,

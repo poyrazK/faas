@@ -228,10 +228,16 @@ func (m *MemStore) summarizeWorkflowPerformance(ctx context.Context, account, te
 	out := workflowPerformanceSummary(instances, opts, at)
 	if baseline != nil {
 		out.RefreshProgress = workflowRefreshProgress(instances, *baseline, at)
+		definitions, err := m.workflowProgressDefinitions(ctx, account, tenant, opts, operator, workflowMissingProgressOperations(instances, *baseline))
+		if err != nil {
+			return api.OperationWorkflowPerformanceSummary{}, err
+		}
+		out.MissingProgress = workflowMissingConditionProgress(instances, definitions, *baseline, at)
 	}
 	if !operator {
 		hideRuleOverlapTenants(&out)
 		hideRefreshProgressTenants(out.RefreshProgress)
+		hideMissingProgressTenants(out.MissingProgress)
 		hideConditionCoverageTenants(out.ConditionCoverage)
 	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)

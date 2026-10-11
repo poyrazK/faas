@@ -1205,6 +1205,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_bottlenecks.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_performance.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_condition_coverage.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_missing_progress.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_performance_instances.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_sla.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),

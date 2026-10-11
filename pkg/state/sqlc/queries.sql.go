@@ -28749,6 +28749,61 @@ func (q *Queries) ListCustomerOperationWorkflowOutcomes(ctx context.Context, db 
 	return items, nil
 }
 
+const listCustomerOperationWorkflowProgressDefinitions = `-- name: ListCustomerOperationWorkflowProgressDefinitions :many
+SELECT o.id AS operation_id, COALESCE((SELECT jsonb_agg(step ORDER BY step->>'step')
+ FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
+ WHERE step->>'workflow'=$1::text),'[]'::jsonb)::jsonb AS workflow_steps
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=$2::uuid AND o.app_id=$3::uuid
+ AND d.scope=$4::text AND o.id=ANY($5::uuid[])
+ AND ($6::text='' OR o.platform_tenant_id::text=$6::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+`
+
+type ListCustomerOperationWorkflowProgressDefinitionsParams struct {
+	WorkflowName string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	OperationIds []pgtype.UUID
+	TenantID     string
+	Now          pgtype.Timestamptz
+}
+
+type ListCustomerOperationWorkflowProgressDefinitionsRow struct {
+	OperationID   pgtype.UUID
+	WorkflowSteps []byte
+}
+
+func (q *Queries) ListCustomerOperationWorkflowProgressDefinitions(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowProgressDefinitionsParams) ([]ListCustomerOperationWorkflowProgressDefinitionsRow, error) {
+	rows, err := db.Query(ctx, listCustomerOperationWorkflowProgressDefinitions,
+		arg.WorkflowName,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.OperationIds,
+		arg.TenantID,
+		arg.Now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomerOperationWorkflowProgressDefinitionsRow{}
+	for rows.Next() {
+		var i ListCustomerOperationWorkflowProgressDefinitionsRow
+		if err := rows.Scan(&i.OperationID, &i.WorkflowSteps); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerOperationWorkflowStepDeclarations = `-- name: ListCustomerOperationWorkflowStepDeclarations :many
 SELECT d.name,declared.step::text,(dep.status='live' AND dep.traffic_percent>0) AS active
 FROM customer_operation_definitions d

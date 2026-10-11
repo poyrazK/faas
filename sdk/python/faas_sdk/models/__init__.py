@@ -2133,6 +2133,16 @@ from .operation_workflow_instance_step import OperationWorkflowInstanceStep
 from .operation_workflow_instance_transition import OperationWorkflowInstanceTransition
 from .operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
 from .operation_workflow_missing_condition_group import OperationWorkflowMissingConditionGroup
+from .operation_workflow_missing_condition_progress import OperationWorkflowMissingConditionProgress
+from .operation_workflow_missing_condition_progress_change import OperationWorkflowMissingConditionProgressChange
+from .operation_workflow_missing_condition_progress_change_status import (
+    OperationWorkflowMissingConditionProgressChangeStatus,
+)
+from .operation_workflow_missing_condition_progress_count import OperationWorkflowMissingConditionProgressCount
+from .operation_workflow_missing_condition_progress_count_status import (
+    OperationWorkflowMissingConditionProgressCountStatus,
+)
+from .operation_workflow_missing_condition_progress_instance import OperationWorkflowMissingConditionProgressInstance
 from .operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
 from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
 from .operation_workflow_outcome_link import OperationWorkflowOutcomeLink
@@ -5626,6 +5636,12 @@ __all__ = (
     "OperationWorkflowInstanceTransition",
     "OperationWorkflowInvariantRequirement",
     "OperationWorkflowMissingConditionGroup",
+    "OperationWorkflowMissingConditionProgress",
+    "OperationWorkflowMissingConditionProgressChange",
+    "OperationWorkflowMissingConditionProgressChangeStatus",
+    "OperationWorkflowMissingConditionProgressCount",
+    "OperationWorkflowMissingConditionProgressCountStatus",
+    "OperationWorkflowMissingConditionProgressInstance",
     "OperationWorkflowOutcomeEntry",
     "OperationWorkflowOutcomeGroup",
     "OperationWorkflowOutcomeLink",

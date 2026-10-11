@@ -10,6 +10,7 @@ type OperationWorkflowPerformanceOptions struct {
 
 // OperationWorkflowPerformanceSummary compares complete retained histories by cohort.
 type OperationWorkflowPerformanceSummary struct {
+	MissingProgress   *OperationWorkflowMissingConditionProgress `json:"missing_progress,omitempty"`
 	ConditionCoverage *OperationWorkflowConditionCoverage        `json:"condition_coverage,omitempty"`
 	RefreshProgress   *OperationWorkflowConditionRefreshProgress `json:"refresh_progress,omitempty"`
 	ActiveConditions  *OperationWorkflowActiveConditionSummary   `json:"active_conditions,omitempty"`
