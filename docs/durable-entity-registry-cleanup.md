@@ -238,7 +238,48 @@ Configured app subsets still share the candidate pool and can scan one another's
 hints without acting on them. Native acceptance must measure index backlog,
 root-repair revisit time and provider request/storage cost.
 
+## Cleanup health and bounded backlog observations
+
+The cleanup GET also returns `discovery_health` and `progress_health` without
+adding bucket scans. Discovery describes the serving node's index and root
+reconciliation lanes: last attempt completion, last successful discovery,
+scheduled retry and consecutive discovery failures. It resets on process restart;
+another node may report different observations. `healthy` means page discovery
+succeeded, not that every operation progressed or that a full scan completed.
+
+Discovery is `retrying` during scheduled backoff and `stalled` if no attempt
+completes within one minute after its scheduled time. Startup gets one minute;
+disabled and stopped workers have explicit states. Inspect both lanes: successful
+reconciliation can continue cleanup while the index is unavailable.
+
+Scope progress includes `unfinished_age_seconds` and distinguishes reader grace,
+manual operation, missing/unavailable observations, an active claim, scheduled
+retry and ready work. `stalled` means ten minutes have elapsed after the later of
+reader grace, last observed success and the scheduled attempt, with no active
+lease or pending retry. Missing observations remain `awaiting_observation`; bounded
+discovery may not have reached the scope. Treat a stall as an inspection signal,
+not permission to override ownership or replay an uncertain mutation.
+
+Worker debug logs report counts for each bounded page: keys scanned, authorized
+active operations seen before stepping, oldest active start time in that page,
+attempts, scope failures, obsolete hints pruned and hint publication failures.
+Counts include grace waiting and can repeat across pages or nodes. They are
+observations, not an exact total backlog; do not sum them into one. Customer GETs
+do not expose cross-tenant page counts. No external notification is configured.
+See [ADR 982](adr/982-durable-registry-cleanup-health.md).
+
 ## Source and native acceptance
+
+The cleanup-health implementation at source commit
+`8dae92be904aaca71b6e9a55d266f10e035307f3` passed
+[remote CI run 38177282361](https://github.com/poyrazK/faas/actions/runs/38177282361).
+Validation includes four durable Go packages under the race detector, 34 focused
+API race tests (including discovery/progress health and authenticated response
+coverage), CLI and generated-protocol checks, 16 Node workflow tests and the
+packed starter install/typecheck workflow. No local tests or native GCS/KVM
+acceptance were run. Native acceptance must also check independent node snapshots,
+clock skew, shutdown/restart, discovery outages, delayed progress and debug-log
+observations at realistic backlog sizes before production enablement.
 
 The indexed-discovery implementation at source commit
 `4c4fe97fc62e52a6c293c4825e5faf210e4e8a13` passed
