@@ -69,7 +69,21 @@ func (s *server) connectDurableEntity(w http.ResponseWriter, r *http.Request, ac
 		}
 		s.invokeDurableEntity(w, r, current)
 	})))
+	if r.Header.Get("Origin") != "" {
+		api.WriteProblem(w, api.ErrValidation("entity sockets accept service clients without an Origin header"))
+		return
+	}
+	lease, release, ok := s.reserveEntityTenantConnection(w, r, id)
+	if !ok {
+		return
+	}
+	defer release()
 	s.durableEntitySockets.Serve(w, r, acct.ID, string(identity), func(frame entitysocket.Frame) entitysocket.Reply {
+		if s.durableEntityTenantQuotas != nil {
+			if err := s.durableEntityTenantQuotas.CheckConnection(r.Context(), id, lease); err != nil {
+				return entitysocket.Reply{Status: 503}
+			}
+		}
 		request.RequestID, request.Payload = frame.RequestID, frame.Payload
 		body, err := json.Marshal(request)
 		if err != nil {

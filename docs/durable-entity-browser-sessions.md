@@ -109,3 +109,9 @@ and revocation writes, header redaction, prefix-restricted cleanup, and the
 existing takeover/restart scenarios. Keep the production preview flags off until
 that evidence is available. Authenticate users and authorize entity access in
 the application backend before minting grants.
+
+For shared admission limits and atomic grant-byte accounting, see
+[tenant quotas](durable-entity-tenant-quotas.md). Quota mode moves new grants into
+`tenant-quotas/v1/` and uses opaque scoped grant IDs/credentials. Its records must
+not receive the standalone-grant TTL cleanup rule. Existing standalone grants
+need renewal after a coordinated quota-mode rollout.

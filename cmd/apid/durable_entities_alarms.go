@@ -93,6 +93,11 @@ func (s *server) deliverDurableEntityAlarm(ctx context.Context, alarm durableent
 	if id != alarm.Entity {
 		return durableentity.ErrAlarmObsolete
 	}
+	if s.durableEntityTenantQuotas != nil {
+		if err := s.durableEntityTenantQuotas.AdmitInvocation(callCtx, id); err != nil {
+			return err
+		}
+	}
 	result, err = s.durableEntities.InvokeAlarm(callCtx, alarm, s.durableEntityOwner, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.dispatchDurableEntityHandler(ctx, acct, app, scope, alarm.Entity, request, view, "alarm")
 	})

@@ -42,7 +42,10 @@ type Grant struct {
 	Digest           string           `json:"digest"`
 	Revoked          bool             `json:"revoked"`
 }
-type Grants struct{ Store durableentity.ObjectStore }
+type Grants struct {
+	Store  durableentity.ObjectStore
+	Quotas *Quotas
+}
 
 func ValidOrigin(origin string) bool {
 	u, err := url.Parse(origin)
@@ -71,11 +74,29 @@ func (g *Grants) Mint(ctx context.Context, grant Grant, ttl time.Duration) (Gran
 		return Grant{}, "", err
 	}
 	grant.ID = uuid.NewString()
-	grant.ExpiresAt = time.Now().UTC().Add(ttl)
+	if g.Quotas != nil {
+		scope, err := scopeFor(grant.Entity)
+		if err != nil {
+			return Grant{}, "", err
+		}
+		grant.ID = scopeKey(scope) + "." + grant.ID
+	}
+	now := time.Now().UTC()
+	if g.Quotas != nil {
+		now = g.Quotas.now()
+	}
+	grant.ExpiresAt = now.Add(ttl)
 	grant.Revoked = false
 	token := grant.ID + "." + base64.RawURLEncoding.EncodeToString(secret)
 	digest := sha256.Sum256([]byte(token))
 	grant.Digest = hex.EncodeToString(digest[:])
+	if g.Quotas != nil {
+		committed, err := g.Quotas.mint(ctx, grant)
+		if err != nil {
+			return Grant{}, "", err
+		}
+		return committed, token, nil
+	}
 	body, err := json.Marshal(grant)
 	if err != nil {
 		return Grant{}, "", err
@@ -86,6 +107,9 @@ func (g *Grants) Mint(ctx context.Context, grant Grant, ttl time.Duration) (Gran
 	return grant, token, nil
 }
 func (g *Grants) Read(ctx context.Context, id string) (Grant, string, error) {
+	if g.Quotas != nil {
+		return g.Quotas.readGrant(ctx, id)
+	}
 	if !sessionUUID(id) {
 		return Grant{}, "", ErrGrantDenied
 	}
@@ -104,25 +128,32 @@ func (g *Grants) Read(ctx context.Context, id string) (Grant, string, error) {
 }
 func (g *Grants) Authenticate(ctx context.Context, token, origin string) (Grant, error) {
 	parts := strings.Split(token, ".")
-	if len(parts) != 2 || len(parts[1]) != 43 {
+	if (len(parts) != 2 && len(parts) != 3) || len(parts[len(parts)-1]) != 43 {
 		return Grant{}, ErrGrantDenied
 	}
-	secret, err := base64.RawURLEncoding.DecodeString(parts[1])
+	secret, err := base64.RawURLEncoding.DecodeString(parts[len(parts)-1])
 	if err != nil || len(secret) != 32 {
 		return Grant{}, ErrGrantDenied
 	}
-	grant, _, err := g.Read(ctx, parts[0])
+	grant, _, err := g.Read(ctx, strings.Join(parts[:len(parts)-1], "."))
 	if err != nil {
 		return Grant{}, err
 	}
 	digest := sha256.Sum256([]byte(token))
 	expected, err := hex.DecodeString(grant.Digest)
-	if err != nil || subtle.ConstantTimeCompare(digest[:], expected) != 1 || grant.Revoked || !time.Now().Before(grant.ExpiresAt) || !ValidOrigin(origin) || origin != grant.Origin {
+	now := time.Now()
+	if g.Quotas != nil {
+		now = g.Quotas.now()
+	}
+	if err != nil || subtle.ConstantTimeCompare(digest[:], expected) != 1 || grant.Revoked || !now.Before(grant.ExpiresAt) || !ValidOrigin(origin) || origin != grant.Origin {
 		return Grant{}, ErrGrantDenied
 	}
 	return grant, nil
 }
 func (g *Grants) Revoke(ctx context.Context, id, account, app string) error {
+	if g.Quotas != nil {
+		return g.Quotas.revoke(ctx, id, account, app)
+	}
 	for attempt := 0; attempt < 3; attempt++ {
 		grant, version, err := g.Read(ctx, id)
 		if err != nil {

@@ -132,6 +132,8 @@ test('browser connector keeps scoped credentials out of URLs and rejects unsafe 
   connectDurableEntityBrowserSession('https://api.example.com',grant);
   assert.equal(calls[0]?.url,'wss://api.example.com/v1/apps/rooms/entities/session-connect');
   assert.deepEqual(calls[0]?.protocols,['gregale.entity.v1',`gregale.grant.${grant.credential}`]);
+  connectDurableEntityBrowserSession('https://api.example.com',{...grant,credential:`${'a'.repeat(64)}.${grant.credential}`});
+  assert.deepEqual(calls[1]?.protocols,['gregale.entity.v1',`gregale.grant.${'a'.repeat(64)}.${grant.credential}`]);
   for(const origin of ['http://api.example.com','https://owner:secret@api.example.com','https://api.example.com/?token=secret'])assert.throws(()=>connectDurableEntityBrowserSession(origin,grant));
   assert.throws(()=>connectDurableEntityBrowserSession('https://api.example.com',{...grant,connect_path:'//attacker.example/connect'}));
   assert.throws(()=>connectDurableEntityBrowserSession('https://api.example.com',{...grant,expires_at:'invalid'}));

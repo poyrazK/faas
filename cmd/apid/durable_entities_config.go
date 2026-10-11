@@ -17,6 +17,11 @@ import (
 
 func (s *server) configureDurableEntities(ctx context.Context, getenv func(string) string) error {
 	s.durableEntitySockets = nil
+	s.durableEntityTenantQuotas = nil
+	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
+	if quotas && getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
+		return errors.New("tenant quotas require durable entities")
+	}
 	s.durableEntitySessionGrants = nil
 	browser := getenv("FAAS_DURABLE_ENTITY_BROWSER_SESSIONS_ENABLED") == "1"
 	if browser && getenv("FAAS_DURABLE_ENTITY_SOCKETS_ENABLED") != "1" {
@@ -98,6 +103,14 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	if err != nil {
 		return err
 	}
+	var tenantQuotas *entitysocket.Quotas
+	if quotas {
+		limits, err := durableEntityTenantLimits(getenv, limit)
+		if err != nil {
+			return err
+		}
+		tenantQuotas = &entitysocket.Quotas{Store: store, Limits: limits}
+	}
 	// The request budget is shorter than this lease. We deliberately avoid a
 	// renewal writer racing every transition in the first synchronous slice.
 	probeCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
@@ -143,12 +156,13 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	if sockets {
 		s.durableEntitySockets = entitysocket.New()
 		if browser {
-			s.durableEntitySessionGrants = &entitysocket.Grants{Store: store}
+			s.durableEntitySessionGrants = &entitysocket.Grants{Store: store, Quotas: tenantQuotas}
 		}
 	}
 	s.durableEntityRestoreValidationEnabled = getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") == "1"
 	s.durableEntityBackupsEnabled = backups
 	s.durableEntityHealthEnabled = health
+	s.durableEntityTenantQuotas = tenantQuotas
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance

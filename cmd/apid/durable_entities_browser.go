@@ -25,6 +25,11 @@ func (s *server) sessionGrantAvailable(w http.ResponseWriter) bool {
 	return true
 }
 func grantProblem(w http.ResponseWriter, err error) {
+	var quota *entitysocket.QuotaError
+	if errors.As(err, &quota) {
+		writeEntityTenantQuotaProblem(w, err)
+		return
+	}
 	if errors.Is(err, entitysocket.ErrGrantDenied) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Session grant denied", "grant is invalid, expired or revoked"))
 	} else {
@@ -150,6 +155,11 @@ func (s *server) connectEntityBrowserSession(w http.ResponseWriter, r *http.Requ
 		_, _ = w.Write(check.body.Bytes())
 		return
 	}
+	lease, release, ok := s.reserveEntityTenantConnection(w, r, grant.Entity)
+	if !ok {
+		return
+	}
+	defer release()
 	identity, _ := json.Marshal(grant.Entity)
 	s.durableEntitySockets.ServeBrowser(w, r, acct.ID, string(identity), grant.Origin, func(frame entitysocket.Frame) entitysocket.Reply {
 		current, err := s.durableEntitySessionGrants.Authenticate(r.Context(), token, r.Header.Get("Origin"))
@@ -170,6 +180,11 @@ func (s *server) connectEntityBrowserSession(w http.ResponseWriter, r *http.Requ
 		admit(gate, sub, account)
 		if gate.status != 204 {
 			return entitysocket.Reply{Status: gate.status}
+		}
+		if s.durableEntityTenantQuotas != nil {
+			if err := s.durableEntityTenantQuotas.CheckConnection(r.Context(), grant.Entity, lease); err != nil {
+				return entitysocket.Reply{Status: 503}
+			}
 		}
 		body, _ := json.Marshal(api.DurableEntityInvokeRequest{Namespace: current.Entity.Namespace, Key: current.Entity.Key, Environment: current.Environment, PlatformTenantID: current.PlatformTenantID, RequestID: frame.RequestID, Payload: frame.Payload})
 		sub = sub.Clone(context.WithValue(sub.Context(), entitySocketScopeFence{}, grant.Entity))

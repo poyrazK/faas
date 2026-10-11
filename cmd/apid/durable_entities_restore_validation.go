@@ -125,6 +125,11 @@ func durableEntityValidationDeploymentProblem() *api.Problem {
 }
 
 func (s *server) performDurableEntityRestore(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest) (durableentity.Result, error) {
+	if s.durableEntityTenantQuotas != nil {
+		if err := s.durableEntityTenantQuotas.AdmitInvocation(ctx, id); err != nil {
+			return durableentity.Result{}, err
+		}
+	}
 	exported := durableEntityExportFromAPI(request.Export)
 	if request.ValidationDeploymentID == "" {
 		if request.ValidationBundleSHA256 != "" {

@@ -76,5 +76,5 @@ jobs:
       - name: Verify CLI workflow, read-only inspection and generated reference
         run: go test -race ./cmd/gregale -run 'Test(DurableEntity|Entity|MarkdownReferenceFresh)' -count=1
 
-      - name: Verify authenticated entity sockets and admission changes
-        run: go test -race ./cmd/apid -run 'TestDurableEntitySocket' -count=1
+      - name: Verify authenticated entity sockets, quotas, alarms and restore admission
+        run: go test -race ./cmd/apid -run 'Test(DurableEntitySocket|DurableEntityAlarm|ApplicationValidatedRestore|EntityExportRestore)' -count=1

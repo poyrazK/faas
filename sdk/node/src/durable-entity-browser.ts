@@ -14,7 +14,7 @@ export function connectDurableEntityBrowserSession(apiOrigin: string, grant: Dur
     throw new TypeError('use an HTTPS API origin (HTTP localhost is allowed for development)');
   }
   if (grant.protocol !== 'gregale.entity.v1' || !/^\/v1\/apps\/[a-z0-9-]+\/entities\/session-connect$/.test(grant.connect_path) ||
-      !/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(grant.credential) || !Number.isFinite(Date.parse(grant.expires_at)) || Date.parse(grant.expires_at) <= Date.now()) {
+      !/^(?:[a-f0-9]{64}\.)?[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(grant.credential) || !Number.isFinite(Date.parse(grant.expires_at)) || Date.parse(grant.expires_at) <= Date.now()) {
     throw new TypeError('invalid or expired session grant');
   }
   const target = new URL(grant.connect_path, origin);

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,6 +48,12 @@ func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acc
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
+	if s.durableEntityTenantQuotas != nil {
+		if err := s.durableEntityTenantQuotas.AdmitInvocation(ctx, id); err != nil {
+			writeEntityTenantQuotaProblem(w, err)
+			return
+		}
+	}
 	started := time.Now()
 	result, err := s.durableEntities.Invoke(ctx, id, s.durableEntityOwner, durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.invokeDurableEntityHandler(ctx, acct, app, scope, id, request, view)
@@ -106,6 +113,11 @@ func (s *server) resolveDurableEntityIdentity(r *http.Request, acct state.Accoun
 }
 
 func writeDurableEntityProblem(w http.ResponseWriter, err error) {
+	var quota *entitysocket.QuotaError
+	if errors.As(err, &quota) {
+		writeEntityTenantQuotaProblem(w, err)
+		return
+	}
 	var problem *api.Problem
 	if errors.As(err, &problem) {
 		api.WriteProblem(w, problem)
