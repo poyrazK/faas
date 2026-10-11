@@ -312,3 +312,13 @@ export { validateDurableEntityRestore, type DurableEntityRestoreValidationOption
 export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
+
+export type { BindingReleasePolicy } from './generated/models/BindingReleasePolicy.js';
+
+export type { SetBindingReleasePolicyRequest } from './generated/models/SetBindingReleasePolicyRequest.js';
+
+export type { SetObjectStorageBindingReleasePolicyRequest } from './generated/models/SetObjectStorageBindingReleasePolicyRequest.js';
+
+export type { ObjectStorageReleaseRequirements } from './generated/models/ObjectStorageReleaseRequirements.js';
+
+export type { BindingCheckReport } from './generated/models/BindingCheckReport.js';

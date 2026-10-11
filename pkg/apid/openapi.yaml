@@ -605,7 +605,9 @@ paths:
         canary advance evaluate the policy; request flags may only strengthen it.
         New candidates must be admitted with explicit zero traffic. Automatic
         cutovers, legacy recovery and project release graph switches fail closed
-        until they support binding fences. To recover without evidence, explicitly
+        until they support binding fences. Policies with storage requirements must use
+        release-policy-with-object-storage for updates, including explicit clearing.
+        To recover without evidence, explicitly
         set off with the current revision and a reason, then retry. Every update
         has durable policy history. Existing traffic is not changed by this call.
       requestBody:
@@ -613,6 +615,47 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/SetBindingReleasePolicyRequest' }
+      responses:
+        '200':
+          description: Saved policy with incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/bindings/release-policy-with-object-storage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Exact deployment scope. Omit to select default.
+        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
+    put:
+      tags: [apps]
+      operationId: setObjectStorageBindingReleasePolicy
+      summary: Replace release policy including required object-storage operations.
+      description: |
+        Requires deploy:write or admin and completed MFA. Uses the same revision
+        compare-and-set and traffic fences as release-policy. Explicit
+        object_storage_requirements is required; an empty object clears it.
+        Keys are managed environment prefixes in this scope (at most 32), values
+        are read, write or read_write. Missing bindings, insufficient permissions,
+        stale evidence, incomplete stages and mismatched operations block traffic.
+        Read accepts the legacy listing canary; write requires upload and cleanup;
+        read_write also requires byte-for-byte download. Current application ACKs
+        are independently required when configured. This call only records policy;
+        neither policy updates nor promotion initiate storage writes. Old servers
+        return 404 on this route rather than silently dropping the requirements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetObjectStorageBindingReleasePolicyRequest' }
       responses:
         '200':
           description: Saved policy with incremented revision.
@@ -43899,6 +43942,8 @@ components:
       description: Preflight status and safe evidence summary for one binding.
       required: [type, name, scope, status]
       properties:
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.' }
+        required_object_storage_mode: { type: string, enum: [read, write, read_write] }
         type: { type: string }
         name: { type: string }
         binding: { type: string }
@@ -43914,6 +43959,7 @@ components:
       description: Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a passed report does not independently establish application readiness or credential use. Optional application acknowledgements are version-bound self-attestations.
       required: [app, scope, deployment_id, checked_at, inventory_generated_at, max_verification_age, allow_unsupported, passed, coverage, bindings, runtime, issues, blockers, warnings]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         expected_deployment_id: { type: string, format: uuid }
         app: { type: string }
         scope: { type: string }
@@ -43939,11 +43985,24 @@ components:
         path: { type: string, minLength: 1, maxLength: 512 }
         expected_status: { type: integer, minimum: 200, maximum: 299 }
 
+    ObjectStorageReleaseRequirements:
+      type: object
+      maxProperties: 32
+      description: 'Managed environment prefix to required canary mode in the selected scope. Prefixes match ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require successful cleanup. No implicit probes or writes.'
+      additionalProperties: { type: string, enum: [read, write, read_write] }
+    SetObjectStorageBindingReleasePolicyRequest:
+      allOf:
+        - $ref: '#/components/schemas/SetBindingReleasePolicyRequest'
+        - type: object
+          required: [object_storage_requirements]
+          properties:
+            object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
     BindingReleasePolicy:
       type: object
       description: Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
       required: [app_id, scope, mode, revision, max_verification_age, require_application_ack]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         app_id: { type: string, format: uuid }
         scope: { type: string }
         mode: { type: string, enum: [off, enforce] }
@@ -43957,6 +44016,7 @@ components:
       description: Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
       required: [mode, expected_revision]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         mode: { type: string, enum: [off, enforce] }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
         max_verification_age: { type: string, default: 10m, description: 'Whole-second Go duration between 1s and 24h.' }
@@ -43986,6 +44046,7 @@ components:
       description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
       required: [result, source, deployment_id, scope]
       properties:
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.' }
         result: { type: string, description: 'Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence.' }
         reason: { type: string, description: 'Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or report_truncated.' }
         source: { type: string, description: 'Currently task_guest.' }

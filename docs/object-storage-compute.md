@@ -142,7 +142,64 @@ The admitted mode must match the returned report. Missing download/cleanup
 stages, legacy reports for write tasks, nonzero exits and truncated output never
 qualify. The existing binding check and promotion gates consume the normalized
 operation stages; a failed cleanup makes the latest evidence fail. Existing
-read-only evidence retains its original meaning, and promotion does not
-automatically require or execute writes. Inspect the recorded stages when a
-release requires write-path qualification. Probes run in task guests; they do
+read-only evidence retains its original meaning. Release policies can require
+specific operations per prefix; promotion consumes that evidence and never
+executes writes. Probes run in task guests; they do
 not prove resident application adoption, which remains a separate ACK gate.
+
+## Required storage operations before traffic
+
+Declare storage requirements per managed environment prefix in one deployment
+scope. Setting a policy replaces its complete requirements map; include every
+prefix you want to retain. Policy updates use compare-and-set revisions.
+
+```sh
+gregale bindings release-policy set my-api --scope production \
+  --mode enforce --expected-revision 0 --max-age 10m \
+  --object-storage-require GREGALE_S3_ASSETS=read_write \
+  --require-application-ack
+```
+
+`read` accepts the legacy bucket-listing canary. It does not prove object byte
+reads. `write` requires successful conditional upload and cleanup; `read_write`
+also requires byte-for-byte download. A complete read/write canary can satisfy
+any of these requirements. Write-only cleanup acknowledges deletion; it cannot
+independently read back absence. Existing cleanup and Object Lock limits still
+apply. Neither setting policy nor increasing traffic schedules a canary.
+
+Collect write evidence explicitly against the exact live candidate, then inspect
+it with the same requirements:
+
+```sh
+gregale bindings verify my-api --deployment v12 \
+  --object-storage GREGALE_S3_ASSETS --object-storage-write
+gregale bindings check my-api --deployment v12 --scope production \
+  --object-storage-require GREGALE_S3_ASSETS=read_write \
+  --require-application-ack --json
+```
+
+`bindings check` evaluates the flags supplied to that read-only check; use
+`bindings release-policy get` to inspect the stored policy. Server-side promotion,
+traffic redistribution, and existing checked rollout/recovery paths consume the
+stored requirements for each deployment gaining traffic. A missing/ambiguous
+prefix, insufficient permission, incomplete or failed stages, stale binding or
+credential revision, wrong deployment/scope, expired evidence, pending rotation,
+or missing required application ACK blocks the release. Waiving unsupported
+bindings cannot waive storage operations. Application ACKs remain independent
+version-bound self-attestations, not proof of readiness or credential use.
+
+Storage policy updates use a dedicated route that old servers reject. A legacy
+policy update cannot silently remove existing requirements. Use the repeated
+`--object-storage-require` flags to retain/replace them, or explicitly clear them:
+
+```sh
+gregale bindings release-policy set my-api --scope production \
+  --mode enforce --expected-revision 1 --clear-object-storage-requirements
+```
+
+The locked traffic write compares the evaluated requirements and policy revision
+again. Config, probe completion, runtime observations, rotation, or policy changes
+invalidate the promotion fence; collect current evidence and retry. Rolling back
+the requirements migration is refused while any policy has a nonempty map; the
+guard locks policy writes so concurrent updates cannot evade it. Clear requirements
+explicitly before a reviewed rollback.

@@ -302,6 +302,10 @@ func normalizeBindingVerification(task state.BindingVerificationTask) *api.Bindi
 		names = []string{"configuration", "identity", "gateway", "response"}
 		statuses = []string{report.Configuration.Status, report.Identity.Status, report.Gateway.Status, report.Response.Status}
 	case api.BindingTypeObjectStorage:
+		result.ObjectStorageMode = task.Pin.ObjectStorageMode
+		if result.ObjectStorageMode == "" {
+			result.ObjectStorageMode = "read"
+		}
 		var report api.ObjectStorageBindingProbeReport
 		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Prefix != task.Pin.Binding || report.Mode != task.Pin.ObjectStorageMode {
 			result.Reason = "report_invalid"

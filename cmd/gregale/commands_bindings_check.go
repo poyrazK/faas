@@ -23,6 +23,8 @@ func cmdBindingsCheck(args []string) int {
 	maxAge := fs.Duration("max-verification-age", bindingcheck.DefaultMaxVerificationAge, "maximum age of passed probe evidence (default 10m)")
 	allowUnsupported := fs.Bool("allow-unsupported", false, "waive connectivity coverage for active queue and outbound bindings")
 	requireAck := fs.Bool("require-application-ack", false, "require current application acknowledgements for PostgreSQL and object-storage binding secrets")
+	var storageRequirements storageRequirementsFlag
+	fs.Var(&storageRequirements, "object-storage-require", "require PREFIX=read|write|read_write evidence (repeatable; reads recorded evidence only)")
 	wait := fs.Bool("wait", false, "poll read-only inventory while probes, refreshes or application acknowledgements are pending")
 	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time to wait for binding preflight")
 	pollInterval := fs.Duration("poll-interval", bindingCheckPollIntervalDefault, "inventory polling interval with --wait")
@@ -88,7 +90,7 @@ func cmdBindingsCheck(args []string) int {
 		}
 		return code
 	}
-	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck}
+	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck, ObjectStorageRequirements: storageRequirements}
 	report, err := pollBindingCheck(ctx, client, policy, *wait, *pollInterval)
 	if err != nil && report.App == "" {
 		code := printErr("Could not load app bindings", err)
@@ -129,6 +131,9 @@ func renderBindingCheck(report bindingcheck.Report) {
 			_, _ = fmt.Fprintf(osStdout, " (%s)", item.Reason)
 		}
 		_, _ = fmt.Fprintln(osStdout)
+		if item.RequiredObjectStorageMode != "" || item.ObjectStorageMode != "" {
+			_, _ = fmt.Fprintf(osStdout, "  storage evidence=%s required=%s\n", humanBindingValue(item.ObjectStorageMode), humanBindingValue(item.RequiredObjectStorageMode))
+		}
 		if adoption := item.ApplicationAdoption; adoption != nil {
 			_, _ = fmt.Fprintf(osStdout, "  application adoption=%s; ACK pairs current=%d failed=%d stale=%d unknown=%d; reload pairs current=%d failed=%d stale=%d unknown=%d\n", adoption.Status, adoption.Application.Current, adoption.Application.Failed, adoption.Application.Stale, adoption.Application.Unknown, adoption.Reload.Current, adoption.Reload.Failed, adoption.Reload.Stale, adoption.Reload.Unknown)
 			for _, target := range adoption.Targets {

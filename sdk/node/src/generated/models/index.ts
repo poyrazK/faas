@@ -994,6 +994,7 @@ export type { ObjectStorageComputeBindingList } from './ObjectStorageComputeBind
 export type { ObjectStorageComputeBindingSecretKeys } from './ObjectStorageComputeBindingSecretKeys.js';
 export type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './ObjectStoragePricing.js';
+export type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
 export type { ObjectStorageUsage } from './ObjectStorageUsage.js';
 export type { ObjectStorageUsageReport } from './ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './ObjectStorageUsageResponse.js';
@@ -1695,6 +1696,7 @@ export type { SetDeploymentAliasRequest } from './SetDeploymentAliasRequest.js';
 export type { SetGraceWindowRequest } from './SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessGrantRequest.js';
 export type { SetObjectS3CopySourceRequest } from './SetObjectS3CopySourceRequest.js';
+export type { SetObjectStorageBindingReleasePolicyRequest } from './SetObjectStorageBindingReleasePolicyRequest.js';
 export type { SetPasswordRequest } from './SetPasswordRequest.js';
 export type { SetPlatformTenantConsumerProvisioningPolicyRequest } from './SetPlatformTenantConsumerProvisioningPolicyRequest.js';
 export type { SetPlatformTenantCredentialPolicyRequest } from './SetPlatformTenantCredentialPolicyRequest.js';

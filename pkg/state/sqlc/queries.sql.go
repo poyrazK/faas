@@ -69743,21 +69743,22 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 
 const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one
 UPDATE app_binding_release_policies p SET mode=$1,revision=p.revision+1,max_age_seconds=$2,
- require_application_ack=$3,reason=$4,updated_at=clock_timestamp()
-FROM apps a WHERE p.app_id=a.id AND a.id=$5 AND a.account_id=$6 AND a.status<>'deleted'
- AND p.scope=$7 AND p.revision=$8
+ require_application_ack=$3,reason=$4,object_storage_requirements=$5::jsonb,updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=$6 AND a.account_id=$7 AND a.status<>'deleted'
+ AND p.scope=$8 AND p.revision=$9
 RETURNING to_jsonb(p)::jsonb AS policy
 `
 
 type UpdateBindingReleasePolicyParams struct {
-	Mode                  string
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
-	Scope                 string
-	ExpectedRevision      int64
+	Mode                      string
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
+	Scope                     string
+	ExpectedRevision          int64
 }
 
 func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error) {
@@ -69766,6 +69767,7 @@ func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg U
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 		arg.Scope,
@@ -72071,25 +72073,26 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 }
 
 const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
-INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
-SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6
-FROM apps a WHERE a.id=$7 AND a.account_id=$8 AND a.status<>'deleted'
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements)
+SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb
+FROM apps a WHERE a.id=$8 AND a.account_id=$9 AND a.status<>'deleted'
  AND $3::bigint=0
 ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
- max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,updated_at=clock_timestamp()
 WHERE app_binding_release_policies.revision=$3::bigint
 RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy
 `
 
 type WriteBindingReleasePolicyParams struct {
-	Scope                 string
-	Mode                  string
-	ExpectedRevision      int64
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
+	Scope                     string
+	Mode                      string
+	ExpectedRevision          int64
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
 }
 
 func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error) {
@@ -72100,6 +72103,7 @@ func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg Wr
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 	)

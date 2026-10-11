@@ -784,3 +784,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-967: Scenario TCP fault injection](967-scenario-tcp-fault-injection.md)
 
 - [ADR-968: Object storage compute clients and write canaries](968-object-storage-compute-clients-and-write-canaries.md)
+
+- [ADR-969: Object storage operation release gates](969-object-storage-operation-release-gates.md)

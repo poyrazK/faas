@@ -416,6 +416,10 @@ from .binding_application_adoption import BindingApplicationAdoption
 from .binding_application_adoption_source import BindingApplicationAdoptionSource
 from .binding_application_adoption_status import BindingApplicationAdoptionStatus
 from .binding_check_binding_result import BindingCheckBindingResult
+from .binding_check_binding_result_object_storage_mode import BindingCheckBindingResultObjectStorageMode
+from .binding_check_binding_result_required_object_storage_mode import (
+    BindingCheckBindingResultRequiredObjectStorageMode,
+)
 from .binding_check_finding import BindingCheckFinding
 from .binding_check_report import BindingCheckReport
 from .binding_inventory_issue import BindingInventoryIssue
@@ -433,6 +437,7 @@ from .binding_runtime_freshness import BindingRuntimeFreshness
 from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
 from .binding_verification import BindingVerification
 from .binding_verification_check import BindingVerificationCheck
+from .binding_verification_object_storage_mode import BindingVerificationObjectStorageMode
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -1927,6 +1932,8 @@ from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBind
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
+from .object_storage_release_requirements import ObjectStorageReleaseRequirements
+from .object_storage_release_requirements_additional_property import ObjectStorageReleaseRequirementsAdditionalProperty
 from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
@@ -3167,6 +3174,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
+from .set_object_storage_binding_release_policy_request import SetObjectStorageBindingReleasePolicyRequest
 from .set_password_request import SetPasswordRequest
 from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
 from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
@@ -3948,6 +3956,8 @@ __all__ = (
     "BindingApplicationAdoptionSource",
     "BindingApplicationAdoptionStatus",
     "BindingCheckBindingResult",
+    "BindingCheckBindingResultObjectStorageMode",
+    "BindingCheckBindingResultRequiredObjectStorageMode",
     "BindingCheckFinding",
     "BindingCheckReport",
     "BindingInventoryIssue",
@@ -3965,6 +3975,7 @@ __all__ = (
     "BindingRuntimeInstanceCounts",
     "BindingVerification",
     "BindingVerificationCheck",
+    "BindingVerificationObjectStorageMode",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -5403,6 +5414,8 @@ __all__ = (
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
+    "ObjectStorageReleaseRequirements",
+    "ObjectStorageReleaseRequirementsAdditionalProperty",
     "ObjectStorageUsage",
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
@@ -6581,6 +6594,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetObjectS3CopySourceRequest",
+    "SetObjectStorageBindingReleasePolicyRequest",
     "SetPasswordRequest",
     "SetPlatformTenantConsumerProvisioningPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequest",

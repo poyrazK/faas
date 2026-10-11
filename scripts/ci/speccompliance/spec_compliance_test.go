@@ -573,13 +573,14 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
-	"EdgeRuleMatchExpr":      true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
-	"DevBridgeScope":         true, // wire types live in pkg/devbridge; digests never cross the wire
-	"DevBridgeSession":       true,
-	"DevBridgeActivity":      true, // ADR-379 wire observer types live in pkg/devbridge
-	"DevBridgeRequestRecord": true,
-	"DevBridgeCredentials":   true,
-	"DevBridgeWebhookReplay": true,
+	"ObjectStorageReleaseRequirements": true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
+	"EdgeRuleMatchExpr":                true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
+	"DevBridgeScope":                   true, // wire types live in pkg/devbridge; digests never cross the wire
+	"DevBridgeSession":                 true,
+	"DevBridgeActivity":                true, // ADR-379 wire observer types live in pkg/devbridge
+	"DevBridgeRequestRecord":           true,
+	"DevBridgeCredentials":             true,
+	"DevBridgeWebhookReplay":           true,
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
 	// lives in pkg/state/feature_flags.go and handler-local request/evidence
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.

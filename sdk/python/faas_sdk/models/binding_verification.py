@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.binding_verification_object_storage_mode import (
+    BindingVerificationObjectStorageMode,
+    check_binding_verification_object_storage_mode,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -31,6 +35,9 @@ class BindingVerification:
     """Currently task_guest."""
     deployment_id: UUID
     scope: str
+    object_storage_mode: BindingVerificationObjectStorageMode | Unset = UNSET
+    """Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write
+    requirements."""
     reason: str | Unset = UNSET
     """Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or
     report_truncated."""
@@ -47,6 +54,10 @@ class BindingVerification:
         deployment_id = str(self.deployment_id)
 
         scope = self.scope
+
+        object_storage_mode: str | Unset = UNSET
+        if not isinstance(self.object_storage_mode, Unset):
+            object_storage_mode = self.object_storage_mode
 
         reason = self.reason
 
@@ -73,6 +84,8 @@ class BindingVerification:
                 "scope": scope,
             }
         )
+        if object_storage_mode is not UNSET:
+            field_dict["object_storage_mode"] = object_storage_mode
         if reason is not UNSET:
             field_dict["reason"] = reason
         if checked_at is not UNSET:
@@ -96,6 +109,13 @@ class BindingVerification:
         deployment_id = UUID(d.pop("deployment_id"))
 
         scope = d.pop("scope")
+
+        _object_storage_mode = d.pop("object_storage_mode", UNSET)
+        object_storage_mode: BindingVerificationObjectStorageMode | Unset
+        if isinstance(_object_storage_mode, Unset):
+            object_storage_mode = UNSET
+        else:
+            object_storage_mode = check_binding_verification_object_storage_mode(_object_storage_mode)
 
         reason = d.pop("reason", UNSET)
 
@@ -122,6 +142,7 @@ class BindingVerification:
             source=source,
             deployment_id=deployment_id,
             scope=scope,
+            object_storage_mode=object_storage_mode,
             reason=reason,
             checked_at=checked_at,
             credential_generation=credential_generation,

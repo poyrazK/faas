@@ -8,6 +8,10 @@ import type { BindingVerificationCheck } from './BindingVerificationCheck.js';
  */
 export type BindingVerification = {
   /**
+   * Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.
+   */
+  object_storage_mode?: 'read' | 'write' | 'read_write';
+  /**
    * Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence.
    */
   result: string;
