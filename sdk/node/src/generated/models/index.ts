@@ -1154,6 +1154,7 @@ export type { OperationWorkflowReadinessComparisonRequest } from './OperationWor
 export type { OperationWorkflowReadinessComparisonResponse } from './OperationWorkflowReadinessComparisonResponse.js';
 export type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 export type { OperationWorkflowReadinessCoordinationRequest } from './OperationWorkflowReadinessCoordinationRequest.js';
+export type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
 export type { OperationWorkflowReadinessEvidence } from './OperationWorkflowReadinessEvidence.js';
 export type { OperationWorkflowReadinessEvidenceChange } from './OperationWorkflowReadinessEvidenceChange.js';
 export type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowReadinessFollowUp.js';

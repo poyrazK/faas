@@ -201,3 +201,47 @@ func (m *MemStore) readReadinessFollowUps(ctx context.Context, account, tenant, 
 	err = json.Unmarshal(raw, &out)
 	return out, err
 }
+
+func (m *MemStore) PublishDueWorkflowReadinessReminders(ctx context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data := m.operationMemoryLocked()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	type candidate struct {
+		id       string
+		index    int
+		due      time.Time
+		sequence int64
+	}
+	rows := []candidate{}
+	for id, inbox := range data.readinessInbox {
+		for i, n := range inbox {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			if readinessReminderDue(n, now) {
+				rows = append(rows, candidate{id: id, index: i, due: *n.Coordination.FollowUpAt, sequence: n.Sequence})
+			}
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if !a.due.Equal(b.due) {
+			return a.due.Before(b.due)
+		}
+		if a.id != b.id {
+			return a.id < b.id
+		}
+		return a.sequence < b.sequence
+	})
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	rows = rows[:min(len(rows), api.OperationWorkflowReadinessReminderBatchMax)]
+	for _, row := range rows {
+		n := data.readinessInbox[row.id][row.index]
+		n.Reminder = readinessDueReminder(n, now)
+		data.readinessInbox[row.id][row.index] = n
+	}
+	return len(rows), nil
+}

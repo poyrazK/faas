@@ -5402,6 +5402,7 @@ export class OperationsService {
     due,
     offset,
     limit,
+    reminderOnly,
   }: {
     /**
      * ListAccountWorkflowReadinessFollowUps. Application slug.
@@ -5435,6 +5436,10 @@ export class OperationsService {
      * ListAccountWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
      */
     limit?: number,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
+     */
+    reminderOnly?: boolean,
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -5450,6 +5455,7 @@ export class OperationsService {
         'due': due,
         'offset': offset,
         'limit': limit,
+        'reminder_only': reminderOnly,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -5482,6 +5488,7 @@ export class OperationsService {
     due,
     offset,
     limit,
+    reminderOnly,
   }: {
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application environment scope.
@@ -5511,6 +5518,10 @@ export class OperationsService {
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
      */
     limit?: number,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
+     */
+    reminderOnly?: boolean,
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -5523,6 +5534,7 @@ export class OperationsService {
         'due': due,
         'offset': offset,
         'limit': limit,
+        'reminder_only': reminderOnly,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

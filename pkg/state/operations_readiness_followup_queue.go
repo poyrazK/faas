@@ -50,6 +50,16 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 		if opts.Due == "overdue" && !row.Overdue || opts.Due == "upcoming" && row.Overdue {
 			continue
 		}
+		activeReminder := row.Reminder != nil && row.Reminder.DueAt.Equal(*row.Coordination.FollowUpAt) && row.Overdue
+		if !activeReminder {
+			row.Reminder = nil
+		}
+		if opts.ReminderOnly && !activeReminder {
+			continue
+		}
+		if activeReminder {
+			out.DueReminderCount++
+		}
 		if !operator {
 			row.PlatformTenantID = ""
 			row.SubscriptionTenantID = ""
@@ -78,7 +88,7 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 	return out, nil
 }
 func readinessFollowUpProjection(s api.OperationWorkflowReadinessSubscription, tenant string, n api.OperationWorkflowReadinessNotification) api.OperationWorkflowReadinessFollowUp {
-	row := api.OperationWorkflowReadinessFollowUp{SubscriptionID: s.ID, SubscriptionName: s.Name, SubscriptionTenantID: s.TenantID, PlatformTenantID: tenant, Scope: s.Scope, NotificationID: n.ID, Sequence: n.Sequence, Kind: n.Kind, CreatedAt: n.CreatedAt, Coordination: *n.Coordination}
+	row := api.OperationWorkflowReadinessFollowUp{SubscriptionID: s.ID, SubscriptionName: s.Name, SubscriptionTenantID: s.TenantID, PlatformTenantID: tenant, Scope: s.Scope, NotificationID: n.ID, Sequence: n.Sequence, Kind: n.Kind, CreatedAt: n.CreatedAt, Coordination: *n.Coordination, Reminder: n.Reminder}
 	if n.Change != nil {
 		b := n.Change.Baseline
 		row.Workflow = b.Workflow

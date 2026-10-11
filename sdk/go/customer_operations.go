@@ -270,3 +270,5 @@ type OperationWorkflowReadinessFollowUpOptions = api.OperationWorkflowReadinessF
 type OperationWorkflowReadinessFollowUp = api.OperationWorkflowReadinessFollowUp
 
 type OperationWorkflowReadinessFollowUpsResponse = api.OperationWorkflowReadinessFollowUpsResponse
+
+type OperationWorkflowReadinessDueReminder = api.OperationWorkflowReadinessDueReminder

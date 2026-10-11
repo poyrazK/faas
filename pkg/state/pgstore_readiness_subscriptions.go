@@ -201,18 +201,13 @@ func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tena
 	if err != nil {
 		return out, mapErr(err)
 	}
-	rows, err := q.ListReadinessNotifications(ctx, tx, sqlc.ListReadinessNotificationsParams{SubscriptionID: i, Sequence: sequence - 1, Limit: 1})
+
+	raw, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: i, Sequence: sequence})
 	if err != nil {
 		return out, mapErr(err)
 	}
-	if len(rows) != 1 {
-		return out, ErrNotFound
-	}
-	if err = json.Unmarshal(rows[0], &out); err != nil {
+	if err = json.Unmarshal(raw, &out); err != nil {
 		return out, err
-	}
-	if out.Sequence != sequence {
-		return out, ErrNotFound
 	}
 	out, err = applyReadinessCoordination(out, actor, req)
 	if err != nil {
@@ -245,4 +240,41 @@ func (s *PgStore) readReadinessFollowUps(ctx context.Context, account, tenant, a
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+func (s *PgStore) PublishDueWorkflowReadinessReminders(ctx context.Context) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	rows, err := q.LockDueReadinessReminderNotifications(ctx, tx, sqlc.LockDueReadinessReminderNotificationsParams{Now: readinessPGTime(now), BatchLimit: api.OperationWorkflowReadinessReminderBatchMax})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	published := 0
+	for _, row := range rows {
+		var n api.OperationWorkflowReadinessNotification
+		if err = json.Unmarshal(row.Payload, &n); err != nil {
+			return 0, err
+		}
+		if !readinessReminderDue(n, now) {
+			continue
+		}
+		n.Reminder = readinessDueReminder(n, now)
+		payload, err := json.Marshal(n)
+		if err != nil {
+			return 0, err
+		}
+		if _, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: row.SubscriptionID, Sequence: row.Sequence, Payload: payload}); err != nil {
+			return 0, mapErr(err)
+		}
+		published++
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return published, nil
 }

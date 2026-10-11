@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+    from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessFollowUp")
@@ -70,6 +71,9 @@ class OperationWorkflowReadinessFollowUp:
     subject: OperationSubject | Unset = UNSET
     """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
     redeploy. Never an ownership or authorization claim."""
+    reminder: OperationWorkflowReadinessDueReminder | Unset = UNSET
+    """One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling or
+    clearing retires it. Does not authorize execution."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)
@@ -112,6 +116,10 @@ class OperationWorkflowReadinessFollowUp:
         if not isinstance(self.subject, Unset):
             subject = self.subject.to_dict()
 
+        reminder: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reminder, Unset):
+            reminder = self.reminder.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -143,6 +151,8 @@ class OperationWorkflowReadinessFollowUp:
             field_dict["to_state"] = to_state
         if subject is not UNSET:
             field_dict["subject"] = subject
+        if reminder is not UNSET:
+            field_dict["reminder"] = reminder
 
         return field_dict
 
@@ -150,6 +160,7 @@ class OperationWorkflowReadinessFollowUp:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+        from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
 
         d = dict(src_dict)
         subscription_id = UUID(d.pop("subscription_id"))
@@ -201,6 +212,13 @@ class OperationWorkflowReadinessFollowUp:
         else:
             subject = OperationSubject.from_dict(_subject)
 
+        _reminder = d.pop("reminder", UNSET)
+        reminder: OperationWorkflowReadinessDueReminder | Unset
+        if isinstance(_reminder, Unset):
+            reminder = UNSET
+        else:
+            reminder = OperationWorkflowReadinessDueReminder.from_dict(_reminder)
+
         operation_workflow_readiness_follow_up = cls(
             subscription_id=subscription_id,
             subscription_name=subscription_name,
@@ -219,6 +237,7 @@ class OperationWorkflowReadinessFollowUp:
             from_state=from_state,
             to_state=to_state,
             subject=subject,
+            reminder=reminder,
         )
 
         return operation_workflow_readiness_follow_up

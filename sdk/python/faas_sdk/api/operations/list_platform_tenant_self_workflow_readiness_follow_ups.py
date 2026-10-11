@@ -23,6 +23,7 @@ def _get_kwargs(
     due: ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset = UNSET,
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
+    reminder_only: bool | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -45,6 +46,8 @@ def _get_kwargs(
     params["offset"] = offset
 
     params["limit"] = limit
+
+    params["reminder_only"] = reminder_only
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -122,6 +125,7 @@ def sync_detailed(
     due: ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset = UNSET,
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
+    reminder_only: bool | Unset = UNSET,
 ) -> Response[OperationWorkflowReadinessFollowUpsResponse | Problem]:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -138,6 +142,7 @@ def sync_detailed(
         due (ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset):
         offset (int | Unset):
         limit (int | Unset):
+        reminder_only (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,6 +160,7 @@ def sync_detailed(
         due=due,
         offset=offset,
         limit=limit,
+        reminder_only=reminder_only,
     )
 
     response = client.get_httpx_client().request(
@@ -174,6 +180,7 @@ def sync(
     due: ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset = UNSET,
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
+    reminder_only: bool | Unset = UNSET,
 ) -> OperationWorkflowReadinessFollowUpsResponse | Problem | None:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -190,6 +197,7 @@ def sync(
         due (ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset):
         offset (int | Unset):
         limit (int | Unset):
+        reminder_only (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,6 +216,7 @@ def sync(
         due=due,
         offset=offset,
         limit=limit,
+        reminder_only=reminder_only,
     ).parsed
 
 
@@ -221,6 +230,7 @@ async def asyncio_detailed(
     due: ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset = UNSET,
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
+    reminder_only: bool | Unset = UNSET,
 ) -> Response[OperationWorkflowReadinessFollowUpsResponse | Problem]:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -237,6 +247,7 @@ async def asyncio_detailed(
         due (ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset):
         offset (int | Unset):
         limit (int | Unset):
+        reminder_only (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -254,6 +265,7 @@ async def asyncio_detailed(
         due=due,
         offset=offset,
         limit=limit,
+        reminder_only=reminder_only,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -271,6 +283,7 @@ async def asyncio(
     due: ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset = UNSET,
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
+    reminder_only: bool | Unset = UNSET,
 ) -> OperationWorkflowReadinessFollowUpsResponse | Problem | None:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -287,6 +300,7 @@ async def asyncio(
         due (ListPlatformTenantSelfWorkflowReadinessFollowUpsDue | Unset):
         offset (int | Unset):
         limit (int | Unset):
+        reminder_only (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -306,5 +320,6 @@ async def asyncio(
             due=due,
             offset=offset,
             limit=limit,
+            reminder_only=reminder_only,
         )
     ).parsed

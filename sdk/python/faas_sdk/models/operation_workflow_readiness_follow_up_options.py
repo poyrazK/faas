@@ -43,6 +43,9 @@ class OperationWorkflowReadinessFollowUpOptions:
     limit: int | Unset = UNSET
     """OperationWorkflowReadinessFollowUpOptions.limit. Follow-up queue selector; customer tenant derives from
     authentication."""
+    reminder_only: bool | Unset = UNSET
+    """OperationWorkflowReadinessFollowUpOptions.reminder_only. Select only active published due reminders;
+    defaults to false."""
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope
@@ -67,6 +70,8 @@ class OperationWorkflowReadinessFollowUpOptions:
 
         limit = self.limit
 
+        reminder_only = self.reminder_only
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -88,6 +93,8 @@ class OperationWorkflowReadinessFollowUpOptions:
             field_dict["offset"] = offset
         if limit is not UNSET:
             field_dict["limit"] = limit
+        if reminder_only is not UNSET:
+            field_dict["reminder_only"] = reminder_only
 
         return field_dict
 
@@ -125,6 +132,8 @@ class OperationWorkflowReadinessFollowUpOptions:
 
         limit = d.pop("limit", UNSET)
 
+        reminder_only = d.pop("reminder_only", UNSET)
+
         operation_workflow_readiness_follow_up_options = cls(
             scope=scope,
             app_id=app_id,
@@ -134,6 +143,7 @@ class OperationWorkflowReadinessFollowUpOptions:
             due=due,
             offset=offset,
             limit=limit,
+            reminder_only=reminder_only,
         )
 
         return operation_workflow_readiness_follow_up_options

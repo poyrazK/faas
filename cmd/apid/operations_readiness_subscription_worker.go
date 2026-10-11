@@ -26,3 +26,25 @@ func (s *server) runWorkflowReadinessSubscriptionWorker(ctx context.Context) {
 		}
 	}
 }
+
+func (s *server) runWorkflowReadinessReminderWorker(ctx context.Context) {
+	worker, ok := s.store.(state.OperationWorkflowReadinessReminderWorkerStore)
+	if !ok {
+		return
+	}
+	tick := time.NewTicker(api.OperationWorkflowReadinessReminderPollInterval)
+	defer tick.Stop()
+	for {
+		publish, cancel := context.WithTimeout(ctx, api.OperationWorkflowReadinessReminderPublishTimeout)
+		_, err := worker.PublishDueWorkflowReadinessReminders(publish)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			s.log.Warn("workflow readiness due reminders will retry")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}

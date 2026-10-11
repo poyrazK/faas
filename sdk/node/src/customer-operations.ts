@@ -322,6 +322,7 @@ export class GregaleOperationClient {
 
   workflowReadinessFollowUps(options: OperationWorkflowReadinessFollowUpOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessFollowUpsResponse> {
     const q = readinessSubscriptionQuery(options);
+    if (options.reminderOnly !== undefined) q.set('reminder_only', String(options.reminderOnly));
     if (options.owner !== undefined) q.set('owner', options.owner);
     if (options.workflow !== undefined) q.set('workflow', options.workflow);
     if (options.due !== undefined) q.set('due', options.due);
@@ -703,7 +704,7 @@ export interface OperationWorkflowReadinessSubscription extends Omit<OperationWo
  id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
 }
 export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
-export interface OperationWorkflowReadinessNotification { coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotification { reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
 export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
 function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
  if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
@@ -714,6 +715,8 @@ export interface OperationWorkflowReadinessCoordinationRequest { revision: numbe
 export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
 export interface OperationWorkflowReadinessNotificationCheck { notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
-export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
-export interface OperationWorkflowReadinessFollowUp { subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
-export interface OperationWorkflowReadinessFollowUpsResponse { items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
+export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
+export interface OperationWorkflowReadinessFollowUp { reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
+export interface OperationWorkflowReadinessFollowUpsResponse { due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
+
+export interface OperationWorkflowReadinessDueReminder { id: string; due_at: string; created_at: string }

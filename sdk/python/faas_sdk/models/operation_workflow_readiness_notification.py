@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+    from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessNotification")
@@ -42,6 +43,9 @@ class OperationWorkflowReadinessNotification:
     change: OperationWorkflowReadinessChange | Unset = UNSET
     """Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are
     explicit."""
+    reminder: OperationWorkflowReadinessDueReminder | Unset = UNSET
+    """One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling or
+    clearing retires it. Does not authorize execution."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -62,6 +66,10 @@ class OperationWorkflowReadinessNotification:
         if not isinstance(self.change, Unset):
             change = self.change.to_dict()
 
+        reminder: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reminder, Unset):
+            reminder = self.reminder.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -77,6 +85,8 @@ class OperationWorkflowReadinessNotification:
             field_dict["coordination"] = coordination
         if change is not UNSET:
             field_dict["change"] = change
+        if reminder is not UNSET:
+            field_dict["reminder"] = reminder
 
         return field_dict
 
@@ -84,6 +94,7 @@ class OperationWorkflowReadinessNotification:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+        from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -110,6 +121,13 @@ class OperationWorkflowReadinessNotification:
         else:
             change = OperationWorkflowReadinessChange.from_dict(_change)
 
+        _reminder = d.pop("reminder", UNSET)
+        reminder: OperationWorkflowReadinessDueReminder | Unset
+        if isinstance(_reminder, Unset):
+            reminder = UNSET
+        else:
+            reminder = OperationWorkflowReadinessDueReminder.from_dict(_reminder)
+
         operation_workflow_readiness_notification = cls(
             id=id,
             sequence=sequence,
@@ -118,6 +136,7 @@ class OperationWorkflowReadinessNotification:
             explanation=explanation,
             coordination=coordination,
             change=change,
+            reminder=reminder,
         )
 
         return operation_workflow_readiness_notification

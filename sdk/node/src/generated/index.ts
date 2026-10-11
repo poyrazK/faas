@@ -1160,6 +1160,7 @@ export type { OperationWorkflowReadinessComparisonRequest } from './models/Opera
 export type { OperationWorkflowReadinessComparisonResponse } from './models/OperationWorkflowReadinessComparisonResponse.js';
 export type { OperationWorkflowReadinessCoordination } from './models/OperationWorkflowReadinessCoordination.js';
 export type { OperationWorkflowReadinessCoordinationRequest } from './models/OperationWorkflowReadinessCoordinationRequest.js';
+export type { OperationWorkflowReadinessDueReminder } from './models/OperationWorkflowReadinessDueReminder.js';
 export type { OperationWorkflowReadinessEvidence } from './models/OperationWorkflowReadinessEvidence.js';
 export type { OperationWorkflowReadinessEvidenceChange } from './models/OperationWorkflowReadinessEvidenceChange.js';
 export type { OperationWorkflowReadinessFollowUp } from './models/OperationWorkflowReadinessFollowUp.js';

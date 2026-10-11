@@ -90,6 +90,9 @@ func (c *Client) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx contex
 
 func readinessFollowUpQuery(opts OperationWorkflowReadinessFollowUpOptions) url.Values {
 	q := readinessSubscriptionQuery(opts.AppID, opts.Scope, opts.TenantID)
+	if opts.ReminderOnly {
+		q.Set("reminder_only", "true")
+	}
 	if opts.Owner != "" {
 		q.Set("owner", opts.Owner)
 	}

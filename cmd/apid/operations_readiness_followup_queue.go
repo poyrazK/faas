@@ -52,7 +52,7 @@ func workflowReadinessFollowUpOptions(r *http.Request, app string, operator bool
 		if len(v) != 1 || v[0] == "" {
 			return out, state.ErrInvalidArgument
 		}
-		if k != "scope" && k != "owner" && k != "workflow" && k != "due" && k != "offset" && k != "limit" && !(operator && k == "tenant_id") && !(!operator && k == "app_id") {
+		if k != "reminder_only" && k != "scope" && k != "owner" && k != "workflow" && k != "due" && k != "offset" && k != "limit" && !(operator && k == "tenant_id") && !(!operator && k == "app_id") {
 			return out, state.ErrInvalidArgument
 		}
 	}
@@ -60,6 +60,12 @@ func workflowReadinessFollowUpOptions(r *http.Request, app string, operator bool
 		out.TenantID = q.Get("tenant_id")
 	} else {
 		out.AppID = q.Get("app_id")
+	}
+	if q.Has("reminder_only") {
+		if q.Get("reminder_only") != "true" && q.Get("reminder_only") != "false" {
+			return out, state.ErrInvalidArgument
+		}
+		out.ReminderOnly = q.Get("reminder_only") == "true"
 	}
 	out.Scope = q.Get("scope")
 	out.Owner = q.Get("owner")

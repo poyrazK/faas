@@ -38,5 +38,9 @@ export type OperationWorkflowReadinessFollowUpOptions = {
    * OperationWorkflowReadinessFollowUpOptions.limit. Follow-up queue selector; customer tenant derives from authentication.
    */
   limit?: number;
+  /**
+   * OperationWorkflowReadinessFollowUpOptions.reminder_only. Select only active published due reminders; defaults to false.
+   */
+  reminder_only?: boolean;
 };
 

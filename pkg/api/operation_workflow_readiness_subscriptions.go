@@ -37,6 +37,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	Reminder     *OperationWorkflowReadinessDueReminder  `json:"reminder,omitempty"`
 	Coordination *OperationWorkflowReadinessCoordination `json:"coordination,omitempty"`
 	ID           string                                  `json:"id"`
 	Sequence     int64                                   `json:"sequence"`
@@ -82,16 +83,18 @@ type OperationWorkflowReadinessNotificationCheck struct {
 
 // Follow-up queues aggregate retained coordination, not application execution tasks.
 type OperationWorkflowReadinessFollowUpOptions struct {
-	AppID    string `json:"app_id,omitempty"`
-	TenantID string `json:"tenant_id,omitempty"`
-	Scope    string `json:"scope"`
-	Owner    string `json:"owner,omitempty"`
-	Workflow string `json:"workflow,omitempty"`
-	Due      string `json:"due,omitempty"`
-	Offset   int    `json:"offset,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	ReminderOnly bool   `json:"reminder_only,omitempty"`
+	AppID        string `json:"app_id,omitempty"`
+	TenantID     string `json:"tenant_id,omitempty"`
+	Scope        string `json:"scope"`
+	Owner        string `json:"owner,omitempty"`
+	Workflow     string `json:"workflow,omitempty"`
+	Due          string `json:"due,omitempty"`
+	Offset       int    `json:"offset,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
 }
 type OperationWorkflowReadinessFollowUp struct {
+	Reminder             *OperationWorkflowReadinessDueReminder `json:"reminder,omitempty"`
 	SubscriptionID       string                                 `json:"subscription_id"`
 	SubscriptionName     string                                 `json:"subscription_name"`
 	SubscriptionTenantID string                                 `json:"subscription_tenant_id,omitempty"`
@@ -111,6 +114,7 @@ type OperationWorkflowReadinessFollowUp struct {
 	Overdue              bool                                   `json:"overdue"`
 }
 type OperationWorkflowReadinessFollowUpsResponse struct {
+	DueReminderCount int                                  `json:"due_reminder_count"`
 	Items            []OperationWorkflowReadinessFollowUp `json:"items"`
 	EvaluatedAt      time.Time                            `json:"evaluated_at"`
 	TotalCount       int                                  `json:"total_count"`
@@ -118,4 +122,11 @@ type OperationWorkflowReadinessFollowUpsResponse struct {
 	NextOffset       int                                  `json:"next_offset"`
 	HasMore          bool                                 `json:"has_more"`
 	RetentionLimited bool                                 `json:"retention_limited"`
+}
+
+// A reminder is one durable delivery marker for the original notification/deadline.
+type OperationWorkflowReadinessDueReminder struct {
+	ID        string    `json:"id"`
+	DueAt     time.Time `json:"due_at"`
+	CreatedAt time.Time `json:"created_at"`
 }

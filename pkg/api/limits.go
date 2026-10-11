@@ -9687,3 +9687,8 @@ const OperationWorkflowReadinessFollowUpNoteMaxBytes = 1024
 
 // Aggregation reads at most the existing per-app subscription/inbox budgets.
 const OperationWorkflowReadinessFollowUpCandidatesMax = OperationWorkflowReadinessSubscriptionsPerAppMax * OperationWorkflowReadinessInboxMax
+
+// Due reminders use a separate bounded publisher so readiness evaluation cannot delay delivery.
+const OperationWorkflowReadinessReminderBatchMax = 100
+const OperationWorkflowReadinessReminderPollInterval = 30 * time.Second
+const OperationWorkflowReadinessReminderPublishTimeout = 10 * time.Second

@@ -37665,6 +37665,12 @@ paths:
           type: integer
           minimum: 1
           maximum: 100
+      - name: reminder_only
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable
+          due reminders using the same owner, customer, workflow and environment filters.
+        schema:
+          type: boolean
       responses:
         '200':
           description: ListAccountWorkflowReadinessFollowUps. Retained follow-up page.
@@ -37747,6 +37753,12 @@ paths:
           type: integer
           minimum: 1
           maximum: 100
+      - name: reminder_only
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects
+          active durable due reminders using the same owner, customer, workflow and environment filters.
+        schema:
+          type: boolean
       responses:
         '200':
           description: ListPlatformTenantSelfWorkflowReadinessFollowUps. Retained follow-up page.
@@ -74942,6 +74954,8 @@ components:
             explanation.
         change:
           $ref: '#/components/schemas/OperationWorkflowReadinessChange'
+        reminder:
+          $ref: '#/components/schemas/OperationWorkflowReadinessDueReminder'
       required:
       - id
       - sequence
@@ -75160,6 +75174,10 @@ components:
           maximum: 100
           description: OperationWorkflowReadinessFollowUpOptions.limit. Follow-up queue selector; customer tenant derives
             from authentication.
+        reminder_only:
+          type: boolean
+          description: OperationWorkflowReadinessFollowUpOptions.reminder_only. Select only active published due reminders;
+            defaults to false.
       required:
       - scope
     OperationWorkflowReadinessFollowUp:
@@ -75237,6 +75255,8 @@ components:
           type: boolean
           description: OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation
             clock.
+        reminder:
+          $ref: '#/components/schemas/OperationWorkflowReadinessDueReminder'
       required:
       - subscription_id
       - subscription_name
@@ -75290,6 +75310,12 @@ components:
           type: boolean
           description: 'OperationWorkflowReadinessFollowUpsResponse.retention_limited. True: coordination only survives
             within each subscription latest-100 notification window; this is not an exhaustive task inventory.'
+        due_reminder_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessFollowUpsResponse.due_reminder_count. Active published reminders across
+            all matching retained rows, before pagination. Overdue work may await the next bounded publisher pass.
       required:
       - items
       - evaluated_at
@@ -75298,6 +75324,30 @@ components:
       - next_offset
       - has_more
       - retention_limited
+      - due_reminder_count
+    OperationWorkflowReadinessDueReminder:
+      type: object
+      description: One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling
+        or clearing retires it. Does not authorize execution.
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReadinessDueReminder.id. Stable UUID derived from notification identity and
+            normalized deadline, shared across retries and restarts.
+        due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessDueReminder.due_at. Deadline this reminder belongs to.
+        created_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessDueReminder.created_at. Successful reminder publication time.
+      required:
+      - id
+      - due_at
+      - created_at
 
   responses:
     OperationConflict:

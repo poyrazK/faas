@@ -18091,7 +18091,7 @@ SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
  'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
- 'created_at',n.payload->'created_at','coordination',n.payload->'coordination',
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder',
  'workflow',n.payload #>> '{change,baseline,workflow}','instance_id',n.payload #>> '{change,baseline,instance_id}',
  'subject',n.payload #> '{change,baseline,subject}','operation',n.payload #>> '{change,baseline,operation}',
  'from_state',n.payload #>> '{change,baseline,from_state}','to_state',n.payload #>> '{change,baseline,to_state}'
@@ -18103,3 +18103,13 @@ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uui
  AND (s.operator OR s.tenant_id::text=sqlc.arg(tenant)::text)
  AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
 ORDER BY s.id,n.sequence LIMIT sqlc.arg(candidate_limit)::integer;
+
+-- name: LockReadinessNotification :one
+SELECT payload FROM customer_workflow_readiness_notifications WHERE subscription_id=$1 AND sequence=$2 FOR UPDATE;
+
+-- name: LockDueReadinessReminderNotifications :many
+SELECT subscription_id,sequence,payload FROM customer_workflow_readiness_notifications
+WHERE (payload #>> '{coordination,follow_up_at}')::timestamptz <= sqlc.arg(now)::timestamptz
+ AND (payload #>> '{reminder,due_at}')::timestamptz IS DISTINCT FROM (payload #>> '{coordination,follow_up_at}')::timestamptz
+ORDER BY (payload #>> '{coordination,follow_up_at}')::timestamptz,subscription_id,sequence
+LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE SKIP LOCKED;

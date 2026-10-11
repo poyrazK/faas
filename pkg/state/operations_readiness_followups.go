@@ -52,6 +52,9 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			c.AcknowledgedBy = n.Coordination.AcknowledgedBy
 		}
 	}
+	if n.Reminder != nil && (c.FollowUpAt == nil || !n.Reminder.DueAt.Equal(*c.FollowUpAt)) {
+		n.Reminder = nil
+	}
 	n.Coordination = c
 	return n, nil
 }

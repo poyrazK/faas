@@ -33558,7 +33558,7 @@ SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
  'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
- 'created_at',n.payload->'created_at','coordination',n.payload->'coordination',
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder',
  'workflow',n.payload #>> '{change,baseline,workflow}','instance_id',n.payload #>> '{change,baseline,instance_id}',
  'subject',n.payload #> '{change,baseline,subject}','operation',n.payload #>> '{change,baseline,operation}',
  'from_state',n.payload #>> '{change,baseline,from_state}','to_state',n.payload #>> '{change,baseline,to_state}'
@@ -36423,6 +36423,39 @@ func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg L
 	return id, err
 }
 
+const lockDueReadinessReminderNotifications = `-- name: LockDueReadinessReminderNotifications :many
+SELECT subscription_id,sequence,payload FROM customer_workflow_readiness_notifications
+WHERE (payload #>> '{coordination,follow_up_at}')::timestamptz <= $1::timestamptz
+ AND (payload #>> '{reminder,due_at}')::timestamptz IS DISTINCT FROM (payload #>> '{coordination,follow_up_at}')::timestamptz
+ORDER BY (payload #>> '{coordination,follow_up_at}')::timestamptz,subscription_id,sequence
+LIMIT $2::integer FOR UPDATE SKIP LOCKED
+`
+
+type LockDueReadinessReminderNotificationsParams struct {
+	Now        pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) LockDueReadinessReminderNotifications(ctx context.Context, db DBTX, arg LockDueReadinessReminderNotificationsParams) ([]CustomerWorkflowReadinessNotification, error) {
+	rows, err := db.Query(ctx, lockDueReadinessReminderNotifications, arg.Now, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerWorkflowReadinessNotification{}
+	for rows.Next() {
+		var i CustomerWorkflowReadinessNotification
+		if err := rows.Scan(&i.SubscriptionID, &i.Sequence, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockEnvironmentFieldOwnershipScope = `-- name: LockEnvironmentFieldOwnershipScope :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text,31))
 `
@@ -38612,6 +38645,22 @@ func (q *Queries) LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX,
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockReadinessNotification = `-- name: LockReadinessNotification :one
+SELECT payload FROM customer_workflow_readiness_notifications WHERE subscription_id=$1 AND sequence=$2 FOR UPDATE
+`
+
+type LockReadinessNotificationParams struct {
+	SubscriptionID pgtype.UUID
+	Sequence       int64
+}
+
+func (q *Queries) LockReadinessNotification(ctx context.Context, db DBTX, arg LockReadinessNotificationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockReadinessNotification, arg.SubscriptionID, arg.Sequence)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
 }
 
 const lockReadinessSubscription = `-- name: LockReadinessSubscription :one

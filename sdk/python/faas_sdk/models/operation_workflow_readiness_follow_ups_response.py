@@ -39,6 +39,9 @@ class OperationWorkflowReadinessFollowUpsResponse:
     retention_limited: bool
     """OperationWorkflowReadinessFollowUpsResponse.retention_limited. True: coordination only survives within each
     subscription latest-100 notification window; this is not an exhaustive task inventory."""
+    due_reminder_count: int
+    """OperationWorkflowReadinessFollowUpsResponse.due_reminder_count. Active published reminders across all
+    matching retained rows, before pagination. Overdue work may await the next bounded publisher pass."""
 
     def to_dict(self) -> dict[str, Any]:
         items = []
@@ -58,6 +61,8 @@ class OperationWorkflowReadinessFollowUpsResponse:
 
         retention_limited = self.retention_limited
 
+        due_reminder_count = self.due_reminder_count
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -69,6 +74,7 @@ class OperationWorkflowReadinessFollowUpsResponse:
                 "next_offset": next_offset,
                 "has_more": has_more,
                 "retention_limited": retention_limited,
+                "due_reminder_count": due_reminder_count,
             }
         )
 
@@ -98,6 +104,8 @@ class OperationWorkflowReadinessFollowUpsResponse:
 
         retention_limited = d.pop("retention_limited")
 
+        due_reminder_count = d.pop("due_reminder_count")
+
         operation_workflow_readiness_follow_ups_response = cls(
             items=items,
             evaluated_at=evaluated_at,
@@ -106,6 +114,7 @@ class OperationWorkflowReadinessFollowUpsResponse:
             next_offset=next_offset,
             has_more=has_more,
             retention_limited=retention_limited,
+            due_reminder_count=due_reminder_count,
         )
 
         return operation_workflow_readiness_follow_ups_response

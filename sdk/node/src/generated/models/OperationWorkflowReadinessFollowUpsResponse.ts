@@ -35,5 +35,9 @@ export type OperationWorkflowReadinessFollowUpsResponse = {
    * OperationWorkflowReadinessFollowUpsResponse.retention_limited. True: coordination only survives within each subscription latest-100 notification window; this is not an exhaustive task inventory.
    */
   retention_limited: boolean;
+  /**
+   * OperationWorkflowReadinessFollowUpsResponse.due_reminder_count. Active published reminders across all matching retained rows, before pagination. Overdue work may await the next bounded publisher pass.
+   */
+  due_reminder_count: number;
 };
 

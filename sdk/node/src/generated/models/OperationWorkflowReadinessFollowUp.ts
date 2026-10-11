@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
+import type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
 /**
  * Compact pending follow-up with original inbox references; no application readiness is inferred.
  */
@@ -70,5 +71,6 @@ export type OperationWorkflowReadinessFollowUp = {
    * OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock.
    */
   overdue: boolean;
+  reminder?: OperationWorkflowReadinessDueReminder;
 };
 

@@ -2019,6 +2019,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runAutomaticRouteCheckWorker(ctx)
 	go srv.runRouteMonitorWorker(ctx)
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
+	go srv.runWorkflowReadinessReminderWorker(ctx)
 	go srv.runRouteProbeWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
