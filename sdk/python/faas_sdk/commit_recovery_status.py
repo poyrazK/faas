@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -535,6 +535,7 @@ async def awatch_commit_recovery_status(
     reason, phase = "read_failure", "read"
     estimator = _DiagnosticEstimator()
     stalls = _StallTracker()
+    incidents = _IncidentTracker()
     estimate_delay_ms = interval * 1000
 
     async def read_diagnostics(status: dict[str, Any]) -> dict[str, Any]:
@@ -556,6 +557,8 @@ async def awatch_commit_recovery_status(
         return sampled
 
     def summarize(stop_reason: str) -> dict[str, Any]:
+        consumers = stalls.summarize(out, max_diagnostic_age, stall_threshold)
+        lifecycle = incidents.summarize(out, consumers, max_diagnostic_age, stall_threshold)
         freshness = _freshness_counts(out, max_observation_age) if max_observation_age > 0 else None
         return {
             "watch_mode": "diagnostic_coverage" if watch_diagnostics else "recovery_settlement",
@@ -579,7 +582,8 @@ async def awatch_commit_recovery_status(
             **(
                 {
                     "stall_threshold_ms": stall_threshold * 1000,
-                    "consumer_stalls": stalls.summarize(out, max_diagnostic_age, stall_threshold),
+                    "consumer_stalls": consumers,
+                    **lifecycle,
                 }
                 if stall_threshold > 0
                 else {}
@@ -605,6 +609,7 @@ async def awatch_commit_recovery_status(
         async with timeout_scope:
             while True:
                 delay, failed = interval, False
+                incidents.begin_pass()
                 passes += 1
                 try:
                     out = await aget_commit_recovery_status(
@@ -1506,3 +1511,106 @@ class _StallTracker:
                 )
             )
         return list(groups.values())
+
+
+class _IncidentTracker:
+    def __init__(self) -> None:
+        self.session = uuid4().hex
+        self.sequence = 0
+        self.active: dict[int, dict[str, Any]] = {}
+        self.events: list[dict[str, Any]] = []
+
+    def begin_pass(self) -> None:
+        self.events = []
+
+    def emit(self, incident: dict[str, Any], transition: str, reason: str, evidence: dict[str, Any] | None) -> None:
+        self.sequence += 1
+        self.events.append(
+            dict(
+                sequence=self.sequence,
+                incident_id=incident["incident_id"],
+                transition=transition,
+                reason=reason,
+                at=datetime.now(UTC).isoformat(),
+                query=incident["query"],
+                waiting_reason=incident["waiting_reason"],
+                **({"evidence": evidence} if evidence is not None else {}),
+            )
+        )
+
+    @staticmethod
+    def key(query: dict[str, Any]) -> tuple[str, str, str, str]:
+        return query["source"], query["id"], query["subscription_id"].lower(), query["expected_accepted_at"]
+
+    def summarize(
+        self, out: dict[str, Any], consumers: list[dict[str, Any]], age: float, threshold: float
+    ) -> dict[str, Any]:
+        if threshold == 0:
+            return dict(blocker_incidents=[], blocker_transitions=[])
+        waiting = {self.key(b["query"]): b for c in consumers for b in c["blockers"] if b["state"] == "stalled"}
+        now = datetime.now(UTC)
+        seen: set[int] = set()
+        for i, row in enumerate(out["items"]):
+            if not _diagnostic_target(row):
+                continue
+            seen.add(i)
+            pub = row["selection"]["publication"]
+            query = dict(
+                source=pub["source"],
+                id=pub["id"],
+                subscription_id=row["attempt"]["subscription_id"].lower(),
+                expected_accepted_at=pub["accepted_at"],
+            )
+            blocker = waiting.get(self.key(query))
+            active = self.active.get(i)
+            current = _diagnostic_observation(row.get("diagnostics"), row)
+            fresh = current is not None and _diagnostic_freshness(row, now.timestamp(), age) == "fresh"
+            if active:
+                last = datetime.fromisoformat(active["incident"]["last_observed_at"]).timestamp()
+                uninterrupted = last <= now.timestamp() and now.timestamp() - last <= age
+                same_episode = blocker is not None and _diagnostic_time_key(
+                    blocker["first_observed_at"]
+                ) == _diagnostic_time_key(active["first"])
+                if not fresh or not uninterrupted or not same_episode:
+                    transition, reason = "confirmation_lost", "episode_reset"
+                    if not fresh:
+                        reason = "evidence_unavailable"
+                    elif not uninterrupted:
+                        reason = "sample_gap"
+                    elif (
+                        not row["diagnostics"].get("retained")
+                        and _diagnostic_time_key(current["observed_at"])
+                        > _diagnostic_time_key(active["incident"]["last_observed_at"])
+                        and (
+                            current["status"] == "not_waiting"
+                            or (
+                                current.get("routing")
+                                and current["routing"]["waiting_reason"] not in _PERSISTENT_BLOCKERS
+                            )
+                        )
+                    ):
+                        transition, reason = "resolved", "routing_not_blocked"
+                    self.emit(active["incident"], transition, reason, current if fresh else None)
+                    self.active.pop(i, None)
+                    active = None
+            if blocker is not None and fresh:
+                if active is None:
+                    incident = dict(
+                        incident_id=self.session + "-" + str(self.sequence + 1),
+                        query=query,
+                        waiting_reason=blocker["waiting_reason"],
+                        opened_at=now.isoformat(),
+                        last_observed_at=current["observed_at"],
+                    )
+                    active = dict(incident=incident, first=blocker["first_observed_at"])
+                    self.active[i] = active
+                    self.emit(incident, "opened", "persistent_blocker", current)
+                active["incident"]["last_observed_at"] = current["observed_at"]
+        for i in sorted(self.active):
+            if i not in seen:
+                self.emit(self.active[i]["incident"], "confirmation_lost", "selection_unavailable", None)
+                self.active.pop(i)
+        return dict(
+            blocker_incidents=[dict(self.active[i]["incident"]) for i in sorted(self.active)],
+            blocker_transitions=list(self.events),
+        )

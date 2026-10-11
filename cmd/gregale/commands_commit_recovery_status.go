@@ -21,6 +21,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
 	diagnostics := fs.Bool("diagnostics", false, "include bounded live delivery blocker diagnostics")
+	alertsJSON := fs.Bool("alerts-json", false, "emit watch blocker lifecycle alerts as JSON lines on stderr (requires stall-threshold)")
 	stallThreshold := fs.Duration("stall-threshold", 0, "persistent blocker alert threshold (100ms-24h; requires watch, diagnostics and max-diagnostic-age)")
 	diagnosticAge := fs.Duration("max-diagnostic-age", 0, "maximum diagnostic sample age (100ms-24h; requires diagnostics; default disabled)")
 	maxAge := fs.Duration("max-observation-age", 0, "maximum watch evidence age (100ms-24h; default disabled)")
@@ -39,6 +40,9 @@ func cmdCommitRecoveryStatus(args []string) int {
 	if *watchDiagnostics {
 		*watch = true
 		*diagnostics = true
+	}
+	if *alertsJSON && (!*watch || *stallThreshold <= 0) {
+		return 1
 	}
 	if *stallThreshold < 0 || *stallThreshold > api.CommitRecoveryStallThresholdMax || (*stallThreshold > 0 && (*stallThreshold < api.CommitRecoveryStallThresholdMin || !*watch || !*diagnostics || *diagnosticAge <= 0)) {
 		return 1
@@ -101,10 +105,10 @@ func cmdCommitRecoveryStatus(args []string) int {
 	}
 	var checkpointErr error
 	progressCalled := false
+	var lastAlertSequence uint64
 	if *watch {
 		last := ""
 		lastRows := map[string]string{}
-		lastStalls := map[string]bool{}
 		lastDiagnostics := map[string]string{}
 		lastEstimateWarning := false
 		progress := func(status api.CommitRecoveryStatusResult) {
@@ -115,8 +119,11 @@ func cmdCommitRecoveryStatus(args []string) int {
 					return
 				}
 			}
+			printCommitRecoveryStallAlerts(status.Monitoring, &lastAlertSequence, *alertsJSON)
+			if *alertsJSON {
+				return
+			}
 			printCommitRecoveryDiagnosticChanges(status, lastDiagnostics)
-			printCommitRecoveryStallAlerts(status.Monitoring, lastStalls)
 			rows := make([]any, 0, len(status.Items))
 			for _, row := range status.Items {
 				fields := []any{row.Status, row.Reason, row.Generation, row.GenerationRelation, row.Attribution, row.ExecutionID, row.ExecutionState}
@@ -159,6 +166,9 @@ func cmdCommitRecoveryStatus(args []string) int {
 			lastEstimateWarning = warning
 		}
 		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{StallThreshold: *stallThreshold, ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics, WatchDiagnostics: *watchDiagnostics, MaxDiagnosticAge: *diagnosticAge})
+	}
+	if *watch {
+		printCommitRecoveryStallAlerts(out.Monitoring, &lastAlertSequence, *alertsJSON)
 	}
 	if !*watch && err == nil && *diagnostics {
 		if saved != nil && *resumePath != "" {
@@ -271,26 +281,20 @@ func commitRecoveryConsumerSummary(consumers []api.CommitRecoveryDiagnosticConsu
 	return result
 }
 
-func printCommitRecoveryStallAlerts(monitoring *api.CommitRecoveryMonitoring, seen map[string]bool) {
-	current := map[string]bool{}
-	if monitoring != nil {
-		for _, consumer := range monitoring.ConsumerStalls {
-			for _, blocker := range consumer.Blockers {
-				if blocker.State != "stalled" {
-					continue
-				}
-				raw, _ := json.Marshal([]any{blocker.Query, blocker.WaitingReason, blocker.FirstObservedAt})
-				key := string(raw)
-				current[key] = true
-				if !seen[key] {
-					evidence, _ := json.Marshal(blocker)
-					_, _ = fmt.Fprintf(os.Stderr, "Persistent sampled routing blocker for consumer %s: %s\n", consumer.SubscriptionID, evidence)
-				}
-			}
-		}
+func printCommitRecoveryStallAlerts(monitoring *api.CommitRecoveryMonitoring, seen *uint64, jsonLines bool) {
+	if monitoring == nil {
+		return
 	}
-	clear(seen)
-	for key := range current {
-		seen[key] = true
+	for _, transition := range monitoring.BlockerTransitions {
+		if transition.Sequence <= *seen {
+			continue
+		}
+		raw, _ := json.Marshal(transition)
+		if jsonLines {
+			_, _ = fmt.Fprintln(os.Stderr, string(raw))
+		} else {
+			_, _ = fmt.Fprintf(os.Stderr, "Sampled blocker incident %s %s: %s\n", transition.IncidentID, transition.Transition, raw)
+		}
+		*seen = transition.Sequence
 	}
 }

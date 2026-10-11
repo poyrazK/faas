@@ -451,3 +451,6 @@ type CommitRecoveryDiagnosticWaiting = api.CommitRecoveryDiagnosticWaiting
 
 type CommitRecoveryConsumerStall = api.CommitRecoveryConsumerStall
 type CommitRecoveryPersistentBlocker = api.CommitRecoveryPersistentBlocker
+
+type CommitRecoveryBlockerIncident = api.CommitRecoveryBlockerIncident
+type CommitRecoveryBlockerTransition = api.CommitRecoveryBlockerTransition

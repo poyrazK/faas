@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { EventRecipientBlockerQuery } from './generated/models/EventRecipientBlockerQuery.js';
 import { EventsService } from './generated/services/EventsService.js';
 import type { EventBacklogRecipient } from './generated/models/EventBacklogRecipient.js';
@@ -40,6 +41,7 @@ export interface CommitRecoveryStatusItem {
   recipient?: EventReceiptRecipientResponse;
 }
 export interface CommitRecoveryMonitoring {
+ blocker_incidents?: CommitRecoveryBlockerIncident[]; blocker_transitions?: CommitRecoveryBlockerTransition[];
  stall_threshold_ms?: number; consumer_stalls?: CommitRecoveryConsumerStall[];
   diagnostic_estimate?: CommitRecoveryDiagnosticEstimate;
   watch_mode?: string; diagnostic_coverage_complete?: boolean;
@@ -272,6 +274,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
   let reason = 'read_failure', phase = 'read';
   const estimator = new DiagnosticEstimator();
   const stalls = new StallTracker();
+  const incidents = new IncidentTracker();
   let estimateDelayMs = intervalMs;
   const readDiagnostics = async (readSignal: AbortSignal, strictReads = false): Promise<CommitRecoveryStatusResult> => {
     const diagnosticStarted = performance.now();
@@ -286,11 +289,13 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
     }
   };
   const summarize = (stop_reason: string): CommitRecoveryMonitoring => {
+    const consumers = stalls.summarize(out, options.maxDiagnosticAgeMs ?? 0, stallThresholdMs);
+    const lifecycle = incidents.summarize(out, consumers, options.maxDiagnosticAgeMs ?? 0, stallThresholdMs);
     const freshness = maxObservationAgeMs > 0 ? freshnessCounts(out, maxObservationAgeMs) : undefined;
     return {
       watch_mode: options.watchDiagnostics ? "diagnostic_coverage" : "recovery_settlement", diagnostic_coverage_complete: stop_reason === "diagnostic_coverage_complete" ? Boolean(out.diagnostics_progress?.complete && out.diagnostics_progress?.fresh_complete) : diagnosticCoverageComplete(out, options.maxDiagnosticAgeMs ?? 0),
       diagnostic_estimate: estimator.estimate(out, performance.now() - started, estimateDelayMs),
-      ...(stallThresholdMs > 0 ? {stall_threshold_ms: stallThresholdMs, consumer_stalls: stalls.summarize(out, options.maxDiagnosticAgeMs ?? 0, stallThresholdMs)} : {}),
+      ...(stallThresholdMs > 0 ? {stall_threshold_ms: stallThresholdMs, consumer_stalls: consumers, ...lifecycle} : {}),
       stop_reason, passes, retries_consumed: usedRetries, elapsed_ms: Math.max(0, Math.floor(performance.now() - started)),
       acknowledged_executions_terminal: commitRecoveryStatusSettled(out) && (!freshness || freshness.fresh === out.items.length),
       ...(freshness ? { max_observation_age_ms: maxObservationAgeMs, freshness } : {}),
@@ -300,6 +305,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
     for (;;) {
       if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
       let delay = intervalMs, failed = false;
+      incidents.beginPass();
       passes++;
       try {
         out = await getCommitRecoveryStatus(source, fixedPlan, fixedApplied, {
@@ -720,5 +726,58 @@ class StallTracker {
    g.blockers.push({query:o.query,waiting_reason:o.routing.waiting_reason,state,first_observed_at:sample.first,last_observed_at:o.observed_at,samples:sample.samples,monitored_ms:duration});
   });
   return [...groups.values()];
+ }
+}
+
+export interface CommitRecoveryBlockerIncident {
+ incident_id: string; query: EventRecipientBlockerQuery; waiting_reason: string; opened_at: string; last_observed_at: string;
+}
+export interface CommitRecoveryBlockerTransition {
+ sequence: number; incident_id: string; transition: string; reason: string; at: string; query: EventRecipientBlockerQuery; waiting_reason: string; evidence?: CommitRecoveryDiagnosticObservation;
+}
+function incidentRecipientKey(query: EventRecipientBlockerQuery): string {
+ return JSON.stringify([query.source,query.id,query.subscription_id.toLowerCase(),query.expected_accepted_at]);
+}
+class IncidentTracker {
+ private session = randomUUID().replaceAll('-','');
+ private sequence = 0;
+ private active = new Map<number,{incident: CommitRecoveryBlockerIncident; first: string}>();
+ private events: CommitRecoveryBlockerTransition[] = [];
+ beginPass(): void {this.events=[];}
+ private emit(incident: CommitRecoveryBlockerIncident, transition: string, reason: string, evidence?: CommitRecoveryDiagnosticObservation): void {
+  this.events.push({sequence:++this.sequence,incident_id:incident.incident_id,transition,reason,at:new Date().toISOString(),query:incident.query,waiting_reason:incident.waiting_reason,...(evidence ? {evidence}: {})});
+ }
+ summarize(out: CommitRecoveryStatusResult, consumers: CommitRecoveryConsumerStall[], age: number, threshold: number): {blocker_incidents: CommitRecoveryBlockerIncident[]; blocker_transitions: CommitRecoveryBlockerTransition[]} {
+  if(!threshold)return {blocker_incidents:[],blocker_transitions:[]};
+  const waiting=new Map(consumers.flatMap(c=>c.blockers.filter(b=>b.state==='stalled').map(b=>[incidentRecipientKey(b.query),b] as const)));
+  const now=Date.now(),seen=new Set<number>();
+  out.items.forEach((row,i)=>{
+   if(!diagnosticTarget(row))return;
+   seen.add(i);
+   const pub=row.selection!.publication,query={source:pub.source,id:pub.id,subscription_id:row.attempt.subscription_id.toLowerCase(),expected_accepted_at:pub.accepted_at};
+   const blocker=waiting.get(incidentRecipientKey(query));
+   let active=this.active.get(i);
+   const current=diagnosticObservation(row.diagnostics,row),fresh=Boolean(current && diagnosticFreshness(row,now,age)==='fresh');
+   if(active){
+    const last=Date.parse(active.incident.last_observed_at),uninterrupted=last<=now && now-last<=age,sameEpisode=Boolean(blocker && sameAcceptance(blocker.first_observed_at,active.first));
+    if(!fresh || !uninterrupted || !sameEpisode){
+     let transition='confirmation_lost',reason='episode_reset';
+     if(!fresh)reason='evidence_unavailable';
+     else if(!uninterrupted)reason='sample_gap';
+     else if(!row.diagnostics!.retained && diagnosticTimeAfter(current!.observed_at,active.incident.last_observed_at) && (current!.status==='not_waiting' || (current!.routing && !persistentBlockerReasons.has(current!.routing.waiting_reason)))){transition='resolved';reason='routing_not_blocked';}
+     this.emit(active.incident,transition,reason,fresh ? current : undefined);
+     this.active.delete(i);active=undefined;
+    }
+   }
+   if(blocker && fresh){
+    if(!active){
+     const incident={incident_id:this.session+'-'+(this.sequence+1),query,waiting_reason:blocker.waiting_reason,opened_at:new Date(now).toISOString(),last_observed_at:current!.observed_at};
+     active={incident,first:blocker.first_observed_at};this.active.set(i,active);this.emit(incident,'opened','persistent_blocker',current);
+    }
+    active.incident.last_observed_at=current!.observed_at;
+   }
+  });
+  for(const [i,active] of [...this.active.entries()].sort((a,b)=>a[0]-b[0])){if(!seen.has(i)){this.emit(active.incident,'confirmation_lost','selection_unavailable');this.active.delete(i);}}
+  return {blocker_incidents:[...this.active.entries()].sort((a,b)=>a[0]-b[0]).map(([,a])=>({...a.incident})),blocker_transitions:[...this.events]};
  }
 }
