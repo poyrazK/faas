@@ -2898,3 +2898,43 @@ Apply the additive platform `customer_operation_change_reason` migration and
 reinstall the SDK customer Operation schema before upgrading the outbox adapters.
 Both columns default to JSON null for existing rows. The migration is provided in
 this change; it is not applied automatically to running databases.
+
+### Application-defined workflow playbooks
+
+Workflow contracts can declare advisory playbooks for exact blocker codes,
+missing milestones or dependency workflows, pending verification blocker codes,
+and unmet readiness reason codes. Add `playbooks` to an existing
+`operation_workflows` entry alongside its `name`, `version`, and `steps`:
+
+```yaml
+playbooks:
+  - id: stock-review
+    version: 1
+    match_kind: blocker
+    match_code: stock
+    summary: Confirm inventory availability with the warehouse team.
+    owner: warehouse
+    required_evidence:
+      - Inventory reservation reference
+      - Warehouse confirmation
+    runbook_url: https://docs.example.com/runbooks/inventory
+    action_url: https://app.example.com/inventory/review
+```
+
+Each workflow contract permits 32 unique playbooks. IDs are unique within the
+workflow; explicit rule versions start at 1. Guidance is read from the immutable
+operation definition that produced the current workflow report and its matching
+workflow contract version. Publish revised guidance through a new definition;
+existing reports continue using their original definition until the application
+reports from the new one. Repeated steps may repeat an identical rule, but
+conflicting definitions of an ID are rejected.
+
+The workflow case API returns `guidance`, `guidance_status`, and
+`guidance_truncated`. Missing or stale reports never match guidance; unavailable
+reporting definitions are not replaced by a newer deployment's playbooks.
+Terminal reports do not match active blockers or prerequisites. A responsible
+team is a suggestion and does not change follow-up ownership. Evidence lists are
+human checklists, not automatically verified requirements. Runbook and action
+links require absolute HTTPS URLs without embedded credentials. Gregale does
+not fetch or execute them; the application authenticates, authorizes and handles
+any resulting action.

@@ -5,11 +5,24 @@
 import type { OperationWorkflowCaseAction } from './OperationWorkflowCaseAction.js';
 import type { OperationWorkflowCoordinationTimeline } from './OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
+import type { OperationWorkflowPlaybookGuidance } from './OperationWorkflowPlaybookGuidance.js';
 import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowReadinessFollowUp.js';
 /**
  * OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
  */
 export type OperationWorkflowCase = {
+  /**
+   * OperationWorkflowCase.guidance. Matching application playbooks from the definition that reported current fresh nonterminal evidence.
+   */
+  guidance: Array<OperationWorkflowPlaybookGuidance>;
+  /**
+   * OperationWorkflowCase.guidance_status. Availability of exact reporting-definition playbooks, independent of matches and readiness.
+   */
+  guidance_status: 'available' | 'not_declared' | 'evidence_unavailable' | 'definition_unavailable';
+  /**
+   * OperationWorkflowCase.guidance_truncated. Matching guidance or the evaluated transition evidence was truncated.
+   */
+  guidance_truncated: boolean;
   /**
    * OperationWorkflowCase.status. Unknown, stale, terminal_reported, no_transition, blocked or ready. Terminal state alone is not success.
    */

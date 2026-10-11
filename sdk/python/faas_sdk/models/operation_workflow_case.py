@@ -7,12 +7,17 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.operation_workflow_case_guidance_status import (
+    OperationWorkflowCaseGuidanceStatus,
+    check_operation_workflow_case_guidance_status,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
     from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
     from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+    from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
     from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
 
 
@@ -23,6 +28,15 @@ T = TypeVar("T", bound="OperationWorkflowCase")
 class OperationWorkflowCase:
     """OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow."""
 
+    guidance: list[OperationWorkflowPlaybookGuidance]
+    """OperationWorkflowCase.guidance. Matching application playbooks from the definition that reported current
+    fresh nonterminal evidence."""
+    guidance_status: OperationWorkflowCaseGuidanceStatus
+    """OperationWorkflowCase.guidance_status. Availability of exact reporting-definition playbooks, independent of
+    matches and readiness."""
+    guidance_truncated: bool
+    """OperationWorkflowCase.guidance_truncated. Matching guidance or the evaluated transition evidence was
+    truncated."""
     status: str
     """OperationWorkflowCase.status. Unknown, stale, terminal_reported, no_transition, blocked or ready. Terminal
     state alone is not success."""
@@ -63,6 +77,15 @@ class OperationWorkflowCase:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        guidance = []
+        for guidance_item_data in self.guidance:
+            guidance_item = guidance_item_data.to_dict()
+            guidance.append(guidance_item)
+
+        guidance_status: str = self.guidance_status
+
+        guidance_truncated = self.guidance_truncated
+
         status = self.status
 
         summary = self.summary
@@ -103,6 +126,9 @@ class OperationWorkflowCase:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "guidance": guidance,
+                "guidance_status": guidance_status,
+                "guidance_truncated": guidance_truncated,
                 "status": status,
                 "summary": summary,
                 "follow_ups": follow_ups,
@@ -128,9 +154,21 @@ class OperationWorkflowCase:
         from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
         from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
         from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+        from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
         from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
 
         d = dict(src_dict)
+        guidance = []
+        _guidance = d.pop("guidance")
+        for guidance_item_data in _guidance:
+            guidance_item = OperationWorkflowPlaybookGuidance.from_dict(guidance_item_data)
+
+            guidance.append(guidance_item)
+
+        guidance_status = check_operation_workflow_case_guidance_status(d.pop("guidance_status"))
+
+        guidance_truncated = d.pop("guidance_truncated")
+
         status = d.pop("status")
 
         summary = d.pop("summary")
@@ -175,6 +213,9 @@ class OperationWorkflowCase:
             instance = OperationWorkflowInstanceSnapshot.from_dict(_instance)
 
         operation_workflow_case = cls(
+            guidance=guidance,
+            guidance_status=guidance_status,
+            guidance_truncated=guidance_truncated,
             status=status,
             summary=summary,
             follow_ups=follow_ups,

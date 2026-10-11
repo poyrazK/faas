@@ -654,6 +654,18 @@
    }
    if(instance.awaiting_verification_count)caseView.append(node('p','Awaiting application verification: '+instance.awaiting_verification_count));
   }
+  caseView.append(node('h4','Application playbook guidance'));
+  const guidanceMessages={not_declared:'No playbooks are declared by the current reporting definition.',evidence_unavailable:'Fresh application evidence is required before matching playbooks.',definition_unavailable:'The exact reporting definition is unavailable; no substitute guidance is used.'};
+  if(result.guidance_status!=='available')caseView.append(node('p',guidanceMessages[result.guidance_status]||'Playbook guidance is unavailable.'));
+  else if(!(result.guidance||[]).length)caseView.append(node('p','No playbook rules match the current retained evidence.'));
+  for(const entry of result.guidance||[]) {
+   const rule=entry.playbook;caseView.append(node('p',rule.summary+' · Playbook '+rule.id+' v'+rule.version+' · Workflow contract v'+entry.contract_version+(rule.owner?' · Suggested team: '+rule.owner:'')));
+   if((rule.required_evidence||[]).length){caseView.append(node('p','Evidence checklist (advisory):'));const checklist=node('ul','');for(const text of rule.required_evidence)checklist.append(node('li',text));caseView.append(checklist);}
+   for(const [value,label] of [[rule.runbook_url,'Open runbook'],[rule.action_url,'Open application action']]) {
+    if(!value)continue;try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password)continue;const link=node('a',label);link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';caseView.append(link,node('span',' '));}catch{continue;}
+   }
+  }
+  if(result.guidance_truncated)caseView.append(node('p','Playbook guidance is incomplete because its output or evaluated evidence was truncated.'));
   caseView.append(node('h4','Retained open follow-ups'),node('p',result.follow_up_count+' open · '+result.overdue_follow_up_count+' overdue'));
   for(const row of result.follow_ups||[]) {
    const details=[row.overdue?'Overdue':'Scheduled',row.coordination.owner||'Unassigned',clock(row.coordination.follow_up_at),row.coordination.status];

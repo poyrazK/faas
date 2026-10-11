@@ -14,6 +14,7 @@ type OperationWorkflowCaseStore interface {
 type workflowCaseBackend interface {
 	readinessSubscriptionBackend
 	readinessFollowUpBackend
+	OperationDefinitionByID(context.Context, string, string) (OperationDefinition, error)
 }
 
 func (m *MemStore) WorkflowCase(ctx context.Context, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool) (api.OperationWorkflowCase, error) {
@@ -100,6 +101,9 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 		out.FollowUps = out.FollowUps[:api.OperationWorkflowCaseFollowUpsMax]
 	}
 	summarizeWorkflowCase(&out)
+	if err = projectWorkflowCasePlaybooks(ctx, store, account, tenant, opts, &out); err != nil {
+		return out, err
+	}
 	out.EvaluatedAt = time.Now().UTC().Truncate(time.Microsecond)
 	return out, nil
 }

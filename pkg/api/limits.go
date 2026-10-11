@@ -9719,3 +9719,9 @@ const OperationWorkflowCoordinationTimelineOperationLinksMax = 48
 
 const OperationWorkflowCaseFollowUpsMax = OperationHistoryPageMax
 const OperationWorkflowCaseActionsMax = OperationHistoryPageMax
+
+const OperationWorkflowPlaybooksMax = 32
+const OperationWorkflowPlaybookSummaryMaxBytes = 1024
+const OperationWorkflowPlaybookURLMaxBytes = 2048
+const OperationWorkflowPlaybookEvidenceMax = 16
+const OperationWorkflowPlaybookEvidenceMaxBytes = 256

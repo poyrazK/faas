@@ -38066,6 +38066,9 @@ paths:
           content:
             application/json:
               example:
+                guidance: []
+                guidance_status: evidence_unavailable
+                guidance_truncated: false
                 status: unknown
                 summary: No retained application report is available.
                 follow_ups: []
@@ -38193,6 +38196,9 @@ paths:
           content:
             application/json:
               example:
+                guidance: []
+                guidance_status: evidence_unavailable
+                guidance_truncated: false
                 status: unknown
                 summary: No retained application report is available.
                 follow_ups: []
@@ -40263,6 +40269,11 @@ components:
       additionalProperties: false
       required: [workflow, title, step, label, milestone, position]
       properties:
+        playbooks:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowPlaybook'}
+          description: OperationWorkflowStep.playbooks. Optional advisory playbooks pinned to this workflow contract and immutable reporting definition; never execution commands.
         blocker_escalations:
           type: object
           maxProperties: 32
@@ -76934,6 +76945,9 @@ components:
       type: object
       description: OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
       required:
+      - guidance
+      - guidance_status
+      - guidance_truncated
       - status
       - summary
       - follow_ups
@@ -76948,6 +76962,18 @@ components:
       - evaluated_at
       - limitations
       properties:
+        guidance:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowPlaybookGuidance'}
+          description: OperationWorkflowCase.guidance. Matching application playbooks from the definition that reported current fresh nonterminal evidence.
+        guidance_status:
+          type: string
+          enum: [available, not_declared, evidence_unavailable, definition_unavailable]
+          description: OperationWorkflowCase.guidance_status. Availability of exact reporting-definition playbooks, independent of matches and readiness.
+        guidance_truncated:
+          type: boolean
+          description: OperationWorkflowCase.guidance_truncated. Matching guidance or the evaluated transition evidence was truncated.
         status:
           type: string
           description: OperationWorkflowCase.status. Unknown, stale, terminal_reported, no_transition, blocked or ready.
@@ -77015,6 +77041,99 @@ components:
             type: string
           description: OperationWorkflowCase.limitations. Explicit read consistency, retention and application authority
             boundaries.
+
+    OperationWorkflowPlaybook:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists
+        and links are never executed by Gregale.
+      required: [id, version, summary, match_kind, match_code]
+      properties:
+        id:
+          type: string
+          description: OperationWorkflowPlaybook.id. Unique bounded lowercase identifier within the workflow contract.
+          minLength: 1
+          maxLength: 63
+          pattern: ^[a-z][a-z0-9-]*$
+        version:
+          type: integer
+          description: OperationWorkflowPlaybook.version. Explicit playbook revision, pinned alongside the workflow
+            contract version.
+          minimum: 1
+          maximum: 1000000
+        match_kind:
+          type: string
+          description: OperationWorkflowPlaybook.match_kind. Exact observed fact category.
+          enum:
+          - blocker
+          - missing_milestone
+          - missing_dependency
+          - pending_verification
+          - requirement
+        match_code:
+          type: string
+          description: OperationWorkflowPlaybook.match_code. Exact blocker code, milestone, dependency workflow, verification
+            blocker code or readiness reason code.
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9_-]{0,63}$
+        summary:
+          type: string
+          description: OperationWorkflowPlaybook.summary. Application-authored guidance without control characters or
+            surrounding whitespace.
+          minLength: 1
+          maxLength: 1024
+        owner:
+          type: string
+          description: OperationWorkflowPlaybook.owner. Suggested responsible team; does not assign or override coordination
+            ownership.
+          maxLength: 256
+        required_evidence:
+          type: array
+          description: OperationWorkflowPlaybook.required_evidence. Advisory evidence checklist, not automatically verified
+            prerequisites.
+          maxItems: 16
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+        runbook_url:
+          type: string
+          description: OperationWorkflowPlaybook.runbook_url. Absolute HTTPS runbook link without user credentials;
+            never fetched automatically.
+          maxLength: 2048
+          format: uri
+        action_url:
+          type: string
+          description: OperationWorkflowPlaybook.action_url. Absolute HTTPS application action link without user credentials;
+            application handles authorization and execution.
+          maxLength: 2048
+          format: uri
+    OperationWorkflowPlaybookGuidance:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookGuidance. Application-owned advisory guidance; evidence requirements are
+        human checklists and links are never executed by Gregale.
+      required:
+      - playbook
+      - contract_version
+      - reporting_operation_id
+      properties:
+        playbook:
+          type: object
+          $ref: '#/components/schemas/OperationWorkflowPlaybook'
+          description: OperationWorkflowPlaybookGuidance.playbook. Matched advisory rule from the exact reporting definition.
+        contract_version:
+          type: integer
+          description: OperationWorkflowPlaybookGuidance.contract_version. Workflow contract version of the retained
+            current report.
+          minimum: 1
+        reporting_operation_id:
+          type: string
+          description: OperationWorkflowPlaybookGuidance.reporting_operation_id. Operation whose immutable definition
+            supplied this playbook.
+          format: uuid
 
   responses:
     OperationConflict:

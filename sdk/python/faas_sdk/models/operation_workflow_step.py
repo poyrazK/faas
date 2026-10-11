@@ -9,6 +9,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_business_condition_definition import OperationBusinessConditionDefinition
+    from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
     from ..models.operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
     from ..models.operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
     from ..models.operation_workflow_step_state_sla_warning_percent import OperationWorkflowStepStateSlaWarningPercent
@@ -32,6 +33,9 @@ class OperationWorkflowStep:
     label: str
     milestone: str
     position: int
+    playbooks: list[OperationWorkflowPlaybook] | Unset = UNSET
+    """OperationWorkflowStep.playbooks. Optional advisory playbooks pinned to this workflow contract and immutable
+    reporting definition; never execution commands."""
     blocker_escalations: OperationWorkflowStepBlockerEscalations | Unset = UNSET
     """Versioned policies by blocker code. All steps in one workflow definition must agree. Policies only recommend
     escalation for active workflows with known blocker age."""
@@ -77,6 +81,13 @@ class OperationWorkflowStep:
         milestone = self.milestone
 
         position = self.position
+
+        playbooks: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.playbooks, Unset):
+            playbooks = []
+            for playbooks_item_data in self.playbooks:
+                playbooks_item = playbooks_item_data.to_dict()
+                playbooks.append(playbooks_item)
 
         blocker_escalations: dict[str, Any] | Unset = UNSET
         if not isinstance(self.blocker_escalations, Unset):
@@ -138,6 +149,8 @@ class OperationWorkflowStep:
                 "position": position,
             }
         )
+        if playbooks is not UNSET:
+            field_dict["playbooks"] = playbooks
         if blocker_escalations is not UNSET:
             field_dict["blocker_escalations"] = blocker_escalations
         if decision_conditions is not UNSET:
@@ -170,6 +183,7 @@ class OperationWorkflowStep:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_business_condition_definition import OperationBusinessConditionDefinition
+        from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
         from ..models.operation_workflow_step_blocker_escalations import OperationWorkflowStepBlockerEscalations
         from ..models.operation_workflow_step_state_sla_budget_seconds import OperationWorkflowStepStateSlaBudgetSeconds
         from ..models.operation_workflow_step_state_sla_warning_percent import (
@@ -192,6 +206,15 @@ class OperationWorkflowStep:
         milestone = d.pop("milestone")
 
         position = d.pop("position")
+
+        _playbooks = d.pop("playbooks", UNSET)
+        playbooks: list[OperationWorkflowPlaybook] | Unset = UNSET
+        if _playbooks is not UNSET:
+            playbooks = []
+            for playbooks_item_data in _playbooks:
+                playbooks_item = OperationWorkflowPlaybook.from_dict(playbooks_item_data)
+
+                playbooks.append(playbooks_item)
 
         _blocker_escalations = d.pop("blocker_escalations", UNSET)
         blocker_escalations: OperationWorkflowStepBlockerEscalations | Unset
@@ -264,6 +287,7 @@ class OperationWorkflowStep:
             label=label,
             milestone=milestone,
             position=position,
+            playbooks=playbooks,
             blocker_escalations=blocker_escalations,
             decision_conditions=decision_conditions,
             allow_reconciliation=allow_reconciliation,

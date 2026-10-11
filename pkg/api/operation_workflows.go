@@ -18,6 +18,7 @@ const OperationWorkflowStateStaleAfterMaxSeconds int64 = 10 * 365 * 24 * 60 * 60
 // name matches. Source manifests pin the milestone and instance ID pointer;
 // reads populate InstanceID from the retained public payload.
 type OperationWorkflowSpec struct {
+	Playbooks              []OperationWorkflowPlaybook                         `json:"playbooks,omitempty"`
 	DecisionConditions     []OperationBusinessConditionDefinition              `json:"decision_conditions,omitempty"`
 	StateSLAWarningPercent map[string]int64                                    `json:"state_sla_warning_percent,omitempty"`
 	StateSLABudgetSeconds  map[string]int64                                    `json:"state_sla_budget_seconds,omitempty"`
@@ -84,4 +85,21 @@ func ValidateOperationWorkflowInstanceID(value string) error {
 type OperationWorkflowBlockerEscalationPolicy struct {
 	AfterSeconds int64  `json:"after_seconds" yaml:"after_seconds" toml:"after_seconds"`
 	Owner        string `json:"owner" yaml:"owner" toml:"owner"`
+}
+
+type OperationWorkflowPlaybook struct {
+	ID               string   `json:"id" yaml:"id" toml:"id"`
+	Version          int      `json:"version" yaml:"version" toml:"version"`
+	MatchKind        string   `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
+	MatchCode        string   `json:"match_code" yaml:"match_code" toml:"match_code"`
+	Summary          string   `json:"summary" yaml:"summary" toml:"summary"`
+	Owner            string   `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
+	RequiredEvidence []string `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
+	RunbookURL       string   `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
+	ActionURL        string   `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
+}
+type OperationWorkflowPlaybookGuidance struct {
+	Playbook             OperationWorkflowPlaybook `json:"playbook" yaml:"playbook" toml:"playbook"`
+	ContractVersion      int                       `json:"contract_version" yaml:"contract_version" toml:"contract_version"`
+	ReportingOperationID string                    `json:"reporting_operation_id" yaml:"reporting_operation_id" toml:"reporting_operation_id"`
 }

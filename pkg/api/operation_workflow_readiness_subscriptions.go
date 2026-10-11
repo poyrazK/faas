@@ -377,6 +377,9 @@ type OperationWorkflowCaseAction struct {
 	Sequence       int64  `json:"sequence,omitempty"`
 }
 type OperationWorkflowCase struct {
+	Guidance              []OperationWorkflowPlaybookGuidance   `json:"guidance"`
+	GuidanceStatus        string                                `json:"guidance_status"`
+	GuidanceTruncated     bool                                  `json:"guidance_truncated"`
 	Status                string                                `json:"status"`
 	Summary               string                                `json:"summary"`
 	Instance              *OperationWorkflowInstanceSnapshot    `json:"instance,omitempty"`

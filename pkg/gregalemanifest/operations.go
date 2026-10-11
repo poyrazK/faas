@@ -42,6 +42,7 @@ func (o Operation) specification() api.OperationDefinitionSpec {
 // OperationWorkflow declares a read-only business process assembled from
 // milestone facts reported by one or more customer Operations.
 type OperationWorkflow struct {
+	Playbooks              []api.OperationWorkflowPlaybook                         `yaml:"playbooks,omitempty" toml:"playbooks"`
 	BlockerEscalations     map[string]api.OperationWorkflowBlockerEscalationPolicy `yaml:"blocker_escalations,omitempty" toml:"blocker_escalations"`
 	App                    string                                                  `yaml:"app,omitempty" toml:"app"`
 	Name                   string                                                  `yaml:"name" toml:"name"`
@@ -240,6 +241,10 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 		}
 		if workflow.App != "" && workflow.App != slug {
 			continue
+		}
+		playbooks, err := api.CanonicalOperationWorkflowPlaybooks(workflow.Playbooks)
+		if err != nil {
+			return nil, fmt.Errorf("operation workflow %q playbooks: %w", workflow.Name, err)
 		}
 		workflowCount++
 		if workflowCount > api.OperationWorkflowsMaxPerApp {
@@ -450,7 +455,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			}
 			seenNames[step.Name], seenPositions[step.Position], seenBindings[binding] = true, true, true
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
-				Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateSLABudgetSeconds: stateSLABudgets, StateSLAWarningPercent: stateSLAWarnings, StateStaleAfterSeconds: stateStaleAfter, BlockerEscalations: workflow.BlockerEscalations,
+				Playbooks: playbooks, Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateSLABudgetSeconds: stateSLABudgets, StateSLAWarningPercent: stateSLAWarnings, StateStaleAfterSeconds: stateStaleAfter, BlockerEscalations: workflow.BlockerEscalations,
 				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0, Step: step.Name, Label: step.Label,
 				DecisionConditions: step.DecisionConditions, AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})

@@ -1153,6 +1153,8 @@ export type { OperationWorkflowPerformanceSummary } from './OperationWorkflowPer
 export type { OperationWorkflowPlannedDecision } from './OperationWorkflowPlannedDecision.js';
 export type { OperationWorkflowPlannedEffect } from './OperationWorkflowPlannedEffect.js';
 export type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlannedInvariant.js';
+export type { OperationWorkflowPlaybook } from './OperationWorkflowPlaybook.js';
+export type { OperationWorkflowPlaybookGuidance } from './OperationWorkflowPlaybookGuidance.js';
 export type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 export type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowPrerequisiteRecovery.js';
 export type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';

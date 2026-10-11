@@ -2089,6 +2089,7 @@ from .operation_workflow_bottlenecks import OperationWorkflowBottlenecks
 from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWorkflowBottlenecksIncompleteReasonsItem
 from .operation_workflow_case import OperationWorkflowCase
 from .operation_workflow_case_action import OperationWorkflowCaseAction
+from .operation_workflow_case_guidance_status import OperationWorkflowCaseGuidanceStatus
 from .operation_workflow_change_reason import OperationWorkflowChangeReason
 from .operation_workflow_condition_change import OperationWorkflowConditionChange
 from .operation_workflow_condition_change_source import OperationWorkflowConditionChangeSource
@@ -2211,6 +2212,9 @@ from .operation_workflow_performance_summary import OperationWorkflowPerformance
 from .operation_workflow_planned_decision import OperationWorkflowPlannedDecision
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
+from .operation_workflow_playbook import OperationWorkflowPlaybook
+from .operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
+from .operation_workflow_playbook_match_kind import OperationWorkflowPlaybookMatchKind
 from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
 from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
 from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
@@ -5719,6 +5723,7 @@ __all__ = (
     "OperationWorkflowBottlenecksIncompleteReasonsItem",
     "OperationWorkflowCase",
     "OperationWorkflowCaseAction",
+    "OperationWorkflowCaseGuidanceStatus",
     "OperationWorkflowChangeReason",
     "OperationWorkflowConditionChange",
     "OperationWorkflowConditionChangeSource",
@@ -5819,6 +5824,9 @@ __all__ = (
     "OperationWorkflowPlannedDecision",
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
+    "OperationWorkflowPlaybook",
+    "OperationWorkflowPlaybookGuidance",
+    "OperationWorkflowPlaybookMatchKind",
     "OperationWorkflowPolicyRequirement",
     "OperationWorkflowPrerequisiteRecovery",
     "OperationWorkflowPrerequisiteRecoveryReason",

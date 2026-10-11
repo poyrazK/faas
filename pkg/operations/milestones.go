@@ -77,6 +77,11 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	workflowVersions := make(map[string]int)
 	workflowRetainedRequirements := make(map[string]map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
 	for i := range spec.WorkflowSteps {
+		playbooks, err := api.CanonicalOperationWorkflowPlaybooks(spec.WorkflowSteps[i].Playbooks)
+		if err != nil {
+			return err
+		}
+		spec.WorkflowSteps[i].Playbooks = playbooks
 		conditions, err := api.CanonicalOperationBusinessConditions(spec.WorkflowSteps[i].DecisionConditions)
 		if err != nil {
 			return err
@@ -457,7 +462,7 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		}
 		return left.Step < right.Step
 	})
-	return nil
+	return validateWorkflowPlaybookContracts(spec.WorkflowSteps)
 }
 
 func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool {
