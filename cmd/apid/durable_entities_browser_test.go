@@ -45,6 +45,27 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 	} else if r == nil || r.StatusCode != 403 {
 		t.Fatalf("foreign origin: %v %v", r, err)
 	}
+	for _, frame := range []entitysocket.Frame{
+		{ProtocolVersion: 1, RequestID: "session/g1/" + session + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + session + `","generation":1}`)},
+		{ProtocolVersion: 1, RequestID: "session/g0/" + uuid.NewString() + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + uuid.NewString() + `","generation":0}`)},
+		{ProtocolVersion: 1, RequestID: "session/g0/reclaim/" + uuid.NewString(), Payload: json.RawMessage(`{"kind":"reclaim","generation":0,"operation_id":"` + uuid.NewString() + `"}`)},
+	} {
+		c, _, err := dial("https://example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = c.WriteJSON(frame); err != nil {
+			t.Fatal(err)
+		}
+		var denied entitysocket.Reply
+		if err = c.ReadJSON(&denied); err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if denied.Status != 403 || dispatch.calls.Load() != 0 {
+			t.Fatal("scope escape dispatched", denied)
+		}
+	}
 	conn, _, err := dial("https://example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -140,5 +161,45 @@ func TestDurableEntitySocketBrowserFlagRequiresServiceSockets(t *testing.T) {
 		return ""
 	}); err == nil {
 		t.Fatal("browser preview enabled without sockets")
+	}
+}
+
+func TestDurableEntitySocketBrowserIssuerRevocation(t *testing.T) {
+	e, app, dispatch, bucket := entityAPIFixture(t, false)
+	enabled := true
+	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWebSocketEnabled: true, WebSocketEnabled: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.durableEntitySockets = entitysocket.New()
+	e.s.durableEntitySessionGrants = &entitysocket.Grants{Store: bucket}
+	keys, err := e.store.ListAPIKeys(t.Context(), e.acct.ID)
+	if err != nil || len(keys) != 1 {
+		t.Fatal(err)
+	}
+	session := uuid.NewString()
+	_, token, err := e.s.durableEntitySessionGrants.Mint(t.Context(), entitysocket.Grant{Entity: durableentity.ID{AccountID: e.acct.ID, AppID: app.ID, EnvironmentID: app.ID, Namespace: "counters", Key: "a"}, IssuerID: keys[0].ID, SessionID: session, Origin: "https://example.com", Commands: []string{"open"}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(e.h)
+	defer server.Close()
+	d := websocket.Dialer{Subprotocols: []string{entitysocket.BrowserProtocol, entitysocket.CredentialProtocol + token}}
+	conn, _, err := d.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/session-connect", http.Header{"Origin": []string{"https://example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = e.store.DeleteAPIKeyReturning(t.Context(), e.acct.ID, keys[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = conn.WriteJSON(entitysocket.Frame{ProtocolVersion: 1, RequestID: "session/g0/" + session + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + session + `","generation":0}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var denied entitysocket.Reply
+	if err = conn.ReadJSON(&denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Status != 403 || dispatch.calls.Load() != 0 {
+		t.Fatal("revoked issuer dispatched", denied)
 	}
 }
