@@ -57,6 +57,52 @@ func TestIssuesListAssigneeFilterAndTriageColumns(t *testing.T) {
 	}
 }
 
+func TestIssuesRegroupingCLIUsesActionFieldsAndCanonicalResponse(t *testing.T) {
+	var requests []api.IssueActionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/apps/exports/issues/source/actions" {
+			t.Errorf("unexpected regrouping request: %s %s", r.Method, r.URL.Path)
+		}
+		var input api.IssueActionRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		requests = append(requests, input)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.Issue{ID: "canonical", State: "open", EventCount: 7})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var output bytes.Buffer
+	osStdout, jsonOutput = &output, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	for _, args := range [][]string{
+		{"merge", "--app", "exports", "--target", "destination", "source"},
+		{"split", "--app", "exports", "--member", "original", "source"},
+	} {
+		if code := cmdIssues(args); code != 0 {
+			t.Fatalf("regrouping command failed: %v status=%d", args, code)
+		}
+	}
+	if len(requests) != 2 || requests[0].Action != "merge" || requests[0].TargetIssueID != "destination" ||
+		requests[1].Action != "split" || requests[1].MemberIssueID != "original" {
+		t.Fatalf("regrouping fields were lost: %+v", requests)
+	}
+	if !strings.Contains(output.String(), "canonical") || !strings.Contains(output.String(), "7 observed events") {
+		t.Fatal("CLI did not display the canonical response")
+	}
+	for _, action := range []string{"merge", "split"} {
+		if code := cmdIssues([]string{action, "--app", "exports", "source"}); code == 0 {
+			t.Fatal("missing regrouping operand was accepted")
+		}
+	}
+	if len(requests) != 2 {
+		t.Fatal("incomplete regrouping command reached the API")
+	}
+}
+
 func TestIssuesImpactAlertPolicyCLI(t *testing.T) {
 	var method, path string
 	var threshold int64

@@ -56,6 +56,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
+| 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
+| 1112 | [Verified issue grouping explanations](1112-issue-grouping-explanations.md) | accepted | Retained occurrences expose selected sanitized evidence only when it reproduces the saved group fingerprint |
+| 1111 | [Opt-in failure-site issue grouping](1111-issue-failure-site-grouping.md) | accepted | Version 2 groups the nearest application frame with a stable code or normalized message; version 1 identities remain unchanged |
 | 742 | [WebSocket forwarding through Dev Bridge](742-dev-bridge-websocket-forwarding.md) | accepted for internal Dev Bridge use | Bounded, revocable WebSocket upgrades in both bridge directions; other upgrades, gRPC and raw TCP remain out of scope |
 | 741 | [Remote debugger attach for developer environments](741-developer-debugger-attach.md) | proposed | `gregale dev --debug` over a leased edge WebSocket to vmmd `ForwardTCPStream`; developer sessions only |
 | 740 | [Developer live source patches](740-developer-live-source-patch.md) | proposed | ~1 s interpreted-source edits via a guest long-poll on the runtime-config vsock; the build still converges |
@@ -784,3 +788,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
 
 - [ADR-967: Scenario TCP fault injection](967-scenario-tcp-fault-injection.md)
+
+- [ADR-1115: Issue occurrence split preview](1115-issue-occurrence-split-preview.md)
+
+- [ADR-1116: Durable issue occurrence split rules](1116-durable-issue-occurrence-split-rules.md)
+
+- [ADR-1117 · Cause-aware issue grouping](1117-cause-aware-issue-grouping.md)
+
+- [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)

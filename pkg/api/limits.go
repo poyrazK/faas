@@ -8904,6 +8904,7 @@ const (
 	IssueMessageMaxBytes  = 2048
 	IssueStackMaxBytes    = 16 << 10
 	IssueMaxFrames        = 32
+	IssueMaxCauses        = 8
 	IssueMaxFrameBytes    = 512
 	IssueMaxTypeBytes     = 256
 	IssuePageSize         = 50
@@ -8911,6 +8912,19 @@ const (
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
 )
+
+// Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
+// bounds; map artifacts and source content never enter ingestion.
+const (
+	IssueSourceMapsMax       = 32
+	IssueSourceMapMaxBytes   = 512 << 10
+	IssueSourceMapsMaxBytes  = 4 << 20
+	IssueSourceMapEntriesMax = 100000
+	IssueSourceMapSymbolsMax = 8192
+)
+
+// IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
+const IssueGroupMembersMax = 32
 
 type IssueLimits struct {
 	Enabled         bool
@@ -9752,3 +9766,9 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// IssueSplitPreviewSamplesMax bounds matching occurrence IDs in a preview.
+const IssueSplitPreviewSamplesMax = 10
+
+// IssueSplitRulesPerIssueMax bounds immutable rules, including disabled rules.
+const IssueSplitRulesPerIssueMax = 8

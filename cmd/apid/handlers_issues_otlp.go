@@ -57,7 +57,7 @@ func prepareIssueOTLP(batch []api.IssueEvent, credential state.IssueCredential, 
 		if err != nil {
 			return nil, err
 		}
-		inputs = append(inputs, state.RecordIssueParams{Credential: credential, Event: normalized, Fingerprint: fp, Title: title, PayloadHash: issues.PayloadDigest(event), GroupingVersion: issues.GroupingVersion, Limits: acct.Plan.IssueLimits(), Now: now})
+		inputs = append(inputs, state.RecordIssueParams{Credential: credential, Event: normalized, Fingerprint: fp, Title: title, PayloadHash: issues.PayloadDigest(event), GroupingVersion: issues.GroupingVersionFor(normalized), Limits: acct.Plan.IssueLimits(), Now: now})
 	}
 	return inputs, nil
 }

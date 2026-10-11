@@ -57,6 +57,11 @@ import type { IssueEventResponse } from '../models/IssueEventResponse.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
+import type { IssueSplitMatcher } from '../models/IssueSplitMatcher.js';
+import type { IssueSplitPreview } from '../models/IssueSplitPreview.js';
+import type { IssueSplitRule } from '../models/IssueSplitRule.js';
+import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequest.js';
+import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
@@ -2386,6 +2391,213 @@ export class AppsService {
         'release_cursor': releaseCursor,
         'activity_cursor': activityCursor,
       },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview exact occurrence matches without changing grouping.
+   * Read-only snapshot of all retained evidence for one original identity. Missing lifetime evidence remains unclassified. Every populated matcher must equal the sanitized stored value.
+   * @returns IssueSplitPreview Retained match counts, unavailable history, and bounded matching IDs.
+   * @throws ApiError
+   */
+  public static previewIssueSplit({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original fingerprint identity within this app, including a linked member.
+     */
+    issueId: string,
+    requestBody: IssueSplitMatcher,
+  }): CancelablePromise<IssueSplitPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/split-preview',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Split retained matches and route future matching captures.
+   * Creates an immutable ordered rule and an open branch with the source canonical owner. Repeating the same source and matcher returns the existing rule without replaying evidence. At most eight rules, including disabled rules, per source. Branches count toward issue storage limits.
+   * @returns IssueSplitRule Rule and branch created with actor-attributed activity.
+   * @throws ApiError
+   */
+  public static createIssueSplitRule({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the original fingerprint source; derived branches cannot have nested rules.
+     */
+    issueId: string,
+    requestBody: IssueSplitMatcher,
+  }): CancelablePromise<IssueSplitRule> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/split-rules',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Enable or disable an existing occurrence routing rule.
+   * Changes future routing only. Existing evidence, prior retry destinations, matcher, and priority remain unchanged.
+   * @returns IssueSplitRule Rule state returned; changes append actor-attributed activity.
+   * @throws ApiError
+   */
+  public static updateIssueSplitRule({
+    slug,
+    issueId,
+    ruleId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the original source owning the routing rule whose enabled state should change.
+     */
+    issueId: string,
+    /**
+     * Immutable rule UUID belonging to the source issue.
+     */
+    ruleId: string,
+    requestBody: IssueSplitRuleUpdate,
+  }): CancelablePromise<IssueSplitRule> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'rule_id': ruleId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Disable a split rule and merge its isolated branch atomically.
+   * Requires the reviewed canonical source ID. Rejects changed destinations and unrelated branch links. Destination owner and lifecycle win. Existing occurrence provenance and original counters remain intact. Other enabled rules continue routing by priority. A repeated completed undo is a no-op.
+   * @returns IssueSplitRule Disabled rule; its branch is combined with the reviewed source group.
+   * @throws ApiError
+   */
+  public static undoIssueSplitRule({
+    slug,
+    issueId,
+    ruleId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original source issue UUID owning the rule to undo.
+     */
+    issueId: string,
+    /**
+     * Rule UUID to disable and combine with its reviewed source group.
+     */
+    ruleId: string,
+    requestBody: IssueSplitRuleUndoRequest,
+  }): CancelablePromise<IssueSplitRule> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'rule_id': ruleId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

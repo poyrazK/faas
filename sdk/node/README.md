@@ -824,11 +824,11 @@ Test rigs that mock `fetch` should pass `fetch: mockFn` via
 `FaaSClientOptions` rather than setting `globalThis.fetch` directly —
 the wrapper will chain the mock in the correct order.
 
-## Zero runtime dependencies
+## Runtime dependencies
 
-`dependencies: {}` — the wrapper uses only Web APIs (`fetch`,
-`AbortController`, `Headers`, `URL`) plus Node 22 built-ins
-(`node:crypto`, `node:test`, `node:child_process`, `node:net`).
+The HTTP wrapper uses Web APIs (`fetch`, `AbortController`, `Headers`, `URL`)
+and Node 22 built-ins. Deployment-local issue source maps use the pinned
+`@jridgewell/trace-mapping@0.3.31` parser (ADR-1113). No map URLs are fetched.
 
 The `devDependencies` pin `openapi-typescript-codegen@0.31.0` and
 `typescript@5.6.3`. Major-version bumps require an ADR.
@@ -2615,3 +2615,24 @@ Use the attention reason `sla_breached` to find known breaches. Performance coho
 Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
+
+## Issue source maps
+
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
+`sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
+bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
+Ship matching maps with the deployment and load them before creating the reporter.
+Original frames determine grouping, and raw bundle stacks remain available.
+Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
+[registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.

@@ -574,7 +574,7 @@ func TestIssueSDKEndToEndPostgres(t *testing.T) {
 		t.Fatal("Node SDK acceptance requires Node.js")
 	}
 	// Dynamic import accepts an absolute path without shell interpolation.
-	script := `const {createIssueReporter}=await import(process.env.GREGALE_ISSUE_NODE_MODULE);const r=createIssueReporter({baseURL:process.env.GREGALE_ISSUE_API,app:'issue-sdk',token:process.env.GREGALE_ISSUE_TOKEN});r.captureException(new TypeError('Node SDK failure'));if(!await r.close())process.exit(2);`
+	script := `const {createIssueReporter}=await import(process.env.GREGALE_ISSUE_NODE_MODULE);const r=createIssueReporter({baseURL:process.env.GREGALE_ISSUE_API,app:'issue-sdk',token:process.env.GREGALE_ISSUE_TOKEN,groupingStrategy:'failure-site-v1'});r.captureException(new TypeError('Node SDK failure'),{error_code:'NODE_FAILURE'});if(!await r.close())process.exit(2);`
 	cmd := exec.CommandContext(t.Context(), node, "--input-type=module", "-e", script)
 	cmd.Env = append(os.Environ(), "GREGALE_ISSUE_API="+server.URL, "GREGALE_ISSUE_TOKEN="+token.Token, "GREGALE_ISSUE_NODE_MODULE="+filepath.Join(root, "sdk/node/dist/issues.js"))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -586,11 +586,11 @@ func TestIssueSDKEndToEndPostgres(t *testing.T) {
 	}
 	script = `import os
 from faas_sdk.issues import IssueReporter
-r=IssueReporter(os.environ['GREGALE_ISSUE_API'],'issue-sdk',os.environ['GREGALE_ISSUE_TOKEN'])
+r=IssueReporter(os.environ['GREGALE_ISSUE_API'],'issue-sdk',os.environ['GREGALE_ISSUE_TOKEN'],grouping_strategy='failure-site-v1')
 try:
  raise ValueError('Python SDK failure')
 except ValueError as e:
- r.capture_exception(e)
+ r.capture_exception(e,error_code='PYTHON_FAILURE')
 assert r.close()
 `
 	cmd = exec.CommandContext(t.Context(), python, "-c", script)
@@ -607,6 +607,16 @@ assert r.close()
 		detail, err := c.GetIssue(t.Context(), app.Slug, issue.ID, "", "")
 		if err != nil || len(detail.Events) != 1 || len(detail.Events[0].Frames) == 0 || detail.Releases[0].DeploymentID != dep.ID {
 			t.Fatalf("SDK evidence incomplete: %+v %v", detail, err)
+		}
+		if issue.GroupingVersion != 2 || detail.Events[0].GroupingStrategy != "failure-site-v1" || detail.Events[0].ErrorCode == "" {
+			t.Fatalf("SDK grouping controls not applied: %+v", detail)
+		}
+		wantOrder := "newest-first"
+		if detail.Events[0].ErrorCode == "PYTHON_FAILURE" {
+			wantOrder = "oldest-first"
+		}
+		if detail.Events[0].FrameOrder != wantOrder {
+			t.Fatalf("SDK frame order = %q, want %q", detail.Events[0].FrameOrder, wantOrder)
 		}
 	}
 }
