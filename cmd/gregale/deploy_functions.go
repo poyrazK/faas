@@ -153,17 +153,17 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 			}
 		}
 	}
-	fmt.Fprintf(d.out, "Deploying %d functions from %s\n", len(planned), displayPath(d.cwd, d.projectDir))
+	_, _ = fmt.Fprintf(d.out, "Deploying %d functions from %s\n", len(planned), displayPath(d.cwd, d.projectDir))
 	done := make([]string, 0, len(planned))
 	for i, fn := range planned {
-		fmt.Fprintf(d.out, "\n[%d/%d] %s → %s (%s, %s)\n", i+1, len(planned), fn.spec.Name, fn.slug, fn.runtime, fn.root)
+		_, _ = fmt.Fprintf(d.out, "\n[%d/%d] %s → %s (%s, %s)\n", i+1, len(planned), fn.spec.Name, fn.slug, fn.runtime, fn.root)
 		if code := d.deployOne(functionDeployArgs(d.args, fn)); code != 0 {
 			d.summarize(done, fn, planned[i+1:])
 			return code
 		}
 		if !d.planOnly && client != nil {
 			if err := d.reconcile(ctx, client, fn); err != nil {
-				fmt.Fprintf(d.out, "function %s deployed, but its configuration did not apply: %v\n", fn.spec.Name, err)
+				_, _ = fmt.Fprintf(d.out, "function %s deployed, but its configuration did not apply: %v\n", fn.spec.Name, err)
 				d.summarize(done, fn, planned[i+1:])
 				return 1
 			}
@@ -182,20 +182,20 @@ func (d functionSetDeploy) summarize(done []string, failed plannedFunction, skip
 	if d.planOnly {
 		verb = "Planned"
 	}
-	fmt.Fprintf(d.out, "\n%s %d function(s)", verb, len(done))
+	_, _ = fmt.Fprintf(d.out, "\n%s %d function(s)", verb, len(done))
 	if len(done) > 0 {
-		fmt.Fprintf(d.out, ": %s", strings.Join(done, ", "))
+		_, _ = fmt.Fprintf(d.out, ": %s", strings.Join(done, ", "))
 	}
-	fmt.Fprintln(d.out)
+	_, _ = fmt.Fprintln(d.out)
 	if failed.slug != "" {
-		fmt.Fprintf(d.out, "Failed: %s\n", failed.slug)
+		_, _ = fmt.Fprintf(d.out, "Failed: %s\n", failed.slug)
 	}
 	if len(skipped) > 0 {
 		names := make([]string, len(skipped))
 		for i, fn := range skipped {
 			names[i] = fn.slug
 		}
-		fmt.Fprintf(d.out, "Not attempted: %s\n", strings.Join(names, ", "))
+		_, _ = fmt.Fprintf(d.out, "Not attempted: %s\n", strings.Join(names, ", "))
 	}
 }
 
@@ -216,7 +216,7 @@ func (d functionSetDeploy) reportUnlisted(ctx context.Context, client functionSe
 		return
 	}
 	sort.Strings(unlisted)
-	fmt.Fprintf(d.out, "Not in gregale.yaml (kept): %s — delete with `gregale apps --yes <slug>`\n", strings.Join(unlisted, ", "))
+	_, _ = fmt.Fprintf(d.out, "Not in gregale.yaml (kept): %s — delete with `gregale apps --yes <slug>`\n", strings.Join(unlisted, ", "))
 }
 
 // reconcile applies one deployed function's manifest configuration.
@@ -429,7 +429,7 @@ func reconcileFunctionWebhooks(ctx context.Context, client functionSetClient, ou
 		if err != nil {
 			return fmt.Errorf("create endpoint %q: %w", hook.Name, err)
 		}
-		fmt.Fprintf(out, "Webhook %s for %s: %s\n  Save this URL now and register it with %s; it is shown only once.\n", hook.Name, slug, created.EndpointURL, hook.Provider)
+		_, _ = fmt.Fprintf(out, "Webhook %s for %s: %s\n  Save this URL now and register it with %s; it is shown only once.\n", hook.Name, slug, created.EndpointURL, hook.Provider)
 	}
 	var extra []string
 	for _, endpoint := range existing {
@@ -439,7 +439,7 @@ func reconcileFunctionWebhooks(ctx context.Context, client functionSetClient, ou
 	}
 	if len(extra) > 0 {
 		sort.Strings(extra)
-		fmt.Fprintf(out, "Webhook endpoints on %s not in gregale.yaml (kept): %s\n", slug, strings.Join(extra, ", "))
+		_, _ = fmt.Fprintf(out, "Webhook endpoints on %s not in gregale.yaml (kept): %s\n", slug, strings.Join(extra, ", "))
 	}
 	return nil
 }
