@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// AIUsage is the normalized token usage of one provider response (ADR-979).
+// AIUsage is the normalized token usage of one provider response (ADR-988).
 // InputTokens includes cached reads and cache writes, which are also
 // reported separately, so every provider counts input the same way.
 type AIUsage struct {
@@ -45,9 +45,9 @@ type AIUsageRecord struct {
 	Outcome       AIUsageOutcome
 	Usage         AIUsage
 	// CostMillicents is priced at settlement from the integration's price
-	// list (ADR-983); zero when no price matches.
+	// list (ADR-990); zero when no price matches.
 	CostMillicents int64
-	// Log, when set, adds one metadata row to the AI request log (ADR-984).
+	// Log, when set, adds one metadata row to the AI request log (ADR-991).
 	Log *AIRequestLog
 }
 
@@ -120,7 +120,7 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 
 // aiUsageFields covers the OpenAI chat completions, OpenAI Responses,
 // Anthropic Messages, Gemini usageMetadata, Bedrock Converse usage and Bedrock
-// invocation metrics objects (ADR-984). Absent fields stay nil.
+// invocation metrics objects (ADR-991). Absent fields stay nil.
 type aiUsageFields struct {
 	PromptTokens        *int64 `json:"prompt_tokens"`
 	CompletionTokens    *int64 `json:"completion_tokens"`

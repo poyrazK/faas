@@ -14,13 +14,13 @@ import (
 type memoryLease struct {
 	expiresAt time.Time
 	// bindingApp and the reservation count against AI hard caps while the
-	// lease lives (ADR-984).
+	// lease lives (ADR-991).
 	bindingApp     string
 	reservedTokens int64
 	reservedCost   int64
 }
 
-// memoryMinute is one app's fixed UTC-minute window (ADR-984).
+// memoryMinute is one app's fixed UTC-minute window (ADR-991).
 type memoryMinute struct {
 	window           time.Time
 	requests, tokens int64
@@ -51,7 +51,7 @@ type memoryState struct {
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
 	bindingMinutes           map[string]memoryMinute
 	// The limits of the latest admission, used to detect budget alerts at
-	// settlement (ADR-984), and the alerts and request log recorded.
+	// settlement (ADR-991), and the alerts and request log recorded.
 	aiLimits           aiBudgetLimits
 	bindingTokenLimits map[string]*int64
 	aiAlerts           []AIBudgetAlert
@@ -498,7 +498,7 @@ func (b *MemoryBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord)
 }
 
 // RecordAIUsageAlerts settles one AI call and records the budget alerts it
-// reached and its request-log entry (ADR-984).
+// reached and its request-log entry (ADR-991).
 func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageRecord) ([]AIBudgetAlert, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

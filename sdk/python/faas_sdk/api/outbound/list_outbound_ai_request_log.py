@@ -96,7 +96,7 @@ def sync_detailed(
 ) -> Response[OutboundAIRequestLogList | Problem]:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
     only.
 
     Args:
@@ -134,7 +134,7 @@ def sync(
 ) -> OutboundAIRequestLogList | Problem | None:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
     only.
 
     Args:
@@ -167,7 +167,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIRequestLogList | Problem]:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
     only.
 
     Args:
@@ -203,7 +203,7 @@ async def asyncio(
 ) -> OutboundAIRequestLogList | Problem | None:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
     only.
 
     Args:

@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -324,21 +325,15 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 	})
 }
 
-// accountContextKey is the request-context key for the authenticated
-// account (under sessionAuth). Avoids stringly-typed context values.
-type accountContextKey struct{}
-
 // WithAccount returns ctx with acct stashed under the sessionAuth key.
+// Facade over httpkit.WithAccount (ADR-982).
 func WithAccount(ctx context.Context, acct state.Account) context.Context {
-	return context.WithValue(ctx, accountContextKey{}, acct)
+	return httpkit.WithAccount(ctx, acct)
 }
 
-// AccountFrom extracts the authenticated account (or nil). Used by
-// dashboard handlers in slice 4+.
-func AccountFrom(ctx context.Context) (state.Account, bool) {
-	a, ok := ctx.Value(accountContextKey{}).(state.Account)
-	return a, ok
-}
+// AccountFrom extracts the session-authenticated account. Used by
+// dashboard handlers. Facade over httpkit.AccountFrom (ADR-982).
+func AccountFrom(ctx context.Context) (state.Account, bool) { return httpkit.AccountFrom(ctx) }
 
 // looksLikeEmail is a permissive shape check — RFC 5322 is too
 // permissive for a real validator; this catches the common

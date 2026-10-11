@@ -22,6 +22,7 @@ import (
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
@@ -184,7 +185,7 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{e.store})
 	recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{Enabled: true, RingSize: 32}, e.s.log)
 	edge.WithRequestTelemetryRecorder(recorder)
-	receiver := newRequestTelemetryReceiver(e.store.(requestTelemetryStore), e.s.ops, nil, true)
+	receiver := receivers.NewRequestTelemetryReceiver(e.store.(receivers.RequestTelemetryStore), e.s.ops, nil, true)
 	request := func(i int, want bool, version int64) {
 		r := httptest.NewRequest("GET", "http://"+slug+".gregale.dev/exports", nil)
 		r.Header.Set("Authorization", "Bearer "+keys[i])
@@ -206,8 +207,8 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 			t.Fatal("tenant attribution lost")
 		}
 		row := rows[0]
-		out := receiver.handleOne(ctx, &apidpb.IncrementRequestTelemetryRequest{EventId: row.EventID.String(), AccountId: row.AccountID.String(), AppId: row.AppID.String(), DeploymentId: row.DeploymentID.String(), RouteTemplate: row.Route, Method: row.Method, HttpStatus: int32(row.Status), LatencyMs: int32(row.LatencyMS), ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(), Count: 1, ConsumerId: row.ConsumerID, PlatformTenantId: row.PlatformTenantID, FlagEvidenceJson: row.FlagEvidenceJSON, InstanceId: row.InstanceID})
-		if out.Outcome != rtOutcomeInserted {
+		out := receiver.HandleOne(ctx, &apidpb.IncrementRequestTelemetryRequest{EventId: row.EventID.String(), AccountId: row.AccountID.String(), AppId: row.AppID.String(), DeploymentId: row.DeploymentID.String(), RouteTemplate: row.Route, Method: row.Method, HttpStatus: int32(row.Status), LatencyMs: int32(row.LatencyMS), ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(), Count: 1, ConsumerId: row.ConsumerID, PlatformTenantId: row.PlatformTenantID, FlagEvidenceJson: row.FlagEvidenceJSON, InstanceId: row.InstanceID})
+		if out.Outcome != receivers.RtOutcomeInserted {
 			t.Fatalf("telemetry outcome=%s", out.Outcome)
 		}
 	}

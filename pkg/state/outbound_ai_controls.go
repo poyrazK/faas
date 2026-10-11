@@ -9,11 +9,11 @@ import (
 )
 
 // ErrOutboundCredentialKeyLimit reports an integration at its key pool
-// ceiling (ADR-984).
+// ceiling (ADR-991).
 var ErrOutboundCredentialKeyLimit = errors.New("state: outbound credential key limit reached")
 
 // OutboundAIGuardrails are one app binding's per-minute limits, model
-// allow-list and output ceiling (ADR-984). Nil fields are unset.
+// allow-list and output ceiling (ADR-991). Nil fields are unset.
 type OutboundAIGuardrails struct {
 	RequestsPerMinute *int64
 	TokensPerMinute   *int64
@@ -72,7 +72,7 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int
 }
 
-// OutboundAIControlStore owns the ADR-984 customer settings (guardrails and
+// OutboundAIControlStore owns the ADR-991 customer settings (guardrails and
 // key pools) and reads what outboundd records (alerts and the request log).
 type OutboundAIControlStore interface {
 	SetOutboundBindingAIGuardrails(ctx context.Context, accountID, appID, integrationID string, guard OutboundAIGuardrails) error

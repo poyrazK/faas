@@ -44,7 +44,7 @@ func (s *server) writeOutboundAIWriteResult(w http.ResponseWriter, err error, no
 }
 
 // putOutboundAIPolicy replaces a customer integration's AI gateway settings
-// (ADR-979, ADR-983). An empty provider turns AI handling off.
+// (ADR-988, ADR-990). An empty provider turns AI handling off.
 func (s *server) putOutboundAIPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := outboundIntegrationPathID(w, r)
 	if !ok {
@@ -113,7 +113,7 @@ func outboundAIUsageResponse(usage state.OutboundAIUsage) api.OutboundAIUsageRes
 }
 
 // putOutboundBindingAIBudget sets or clears one app's daily AI token limit
-// on an AI integration it is bound to (ADR-983).
+// on an AI integration it is bound to (ADR-990).
 func (s *server) putOutboundBindingAIBudget(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -160,7 +160,7 @@ func (s *server) getOutboundAIPrices(w http.ResponseWriter, r *http.Request, acc
 }
 
 // putOutboundAIPrices replaces the price list; it takes effect immediately
-// and earlier lists stay for the costs already settled (ADR-983).
+// and earlier lists stay for the costs already settled (ADR-990).
 func (s *server) putOutboundAIPrices(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := outboundIntegrationPathID(w, r)
 	if !ok {

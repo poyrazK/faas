@@ -748,7 +748,7 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
 	// outboundRelayEnabled advertises vmmd's streaming relay to
-	// outbound-enabled Runs (ADR-983).
+	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
@@ -2776,8 +2776,8 @@ func (m *Manager) ExecutionOutboundIdentity(instance, integrationID string) (acc
 	return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: integration not granted", instance)
 }
 
-// SetOutboundRelayEnabled records whether vmmd serves the ADR-982 relay, so
-// outbound-enabled Runs are told to stream through it (ADR-983).
+// SetOutboundRelayEnabled records whether vmmd serves the ADR-989 relay, so
+// outbound-enabled Runs are told to stream through it (ADR-990).
 func (m *Manager) SetOutboundRelayEnabled(enabled bool) {
 	if m != nil {
 		m.outboundRelayEnabled.Store(enabled)
@@ -2785,7 +2785,7 @@ func (m *Manager) SetOutboundRelayEnabled(enabled bool) {
 }
 
 // ExecutionRelayIdentity returns the lease-fenced Runs principal and the
-// Run's granted integrations for a relay connection (ADR-983). Unlike
+// Run's granted integrations for a relay connection (ADR-990). Unlike
 // ExecutionOutboundIdentity the integration is not known yet, so the grant
 // list travels with the connection and outboundd checks every request.
 func (m *Manager) ExecutionRelayIdentity(instance string) (accountID, executionID, leaseToken string, integrationIDs []string, err error) {

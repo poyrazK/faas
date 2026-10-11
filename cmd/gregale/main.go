@@ -403,6 +403,8 @@ func run(args []string) (status int) {
 		return cmdPark(args[1:])
 	case "wake":
 		return cmdWake(args[1:])
+	case "wake-ahead":
+		return cmdWakeAhead(args[1:])
 	case "test":
 		return cmdTest(args[1:])
 	case "chaos":
@@ -474,7 +476,7 @@ func run(args []string) (status int) {
 		// commands_registry.go.
 		return cmdRegistry(args[1:])
 	case "ai":
-		// ADR-979/982/983 — AI gateway settings, prices, usage and routes.
+		// ADR-988/989/990/991 — AI gateway settings, prices, usage and routes.
 		return cmdAI(args[1:])
 	case "webhooks":
 		// Issue #476 / ADR-076 — outbound webhook subscriptions

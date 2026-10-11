@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 984 — provider credential schemes: header styles, SigV4, Vertex.
+// adr: 991 — provider credential schemes: header styles, SigV4, Vertex.
 
 import (
 	"context"

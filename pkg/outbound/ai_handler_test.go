@@ -109,7 +109,7 @@ func TestHandlerSettlesAITokensAndEnforcesDailyTokenLimit(t *testing.T) {
 		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/messages", "token", "app-1", http.MethodPost, strings.NewReader(`{"max_tokens":10}`)))
 		return recorder
 	}
-	// Each call reserves 5 input + 10 output tokens (ADR-984), which still
+	// Each call reserves 5 input + 10 output tokens (ADR-991), which still
 	// fits below the 100-token limit until settled usage reaches it.
 	for i, wantTokens := range []int64{80, 160} {
 		if recorder := call(); recorder.Code != http.StatusOK {

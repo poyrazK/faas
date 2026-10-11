@@ -18,7 +18,7 @@ var _ OutboundAIStore = (*PgStore)(nil)
 const outboundAIUsageItemsMax = 5000
 
 // SetOutboundAIPolicy replaces a customer integration's AI gateway settings
-// (ADR-979, ADR-983). Bumping updated_at gives outboundd a new policy
+// (ADR-988, ADR-990). Bumping updated_at gives outboundd a new policy
 // revision.
 func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integrationID string, policy OutboundAIPolicy) error {
 	if !policy.valid() {
@@ -114,7 +114,7 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 }
 
 // SetOutboundBindingAITokenLimit sets or clears one app's daily AI token
-// limit on its binding (ADR-983).
+// limit on its binding (ADR-990).
 func (s *PgStore) SetOutboundBindingAITokenLimit(ctx context.Context, accountID, appID, integrationID string, limit *int64) error {
 	if limit != nil && (*limit < 1 || *limit > api.MaxOutboundAITokensPerDay) {
 		return ErrInvalidArgument

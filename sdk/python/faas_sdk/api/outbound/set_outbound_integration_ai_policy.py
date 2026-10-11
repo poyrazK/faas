@@ -82,7 +82,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Set or clear a customer-owned integration's AI provider and daily token limit.
 
-     Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in
+     Requires MFA and deploy-write scope (ADR-988). The gateway extracts token usage from responses in
     the selected provider's format and stops new calls once the UTC day's settled input plus output
     tokens reach the limit; calls already in flight may finish above it.
 
@@ -119,7 +119,7 @@ def sync(
 ) -> Any | Problem | None:
     """Set or clear a customer-owned integration's AI provider and daily token limit.
 
-     Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in
+     Requires MFA and deploy-write scope (ADR-988). The gateway extracts token usage from responses in
     the selected provider's format and stops new calls once the UTC day's settled input plus output
     tokens reach the limit; calls already in flight may finish above it.
 
@@ -151,7 +151,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Set or clear a customer-owned integration's AI provider and daily token limit.
 
-     Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in
+     Requires MFA and deploy-write scope (ADR-988). The gateway extracts token usage from responses in
     the selected provider's format and stops new calls once the UTC day's settled input plus output
     tokens reach the limit; calls already in flight may finish above it.
 
@@ -186,7 +186,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Set or clear a customer-owned integration's AI provider and daily token limit.
 
-     Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in
+     Requires MFA and deploy-write scope (ADR-988). The gateway extracts token usage from responses in
     the selected provider's format and stops new calls once the UTC day's settled input plus output
     tokens reach the limit; calls already in flight may finish above it.
 

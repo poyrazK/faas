@@ -64,11 +64,11 @@ func (s *server) prepareProjectEnvironmentCloneDeployments(ctx context.Context, 
 		if err != nil {
 			return nil, false, fmt.Errorf("prepare clone workload %q: %w", view.WorkloadSlug, err)
 		}
-		if s.durableEntityValidatorReleaseGateEnabled && s.durableEntityApps[view.AppID] {
-			if s.durableEntityValidatorArtifacts == nil {
+		if s.durable.ValidatorReleaseGateEnabled && s.durable.Apps[view.AppID] {
+			if s.durable.ValidatorArtifacts == nil {
 				return nil, false, errors.New("shared validator artifacts are required for cloning")
 			}
-			if err := s.durableEntityValidatorArtifacts.Transfer(ctx, view.AppID, view.SourceDeploymentID, d.ID); err != nil {
+			if err := s.durable.ValidatorArtifacts.Transfer(ctx, view.AppID, view.SourceDeploymentID, d.ID); err != nil {
 				return nil, false, err
 			}
 		}

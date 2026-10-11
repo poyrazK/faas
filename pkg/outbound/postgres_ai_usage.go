@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// RecordAIUsage settles one AI call (ADR-979). The caller/model rollup is
+// RecordAIUsage settles one AI call (ADR-988). The caller/model rollup is
 // written before the admission counter so this transaction takes locks in the
 // same order as admission and integration deletion: integration, then state.
 func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord) error {
@@ -22,7 +22,7 @@ func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecor
 }
 
 // aiSettlementLimits are the stored limits a settlement compares against
-// to find budget alerts (ADR-984).
+// to find budget alerts (ADR-991).
 type aiSettlementLimits struct {
 	accountID                           uuid.UUID
 	name                                string
@@ -31,7 +31,7 @@ type aiSettlementLimits struct {
 
 // RecordAIUsageAlerts settles one AI call and, in the same transaction,
 // records the budget alerts it reached with their webhooks and the call's
-// request-log entry (ADR-984).
+// request-log entry (ADR-991).
 func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageRecord) ([]AIBudgetAlert, error) {
 	if err := validateAIUsageRecord(record); err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost})
 		}
 	}
-	// ADR-983: the app's own binding counter, when the app has a binding row.
+	// ADR-990: the app's own binding counter, when the app has a binding row.
 	// Operator attachments and Runs have none, so nothing is updated.
 	if budgetTokens > 0 && record.Caller != AIUsageCallerRuns {
 		appID := uuid.MustParse(record.Caller)
@@ -170,7 +170,7 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 			       daily_ai_token_count = CASE WHEN usage.daily_usage_date = (now() AT TIME ZONE 'UTC')::date
 			                                   THEN usage.daily_ai_token_count + $3 ELSE $3 END,
 			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
-			       -- ADR-984: tokens count toward the minute they settle in.
+			       -- ADR-991: tokens count toward the minute they settle in.
 			       minute_request_count = CASE WHEN usage.minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
 			                                   THEN usage.minute_request_count ELSE 0 END,
 			       minute_ai_token_count = CASE WHEN usage.minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'

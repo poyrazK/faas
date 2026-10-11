@@ -11,7 +11,7 @@ import (
 )
 
 // aiResponseTranslator turns one provider response into OpenAI chat
-// completions (ADR-984).
+// completions (ADR-991).
 type aiResponseTranslator interface {
 	// json converts a whole JSON body, a success or a provider error.
 	json(status int, body []byte) []byte

@@ -13,7 +13,7 @@ import (
 var _ OutboundAIControlStore = (*PgStore)(nil)
 
 // SetOutboundBindingAIGuardrails replaces one app's AI guardrails on an AI
-// integration binding (ADR-984).
+// integration binding (ADR-991).
 func (s *PgStore) SetOutboundBindingAIGuardrails(ctx context.Context, accountID, appID, integrationID string, guard OutboundAIGuardrails) error {
 	if !guard.valid() {
 		return ErrInvalidArgument

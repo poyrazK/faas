@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// validateAIAdmissionSpec bounds the ADR-984 admission inputs shared by
+// validateAIAdmissionSpec bounds the ADR-991 admission inputs shared by
 // every backend.
 func validateAIAdmissionSpec(spec AdmissionSpec) error {
 	if spec.AIReservedTokens < 0 || spec.AIReservedTokens > 3*api.OutboundAIMaxTokensPerResponse ||
@@ -26,8 +26,8 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 }
 
 // aiBudgetState is the settled AI usage the admission row holds for today
-// and this calendar month (ADR-979, ADR-983), plus the reservations of live
-// leases (ADR-984).
+// and this calendar month (ADR-988, ADR-990), plus the reservations of live
+// leases (ADR-991).
 type aiBudgetState struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost  int64
 	inflightTokens, inflightBindingTokens, inflightCost int64
@@ -38,7 +38,7 @@ type aiBudgetLimits struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost *int64
 }
 
-// aiReservation is one call's admission-time estimate (ADR-984).
+// aiReservation is one call's admission-time estimate (ADR-991).
 type aiReservation struct {
 	tokens, cost int64
 }
@@ -65,7 +65,7 @@ func aiReservationFromSpec(spec AdmissionSpec) aiReservation {
 // aiBudgetExhausted reports the first AI budget the call cannot fit and how
 // long until it resets. A budget rejects once settled usage reaches it, and
 // also when settled usage plus live reservations plus this call's
-// reservation would pass it (ADR-984), so a limit is a hard cap for the
+// reservation would pass it (ADR-991), so a limit is a hard cap for the
 // gateway's estimate.
 func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLimits, reserve aiReservation) (string, time.Duration, bool) {
 	nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
@@ -97,7 +97,7 @@ type aiMinuteState struct {
 	requests, tokens, inflightTokens int64
 }
 
-// aiMinuteExhausted applies an app's per-minute limits (ADR-984). Requests
+// aiMinuteExhausted applies an app's per-minute limits (ADR-991). Requests
 // count admitted calls; tokens count settled tokens in the window, live
 // reservations and this call's reservation.
 func aiMinuteExhausted(utcNow time.Time, state aiMinuteState, requestsPerMinute, tokensPerMinute *int64, reserve aiReservation) (string, time.Duration, bool) {

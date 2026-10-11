@@ -20,7 +20,7 @@ func (s *server) retryOperationDefinitions(ctx context.Context, app state.App, d
 	for _, def := range defs {
 		specs = append(specs, def.Spec)
 	}
-	if !s.operationDefinitionsAdmission(app.AccountID, app.ID, dep.Scope, specs) {
+	if !s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, dep.Scope, specs) {
 		return nil, api.ErrCapacity("new operation admission is disabled")
 	}
 	return specs, nil
@@ -38,7 +38,7 @@ func (s *server) installRetryOperations(ctx context.Context, dep state.Deploymen
 	if err != nil {
 		return err
 	}
-	if !s.operationDefinitionsAdmission(app.AccountID, app.ID, dep.Scope, specs) {
+	if !s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, dep.Scope, specs) {
 		return api.ErrCapacity("new operation admission is disabled")
 	}
 	for _, spec := range specs {

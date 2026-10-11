@@ -1,14 +1,16 @@
 package main
 
 import (
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/dashboard"
-	"github.com/onebox-faas/faas/pkg/httpsec"
-	"github.com/onebox-faas/faas/pkg/state"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, app state.App) {
@@ -20,7 +22,7 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeOperationError(w, state.ErrInvalidArgument)
+		operation.WriteOperationError(w, state.ErrInvalidArgument)
 		return
 	}
 	for _, key := range []string{"tenant_id", "workflow", "target_operation", "reason", "blocker_code", "dependency_status", "required_outcome_code", "owner", "priority", "sort"} {
@@ -34,7 +36,7 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 	groupBy := "workflow"
 	if values, ok := query["group_by"]; ok {
 		if len(values) != 1 || values[0] == "" {
-			writeOperationError(w, state.ErrInvalidArgument)
+			operation.WriteOperationError(w, state.ErrInvalidArgument)
 			return
 		}
 		groupBy = values[0]
@@ -43,7 +45,7 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 	summaryCursor := ""
 	if values, ok := query["summary_cursor"]; ok {
 		if len(values) != 1 || values[0] == "" {
-			writeOperationError(w, state.ErrInvalidArgument)
+			operation.WriteOperationError(w, state.ErrInvalidArgument)
 			return
 		}
 		summaryCursor = values[0]
@@ -53,14 +55,14 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 	u := *r.URL
 	clone.URL = &u
 	clone.URL.RawQuery = query.Encode()
-	opts, err := operationWorkflowAttentionOptions(clone, true, app.ID)
+	opts, err := operation.OperationWorkflowAttentionOptions(clone, true, app.ID)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	result, err := store.ListAccountWorkflowAttention(r.Context(), acct.ID, opts)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	if opts.Limit == 0 {
@@ -76,7 +78,7 @@ func (s *server) renderAppWorkflowAttention(w http.ResponseWriter, r *http.Reque
 	summaryOpts.Cursor = summaryCursor
 	summary, err := summaryStore.SummarizeAccountWorkflowAttention(r.Context(), acct.ID, api.OperationWorkflowAttentionSummaryOptions{OperationWorkflowAttentionOptions: summaryOpts, GroupBy: groupBy})
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	data.Summary = summary

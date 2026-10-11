@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -50,7 +51,7 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
-	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, predecessor); problem != nil {
+	if problem := s.durable.ValidatorReleaseProblem(ctx, app, predecessor); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

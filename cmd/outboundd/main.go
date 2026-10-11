@@ -203,7 +203,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
 	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled)
-	// ADR-983: AI fallback routes are served on relay connections.
+	// ADR-990: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
-// aiUsagePruner removes AI usage rollups past their retention (ADR-979).
+// aiUsagePruner removes AI usage rollups past their retention (ADR-988).
 type aiUsagePruner interface {
 	PruneAIUsage(context.Context) (int64, error)
 }

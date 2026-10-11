@@ -7,7 +7,7 @@ import (
 )
 
 // ValidOutboundAICostLimits accepts optional daily and monthly cost limits
-// in millicents. Either limit requires an AI provider (ADR-983).
+// in millicents. Either limit requires an AI provider (ADR-990).
 func ValidOutboundAICostLimits(provider string, daily, monthly *int64) bool {
 	for _, limit := range []*int64{daily, monthly} {
 		if limit == nil {
@@ -96,12 +96,12 @@ type OutboundAIRouteTarget struct {
 	Model         string `json:"model,omitempty"`
 }
 
-// OutboundAIRoute tries its targets in order (ADR-983). Callers use
+// OutboundAIRoute tries its targets in order (ADR-990). Callers use
 // $GREGALE_OUTBOUND_URL/r/{id}/{provider path}.
 type OutboundAIRoute struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// Format is "native" or "openai" (ADR-984).
+	// Format is "native" or "openai" (ADR-991).
 	Format    string                  `json:"format"`
 	Targets   []OutboundAIRouteTarget `json:"targets"`
 	CreatedAt time.Time               `json:"created_at"`
@@ -115,7 +115,7 @@ type OutboundAIRouteList struct {
 // CreateOutboundAIRouteRequest names a route and its ordered targets.
 type CreateOutboundAIRouteRequest struct {
 	Name string `json:"name"`
-	// Format defaults to "native"; "openai" translates (ADR-984).
+	// Format defaults to "native"; "openai" translates (ADR-991).
 	Format  string                  `json:"format,omitempty"`
 	Targets []OutboundAIRouteTarget `json:"targets"`
 }
@@ -142,7 +142,7 @@ func ValidOutboundAIRouteTargetShape(targets []OutboundAIRouteTarget) bool {
 	return true
 }
 
-// Route formats (ADR-984). A native route sends the caller's request to
+// Route formats (ADR-991). A native route sends the caller's request to
 // targets of one provider. An openai route accepts OpenAI chat completions
 // and translates them for Anthropic and Gemini targets.
 const (
@@ -172,7 +172,7 @@ func OutboundAIRouteFormatTargetProvider(format, provider string) (allowed, need
 }
 
 // PutOutboundBindingAIGuardrailsRequest replaces an app's per-minute limits,
-// model allow-list and output ceiling on one integration (ADR-984). Null
+// model allow-list and output ceiling on one integration (ADR-991). Null
 // fields remove that guardrail.
 type PutOutboundBindingAIGuardrailsRequest struct {
 	RequestsPerMinute *int64   `json:"requests_per_minute"`
@@ -243,7 +243,7 @@ func ValidOutboundCredentialKeyLabel(label string) bool {
 	return outboundCredentialKeyLabel.MatchString(label)
 }
 
-// OutboundCredentialKey describes one extra provider key (ADR-984). The
+// OutboundCredentialKey describes one extra provider key (ADR-991). The
 // sealed value is write-only and never returned.
 type OutboundCredentialKey struct {
 	ID        string    `json:"id"`
@@ -262,7 +262,7 @@ type CreateOutboundCredentialKeyRequest struct {
 	Authorization string `json:"authorization"`
 }
 
-// AI budget names reported by alerts (ADR-984).
+// AI budget names reported by alerts (ADR-991).
 const (
 	OutboundAIBudgetDailyTokens    = "daily_tokens"
 	OutboundAIBudgetAppDailyTokens = "app_daily_tokens"
@@ -304,7 +304,7 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	CrossedAt        time.Time `json:"crossed_at"`
 }
 
-// OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-984).
+// OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-991).
 // Caller is an app ID or "runs". No request or response content is kept.
 type OutboundAIRequestLogEntry struct {
 	ID                string    `json:"id"`

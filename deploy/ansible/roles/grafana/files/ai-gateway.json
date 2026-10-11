@@ -12,7 +12,7 @@
       "title": "AI calls by usage outcome (5m)",
       "id": 1,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
-      "description": "Settled AI calls per second by integration and outcome (known, unknown, error). ADR-979.",
+      "description": "Settled AI calls per second by integration and outcome (known, unknown, error). ADR-988.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (integration_id, outcome) (rate(outbound_ai_requests_total[5m]))", "legendFormat": "{{integration_id}} {{outcome}}", "refId": "A"}
@@ -25,7 +25,7 @@
       "title": "AI tokens by kind (5m)",
       "id": 2,
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-      "description": "Provider-reported tokens per second by kind (input, cached_input, cache_write, output). ADR-979.",
+      "description": "Provider-reported tokens per second by kind (input, cached_input, cache_write, output). ADR-988.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (kind) (rate(outbound_ai_tokens_total[5m]))", "legendFormat": "{{kind}}", "refId": "A"}
@@ -38,7 +38,7 @@
       "title": "Customer-priced AI cost (EUR per hour)",
       "id": 3,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives euros per hour. ADR-983.",
+      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives euros per hour. ADR-990.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (integration_id) (rate(outbound_ai_cost_millicents_total[15m])) * 3600 / 100000", "legendFormat": "{{integration_id}}", "refId": "A"}
@@ -51,7 +51,7 @@
       "title": "AI time to first byte p50 / p95",
       "id": 4,
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-      "description": "Gateway-observed time from the provider request to its first response byte. ADR-979.",
+      "description": "Gateway-observed time from the provider request to its first response byte. ADR-988.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "histogram_quantile(0.5, sum by (le) (rate(outbound_ai_time_to_first_byte_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A"},
@@ -65,7 +65,7 @@
       "title": "AI budget and guardrail rejections (5m)",
       "id": 5,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-      "description": "Calls refused before reaching the provider: token and cost hard caps, per-minute limits and per-app guardrails. ADR-983, ADR-984.",
+      "description": "Calls refused before reaching the provider: token and cost hard caps, per-minute limits and per-app guardrails. ADR-990, ADR-991.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (reason) (rate(outbound_rejections_total{reason=~\"daily_token_limit|daily_cost_limit|monthly_cost_limit|requests_per_minute_limit|tokens_per_minute_limit|outbound_ai_.*\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
@@ -78,7 +78,7 @@
       "title": "AI budget alerts (1h)",
       "id": 6,
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-      "description": "Budget thresholds (80%, 100%) reached at settlement; each also enqueues an outbound.ai_budget.threshold webhook. ADR-984.",
+      "description": "Budget thresholds (80%, 100%) reached at settlement; each also enqueues an outbound.ai_budget.threshold webhook. ADR-991.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (budget, threshold) (increase(outbound_ai_budget_alerts_total[1h]))", "legendFormat": "{{budget}} {{threshold}}%", "refId": "A"}
@@ -91,7 +91,7 @@
       "title": "Route fallbacks and translations (5m)",
       "id": 7,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-      "description": "AI route attempts that moved to the next target, and OpenAI-format attempts translated per target provider. ADR-983, ADR-984.",
+      "description": "AI route attempts that moved to the next target, and OpenAI-format attempts translated per target provider. ADR-990, ADR-991.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (reason) (rate(outbound_ai_route_fallbacks_total[5m]))", "legendFormat": "fallback {{reason}}", "refId": "A"},
@@ -105,7 +105,7 @@
       "title": "Provider key pool events (5m)",
       "id": 8,
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
-      "description": "Per-key cooldowns after a 429, rotations to another key, and calls that found every key limited. ADR-984.",
+      "description": "Per-key cooldowns after a 429, rotations to another key, and calls that found every key limited. ADR-991.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (event) (rate(outbound_credential_key_events_total[5m]))", "legendFormat": "{{event}}", "refId": "A"}

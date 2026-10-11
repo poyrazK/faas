@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// RoutePrefix addresses an AI fallback route (ADR-983):
+// RoutePrefix addresses an AI fallback route (ADR-990):
 // /r/{route-id}/{provider path}.
 const RoutePrefix = "/r/"
 
@@ -30,7 +30,7 @@ type AIRouteTarget struct {
 
 // AIRoute is an account-owned ordered list of AI integrations. A native
 // route's targets share one provider; an openai route translates OpenAI chat
-// completions for each target (ADR-984).
+// completions for each target (ADR-991).
 type AIRoute struct {
 	ID        string
 	AccountID string

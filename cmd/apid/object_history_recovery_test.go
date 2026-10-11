@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -173,7 +174,7 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 					if _, err = f.pool.Exec(ctx, `UPDATE object_upload_completions SET recovery_retry_at=now()-interval '1 second' WHERE id=$1`, id); err != nil {
 						t.Fatal(err)
 					}
-					if err = e.s.reconcileObjectUploads(ctx, nil); err != nil {
+					if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
 						t.Fatal(err)
 					}
 					c, err := restarted.GetObjectUploadReceipt(ctx, f.account.ID, f.app.ID, "", f.credential.ID, id)

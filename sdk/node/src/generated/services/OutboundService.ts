@@ -293,7 +293,7 @@ export class OutboundService {
   }
   /**
    * Set or clear a customer-owned integration's AI provider and daily token limit.
-   * Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in the selected provider's format and stops new calls once the UTC day's settled input plus output tokens reach the limit; calls already in flight may finish above it.
+   * Requires MFA and deploy-write scope (ADR-988). The gateway extracts token usage from responses in the selected provider's format and stops new calls once the UTC day's settled input plus output tokens reach the limit; calls already in flight may finish above it.
    * @returns void
    * @throws ApiError
    */
@@ -367,7 +367,7 @@ export class OutboundService {
   }
   /**
    * Read the AI price list in effect.
-   * Requires MFA and read scope (ADR-983).
+   * Requires MFA and read scope (ADR-990).
    * @returns OutboundAIPriceListResponse The price list in effect.
    * @throws ApiError
    */
@@ -398,7 +398,7 @@ export class OutboundService {
   }
   /**
    * Replace a customer AI integration's price list.
-   * Requires MFA and deploy-write scope (ADR-983). The new list prices calls settled from now on; earlier lists stay for costs already recorded.
+   * Requires MFA and deploy-write scope (ADR-990). The new list prices calls settled from now on; earlier lists stay for costs already recorded.
    * @returns void
    * @throws ApiError
    */
@@ -433,7 +433,7 @@ export class OutboundService {
   }
   /**
    * List an integration's extra provider keys.
-   * Requires MFA and read scope (ADR-984). Values are write-only and never returned.
+   * Requires MFA and read scope (ADR-991). Values are write-only and never returned.
    * @returns OutboundCredentialKeyList Extra keys, oldest first.
    * @throws ApiError
    */
@@ -464,7 +464,7 @@ export class OutboundService {
   }
   /**
    * Add an extra provider key to a customer-sealed integration.
-   * Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to the next key when one returns 429. At most 8 extra keys.
+   * Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to the next key when one returns 429. At most 8 extra keys.
    * @returns OutboundCredentialKey Key sealed and stored.
    * @throws ApiError
    */
@@ -501,7 +501,7 @@ export class OutboundService {
   }
   /**
    * Remove an extra provider key.
-   * Requires MFA and deploy-write scope (ADR-984). outboundd stops using it on its next call.
+   * Requires MFA and deploy-write scope (ADR-991). outboundd stops using it on its next call.
    * @returns void
    * @throws ApiError
    */
@@ -538,7 +538,7 @@ export class OutboundService {
   }
   /**
    * List AI budget alerts recorded at 80% and 100%.
-   * Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+   * Requires MFA and read scope (ADR-991). Newest first; kept for 90 days.
    * @returns OutboundAIBudgetAlertList Budget alerts.
    * @throws ApiError
    */
@@ -577,7 +577,7 @@ export class OutboundService {
   }
   /**
    * Page the opt-in AI request log.
-   * Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata only.
+   * Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata only.
    * @returns OutboundAIRequestLogList One page of logged calls.
    * @throws ApiError
    */
@@ -622,7 +622,7 @@ export class OutboundService {
   }
   /**
    * List the account's AI fallback routes.
-   * Requires MFA and read scope (ADR-983).
+   * Requires MFA and read scope (ADR-990).
    * @returns OutboundAIRouteList AI routes.
    * @throws ApiError
    */
@@ -641,7 +641,7 @@ export class OutboundService {
   }
   /**
    * Create an AI fallback route over managed AI integrations.
-   * Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI integration of this account; a native route needs one ai_provider, an openai route translates OpenAI chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+   * Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI integration of this account; a native route needs one ai_provider, an openai route translates OpenAI chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
    * @returns OutboundAIRoute Route created.
    * @throws ApiError
    */
@@ -1049,7 +1049,7 @@ export class OutboundService {
   }
   /**
    * Set or clear an app's own daily AI token limit on an AI integration.
-   * Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled input plus output tokens reach the limit; other apps are unaffected.
+   * Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled input plus output tokens reach the limit; other apps are unaffected.
    * @returns void
    * @throws ApiError
    */
@@ -1090,7 +1090,7 @@ export class OutboundService {
   }
   /**
    * Replace an app's AI guardrails on an AI integration.
-   * Requires MFA and deploy-write scope (ADR-984). Sets per-minute request and token limits, a model allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
+   * Requires MFA and deploy-write scope (ADR-991). Sets per-minute request and token limits, a model allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
    * @returns void
    * @throws ApiError
    */

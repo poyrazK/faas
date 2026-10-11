@@ -8,7 +8,7 @@ import (
 )
 
 // AIPrice is one resolved price-list entry in millicents per million tokens
-// (ADR-983). Resolution already replaced absent cached-input and
+// (ADR-990). Resolution already replaced absent cached-input and
 // cache-write prices with the input price.
 type AIPrice struct {
 	ModelPrefix string

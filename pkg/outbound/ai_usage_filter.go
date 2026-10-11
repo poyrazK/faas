@@ -10,7 +10,7 @@ import (
 
 // usageChunkFilter removes the usage-only chunk that OpenAI appends when the
 // gateway, not the caller, turned on stream_options.include_usage
-// (ADR-983). The observer sees the stream before this filter, so the usage
+// (ADR-990). The observer sees the stream before this filter, so the usage
 // is still accounted. Events pass through whole, one at a time.
 type usageChunkFilter struct {
 	src     io.ReadCloser

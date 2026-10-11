@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 984 — OpenAI-format routes translate to Anthropic and Gemini.
+// adr: 991 — OpenAI-format routes translate to Anthropic and Gemini.
 
 import (
 	"context"

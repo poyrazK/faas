@@ -85,7 +85,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled
+     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
     input plus output tokens reach the limit; other apps are unaffected.
 
     Args:
@@ -124,7 +124,7 @@ def sync(
 ) -> Any | Problem | None:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled
+     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
     input plus output tokens reach the limit; other apps are unaffected.
 
     Args:
@@ -158,7 +158,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled
+     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
     input plus output tokens reach the limit; other apps are unaffected.
 
     Args:
@@ -195,7 +195,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled
+     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
     input plus output tokens reach the limit; other apps are unaffected.
 
     Args:

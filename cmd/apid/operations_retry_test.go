@@ -48,7 +48,7 @@ func TestOperationBuildRetryRetainsDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	srv.operationsAdmissionEnabled = true
+	srv.operation.AdmissionEnabled = true
 	retried, err := srv.enqueueRetry(ctx, app, dep, state.StageName("source_download"))
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestOperationBuildRetryRetainsDefinition(t *testing.T) {
 	if _, err := store.BuildByDeployment(ctx, retried.ID); err != nil {
 		t.Fatal("accepted retry has no build", err)
 	}
-	srv.operationsAdmissionEnabled = false
+	srv.operation.AdmissionEnabled = false
 	if _, err := srv.enqueueRetry(ctx, app, dep, state.StageName("source_download")); err == nil {
 		t.Fatal("retry created an operation deployment while admission disabled")
 	}

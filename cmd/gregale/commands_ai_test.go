@@ -1,6 +1,6 @@
 package main
 
-// adr: 983 — euro amounts become integer millicents without floating point.
+// adr: 990 — euro amounts become integer millicents without floating point.
 
 import (
 	"strings"
@@ -38,7 +38,7 @@ func TestParseAIPriceSpec(t *testing.T) {
 	}
 }
 
-// adr: 984 — guardrail flags merge into the current set; keys come from stdin.
+// adr: 991 — guardrail flags merge into the current set; keys come from stdin.
 func TestApplyAIGuardrailFlags(t *testing.T) {
 	rpm := int64(60)
 	current := api.PutOutboundBindingAIGuardrailsRequest{RequestsPerMinute: &rpm, AllowedModels: []string{"gpt-4o"}}

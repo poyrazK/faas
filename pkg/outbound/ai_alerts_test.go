@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 984 — budget alerts at 80% and 100%, and the opt-in request log.
+// adr: 991 — budget alerts at 80% and 100%, and the opt-in request log.
 
 import (
 	"net/http"

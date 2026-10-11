@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -342,10 +343,10 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		st = state.NewPgStore(pool)
 	}
 	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(s.objectStorage)
-	if err = fresh.reconcileObjectUploads(t.Context(), nil); err != nil {
+	if err = fresh.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = fresh.reconcileObjectMultipartUploads(t.Context(), nil); err != nil {
+	if err = fresh.object.ReconcileObjectMultipartUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	c, err := st.(state.ObjectTrackedGatewayUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", lostSubject, lost.UploadID)

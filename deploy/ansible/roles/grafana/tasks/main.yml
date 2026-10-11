@@ -386,11 +386,11 @@
     - restart grafana-server
     - reload grafana provisioning
 
-# ADR-984 — AI gateway: AI calls, tokens, customer-priced cost, time to
+# ADR-991 — AI gateway: AI calls, tokens, customer-priced cost, time to
 # first byte, budget rejections and alerts, route fallbacks and
 # translations, and provider key pool events. Byte-identical copy of
 # deploy/grafana/ai-gateway.json (grafana-mirror-check enforces identity).
-- name: grafana — drop ai-gateway dashboard JSON (ADR-984)
+- name: grafana — drop ai-gateway dashboard JSON (ADR-991)
   ansible.builtin.copy:
     src: ai-gateway.json
     dest: "{{ gv_dashboards_dir }}/ai-gateway.json"

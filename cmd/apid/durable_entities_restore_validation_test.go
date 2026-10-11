@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
@@ -18,11 +19,11 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 	request := entityRequest("validated-source")
 	hook := entityOutboxHook(t, e, app)
 	seedAPIOutbox(t, e, app, request, hook.ID)
-	id, _, problem := e.s.durableEntityIdentity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 	if problem != nil {
 		t.Fatal(problem)
 	}
-	exported, err := e.s.durableEntities.ExportState(t.Context(), id)
+	exported, err := e.s.durable.Engine.ExportState(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 	if rec := e.do(t, http.MethodPost, path+"/validate", restore, nil); rec.Code != http.StatusServiceUnavailable {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	e.s.durableEntityRestoreValidationEnabled = true
+	e.s.durable.RestoreValidationEnabled = true
 	var reject atomic.Bool
 	dispatch.guest = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != api.DurableEntityRestoreValidationPath {
@@ -80,7 +81,7 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 	if rec := e.do(t, http.MethodPost, path, restore, nil); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	current, err := e.s.durableEntities.Read(t.Context(), id)
+	current, err := e.s.durable.Engine.Read(t.Context(), id)
 	if err != nil || current.Version != 2 {
 		t.Fatal("rejection committed", current, err)
 	}

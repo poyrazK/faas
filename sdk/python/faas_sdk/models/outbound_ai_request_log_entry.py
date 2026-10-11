@@ -18,7 +18,7 @@ T = TypeVar("T", bound="OutboundAIRequestLogEntry")
 
 @_attrs_define
 class OutboundAIRequestLogEntry:
-    """One settled AI call's metadata (ADR-984). No request or response content is kept."""
+    """One settled AI call's metadata (ADR-991). No request or response content is kept."""
 
     id: UUID
     created_at: datetime.datetime

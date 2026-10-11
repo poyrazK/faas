@@ -116,8 +116,8 @@ from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerU
 from .api_consumer_usage_statement_handoff_response import APIConsumerUsageStatementHandoffResponse
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
-from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
+from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
@@ -2892,6 +2892,11 @@ from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResp
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
+from .route_advice_evidence import RouteAdviceEvidence
+from .route_advice_impact import RouteAdviceImpact
+from .route_advice_response import RouteAdviceResponse
+from .route_advice_suggestion import RouteAdviceSuggestion
+from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
 from .route_assignment import RouteAssignment
 from .route_budget_requirement import RouteBudgetRequirement
@@ -3077,6 +3082,11 @@ from .route_policy_plan_status import RoutePolicyPlanStatus
 from .route_policy_plan_version import RoutePolicyPlanVersion
 from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
+from .route_priorities_response import RoutePrioritiesResponse
+from .route_priorities_response_source import RoutePrioritiesResponseSource
+from .route_priority_rule import RoutePriorityRule
+from .route_priority_rule_class import RoutePriorityRuleClass
+from .route_priority_rule_method import RoutePriorityRuleMethod
 from .route_public_exception import RoutePublicException
 from .route_public_exception_method import RoutePublicExceptionMethod
 from .route_removal_approval import RouteRemovalApproval
@@ -3203,6 +3213,7 @@ from .service_rollout_handoff_response_action import ServiceRolloutHandoffRespon
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
 from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
+from .service_wake_ahead_response import ServiceWakeAheadResponse
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -3238,8 +3249,10 @@ from .set_route_health_gate_request_on_regression import SetRouteHealthGateReque
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
 from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
+from .set_route_priorities_request import SetRoutePrioritiesRequest
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
+from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -6363,6 +6376,11 @@ __all__ = (
     "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
+    "RouteAdviceEvidence",
+    "RouteAdviceImpact",
+    "RouteAdviceResponse",
+    "RouteAdviceSuggestion",
+    "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
     "RouteAssignment",
     "RouteBudgetRequirement",
@@ -6548,6 +6566,11 @@ __all__ = (
     "RoutePolicyPlanVersion",
     "RoutePolicyReceipt",
     "RoutePolicyRuleUsage",
+    "RoutePrioritiesResponse",
+    "RoutePrioritiesResponseSource",
+    "RoutePriorityRule",
+    "RoutePriorityRuleClass",
+    "RoutePriorityRuleMethod",
     "RoutePublicException",
     "RoutePublicExceptionMethod",
     "RouteRemovalApproval",
@@ -6670,6 +6693,7 @@ __all__ = (
     "ServiceRolloutHandoffResponsePhase",
     "ServiceRolloutRecoveryReceipt",
     "ServiceRolloutRecoveryReceiptStatus",
+    "ServiceWakeAheadResponse",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
@@ -6703,8 +6727,10 @@ __all__ = (
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
     "SetRouteMonitorRequestOnViolation",
+    "SetRoutePrioritiesRequest",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
+    "SetServiceWakeAheadRequest",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

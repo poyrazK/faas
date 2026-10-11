@@ -26,11 +26,12 @@ type dataAPISyncCommand struct {
 }
 
 type dataAPISyncConfig struct {
-	Output         string              `json:"output"`
-	Migrate        dataAPISyncCommand  `json:"migrate"`
-	Check          dataAPISyncCommand  `json:"check"`
-	Permissions    *dataAPISyncCommand `json:"permissions,omitempty"`
-	AccessTokenEnv string              `json:"access_token_env,omitempty"`
+	Output         string                   `json:"output"`
+	Migrate        dataAPISyncCommand       `json:"migrate"`
+	Check          dataAPISyncCommand       `json:"check"`
+	Permissions    *dataAPISyncCommand      `json:"permissions,omitempty"`
+	AccessTokenEnv string                   `json:"access_token_env,omitempty"`
+	Coordination   *dataAPISyncCoordination `json:"coordination,omitempty"`
 	accessToken    string
 }
 
@@ -42,23 +43,33 @@ type dataAPISyncReceipt struct {
 	Fingerprint      string `json:"fingerprint"`
 	Output           string `json:"output"`
 	Status           string `json:"status"`
+	RefreshPaused    bool   `json:"refresh_paused,omitempty"`
+	ResumeRequested  bool   `json:"resume_requested,omitempty"`
+	RecoveryOnly     bool   `json:"recovery_only,omitempty"`
 	ContractVerified bool   `json:"contract_verified"`
 }
 
 func cmdDataAPISync(args []string) int {
 	fs := newFlagSet("data-api sync", flag.ContinueOnError)
+	resumeOnly := fs.Bool("resume-only", false, "reverify an owned paused refresh without rerunning migrations")
 	configPath := fs.String("config", "", "JSON workflow file with output, migrate, optional permissions and check commands")
 	timeout := fs.Duration("timeout", 20*time.Minute, "deadline for the entire workflow (maximum 1h)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *configPath == "" || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api sync NAME --config FILE [--timeout DURATION]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api sync NAME --config FILE [--timeout DURATION] [--resume-only]", "data-api")
 		return 1
 	}
 	config, err := loadDataAPISyncConfig(*configPath)
 	if err != nil {
 		return printErr("Invalid Data API workflow", err)
+	}
+	if *resumeOnly && config.Coordination == nil {
+		return printErr("Invalid recovery", errors.New("--resume-only requires coordination"))
+	}
+	if config.Coordination != nil {
+		config.Coordination.recoveryOnly = *resumeOnly
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -142,6 +153,16 @@ func loadDataAPISyncConfig(path string) (dataAPISyncConfig, error) {
 	if !validDataAPIAccessToken(config.accessToken) {
 		return config, errors.New("configure a nonempty application JWT in access_token_env (default GREGALE_DATA_API_ACCESS_TOKEN); do not use an account key")
 	}
+	if config.Coordination != nil {
+		if err := prepareDataAPICoordination(base, config.Coordination); err != nil {
+			return config, err
+		}
+		for _, input := range []string{config.Coordination.Baseline, config.Coordination.Approval} {
+			if input != "" && dataAPIContractOutputAliases(config.Output, input) {
+				return config, errors.New("types output must not replace a coordination baseline or approval")
+			}
+		}
+	}
 	return config, nil
 }
 
@@ -178,6 +199,9 @@ func prepareDataAPISyncCommand(base string, step *dataAPISyncCommand) error {
 }
 
 func runDataAPISync(ctx context.Context, client *api.Client, slug string, config dataAPISyncConfig) (dataAPISyncReceipt, error) {
+	if config.Coordination != nil {
+		return runCoordinatedDataAPISync(ctx, client, slug, config)
+	}
 	receipt := dataAPISyncReceipt{App: slug, Output: config.Output}
 	// Resolve the public URL before running a migration. Management reads are
 	// safe here; no restart or type task is submitted until migration succeeds.
@@ -238,10 +262,25 @@ func dataAPISyncProgress(message string) {
 }
 
 func runDataAPISyncCommand(ctx context.Context, step dataAPISyncCommand) error {
+	return runDataAPISyncCommandEnv(ctx, step, nil)
+}
+
+func runDataAPISyncCommandEnv(ctx context.Context, step dataAPISyncCommand, extra map[string]string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, step.Command[0], step.Command[1:]...) //nolint:gosec // Explicit developer argv from the requested workflow, without a shell.
+	command.Env = os.Environ()
+	for key, value := range extra {
+		prefix := key + "="
+		filtered := command.Env[:0]
+		for _, item := range command.Env {
+			if !strings.HasPrefix(item, prefix) {
+				filtered = append(filtered, item)
+			}
+		}
+		command.Env = append(filtered, prefix+value)
+	}
 	command.Dir, command.Stdin = step.Directory, os.Stdin
 	// Keep stdout exclusively for the final receipt, including nested CLI output.
 	command.Stdout, command.Stderr = osStderr, osStderr
@@ -271,6 +310,11 @@ func dataAPISyncDiagnostic(err error, receipt dataAPISyncReceipt) error {
 	}
 	if receipt.TaskID != "" {
 		detail += fmt.Sprintf(" (task_id=%s)", receipt.TaskID)
+	}
+	if receipt.ResumeRequested {
+		detail += "; barrier release may have completed; inspect the serving contract before recovery"
+	} else if receipt.RefreshPaused {
+		detail += "; refresh barrier remains paused; correct the failure and rerun with --resume-only and the same private token"
 	}
 	detail += "; completed steps are not rolled back, and accepted remote work is not cancelled"
 	return &APIError{Problem: api.Problem{Status: status, Code: code, Title: title, Detail: detail}}

@@ -68,7 +68,7 @@ func (c *Client) SetOutboundBindingAIBudget(ctx context.Context, slug, integrati
 	return c.do(ctx, "PUT", path, PutOutboundBindingAIBudgetRequest{DailyTokenLimit: dailyTokenLimit}, nil)
 }
 
-// SetOutboundBindingAIGuardrails replaces one app's AI guardrails (ADR-984).
+// SetOutboundBindingAIGuardrails replaces one app's AI guardrails (ADR-991).
 func (c *Client) SetOutboundBindingAIGuardrails(ctx context.Context, slug, integrationID string, req PutOutboundBindingAIGuardrailsRequest) error {
 	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/ai-guardrails"
 	return c.do(ctx, "PUT", path, req, nil)

@@ -115,7 +115,7 @@ func canRetryRequest(req *http.Request) bool {
 	if req == nil {
 		return false
 	}
-	// ADR-983: a buffered AI POST carries a replayable body (GetBody).
+	// ADR-990: a buffered AI POST carries a replayable body (GetBody).
 	replayablePost := req.Method == http.MethodPost && req.GetBody != nil
 	if req.Method != http.MethodGet && req.Method != http.MethodHead && !replayablePost {
 		return false
@@ -200,7 +200,7 @@ func (h *Handler) doWithRetries(
 			retryAfterValue := resp.Header.Get("Retry-After")
 			providerDelay, hasRetryAfter := parseRetryAfter(retryAfterValue, time.Now())
 			if resp.StatusCode == http.StatusTooManyRequests && keys != nil && canRetry {
-				// ADR-984: another key of the pool takes the call at once; it
+				// ADR-991: another key of the pool takes the call at once; it
 				// costs neither a retry nor the shared retry budget.
 				next, cloneErr := cloneForRetry(ctx, req)
 				if cloneErr == nil && keys.rotate(next, providerDelay) {

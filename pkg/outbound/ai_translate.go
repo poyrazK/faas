@@ -11,7 +11,7 @@ import (
 )
 
 // errTranslationUnsupported marks an OpenAI request the translation layer
-// cannot express for the target provider (ADR-984).
+// cannot express for the target provider (ADR-991).
 var errTranslationUnsupported = errors.New("outbound AI translation: unsupported request")
 
 // openAIChatRequest is the OpenAI chat-completions subset routes translate.

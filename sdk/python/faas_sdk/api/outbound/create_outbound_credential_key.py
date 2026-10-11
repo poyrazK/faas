@@ -96,7 +96,7 @@ def sync_detailed(
 ) -> Response[Any | OutboundCredentialKey | Problem]:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
@@ -131,7 +131,7 @@ def sync(
 ) -> Any | OutboundCredentialKey | Problem | None:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
@@ -161,7 +161,7 @@ async def asyncio_detailed(
 ) -> Response[Any | OutboundCredentialKey | Problem]:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
@@ -194,7 +194,7 @@ async def asyncio(
 ) -> Any | OutboundCredentialKey | Problem | None:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:

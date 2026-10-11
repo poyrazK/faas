@@ -114,7 +114,7 @@ type Request struct {
 	// No grant IDs or bearer material cross the guest boundary.
 	OutboundEnabled bool `json:"outbound_enabled,omitempty"`
 	// OutboundRelay tells the guest that vmmd serves the streaming app relay
-	// for this Run (ADR-983), so GREGALE_OUTBOUND_URL points at guest-init's
+	// for this Run (ADR-990), so GREGALE_OUTBOUND_URL points at guest-init's
 	// relay instead of the buffered broker helper. Older guests ignore it.
 	OutboundRelay bool `json:"outbound_relay,omitempty"`
 }

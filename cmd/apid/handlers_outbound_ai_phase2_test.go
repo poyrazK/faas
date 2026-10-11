@@ -1,6 +1,6 @@
 package main
 
-// adr: 983 — per-app AI limits, price lists, cost budgets and AI routes.
+// adr: 990 — per-app AI limits, price lists, cost budgets and AI routes.
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 
 func seedAIIntegration(t *testing.T, e testEnv, name, provider string) string {
 	t.Helper()
-	// ADR-984: the AI gateway APIs are closed until the release gate opens.
+	// ADR-991: the AI gateway APIs are closed until the release gate opens.
 	e.s.aiGatewayEnabled = true
 	id := uuid.NewString()
 	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{

@@ -103,7 +103,7 @@ func (v *WorkloadIdentityVerifier) Verify(rawToken, integrationID string) (Workl
 }
 
 // VerifyRelay accepts only the connection-scoped assertion vmmd attaches to
-// an app relay connection (ADR-982). It is never valid for one integration.
+// an app relay connection (ADR-989). It is never valid for one integration.
 func (v *WorkloadIdentityVerifier) VerifyRelay(rawToken string) (WorkloadIdentity, error) {
 	return v.verifyAppAudience(rawToken, workloadidentity.OutboundRelayAudience)
 }
@@ -156,7 +156,7 @@ func (v *WorkloadIdentityVerifier) VerifyExecution(rawToken, integrationID strin
 }
 
 // VerifyExecutionRelay accepts only the connection-scoped assertion vmmd
-// attaches to a Run's relay connection (ADR-983).
+// attaches to a Run's relay connection (ADR-990).
 func (v *WorkloadIdentityVerifier) VerifyExecutionRelay(rawToken string) (ExecutionIdentity, error) {
 	return v.verifyExecutionAudience(rawToken, workloadidentity.OutboundRelayAudience)
 }

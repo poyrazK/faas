@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
@@ -92,7 +94,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	if err != nil || len(definitions) != 0 {
 		t.Fatalf("closed production gate persisted definitions: %+v %v", definitions, err)
 	}
-	srv.operationsAdmissionEnabled = true
+	srv.operation.AdmissionEnabled = true
 	define := do("PUT", "/v1/apps/"+app.Slug+"/deployments/"+dep.ID+"/operation-definitions/export", key, spec, nil)
 	check(define, http.StatusOK)
 	var def api.OperationDefinitionResponse
@@ -146,8 +148,8 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 		}
 		lookupPath := "/v1/platform-tenant-self/customer-operations/submissions/lookup"
 		lookup := api.OperationSubmissionLookupRequest{AppID: app.ID, Scope: def.Scope, Name: "export", IdempotencyKey: "export-1"}
-		srv.operationsAdmissionEnabled = false
-		defer func() { srv.operationsAdmissionEnabled = true }()
+		srv.operation.AdmissionEnabled = false
+		defer func() { srv.operation.AdmissionEnabled = true }()
 		found := do("POST", lookupPath, aliceKey, lookup, nil)
 		check(found, http.StatusOK)
 		var result api.OperationSubmissionLookupResponse
@@ -201,7 +203,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, json.RawMessage(`{"definition_id":"`+def.ID+`","input":{"count":1},"tenant_id":"forged"}`), headers), http.StatusBadRequest)
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, json.RawMessage(`{"definition_id":"`+def.ID+`","input":{"count":1},"input":{"count":2}}`), headers), http.StatusBadRequest)
 	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 9}, nil), http.StatusConflict)
-	srv.operationsAdmissionEnabled = false // reports and downloads survive admission rollback
+	srv.operation.AdmissionEnabled = false // reports and downloads survive admission rollback
 	readKey, readHash, _ := api.GenerateAPIKey()
 	if _, err := store.CreateAPIKey(ctx, acct.ID, readHash, "recovery-read", []string{api.ScopeAppsRead}); err != nil {
 		t.Fatal(err)
@@ -259,7 +261,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operationsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,14 +311,14 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	badArtifact.SizeBytes++
 	check(do("POST", artifactURL, assertion.AccessToken, badArtifact, proof), http.StatusConflict)
 	check(do("POST", artifactURL, aliceKey, artifact, proof), http.StatusUnauthorized)
-	backend := srv.operationArtifactStorage
+	backend := srv.operation.ArtifactStorage
 	interrupted := &operationArtifactInterruptedStorage{StorageBackend: backend}
-	srv.operationArtifactStorage = interrupted
+	srv.operation.ArtifactStorage = interrupted
 	check(do("POST", artifactURL, assertion.AccessToken, artifact, proof), http.StatusServiceUnavailable)
 	if interrupted.key == "" {
 		t.Fatal("interrupted copy did not reach storage")
 	}
-	srv.operationArtifactStorage = backend
+	srv.operation.ArtifactStorage = backend
 	attached := do("POST", artifactURL, assertion.AccessToken, artifact, proof)
 	check(attached, http.StatusOK)
 	var artifactStatus api.OperationResponse
@@ -383,12 +385,12 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	}
 	cleanupAt := time.Now().Add(api.OperationArtifactStagingLifetime + time.Second)
 	interrupted.deleteUnavailable = true
-	srv.operationArtifactStorage = interrupted
-	if err := srv.cleanupOperationArtifacts(ctx, cleanupAt); err == nil {
+	srv.operation.ArtifactStorage = interrupted
+	if err := srv.operation.CleanupOperationArtifacts(ctx, cleanupAt); err == nil {
 		t.Fatal("storage outage lost cleanup retry")
 	}
-	srv.operationArtifactStorage = backend
-	if err := srv.cleanupOperationArtifacts(ctx, cleanupAt.Add(api.OperationArtifactCleanupRetry)); err != nil {
+	srv.operation.ArtifactStorage = backend
+	if err := srv.operation.CleanupOperationArtifacts(ctx, cleanupAt.Add(api.OperationArtifactCleanupRetry)); err != nil {
 		t.Fatal(err)
 	}
 	if stream, err := backend.Get(ctx, interrupted.key); !storage.IsNotFound(err) {
@@ -398,7 +400,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 		t.Fatalf("abandoned copy survived cleanup: %v", err)
 	}
 	check(do("GET", fileURL, aliceKey, nil, nil), http.StatusOK)
-	if err := srv.operationArtifactStorage.Put(ctx, artifactKey, bytes.NewBufferString("corrupt retained copy")); err != nil {
+	if err := srv.operation.ArtifactStorage.Put(ctx, artifactKey, bytes.NewBufferString("corrupt retained copy")); err != nil {
 		t.Fatal(err)
 	}
 	changed := do("GET", fileURL, aliceKey, nil, nil)
@@ -406,7 +408,7 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	if !bytes.Contains(changed.Body.Bytes(), []byte("operation_artifact_changed")) {
 		t.Fatal("changed artifact has no independent error")
 	}
-	if err := srv.cleanupOperationArtifacts(ctx, retainedOp.ExpiresAt.Add(time.Second)); err != nil {
+	if err := srv.operation.CleanupOperationArtifacts(ctx, retainedOp.ExpiresAt.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	check(do("GET", fileURL, aliceKey, nil, nil), http.StatusGone)
@@ -475,13 +477,13 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	aliceKey = plaintext
-	srv.operationsAdmissionEnabled = false
+	srv.operation.AdmissionEnabled = false
 	check(do("GET", receipt.StatusURL, aliceKey, nil, nil), http.StatusOK)
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, start, headers), http.StatusServiceUnavailable)
 
 	// A native workflow uses the same customer submission/read contract and
 	// exposes its own execution identity without issuing an HTTP runtime claim.
-	srv.operationsAdmissionEnabled, srv.workflowRuntimeEnabled = true, true
+	srv.operation.AdmissionEnabled, srv.workflowRuntimeEnabled = true, true
 	workflowSpec := api.WorkflowSpec{Name: "export-chain", Steps: []api.WorkflowStepSpec{{Name: "generating", Path: "/generate"}}}
 	workflowJSON, _ := json.Marshal([]api.WorkflowSpec{workflowSpec})
 	workflowDep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Workflows: workflowJSON})
@@ -570,7 +572,7 @@ func TestOperationsTypedControlNumbers(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"report_id":"rows","stage":"generating","completed":100,"total":1000}`))
 	rec := httptest.NewRecorder()
 	var report api.OperationReportRequest
-	if !decodeOperationBody(rec, req, &report, api.OperationReportBodyMaxBytes) || report.Completed != 100 || report.Total != 1000 {
+	if !operation.DecodeOperationBody(rec, req, &report, api.OperationReportBodyMaxBytes) || report.Completed != 100 || report.Total != 1000 {
 		t.Fatalf("typed progress: %+v, %s", report, rec.Body.String())
 	}
 }
@@ -580,7 +582,7 @@ func TestOperationsBodyLimitProblem(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	var report api.OperationReportRequest
-	if decodeOperationBody(rec, req, &report, api.OperationReportBodyMaxBytes) {
+	if operation.DecodeOperationBody(rec, req, &report, api.OperationReportBodyMaxBytes) {
 		t.Fatal("oversized operation body was accepted")
 	}
 	var problem api.Problem
@@ -603,7 +605,7 @@ func TestOperationsWorkflowRecoveryProblems(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			writeOperationError(rec, tc.err)
+			operation.WriteOperationError(rec, tc.err)
 			var problem api.Problem
 			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != tc.status || problem.Code != tc.code {
 				t.Fatalf("recovery problem: %d %s %v", rec.Code, rec.Body.String(), err)
@@ -629,7 +631,7 @@ func TestOperationsEventCursorPrecedence(t *testing.T) {
 		t.Run(tc.query+"/"+tc.header, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/"+tc.query, nil)
 			req.Header.Set("Last-Event-ID", tc.header)
-			got, err := operationEventsCursor(req)
+			got, err := operation.OperationEventsCursor(req)
 			if (err != nil) != tc.invalid || got != tc.want {
 				t.Fatalf("cursor=%d error=%v, want %d invalid=%v", got, err, tc.want, tc.invalid)
 			}

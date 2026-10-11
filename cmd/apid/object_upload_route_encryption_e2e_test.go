@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -192,7 +193,7 @@ func encryptedUploadRouteE2E(t *testing.T, s *server, st state.Store, acct state
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
 	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.reconcileObjectUploads(ctx, nil); err != nil {
+	if err = fresh.object.ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal("restart recovery", err)
 	}
 	edge.Close()

@@ -16,7 +16,7 @@ const (
 )
 
 // awsEventStreamReader splits an AWS event stream into message payloads for
-// usage observation (ADR-984). Each message is a 12-byte prelude (total
+// usage observation (ADR-991). Each message is a 12-byte prelude (total
 // length, headers length, prelude CRC), headers, payload and a 4-byte CRC.
 // The gateway forwards the bytes unchanged, so CRCs are not checked; a
 // message larger than the usage event bound is skipped.

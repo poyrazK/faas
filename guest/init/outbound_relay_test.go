@@ -1,6 +1,6 @@
 package main
 
-// adr: 982 — guest-init relays app bytes to the host without reading them.
+// adr: 989 — guest-init relays app bytes to the host without reading them.
 
 import (
 	"io"

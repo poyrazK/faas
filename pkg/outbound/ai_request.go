@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// aiRequest is the replayable body of an AI POST (ADR-983). It lets the
+// aiRequest is the replayable body of an AI POST (ADR-990). It lets the
 // gateway retry, cache by exact body, fall back across route targets, and
 // adjust OpenAI stream options without re-reading the caller's stream.
 type aiRequest struct {

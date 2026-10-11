@@ -53,20 +53,20 @@ type OutboundIntegrationOffer struct {
 	RequestPolicy        OutboundRequestPolicy `json:"request_policy"`
 	// AIProvider is empty for ordinary integrations. "openai" (the
 	// OpenAI-compatible wire format) or "anthropic" enables token usage
-	// extraction and the optional daily token limit (ADR-979).
+	// extraction and the optional daily token limit (ADR-988).
 	AIProvider        string `json:"ai_provider,omitempty"`
 	AIDailyTokenLimit *int64 `json:"ai_daily_token_limit"`
 	// Cost limits in millicents per UTC day and calendar month, priced from
-	// the integration's price list (ADR-983).
+	// the integration's price list (ADR-990).
 	AIDailyCostLimitMillicents   *int64 `json:"ai_daily_cost_limit_millicents"`
 	AIMonthlyCostLimitMillicents *int64 `json:"ai_monthly_cost_limit_millicents"`
-	// AIRequestLogEnabled records per-call metadata (ADR-984).
+	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool `json:"ai_request_log_enabled"`
 }
 
 // Outbound AI providers select the credential handling and the response
 // format the gateway parses for token usage. OpenAI covers any provider that
-// speaks its wire format (ADR-979, ADR-984).
+// speaks its wire format (ADR-988, ADR-991).
 const (
 	OutboundAIProviderOpenAI      = "openai"
 	OutboundAIProviderAnthropic   = "anthropic"
@@ -106,7 +106,7 @@ type PutOutboundAIPolicyRequest struct {
 	DailyTokenLimit            *int64 `json:"daily_token_limit"`
 	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
 	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
-	// RequestLogEnabled stores per-call metadata, never content (ADR-984).
+	// RequestLogEnabled stores per-call metadata, never content (ADR-991).
 	RequestLogEnabled bool `json:"request_log_enabled"`
 }
 
@@ -131,7 +131,7 @@ type OutboundAIUsageItem struct {
 	CacheWriteTokens     int64  `json:"cache_write_tokens"`
 	OutputTokens         int64  `json:"output_tokens"`
 	// CostMillicents is priced from the price list effective at each call,
-	// rounded up per call; zero without a price list (ADR-983).
+	// rounded up per call; zero without a price list (ADR-990).
 	CostMillicents int64 `json:"cost_millicents"`
 }
 
@@ -325,9 +325,9 @@ type OutboundAppBinding struct {
 	AllowedPathPrefixes []string                 `json:"allowed_path_prefixes"`
 	DailyRequestLimit   *int64                   `json:"daily_request_limit"`
 	CreatedAt           time.Time                `json:"created_at"`
-	// AIDailyTokenLimit is this app's own UTC-day AI token limit (ADR-983).
+	// AIDailyTokenLimit is this app's own UTC-day AI token limit (ADR-990).
 	AIDailyTokenLimit *int64 `json:"ai_daily_token_limit"`
-	// Per-app AI guardrails (ADR-984); null means unrestricted.
+	// Per-app AI guardrails (ADR-991); null means unrestricted.
 	AIRequestsPerMinute *int64   `json:"ai_requests_per_minute"`
 	AITokensPerMinute   *int64   `json:"ai_tokens_per_minute"`
 	AIAllowedModels     []string `json:"ai_allowed_models"`

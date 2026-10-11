@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -101,7 +102,7 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		if _, err = client.PutObjectBucketEncryption(ctx, "encrypted-journal", b.ID, selection); err != nil {
 			t.Fatal(err)
 		}
-		if err = s.reconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err = s.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		requested = nil
@@ -121,7 +122,7 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		if _, err = client.DeleteObjectBucketEncryption(ctx, "encrypted-journal", b.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err = s.reconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err = s.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -209,7 +210,7 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
 	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.reconcileObjectMultipartUploads(ctx, nil); err != nil {
+	if err = fresh.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal("restart recovery", err)
 	}
 	done, err := client.GetObjectMultipartUpload(ctx, "encrypted-journal", b.ID, u.ID)

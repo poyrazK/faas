@@ -37,12 +37,12 @@ type OutboundIntegrationOffer struct {
 	AIDailyTokenLimit    *int64
 	AIDailyCostLimit     *int64
 	AIMonthlyCostLimit   *int64
-	// AIRequestLogEnabled records per-call metadata (ADR-984).
+	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
-// for a caller (an app ID or "runs") and model (ADR-979).
+// for a caller (an app ID or "runs") and model (ADR-988).
 type OutboundAIUsageItem struct {
 	Caller               string
 	Model                string
@@ -59,7 +59,7 @@ type OutboundAIUsageItem struct {
 // OutboundAIUsage is one UTC day of AI usage for an integration.
 // DailyTokenCount is the live admission counter for today and the sum of
 // rollup tokens for an earlier day. Costs are settled rollup sums for the
-// day and for its calendar month through that day (ADR-983).
+// day and for its calendar month through that day (ADR-990).
 type OutboundAIUsage struct {
 	UsageDate             string
 	AIProvider            string
@@ -74,8 +74,8 @@ type OutboundAIUsage struct {
 	MonthlyCostLimit      *int64
 }
 
-// OutboundAIPolicy is the complete customer AI gateway setting (ADR-979,
-// ADR-983). An empty Provider turns AI handling off and requires no limits.
+// OutboundAIPolicy is the complete customer AI gateway setting (ADR-988,
+// ADR-990). An empty Provider turns AI handling off and requires no limits.
 type OutboundAIPolicy struct {
 	Provider          string
 	DailyTokenLimit   *int64
@@ -144,9 +144,9 @@ type OutboundAppBinding struct {
 	OutboundIntegrationOffer
 	AppID                    string
 	BindingDailyRequestLimit *int64
-	// BindingAIDailyTokenLimit is this app's own AI token limit (ADR-983).
+	// BindingAIDailyTokenLimit is this app's own AI token limit (ADR-990).
 	BindingAIDailyTokenLimit *int64
-	// Per-app AI guardrails (ADR-984); nil means unrestricted.
+	// Per-app AI guardrails (ADR-991); nil means unrestricted.
 	BindingAIRequestsPerMinute *int64
 	BindingAITokensPerMinute   *int64
 	BindingAIAllowedModels     []string

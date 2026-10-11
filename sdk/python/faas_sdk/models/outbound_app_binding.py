@@ -32,15 +32,15 @@ class OutboundAppBinding:
     """Optional per-binding daily admitted-request limit."""
     created_at: datetime.datetime
     ai_daily_token_limit: int | None | Unset = UNSET
-    """This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983)."""
+    """This app's own UTC-day AI input plus output token limit on an AI integration (ADR-990)."""
     ai_requests_per_minute: int | None | Unset = UNSET
-    """Admitted calls per UTC minute for this app (ADR-984)."""
+    """Admitted calls per UTC minute for this app (ADR-991)."""
     ai_tokens_per_minute: int | None | Unset = UNSET
-    """Settled tokens plus live reservations per UTC minute for this app (ADR-984)."""
+    """Settled tokens plus live reservations per UTC minute for this app (ADR-991)."""
     ai_allowed_models: list[str] | None | Unset = UNSET
-    """Exact model names or prefixes ending in "*" this app may call; null allows every model (ADR-984)."""
+    """Exact model names or prefixes ending in "*" this app may call; null allows every model (ADR-991)."""
     ai_max_output_tokens: int | None | Unset = UNSET
-    """Per-request output-token ceiling; added to requests that name none (ADR-984)."""
+    """Per-request output-token ceiling; added to requests that name none (ADR-991)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -11,7 +11,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-// AIUsageBackend settles AI token usage after a response (ADR-979). It adds
+// AIUsageBackend settles AI token usage after a response (ADR-988). It adds
 // the call's tokens to the integration's UTC-day admission counter and to the
 // caller/model rollup in one shared-state write.
 type AIUsageBackend interface {
@@ -70,7 +70,7 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 // observeAIResponse starts usage extraction for an AI integration's
 // generation call. It returns nil when the response is not an AI call. The
 // plan picks the call's wire format and the model to report when the
-// response names none (ADR-984).
+// response names none (ADR-991).
 func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest, plan *aiCallPlan) *aiUsageObserver {
 	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil {
 		return nil
@@ -85,7 +85,7 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 	observer.applyHeaders(resp.Header)
 	resp.Body = &observedBody{ReadCloser: resp.Body, observer: observer}
 	if ai != nil && ai.usageInjected && streamingMediaType(resp.Header.Get("Content-Type")) {
-		// ADR-983: the caller never asked for the usage chunk; hide it after
+		// ADR-990: the caller never asked for the usage chunk; hide it after
 		// the observer has counted it.
 		resp.Body = newUsageChunkFilter(resp.Body)
 	}

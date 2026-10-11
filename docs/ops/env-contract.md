@@ -24,7 +24,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 |---|---|---|---|---|---|---|
 | `FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ADMIN_EMAILS` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
-| `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd | `default` |  |  | `int` | optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-984), any other value keeps it closed, unset preserves the TOML setting (default off) |
+| `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd | `default` |  |  | `int` | optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off) |
 | `FAAS_ALERT_EVAL_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_APID_ADVISORY_SOCK` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
@@ -364,7 +364,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
 | `FAAS_PREFLIGHT_GITHUB_TOKEN` | apid | `secrets-env` |  |  | `` | optional read-only GitHub token for the public migration preflight; without it upstream commit lookups use the anonymous budget of 60 calls per hour per source IP. Delivered by /etc/faas/sealed.env (apid) |
-| `FAAS_PREPARED_NETWORKS` | vmmd, shared | `default` |  |  | `` | opt-in unused-network cache size (0–16), disabled by default; ADR-149; "shared" covers pkg/e2etest forwarding it to a harness-booted vmmd |
+| `FAAS_PREPARED_NETWORKS` | vmmd, shared | `dropin` |  |  | `` | unused-network cache size (0–16); ansible vmmd_prepared_networks (default 4) renders 99-faas-prepared-networks.conf, code default 0; ADR-149; "shared" covers pkg/e2etest forwarding it to a harness-booted vmmd |
 | `FAAS_PRESSURE_MIGRATION_POLICY` | schedd | `default` |  |  | `` |  |
 | `FAAS_PRESSURE_REASSESSMENT_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_PRESSURE_THRESHOLD_PER_MIN` | schedd | `default` |  |  | `` |  |
@@ -565,10 +565,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT` | vmmd, shared | `default` |  |  | `` | optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts |
 | `FAAS_VMMD_NODE_KEY_PATH` | vmmd | `default` |  |  | `` |  |
-| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box app outbound relay (ADR-982); vmmd_service 99-faas-outbound-relay.conf |
-| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/outboundd-client leaf (ADR-982) |
-| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/outboundd-client leaf (ADR-982) |
-| `FAAS_VMMD_OUTBOUND_RELAY_TARGET` | vmmd | `dropin` |  |  | `` | outboundd relay listener for app outbound integrations: unix:// on a single box, tcp:// with client mTLS on a split box; empty closes the relay (ADR-982) |
+| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box app outbound relay (ADR-989); vmmd_service 99-faas-outbound-relay.conf |
+| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/outboundd-client leaf (ADR-989) |
+| `FAAS_VMMD_OUTBOUND_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/outboundd-client leaf (ADR-989) |
+| `FAAS_VMMD_OUTBOUND_RELAY_TARGET` | vmmd | `dropin` |  |  | `` | outboundd relay listener for app outbound integrations: unix:// on a single box, tcp:// with client mTLS on a split box; empty closes the relay (ADR-989) |
 | `FAAS_VMMD_RAW_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_RESOURCE_JOURNAL_DIR` | vmmd, shared | `default` |  |  | `` | optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it) |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |

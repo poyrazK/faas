@@ -1,6 +1,6 @@
 package main
 
-// adr: 984 — guardrails, key pools, alerts, request log and route formats.
+// adr: 991 — guardrails, key pools, alerts, request log and route formats.
 
 import (
 	"encoding/json"
@@ -152,11 +152,12 @@ func TestAIGatewayReleaseGateIsClosedByDefault(t *testing.T) {
 		Name: "llm", Origin: "https://api.openai.com", AllowedMethods: []string{"POST"}, AllowedPathPrefixes: []string{"/v1"},
 		AIProvider: api.OutboundAIProviderOpenAI,
 	}, nil), http.StatusForbidden, "outbound_ai_gateway_unavailable")
-	// Ordinary integrations are unaffected.
+	// Ordinary integrations are not refused by the gate. The origin check
+	// that follows performs a real DNS lookup, so only the gate is asserted.
 	if plain := e.do(t, http.MethodPost, "/v1/outbound/integrations", api.CreateOutboundIntegrationRequest{
 		Name: "plain", Origin: "https://api.example.com", AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
-	}, nil); plain.Code != http.StatusCreated {
-		t.Fatalf("plain integration = %d %s", plain.Code, plain.Body.String())
+	}, nil); strings.Contains(plain.Body.String(), "outbound_ai_gateway_unavailable") {
+		t.Fatalf("the gate refused a plain integration: %d %s", plain.Code, plain.Body.String())
 	}
 	for _, path := range []string{"/ai", "/ai-usage", "/ai-prices", "/ai-alerts", "/ai-requests", "/credential-keys"} {
 		method := http.MethodGet

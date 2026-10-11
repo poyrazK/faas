@@ -48,14 +48,18 @@ export function cursorFrom<const Order extends readonly [CursorOrder, ...CursorO
 }
 
 /** Apply keyset pagination to a fresh selected query, preserving its projection.
- * Keep the same filters and ordering across pages. The final column must be
- * unique and non-null for the filtered result; uniqueness is caller-owned.
+ * Keep the same filters and ordering across pages.
+ * before returns nearest preceding rows in reverse order; reverse data for display.
+ * The final column must be unique and non-null for the filtered result; uniqueness is caller-owned.
  */
 export function cursorPage<Query extends { order(column: string, options: { ascending: boolean; nullsFirst: boolean }): Query; limit(count: number): Query; or(filters: string): Query }, const Order extends readonly [CursorOrder, ...CursorOrder[]]>(
   query: Query & ReadQuery<Query>,
-  options: { order: Order & CheckedOrder<Query, Order>; size: number; after?: TypedCursor<Query, Order> },
+  options: { order: Order & CheckedOrder<Query, Order>; size: number; after?: TypedCursor<Query, Order>; before?: TypedCursor<Query, Order> },
 ): Query {
-  const { order, size, after } = options
+  const { order, size } = options
+  if (options.after !== undefined && options.before !== undefined) throw new Error('Use either after or before, not both')
+  const after = options.before ?? options.after
+  const traversal = options.before === undefined ? order : order.map(field => ({ ...field, ascending: !(field.ascending ?? true), nullsFirst: !(field.nullsFirst ?? false) }))
   checkOrder(order)
   if (!Number.isSafeInteger(size) || size < 1) throw new Error('Cursor page size must be a positive safe integer')
   const branches: string[] = []
@@ -63,7 +67,7 @@ export function cursorPage<Query extends { order(column: string, options: { asce
   if (after !== undefined) {
     if (!Array.isArray(after) || after.length !== order.length || after.at(-1) === null) throw new Error('Cursor must contain one value per ordering column and a non-null tie-breaker')
     for (let i = 0; i < order.length; i++) {
-      const { column, ascending = true, nullsFirst = false } = order[i]
+      const { column, ascending = true, nullsFirst = false } = traversal[i]
       const value = after[i] as Scalar
       const next = value === null ? nullsFirst ? `${column}.not.is.null` : undefined
         : nullsFirst ? `${column}.${ascending ? 'gt' : 'lt'}.${literal(value)}`
@@ -74,7 +78,7 @@ export function cursorPage<Query extends { order(column: string, options: { asce
   }
   // Validate everything before mutating the SDK builder.
   const builder: Query = query
-  for (const { column, ascending = true, nullsFirst = false } of order) builder.order(column, { ascending, nullsFirst })
+  for (const { column, ascending = true, nullsFirst = false } of traversal) builder.order(column, { ascending, nullsFirst })
   if (after !== undefined) builder.or(branches.join(','))
   return builder.limit(size)
 }

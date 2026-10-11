@@ -11,7 +11,7 @@ export type PutOutboundAIPolicyRequest = {
   daily_cost_limit_millicents?: number | null;
   monthly_cost_limit_millicents?: number | null;
   /**
-   * Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-984). Requires ai_provider.
+   * Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
    */
   request_log_enabled?: boolean;
 };

@@ -10,7 +10,7 @@ import (
 )
 
 // aiWireFormat is the request and usage format of one AI call. It follows
-// from the integration's provider and the provider path (ADR-984), because
+// from the integration's provider and the provider path (ADR-991), because
 // Vertex and Bedrock serve several formats behind one origin.
 type aiWireFormat int
 

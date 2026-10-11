@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -1895,7 +1896,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if st, ok := s.store.(state.ObjectBucketStore); ok {
 		buckets, err := st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
 		if err != nil {
-			bucketProblem(w, err)
+			object.BucketProblem(w, err)
 			return
 		}
 		if len(buckets) != 0 {
@@ -2432,7 +2433,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
-	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, target); problem != nil {
+	if problem := s.durable.ValidatorReleaseProblem(ctx, app, target); problem != nil {
 		return state.Deployment{}, problem
 	}
 	var current state.Deployment
@@ -6049,7 +6050,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
 	resp := s.deploymentResponse(d, app)
-	resp.DurableEntityValidator = s.deploymentValidatorInfo(ctx, d, app)
+	resp.DurableEntityValidator = s.durable.DeploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
 	}
@@ -6728,7 +6729,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.objectStorageUsageResponse(usage, charges)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges)
 		out.ObjectStorage = &objectStorage
 	}
 

@@ -1,6 +1,6 @@
 // commands_ai.go — `gregale ai`: AI gateway settings, prices, per-app
 // limits, usage and fallback routes on managed outbound integrations
-// (ADR-979, ADR-982, ADR-983). Money is entered and shown in euros and sent
+// (ADR-988, ADR-989, ADR-990). Money is entered and shown in euros and sent
 // to the API as integer millicents; no floating point is involved.
 
 package main

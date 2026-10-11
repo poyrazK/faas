@@ -1,5 +1,5 @@
 -- filename: 20261011154457338_outbound_ai_cost_and_app_limits.sql
--- ADR-983: per-app AI token limits, customer price lists, cost budgets and
+-- ADR-990: per-app AI token limits, customer price lists, cost budgets and
 -- AI fallback routes. Additive and replay-safe.
 
 -- +goose Up

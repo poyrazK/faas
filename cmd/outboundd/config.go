@@ -29,14 +29,14 @@ type Config struct {
 	Integrations             map[string]IntegrationConfig `toml:"integrations"`
 	WorkloadIdentityJWKSPath string                       `toml:"workload_identity_jwks_path"`
 	WorkloadIdentityIssuer   string                       `toml:"workload_identity_issuer"`
-	// RelayListen enables the app relay listener for vmmd (ADR-982):
+	// RelayListen enables the app relay listener for vmmd (ADR-989):
 	// "unix:///run/faas/outboundd-relay.sock" on a single box, or
 	// "tcp://host:port" with the relay_tls_* mTLS material on a split box.
 	RelayListen      string `toml:"relay_listen"`
 	RelayTLSCertPath string `toml:"relay_tls_cert_path"`
 	RelayTLSKeyPath  string `toml:"relay_tls_key_path"`
 	RelayTLSCAPath   string `toml:"relay_tls_ca_path"`
-	// AIGatewayEnabled is the AI gateway release gate (ADR-984). While it is
+	// AIGatewayEnabled is the AI gateway release gate (ADR-991). While it is
 	// off, AI integrations and routes are refused. FAAS_AI_GATEWAY_ENABLED
 	// overrides it: "1" turns it on, any other value turns it off.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`

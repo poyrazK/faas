@@ -127,3 +127,27 @@ and unknown-outcome rules still apply. The harness's simulated complete journey
 and its failure tests verify ordering and cleanup locally; real PostgreSQL tests
 verify fixture migrations, grants, generated RPC types and replacement roles.
 Neither portable result counts as live staging or native provider qualification.
+
+## Hosted contract rollout qualification
+
+The canary now snapshots the contracts before and after its additive migration,
+then generates an acceptance policy with the shipped CLI's `data-api diff`.
+Using the installed SDK, it verifies older-client insert/RPC/delete and
+current-client update, rejects unapproved writes and RPCs before they commit,
+and revokes the older contract while the current client continues working.
+
+It also installs a policy bound to the previous schema. Qualification requires
+refresh failure, an unavailable data route, and the runtime's specific stale
+policy diagnostic. An unrelated deployment failure cannot satisfy this check.
+The policy is removed and the serving contract verified during recovery, even
+when an assertion fails. Only fingerprints and completed check names enter the
+report; tokens, policy command output, and raw runtime logs are omitted.
+
+The fixture requires both subject and tenant claims. A token with the same
+subject but another tenant must see no rows and must fail to insert into the
+original tenant. Generated clients compile without `skipLibCheck`.
+
+Run `make data-api-staging-check` for portable harness and SDK rollout tests.
+These tests simulate provider responses and do not establish hosted acceptance.
+The existing staging manifest, secure credentials, runner and manual workflow
+remain the entry point for live verification.

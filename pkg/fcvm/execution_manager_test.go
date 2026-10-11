@@ -210,7 +210,7 @@ func TestManagerWakeExecutionIsNetworkless(t *testing.T) {
 	if _, _, _, err := m.ExecutionOutboundIdentity(inst.Lease.Instance, "22222222-2222-4222-8222-222222222222"); err == nil {
 		t.Fatal("unrequested integration received execution identity")
 	}
-	// ADR-983: the relay identity carries the whole grant list instead.
+	// ADR-990: the relay identity carries the whole grant list instead.
 	relayAccount, relayExecution, relayLease, granted, err := m.ExecutionRelayIdentity(inst.Lease.Instance)
 	if err != nil || relayAccount != "acct-1" || relayExecution != "exec-wake-1" || relayLease != leaseToken ||
 		len(granted) != 1 || granted[0] != "11111111-1111-4111-8111-111111111111" {

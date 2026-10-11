@@ -515,7 +515,7 @@ paths:
       tags: [outbound]
       operationId: setOutboundIntegrationAIPolicy
       summary: Set or clear a customer-owned integration's AI provider and daily token limit.
-      description: Requires MFA and deploy-write scope (ADR-979). The gateway extracts token usage from responses in the selected provider's format and stops new calls once the UTC day's settled input plus output tokens reach the limit; calls already in flight may finish above it.
+      description: Requires MFA and deploy-write scope (ADR-988). The gateway extracts token usage from responses in the selected provider's format and stops new calls once the UTC day's settled input plus output tokens reach the limit; calls already in flight may finish above it.
       requestBody:
         required: true
         content:
@@ -568,7 +568,7 @@ paths:
       tags: [outbound]
       operationId: getOutboundIntegrationAIPrices
       summary: Read the AI price list in effect.
-      description: Requires MFA and read scope (ADR-983).
+      description: Requires MFA and read scope (ADR-990).
       responses:
         '200':
           description: The price list in effect.
@@ -583,7 +583,7 @@ paths:
       tags: [outbound]
       operationId: setOutboundIntegrationAIPrices
       summary: Replace a customer AI integration's price list.
-      description: Requires MFA and deploy-write scope (ADR-983). The new list prices calls settled from now on; earlier lists stay for costs already recorded.
+      description: Requires MFA and deploy-write scope (ADR-990). The new list prices calls settled from now on; earlier lists stay for costs already recorded.
       requestBody:
         required: true
         content:
@@ -607,7 +607,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundCredentialKeys
       summary: List an integration's extra provider keys.
-      description: Requires MFA and read scope (ADR-984). Values are write-only and never returned.
+      description: Requires MFA and read scope (ADR-991). Values are write-only and never returned.
       responses:
         '200':
           description: Extra keys, oldest first.
@@ -622,7 +622,7 @@ paths:
       tags: [outbound]
       operationId: createOutboundCredentialKey
       summary: Add an extra provider key to a customer-sealed integration.
-      description: Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to the next key when one returns 429. At most 8 extra keys.
+      description: Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to the next key when one returns 429. At most 8 extra keys.
       requestBody:
         required: true
         content:
@@ -657,7 +657,7 @@ paths:
       tags: [outbound]
       operationId: deleteOutboundCredentialKey
       summary: Remove an extra provider key.
-      description: Requires MFA and deploy-write scope (ADR-984). outboundd stops using it on its next call.
+      description: Requires MFA and deploy-write scope (ADR-991). outboundd stops using it on its next call.
       responses:
         '204': { description: Key removed. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -676,7 +676,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIBudgetAlerts
       summary: List AI budget alerts recorded at 80% and 100%.
-      description: Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+      description: Requires MFA and read scope (ADR-991). Newest first; kept for 90 days.
       parameters:
         - name: limit
           in: query
@@ -705,7 +705,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIRequestLog
       summary: Page the opt-in AI request log.
-      description: Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata only.
+      description: Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata only.
       parameters:
         - name: limit
           in: query
@@ -733,7 +733,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIRoutes
       summary: List the account's AI fallback routes.
-      description: Requires MFA and read scope (ADR-983).
+      description: Requires MFA and read scope (ADR-990).
       responses:
         '200':
           description: AI routes.
@@ -746,7 +746,7 @@ paths:
       tags: [outbound]
       operationId: createOutboundAIRoute
       summary: Create an AI fallback route over managed AI integrations.
-      description: Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI integration of this account; a native route needs one ai_provider, an openai route translates OpenAI chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+      description: Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI integration of this account; a native route needs one ai_provider, an openai route translates OpenAI chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
       requestBody:
         required: true
         content:
@@ -1091,7 +1091,7 @@ paths:
       tags: [outbound]
       operationId: setOutboundBindingAIBudget
       summary: Set or clear an app's own daily AI token limit on an AI integration.
-      description: Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled input plus output tokens reach the limit; other apps are unaffected.
+      description: Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled input plus output tokens reach the limit; other apps are unaffected.
       requestBody:
         required: true
         content:
@@ -1115,7 +1115,7 @@ paths:
       tags: [outbound]
       operationId: setOutboundBindingAIGuardrails
       summary: Replace an app's AI guardrails on an AI integration.
-      description: Requires MFA and deploy-write scope (ADR-984). Sets per-minute request and token limits, a model allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
+      description: Requires MFA and deploy-write scope (ADR-991). Sets per-minute request and token limits, a model allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
       requestBody:
         required: true
         content:
@@ -15246,6 +15246,196 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/routes/advice:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteAdvice
+      summary: Suggest edge rules for observed routes with what-if estimates.
+      description: |
+        Read-only route advisor (ADR-976). Reads retained request telemetry for
+        the app's busiest observed routes across deployments and suggests three
+        kinds of edge rules: cache for anonymous, successful GET routes with
+        repeat traffic; async for POST routes that time out or exceed a 10 s
+        p95; and a per-consumer throttle when one consumer dominates a route and
+        a limit exists that no other observed consumer reaches. A route needs at
+        least 200 requests in the window, and routes that already have a rule of
+        the suggested kind (enabled or not) are skipped.
+
+        Each suggestion carries its evidence, an estimate replayed from the same
+        window, cautions, and ready-to-create rule bodies: one per hostname (the
+        platform hostname and every verified custom domain), always disabled.
+        Nothing is applied; create the rules with POST /v1/apps/{slug}/edge-rules
+        and enable them after review. Suggestion IDs are stable for the same
+        kind, method and route. Estimates are observed_only and upper bounds:
+        the cache estimate cannot see credential headers or query strings.
+        Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
+        plan gate.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 168h }
+          description: "Positive lookback duration (for example 7d) or RFC3339 start timestamp; clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end of the advice window, default now; must be within retained telemetry and not in the future."
+        - name: cache_max_age
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 3600, default: 60 }
+          description: "What-if cache lifetime in seconds for cache estimates and proposed cache rules."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Route advisor suggestions for the window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteAdviceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/service-wake-ahead:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getServiceWakeAhead
+      summary: Read an app's service wake-ahead opt-in.
+      description: |
+        Service wake-ahead (ADR-977) is off by default. When it is on and this
+        app starts a cold wake, the gateway also starts restoring the services
+        it has measured this app calling soon after it wakes, so their restores
+        overlap instead of running one after another. Measurement is per
+        gateway and needs at least 20 observed wakes of this app before any
+        service is woken ahead. Woken services are billed like any other
+        running instance. Requires app read access and completed MFA.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's wake-ahead opt-in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceWakeAheadResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setServiceWakeAhead
+      summary: Turn an app's service wake-ahead on or off.
+      description: |
+        Sets the ADR-977 opt-in. Gateways apply the change within 30 seconds.
+        Wake-ahead never starts while fleet residency is at or above 60% of the
+        admission ceiling, never parks other instances to make room, and goes
+        through the same admission and plan concurrency limits as a request.
+        Requires deploy write access and completed MFA. Body limit is 1 KiB.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetServiceWakeAheadRequest' }
+      responses:
+        '200':
+          description: The updated opt-in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceWakeAheadResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/route-priorities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRoutePriorities
+      summary: Read the routes served first and last when an app is saturated.
+      description: |
+        Route priorities (ADR-978) order the queue requests wait in while every
+        routable instance of the app is busy. Critical requests are served
+        before normal ones and normal before bulk; within a class the queue
+        stays first in, first out, and the request already at the head is never
+        moved. When the queue is full, a request takes the place of the newest
+        waiting request of a lower class, which receives the usual 503 with
+        Retry-After. Saved rules apply when present (source configured);
+        otherwise the app's route-health selectors are critical (route_health);
+        otherwise there are none. Crawlers and link-preview bots that match no
+        rule are bulk. Requires app read access and completed MFA.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's effective route priorities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRoutePriorities
+      summary: Replace an app's saved route priorities.
+      description: |
+        Saves at most 20 rules, matched in order; the first match wins. A path
+        is a route template (/users/{id}) or an edge-rule glob (/exports/*); an
+        omitted method matches every method. An empty list saves "no
+        priorities" and turns off the route-health default. Gateways apply the
+        change within 30 seconds. Requires deploy write access and completed
+        MFA. Body limit is 16 KiB.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRoutePrioritiesRequest' }
+      responses:
+        '200':
+          description: The effective route priorities after saving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: resetRoutePriorities
+      summary: Delete an app's saved route priorities.
+      description: "Deletes saved rules so the route-health default applies again. Requires deploy write access and completed MFA."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The effective route priorities after the reset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePrioritiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/route-monitor/report:
     parameters:
@@ -43143,6 +43333,110 @@ components:
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
         evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    RouteAdviceResponse:
+      type: object
+      description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
+      required: [slug, from, until, cache_max_age_seconds, routes_analyzed, suggestions]
+      properties:
+        slug: {"type": "string"}
+        from: {"type": "string", "format": "date-time"}
+        until: {"type": "string", "format": "date-time"}
+        window_clamped: {"type": "boolean", "description": "The requested window was shortened to plan retention."}
+        cache_max_age_seconds: {"type": "integer", "minimum": 1, "maximum": 3600}
+        routes_analyzed: {"type": "integer", "minimum": 0}
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/RouteAdviceSuggestion' }
+    RouteAdviceSuggestion:
+      type: object
+      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname)."
+      required: [id, kind, method, route, title, rationale, evidence, impact, rules]
+      properties:
+        id: {"type": "string", "description": "Stable for the same kind, method and route."}
+        kind: {"type": "string", "enum": ["cache", "async", "throttle"]}
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Observed route template, for example /users/{id}."}
+        title: {"type": "string"}
+        rationale: {"type": "string"}
+        evidence: { $ref: '#/components/schemas/RouteAdviceEvidence' }
+        impact: { $ref: '#/components/schemas/RouteAdviceImpact' }
+        cautions:
+          type: array
+          items: {"type": "string"}
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+    RouteAdviceEvidence:
+      type: object
+      description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
+      required: [requests, anonymous_requests, server_errors, timeouts, cold_boots, p95_latency_ms]
+      properties:
+        requests: {"type": "integer", "format": "int64"}
+        anonymous_requests: {"type": "integer", "format": "int64"}
+        server_errors: {"type": "integer", "format": "int64"}
+        timeouts: {"type": "integer", "format": "int64"}
+        cold_boots: {"type": "integer", "format": "int64"}
+        p95_latency_ms: {"type": "integer"}
+        consumers: {"type": "integer", "format": "int64"}
+        top_consumer_id: {"type": "string", "format": "uuid"}
+        top_consumer_requests: {"type": "integer", "format": "int64"}
+        top_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+        next_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+    RouteAdviceImpact:
+      type: object
+      description: "What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."
+      required: [summary, estimated_cache_hits, estimated_wakes_avoided, estimated_throttled_requests, timeouts_affected]
+      properties:
+        summary: {"type": "string", "description": "One-sentence what-if estimate for the suggested rule."}
+        estimated_cache_hits: {"type": "integer", "format": "int64"}
+        estimated_wakes_avoided: {"type": "integer", "format": "int64"}
+        estimated_throttled_requests: {"type": "integer", "format": "int64"}
+        timeouts_affected: {"type": "integer", "format": "int64"}
+    ServiceWakeAheadResponse:
+      type: object
+      description: "An app's service wake-ahead opt-in (ADR-977)."
+      required: [slug, enabled]
+      properties:
+        slug: {"type": "string"}
+        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
+        updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
+    SetServiceWakeAheadRequest:
+      type: object
+      description: "Turns service wake-ahead on or off for one app."
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: {"type": "boolean", "description": "true to wake measured services ahead, false to wake them only when called."}
+    RoutePriorityRule:
+      type: object
+      description: "Assigns a priority class to requests matching a method and path (ADR-978)."
+      required: [path, class]
+      additionalProperties: false
+      properties:
+        method: {"type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "description": "Omitted matches every method."}
+        path: {"type": "string", "maxLength": 240, "description": "Route template such as /users/{id}, or an edge-rule glob such as /exports/*."}
+        class: {"type": "string", "enum": ["critical", "bulk"]}
+    RoutePrioritiesResponse:
+      type: object
+      description: "An app's effective route priorities and where they come from."
+      required: [slug, source, routes]
+      properties:
+        slug: {"type": "string"}
+        source: {"type": "string", "enum": ["configured", "route_health", "none"]}
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
+        updated_at: {"type": "string", "format": "date-time", "description": "When saved rules last changed; omitted for the route-health default."}
+    SetRoutePrioritiesRequest:
+      type: object
+      description: "Replaces the saved route priorities; an empty list saves none."
+      required: [routes]
+      additionalProperties: false
+      properties:
+        routes:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
@@ -45267,7 +45561,7 @@ components:
         ai_provider:
           type: string
           enum: [openai, anthropic, gemini, azure_openai, bedrock, vertex]
-          description: Present for AI gateway integrations (ADR-979, ADR-984). openai is the OpenAI-compatible wire format; the provider also selects how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-account token for vertex) and how token usage is read.
+          description: Present for AI gateway integrations (ADR-988, ADR-991). openai is the OpenAI-compatible wire format; the provider also selects how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-account token for vertex) and how token usage is read.
         ai_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -45279,16 +45573,16 @@ components:
           format: int64
           minimum: 1
           maximum: 1000000000000
-          description: UTC-day cost limit priced from the integration's price list (ADR-983).
+          description: UTC-day cost limit priced from the integration's price list (ADR-990).
         ai_monthly_cost_limit_millicents:
           type: [integer, 'null']
           format: int64
           minimum: 1
           maximum: 1000000000000
-          description: Calendar-month cost limit priced from the integration's price list (ADR-983).
+          description: Calendar-month cost limit priced from the integration's price list (ADR-990).
         ai_request_log_enabled:
           type: boolean
-          description: Whether every settled AI call writes one metadata row to the request log (ADR-984). Never stores content.
+          description: Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -45320,7 +45614,7 @@ components:
         ai_provider:
           type: string
           enum: [openai, anthropic, gemini, azure_openai, bedrock, vertex]
-          description: Optional AI gateway mode (ADR-979, ADR-984). Enables token usage extraction for that provider's response format.
+          description: Optional AI gateway mode (ADR-988, ADR-991). Enables token usage extraction for that provider's response format.
         ai_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -45352,7 +45646,7 @@ components:
           maximum: 1000000000000
         request_log_enabled:
           type: boolean
-          description: Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-984). Requires ai_provider.
+          description: Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
@@ -45525,14 +45819,14 @@ components:
           format: int64
           minimum: 1
           maximum: 100000000000
-          description: This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983).
-        ai_requests_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 100000, description: Admitted calls per UTC minute for this app (ADR-984). }
-        ai_tokens_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000000, description: Settled tokens plus live reservations per UTC minute for this app (ADR-984). }
+          description: This app's own UTC-day AI input plus output token limit on an AI integration (ADR-990).
+        ai_requests_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 100000, description: Admitted calls per UTC minute for this app (ADR-991). }
+        ai_tokens_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000000, description: Settled tokens plus live reservations per UTC minute for this app (ADR-991). }
         ai_allowed_models:
           type: [array, 'null']
-          description: Exact model names or prefixes ending in "*" this app may call; null allows every model (ADR-984).
+          description: Exact model names or prefixes ending in "*" this app may call; null allows every model (ADR-991).
           items: { type: string, maxLength: 128 }
-        ai_max_output_tokens: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000, description: Per-request output-token ceiling; added to requests that name none (ADR-984). }
+        ai_max_output_tokens: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000, description: Per-request output-token ceiling; added to requests that name none (ADR-991). }
     PutOutboundBindingAIBudgetRequest:
       type: object
       description: Set or clear (null) an app binding's daily AI token limit.
@@ -45580,7 +45874,7 @@ components:
         model: { type: string, maxLength: 128 }
     OutboundAIRoute:
       type: object
-      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-983). An openai-format route accepts OpenAI chat completions and translates them for Anthropic and Gemini targets (ADR-984).
+      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and translates them for Anthropic and Gemini targets (ADR-991).
       required: [id, name, format, targets, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -45606,7 +45900,7 @@ components:
         format:
           type: string
           enum: [native, openai]
-          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and gemini targets, and every target but openai must name its model (ADR-984).
+          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and gemini targets, and every target but openai must name its model (ADR-991).
         targets:
           type: array
           minItems: 1
@@ -45623,7 +45917,7 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
     PutOutboundBindingAIGuardrailsRequest:
       type: object
-      description: Replace an app's AI guardrails on one integration (ADR-984). Null fields remove that guardrail.
+      description: Replace an app's AI guardrails on one integration (ADR-991). Null fields remove that guardrail.
       properties:
         requests_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 100000 }
         tokens_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000000 }
@@ -45636,7 +45930,7 @@ components:
         max_output_tokens: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000 }
     OutboundCredentialKey:
       type: object
-      description: One extra provider key of an integration's pool (ADR-984). The value is write-only.
+      description: One extra provider key of an integration's pool (ADR-991). The value is write-only.
       required: [id, label, created_at]
       properties:
         id: { type: string, format: uuid }
@@ -45657,7 +45951,7 @@ components:
         authorization: { type: string, minLength: 1, maxLength: 8192, description: Same format as the integration's primary credential; sealed for outboundd and never returned. }
     OutboundAIBudgetAlert:
       type: object
-      description: The first settlement that reached a budget threshold in its period (ADR-984). limit and used are tokens for token budgets and millicents for cost budgets.
+      description: The first settlement that reached a budget threshold in its period (ADR-991). limit and used are tokens for token budgets and millicents for cost budgets.
       required: [id, integration_id, budget, app_id, period_start, threshold_percent, limit, used, crossed_at]
       properties:
         id: { type: string, format: uuid }
@@ -45678,7 +45972,7 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIBudgetAlert' }
     OutboundAIRequestLogEntry:
       type: object
-      description: One settled AI call's metadata (ADR-984). No request or response content is kept.
+      description: One settled AI call's metadata (ADR-991). No request or response content is kept.
       required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts]
       properties:
         id: { type: string, format: uuid }
@@ -70942,7 +71236,7 @@ components:
 
     OutboundAIBudgetThresholdWebhookPayload:
       type: object
-      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-984). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app.
+      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app.
       required: [alert_id, integration_id, integration_name, budget, app_id, period_start, threshold_percent, limit, used, crossed_at]
       properties:
         alert_id: { type: string, format: uuid }

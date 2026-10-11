@@ -33,7 +33,7 @@ type manifestInternalHost struct {
 const manifestGatewayEgressPort = 9092
 const manifestAppErrorsPort = 9093
 
-// manifestOutboundRelayPort is outboundd's ADR-982 app relay listener on the
+// manifestOutboundRelayPort is outboundd's ADR-989 app relay listener on the
 // control plane; the nftables role opens it to compute CIDRs.
 const manifestOutboundRelayPort = 8096
 const manifestGithubdPort = 50053
@@ -356,7 +356,7 @@ func renderManifestInternalHosts(m *manifest.Manifest) ([]manifestInternalHost, 
 			// is independent of the provider or the host's public IP.
 			entry.Names = append(entry.Names, "apid.faas")
 			entry.Names = append(entry.Names, "githubd.faas")
-			// ADR-982: compute vmmd dials the outboundd app relay by this
+			// ADR-989: compute vmmd dials the outboundd app relay by this
 			// name, which matches the outboundd/server leaf SAN.
 			entry.Names = append(entry.Names, "outboundd.faas")
 		}

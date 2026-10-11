@@ -1,5 +1,5 @@
 // commands_ai_controls.go — `gregale ai guardrails|keys|alerts|logs`
-// (ADR-984): per-app guardrails, extra provider keys, budget alerts and the
+// (ADR-991): per-app guardrails, extra provider keys, budget alerts and the
 // opt-in AI request log.
 
 package main

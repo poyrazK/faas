@@ -88,7 +88,7 @@ def sync_detailed(
 ) -> Response[OutboundAIBudgetAlertList | Problem]:
     """List AI budget alerts recorded at 80% and 100%.
 
-     Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+     Requires MFA and read scope (ADR-991). Newest first; kept for 90 days.
 
     Args:
         integration (UUID):
@@ -122,7 +122,7 @@ def sync(
 ) -> OutboundAIBudgetAlertList | Problem | None:
     """List AI budget alerts recorded at 80% and 100%.
 
-     Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+     Requires MFA and read scope (ADR-991). Newest first; kept for 90 days.
 
     Args:
         integration (UUID):
@@ -151,7 +151,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIBudgetAlertList | Problem]:
     """List AI budget alerts recorded at 80% and 100%.
 
-     Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+     Requires MFA and read scope (ADR-991). Newest first; kept for 90 days.
 
     Args:
         integration (UUID):
@@ -183,7 +183,7 @@ async def asyncio(
 ) -> OutboundAIBudgetAlertList | Problem | None:
     """List AI budget alerts recorded at 80% and 100%.
 
-     Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+     Requires MFA and read scope (ADR-991). Newest first; kept for 90 days.
 
     Args:
         integration (UUID):

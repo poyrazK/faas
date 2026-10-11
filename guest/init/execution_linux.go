@@ -101,7 +101,7 @@ func runExecutionGuest(log *slog.Logger) error {
 	}
 	defer func() { _ = ln.Close() }()
 	runExecutor := executor.NewWithProfile(manifest.Profile)
-	// ADR-983: Runs stream outbound calls through the loopback relay when
+	// ADR-990: Runs stream outbound calls through the loopback relay when
 	// vmmd advertises it per request; the broker helper stays the fallback.
 	if err := startOutboundRelay(log); err != nil {
 		log.Warn("execution outbound relay unavailable", "err", err)

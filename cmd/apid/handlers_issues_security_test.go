@@ -16,8 +16,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/issues"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -327,10 +329,10 @@ func TestIssueAutomaticHTTPSource(t *testing.T) {
 	app := seedPGApp(t, e, "issue-http")
 	dep := issueSeedDeployment(t, e, app, 1)
 	req := &apidpb.IncrementAppErrorRequest{AccountId: e.acct.ID, AppId: app.ID, DeploymentId: dep.ID, RequestId: uuid.NewString(), ReceivedAtUnixMs: time.Now().UnixMilli(), HttpStatus: 500, ErrorClass: "HTTPError", Fingerprint: strings.Repeat("a", 64), RouteTemplate: "/exports"}
-	if err := recordHTTPIssue(t.Context(), e.store, req); err != nil {
+	if err := receivers.RecordHTTPIssue(t.Context(), e.store, req); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordHTTPIssue(t.Context(), e.store, req); err != nil {
+	if err := receivers.RecordHTTPIssue(t.Context(), e.store, req); err != nil {
 		t.Fatal(err)
 	}
 	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)

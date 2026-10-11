@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -15,7 +16,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Cache-Control", "no-store")
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeOperationError(w, state.ErrInvalidArgument)
+		operation.WriteOperationError(w, state.ErrInvalidArgument)
 		return
 	}
 	if q.Has("dimension") {
@@ -34,9 +35,9 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 	u := *r.URL
 	clone.URL = &u
 	clone.URL.RawQuery = q.Encode()
-	opts, err := operationWorkflowPerformanceOptions(clone, true, app.ID)
+	opts, err := operation.OperationWorkflowPerformanceOptions(clone, true, app.ID)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	data := dashboard.WorkflowPerformanceData{AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, ListURL: dashboardCustomerOperationsURL(app.Slug), SummaryURL: dashboardCustomerOperationsURL(app.Slug) + "/performance"}
@@ -48,7 +49,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 		}
 		summary, err := store.SummarizeAccountWorkflowPerformance(r.Context(), acct.ID, opts)
 		if err != nil {
-			writeOperationError(w, err)
+			operation.WriteOperationError(w, err)
 			return
 		}
 		data.Summary = &summary

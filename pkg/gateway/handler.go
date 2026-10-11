@@ -962,6 +962,11 @@ type Handler struct {
 	// this gateway process and deliberately separate from scraped
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
+	// wakeAhead is the opt-in ADR-977 wake-ahead runner; nil disables it.
+	wakeAhead *wakeAheadRunner
+	// routePriorities orders the warm-capacity queue by route (ADR-978);
+	// nil keeps it FIFO.
+	routePriorities *routePriorityCache
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
 	// picker selects a concrete instance. Instance slots and FIFO ordering are
 	// gateway-local; production installs a shared admission backend so the
@@ -4411,7 +4416,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if !allowed {
-		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
@@ -4425,6 +4429,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			// The central counter decided; the local bucket has no view.
 			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
 		}
+		w.Header().Set("Retry-After", strconv.Itoa(routeThrottleRetryAfter(rule.RequestsPerSecond)))
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
@@ -6764,6 +6769,9 @@ haveApp:
 		return
 	}
 	if !pick.OK {
+		// ADR-977: a cold app starts restoring the services it is measured to
+		// call before its own restore completes. Opt-in; never blocks.
+		h.noteColdWake(r.Context(), app.ID)
 		// This is the canonical platform-only boundary. Authentication,
 		// routing, rate limiting, and the public edge have already completed;
 		// scheduler admission, VM restore, and the internal first-byte hop are
@@ -6975,7 +6983,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
@@ -8717,12 +8725,23 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // not an error: the caller re-reads the endpoint registry and surfaces
 // "no healthy replicas" if the wake genuinely produced nothing.
 func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	return h.ensureServiceCapacity(ctx, app, sched.TriggerServiceMesh)
+}
+
+// triggerServiceWakeAhead attributes ADR-977 wake-ahead restores.
+const triggerServiceWakeAhead = sched.TriggerServiceWakeAhead
+
+// ensureServiceCapacity is the shared body of service-mesh and wake-ahead
+// restores. A parked target starting to wake may itself wake its measured
+// targets ahead (ADR-977), up to the depth limit.
+func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger string) error {
 	limits, ok := api.LimitsFor(app.Plan)
 	if !ok {
 		limits = api.Limits{}
 	}
+	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
 	return err
 }
 

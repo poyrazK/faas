@@ -17,7 +17,7 @@ import (
 )
 
 // VsockOutboundRelayHostPort is the host endpoint guest-init's loopback
-// outbound relay connects to (ADR-982).
+// outbound relay connects to (ADR-989).
 const VsockOutboundRelayHostPort uint32 = fcvm.VsockOutboundRelayHostPort
 
 // OutboundRelayReceiver splices an app's relay connection to outboundd. The
@@ -74,7 +74,7 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 }
 
 // relayPreamble identifies the instance as a Run with granted integrations
-// (ADR-983) or as an app (ADR-982). A Run without grants, or any other
+// (ADR-990) or as an app (ADR-989). A Run without grants, or any other
 // instance, gets no relay.
 func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamble, error) {
 	if accountID, executionID, leaseToken, integrations, err := r.mgr.ExecutionRelayIdentity(instance); err == nil {

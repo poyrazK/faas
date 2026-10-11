@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// configureAIGateway reads the AI gateway release gate (ADR-984). It is off
+// configureAIGateway reads the AI gateway release gate (ADR-991). It is off
 // unless ai_gateway_enabled or FAAS_AI_GATEWAY_ENABLED=1 turns it on, so the
 // AI APIs stay closed until an operator enables them.
 func (s *server) configureAIGateway(cfg Config, getenv func(string) string) {

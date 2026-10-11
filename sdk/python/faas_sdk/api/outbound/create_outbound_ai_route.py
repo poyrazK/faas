@@ -85,7 +85,7 @@ def sync_detailed(
 ) -> Response[Any | OutboundAIRoute | Problem]:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI
+     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
     integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
     chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
     path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
@@ -120,7 +120,7 @@ def sync(
 ) -> Any | OutboundAIRoute | Problem | None:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI
+     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
     integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
     chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
     path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
@@ -150,7 +150,7 @@ async def asyncio_detailed(
 ) -> Response[Any | OutboundAIRoute | Problem]:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI
+     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
     integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
     chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
     path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
@@ -183,7 +183,7 @@ async def asyncio(
 ) -> Any | OutboundAIRoute | Problem | None:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI
+     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
     integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
     chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
     path}; the gateway tries targets in order and moves on after a budget or availability rejection, a

@@ -273,7 +273,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2`, integrationID, now); err != nil {
 		return Decision{}, err
 	}
-	// ADR-984: live leases hold their calls' AI reservations.
+	// ADR-991: live leases hold their calls' AI reservations.
 	var inflightTokens, inflightBindingTokens, inflightCost int64
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(sum(ai_reserved_tokens), 0)::bigint,
@@ -367,8 +367,8 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
-	// Tokens and cost settle after each response (ADR-979, ADR-983); live
-	// reservations make the stored limits hard caps (ADR-984).
+	// Tokens and cost settle after each response (ADR-988, ADR-990); live
+	// reservations make the stored limits hard caps (ADR-991).
 	reserve := aiReservationFromSpec(spec)
 	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
 		dailyTokens: dailyAITokenCount, bindingTokens: bindingAITokenCount,

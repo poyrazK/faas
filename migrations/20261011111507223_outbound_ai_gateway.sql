@@ -1,5 +1,5 @@
 -- filename: 20261011111507223_outbound_ai_gateway.sql
--- ADR-979: AI gateway mode on outbound integrations. Additive and replay-safe.
+-- ADR-988: AI gateway mode on outbound integrations. Additive and replay-safe.
 
 -- +goose Up
 -- +goose StatementBegin

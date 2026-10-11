@@ -125,7 +125,7 @@ func TestRouteRequiresRelayIdentityOfTheOwningAccount(t *testing.T) {
 }
 
 func TestRouteFallsBackPastAGatewayBudgetRejection(t *testing.T) {
-	// ADR-984: the primary's 1-token cap cannot hold the call's reservation,
+	// ADR-991: the primary's 1-token cap cannot hold the call's reservation,
 	// so even the first call falls back.
 	f := newRouteFixture(t, http.StatusOK, func(i *Integration) { i.DailyAITokenLimit = int64Ref(1) })
 	first := f.post("account-1", "/r/route-1/v1/chat/completions", `{"model":"gpt-4o"}`)

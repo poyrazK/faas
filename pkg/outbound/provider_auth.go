@@ -27,7 +27,7 @@ import (
 var errProviderCredential = errors.New("outbound provider credential is unusable")
 
 // applyProviderCredential places a managed credential on an upstream
-// request in the provider's own scheme (ADR-984). body is the exact body
+// request in the provider's own scheme (ADR-991). body is the exact body
 // sent, needed for AWS signing. The credential is never logged or returned.
 func (h *Handler) applyProviderCredential(ctx context.Context, req *http.Request, integration Integration, credential string, body []byte) error {
 	switch integration.AIProvider {
@@ -64,7 +64,7 @@ func (h *Handler) applyProviderCredential(ctx context.Context, req *http.Request
 }
 
 // providerNeedsBufferedBody reports providers whose credential covers the
-// body (ADR-984): AWS signatures hash it.
+// body (ADR-991): AWS signatures hash it.
 func providerNeedsBufferedBody(provider string) bool {
 	return provider == api.OutboundAIProviderBedrock
 }
@@ -233,7 +233,7 @@ func hmacSHA256(key []byte, data string) []byte {
 }
 
 // googleTokenURI is the only token endpoint a Vertex service-account key
-// may name; any other value is refused (ADR-984).
+// may name; any other value is refused (ADR-991).
 const googleTokenURI = "https://oauth2.googleapis.com/token"
 
 const vertexTokenScope = "https://www.googleapis.com/auth/cloud-platform"

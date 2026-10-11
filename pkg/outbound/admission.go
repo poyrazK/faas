@@ -34,7 +34,7 @@ const (
 	ReasonDailyTokenLimit  = "daily_token_limit"
 	ReasonDailyCostLimit   = "daily_cost_limit"
 	ReasonMonthlyCostLimit = "monthly_cost_limit"
-	// Per-app per-minute AI limits (ADR-984).
+	// Per-app per-minute AI limits (ADR-991).
 	ReasonRequestsPerMinute = "requests_per_minute_limit"
 	ReasonTokensPerMinute   = "tokens_per_minute_limit"
 
@@ -83,20 +83,20 @@ type Integration struct {
 	AllowedPathPrefixes []string
 	Enabled             bool
 	// AIProvider enables token usage extraction for "openai" (the
-	// OpenAI-compatible wire format) or "anthropic" responses (ADR-979).
+	// OpenAI-compatible wire format) or "anthropic" responses (ADR-988).
 	AIProvider string
 	// DailyAITokenLimit stops new admissions once the UTC day's settled
 	// input plus output tokens reach it. It requires AIProvider.
 	DailyAITokenLimit *int64
-	// BindingDailyAITokenLimits are per-app UTC-day token limits (ADR-983).
+	// BindingDailyAITokenLimits are per-app UTC-day token limits (ADR-990).
 	BindingDailyAITokenLimits map[string]*int64
 	// DailyAICostLimit and MonthlyAICostLimit are millicent spend guards
-	// priced from AIPrices, the price list current at resolution (ADR-983).
+	// priced from AIPrices, the price list current at resolution (ADR-990).
 	DailyAICostLimit   *int64
 	MonthlyAICostLimit *int64
 	AIPrices           []AIPrice
 	// BindingAIGuardrails are per-app per-minute limits, model allow-lists
-	// and output ceilings (ADR-984), keyed by bound app ID.
+	// and output ceilings (ADR-991), keyed by bound app ID.
 	BindingAIGuardrails map[string]AIGuardrails
 	// AIRequestLogEnabled records per-call metadata at settlement.
 	AIRequestLogEnabled bool
@@ -286,12 +286,12 @@ type AdmissionSpec struct {
 	DailyAITokenLimit *int64
 	// BindingDailyAITokenLimit, DailyAICostLimit and MonthlyAICostLimit
 	// follow the same rule for one app's tokens and the integration's cost
-	// (ADR-983); the Postgres backend reads the stored values.
+	// (ADR-990); the Postgres backend reads the stored values.
 	BindingDailyAITokenLimit *int64
 	DailyAICostLimit         *int64
 	MonthlyAICostLimit       *int64
 	// AIReservedTokens and AIReservedCostMillicents are this call's
-	// admission-time reservation (ADR-984). They count against the AI limits
+	// admission-time reservation (ADR-991). They count against the AI limits
 	// with every live lease's reservation and leave with the lease.
 	AIReservedTokens         int64
 	AIReservedCostMillicents int64

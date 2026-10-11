@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -130,13 +131,13 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 		t.Fatal(err)
 	}
 	for range 3 {
-		if err := s.reconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+		if err := s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.reconcileObjectCapacity(t.Context(), nil); err != nil {
+		if err := s.object.ReconcileObjectCapacity(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.reconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
+		if err := s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
 		advance()
@@ -173,7 +174,7 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 	if err != nil || j.State != "waiting" || puts.Load() != 0 {
 		t.Fatal("acceptance was not journaled", j, err)
 	}
-	if err = s.reconcileObjectVersionProtection(t.Context(), nil); err != nil || puts.Load() != 1 {
+	if err = s.object.ReconcileObjectVersionProtection(t.Context(), nil); err != nil || puts.Load() != 1 {
 		t.Fatal(err, puts.Load())
 	}
 	j, err = client.GetObjectVersionProtection(t.Context(), "encrypted-journal", b.ID, id)
@@ -210,7 +211,7 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectVersionProtection(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectVersionProtection(t.Context(), nil); err != nil {
 		t.Fatal("disabled recovery", err)
 	}
 	j, err = client.GetObjectVersionProtection(t.Context(), "encrypted-journal", b.ID, id)

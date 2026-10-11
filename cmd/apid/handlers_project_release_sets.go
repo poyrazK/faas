@@ -50,7 +50,7 @@ func (s *server) publishProjectReleaseSet(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("project release sets are unavailable"))
 		return
 	}
-	if err := s.checkProjectValidatorMembers(r.Context(), members); err != nil {
+	if err := s.durable.CheckProjectValidatorMembers(r.Context(), members); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("validator artifact preflight blocked project publication"))
 		return
 	}

@@ -83,7 +83,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`open`](#open) | Open the app&#39;s URL (linked app or interactive picker) |
 | [`orgs`](#orgs) | Manage orgs, members, and workspace activity |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
-| [`park`](#park) | Park an app cold (kill all live instances) |
+| [`park`](#park) | Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
@@ -105,6 +105,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline [&lt;slug&gt;] &lt;wake-id&gt; [--app SLUG] [--since RFC3339] [--limit N] [--all] [--verbose]; slug defaults to linked context) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
+| [`wake-ahead`](#wake-ahead) | Wake the services an app calls while the app itself wakes (opt-in) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
 | [`log-drains`](#log-drains) | Ship app runtime logs to an HTTP JSON or OTLP endpoint |
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
@@ -2833,9 +2834,15 @@ gregale app my-api costs --month 2026-10 --json
 
 ### app rename
 
-Rename an app
+Rename an app; the old hostname stops routing
 
-`gregale app <slug> rename`
+`gregale app <slug> rename <new-slug>`
+
+Examples:
+
+```sh
+gregale app my-api rename my-api-v2
+```
 
 ### app restart
 
@@ -7122,6 +7129,49 @@ gregale routes status my-api
 gregale routes status my-api --since 24h --json
 ```
 
+### routes advise
+
+Suggest cache, async and throttle edge rules from observed traffic, with what-if estimates
+
+`gregale routes advise [--since <DURATION>] [--until <RFC3339>] [--cache-max-age <SECONDS>] [--apply <ID>] [--enable] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | traffic window to analyze (default 7d; clamped to telemetry retention) |  |
+| `--until <RFC3339>` | end of the window (default now) |  |
+| `--cache-max-age <SECONDS>` | what-if cache lifetime for cache suggestions (default 60) |  |
+| `--apply <ID>` | create the edge rules of this suggestion (disabled for review) |  |
+| `--enable` | with --apply, create the rules enabled |  |
+
+Examples:
+
+```sh
+gregale routes advise my-api
+gregale routes advise my-api --cache-max-age 300
+gregale routes advise my-api --apply 3f9a1c2b7d4e
+```
+
+### routes priority
+
+Show or set which routes are served first, and turned away last, when every instance is busy
+
+`gregale routes priority [--critical <[METHOD] PATH>] [--bulk <[METHOD] PATH>] [--clear] [--reset] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--critical <[METHOD] PATH>` | route served first when the app is saturated (repeatable) |  |
+| `--bulk <[METHOD] PATH>` | route served last and turned away first (repeatable) |  |
+| `--clear` | save no priorities, not even the route-health default |  |
+| `--reset` | delete saved priorities and use the route-health default |  |
+
+Examples:
+
+```sh
+gregale routes priority my-api
+gregale routes priority my-api --critical "POST /checkout" --bulk "/exports/*"
+gregale routes priority my-api --reset
+```
+
 ### routes requirements
 
 Save or read versioned route requirements for an app
@@ -9802,7 +9852,7 @@ Set / clear the account&#39;s overage cap (--clear | &lt;cents&gt;)
 
 ## park
 
-Park an app cold (kill all live instances)
+Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request
 
 `gregale park <slug>`
 
@@ -9852,7 +9902,7 @@ gregale data-api install --restore
 
 Run a disposable local Data API with test identities
 
-`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
+`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--approval <FILE>] [--accepted-contracts <FILE>] [--replay <FILE>] [--scenario <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9866,6 +9916,8 @@ Run a disposable local Data API with test identities
 | `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
 | `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |
 | `--check-breaking` | reject breaking changes; requires an existing baseline |  |
+| `--approval <FILE>` | reviewed compatibility approvals; requires --baseline and --check-breaking |  |
+| `--accepted-contracts <FILE>` | project-relative reviewed runtime contract policy |  |
 | `--replay <FILE>` | replay saved requests relative to the project (requires --once) |  |
 | `--scenario <NAME>` | select one named scenario (requires --replay) |  |
 
@@ -9910,13 +9962,16 @@ Generate types in an owner-authenticated app task
 
 Compare the current schema with a saved JSON baseline
 
-`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--timeout <DURATION>] [<name>]`
+`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--check-compatible] [--approval <FILE>] [--accept-contract <FILE>] [--timeout <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--baseline <FILE>` | JSON snapshot exported with types --snapshot | required |
 | `--current <FILE>` | compare a saved current contract offline; omit the app name |  |
-| `--check` | fail on breaking contract changes |  |
+| `--check` | fail on unapproved breaking contract changes |  |
+| `--check-compatible` | fail on unapproved breaking changes (alias of --check) |  |
+| `--approval <FILE>` | reviewed changes bound to both contract fingerprints |  |
+| `--accept-contract <FILE>` | write an owner runtime policy; requires zero breaking changes |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
 Examples:
@@ -9946,10 +10001,11 @@ gregale data-api refresh notes-data --wait --timeout 5m
 
 Run migrations, refresh the API, export types and check the client
 
-`gregale data-api sync --config <FILE> [--timeout <DURATION>] <name>`
+`gregale data-api sync [--resume-only] --config <FILE> [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--resume-only` | reverify an owned paused refresh without rerunning migrations |  |
 | `--config <FILE>` | JSON workflow with output, migrate and check argument arrays | required |
 | `--timeout <DURATION>` | entire workflow deadline (default 20m, maximum 1h) |  |
 
@@ -11240,6 +11296,21 @@ Examples:
 ```sh
 gregale wake my-api
 gregale wake --wait --timeout 2m my-api
+```
+
+
+## wake-ahead
+
+Wake the services an app calls while the app itself wakes (opt-in)
+
+`gregale wake-ahead <slug> [on|off]`
+
+Examples:
+
+```sh
+gregale wake-ahead my-api
+gregale wake-ahead my-api on
+gregale wake-ahead my-api off --json
 ```
 
 

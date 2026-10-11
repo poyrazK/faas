@@ -80,7 +80,7 @@ func testOperationsHTTPAccountRecoveryBoundary(t *testing.T, receipt bool) {
 		t.Fatal(err)
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	if srv.operationsAdmissionEnabled {
+	if srv.operation.AdmissionEnabled {
 		t.Fatal("test must exercise recovery with admission closed")
 	}
 	handler := srv.handler()

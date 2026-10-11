@@ -70,13 +70,13 @@ func TestObjectLifecycleRecoveryEndToEndPG(t *testing.T) {
 	}
 	setFlag(false)
 	s := server()
-	if err := s.reconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != 0 {
+	if err := s.object.ReconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != 0 {
 		t.Fatal("disabled storage dispatched lifecycle", err, requests.Load())
 	}
 	setFlag(true)
 	missing := server().WithObjectStorage(&objectstorage.Registry{Accounting: f.policy})
 	missingOutcome := ""
-	if err := missing.reconcileObjectLifecycle(ctx, func(_, outcome string) { missingOutcome = outcome }); err != nil || requests.Load() != 0 || missingOutcome != "deferred" {
+	if err := missing.object.ReconcileObjectLifecycle(ctx, func(_, outcome string) { missingOutcome = outcome }); err != nil || requests.Load() != 0 || missingOutcome != "deferred" {
 		t.Fatal("missing placement was not deferred", err, requests.Load(), missingOutcome)
 	}
 	if rows, err := f.st.DueObjectLifecyclePolicies(ctx, api.ObjectLifecycleBatch); err != nil || len(rows) != 0 {
@@ -88,11 +88,11 @@ func TestObjectLifecycleRecoveryEndToEndPG(t *testing.T) {
 	s = server()
 	outcomes := []string{}
 	observe := func(operation, outcome string) { outcomes = append(outcomes, operation+":"+outcome) }
-	if err := s.reconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
+	if err := s.object.ReconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
 		t.Fatal("wired expiration", err, deletes.Load())
 	}
 	s = server()
-	if err := s.reconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
+	if err := s.object.ReconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
 		t.Fatal("restart repeated expiration", err, deletes.Load())
 	}
 	if strings.Join(outcomes, ",") != "lifecycle:scanning,lifecycle:completed" {

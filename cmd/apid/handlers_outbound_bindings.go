@@ -31,7 +31,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		RequestPolicy:        offer.RequestPolicy,
 		AIProvider:           offer.AIProvider,
 		AIDailyTokenLimit:    copyOutboundDailyLimit(offer.AIDailyTokenLimit),
-		// ADR-983 cost limits, priced from the integration's price list.
+		// ADR-990 cost limits, priced from the integration's price list.
 		AIDailyCostLimitMillicents:   copyOutboundDailyLimit(offer.AIDailyCostLimit),
 		AIMonthlyCostLimitMillicents: copyOutboundDailyLimit(offer.AIMonthlyCostLimit),
 		AIRequestLogEnabled:          offer.AIRequestLogEnabled,
@@ -55,7 +55,7 @@ func outboundBindingResponse(binding state.OutboundAppBinding) api.OutboundAppBi
 		AllowedMethods:      append([]string{}, binding.RouteMethods...),
 		AllowedPathPrefixes: append([]string{}, binding.RoutePathPrefixes...),
 		AIDailyTokenLimit:   copyOutboundDailyLimit(binding.BindingAIDailyTokenLimit),
-		// ADR-984 per-app guardrails.
+		// ADR-991 per-app guardrails.
 		AIRequestsPerMinute: copyOutboundDailyLimit(binding.BindingAIRequestsPerMinute),
 		AITokensPerMinute:   copyOutboundDailyLimit(binding.BindingAITokensPerMinute),
 		AIAllowedModels:     outboundAllowedModels(binding.BindingAIAllowedModels),

@@ -67,7 +67,7 @@ func (m *Manager) ExecuteExecutionWithBroker(ctx context.Context, instance strin
 	if req.OutboundEnabled && len(inst.ExecutionOutboundIntegrationIDs) == 0 {
 		return zero, ErrExecutionInstanceNotFound
 	}
-	// ADR-983: advertise the streaming relay only when this vmmd serves it.
+	// ADR-990: advertise the streaming relay only when this vmmd serves it.
 	req.OutboundRelay = req.OutboundEnabled && m.outboundRelayEnabled.Load()
 
 	dialer, ok := m.vmm.(ExecutionDialer)

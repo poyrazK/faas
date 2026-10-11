@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -39,7 +40,7 @@ func TestKeyedInvocationReplayIndependentEventRecovery(t *testing.T) {
 	}
 	read := func() api.EventReceiptResponse {
 		t.Helper()
-		rec := e.do(t, "GET", eventReceiptURL("orders", "receipt-1"), nil, nil)
+		rec := e.do(t, "GET", appevents.EventReceiptURL("orders", "receipt-1"), nil, nil)
 		var receipt api.EventReceiptResponse
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &receipt) != nil {
 			t.Fatalf("receipt: %d %s", rec.Code, rec.Body)

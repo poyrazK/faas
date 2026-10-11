@@ -30,6 +30,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -72,7 +73,7 @@ func (s *server) destroyPreview(w http.ResponseWriter, r *http.Request, acct sta
 // both GitHub previews and CLI-managed developer sessions.
 func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) {
 	if err := s.cleanupDevSessionBuckets(r.Context(), app); err != nil {
-		bucketProblem(w, err)
+		object.BucketProblem(w, err)
 		return
 	}
 	if err := s.cleanupDevPostgres(r.Context(), app); err != nil {

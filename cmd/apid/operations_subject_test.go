@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,7 +27,7 @@ func TestOperationSubjectHistoryOptions(t *testing.T) {
 		{"app_id=app&scope=default&subject_type=order&subject_type=invoice&subject_id=42", false},
 		{"app_id=app&scope=default&subject_type=order&subject_id=42&owner=bob", false},
 	} {
-		opts, err := operationHistoryOptions(httptest.NewRequest(http.MethodGet, "/?"+tc.query, nil))
+		opts, err := operation.OperationHistoryOptions(httptest.NewRequest(http.MethodGet, "/?"+tc.query, nil))
 		if (err == nil) != tc.want {
 			t.Fatalf("query %s: %+v %v", tc.query, opts, err)
 		}

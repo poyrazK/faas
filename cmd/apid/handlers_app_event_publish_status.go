@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -54,7 +55,7 @@ func (s *server) getAppEventPublishStatus(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("application identity"))
 		return
 	}
-	cursor, err := decodeEventReceiptCursor(query.After, acct.ID, source, id)
+	cursor, err := appevents.DecodeEventReceiptCursor(query.After, acct.ID, source, id)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
@@ -65,7 +66,7 @@ func (s *server) getAppEventPublishStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	retained, err := store.EventReceipt(ctx, acct.ID, source, id, cursor, query.Limit)
-	out := api.AppEventPublishStatusResponse{AppID: appID, Source: source, EventID: id, ReceiptURL: eventReceiptURL(source, id), ObservedAt: time.Now().UTC(), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
+	out := api.AppEventPublishStatusResponse{AppID: appID, Source: source, EventID: id, ReceiptURL: appevents.EventReceiptURL(source, id), ObservedAt: time.Now().UTC(), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
 	if errors.Is(err, state.ErrNotFound) {
 		out.Status, out.Reason = "unavailable", "not_retained_or_not_observed"
 		out.Acceptance = guard.Compare(nil)
@@ -73,11 +74,11 @@ func (s *server) getAppEventPublishStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		s.writeEventReceiptError(w, r, err)
+		s.appEvents.WriteEventReceiptError(w, r, err)
 		return
 	}
 	out.Acceptance = guard.Compare(&retained.AcceptedAt)
-	evidence := eventReceiptResponse(acct.ID, retained)
+	evidence := appevents.EventReceiptResponse(acct.ID, retained)
 	out.Evidence = &evidence
 	out.Receipt = &api.PublishEventResponse{ID: id, AccountID: acct.ID, AcceptedAt: retained.AcceptedAt, ReceiptURL: out.ReceiptURL}
 	out.Status = "accepted"

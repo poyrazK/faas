@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ManagedKey is one provider key of an integration's pool (ADR-984). ID is
+// ManagedKey is one provider key of an integration's pool (ADR-991). ID is
 // "primary" for the integration's credential or the extra key's UUID. Value
 // is the sealed credential's plaintext and is never logged or returned.
 type ManagedKey struct {
@@ -29,7 +29,7 @@ type ManagedKeyPoolResolver interface {
 
 // keyPoolState is this process's view of which keys are cooling down after
 // a 429 and where each integration's round robin stands. It is
-// deliberately local: a key rotates away on its first 429 (ADR-984).
+// deliberately local: a key rotates away on its first 429 (ADR-991).
 type keyPoolState struct {
 	mu        sync.Mutex
 	cooldowns map[string]time.Time

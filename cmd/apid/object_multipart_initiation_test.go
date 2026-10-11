@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -95,7 +96,7 @@ func multipartInitiationAPIRecovery(t *testing.T, h http.Handler, s *server, st 
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.ensureAdmittedObjectMultipart(ctx, sessions, p, b, u, objectstorage.MultipartCreateRequest{SessionID: u.ID, Key: u.Key})
+	_, err = s.object.EnsureAdmittedObjectMultipart(ctx, sessions, p, b, u, objectstorage.MultipartCreateRequest{SessionID: u.ID, Key: u.Key})
 	if lost && !errors.Is(err, objectstorage.ErrUnavailable) || !lost && err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func multipartInitiationAPIRecovery(t *testing.T, h http.Handler, s *server, st 
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.executeObjectMultipartOperation(ctx, sessions, b, u)
+	err = s.object.ExecuteObjectMultipartOperation(ctx, sessions, b, u)
 	if lost && !errors.Is(err, objectstorage.ErrUnavailable) || !lost && err != nil || p.writes != 1 {
 		t.Fatal("recovery wrote another upload", err, p.writes)
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -80,7 +81,7 @@ func TestObjectVersionDeleteControlEndToEndPG(t *testing.T) {
 	}
 	recovery := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
 	f.enabled.Store(false)
-	if e = recovery.reconcileObjectDeletions(ctx, nil); e != nil {
+	if e = recovery.object.ReconcileObjectDeletions(ctx, nil); e != nil {
 		t.Fatal(e)
 	}
 	receipt, e = client.GetObjectDeletion(ctx, f.app.Slug, f.bucket.ID, deletionID)

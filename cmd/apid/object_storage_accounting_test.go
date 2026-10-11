@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -84,16 +85,16 @@ func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.
 
 func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
 	provider := &objectStorageBillingStatusProvider{}
-	if err := validateObjectStorageBillingSetup(provider, nil); err == nil || !strings.Contains(err.Error(), "requires object-storage pricing") {
+	if err := object.ValidateObjectStorageBillingSetup(provider, nil); err == nil || !strings.Contains(err.Error(), "requires object-storage pricing") {
 		t.Fatalf("missing pricing error = %v", err)
 	}
 	registry := objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external")
 	registry.Pricing = &api.ObjectStoragePricing{Currency: "USD"}
-	if err := validateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires EUR") {
+	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires EUR") {
 		t.Fatalf("USD pricing error = %v", err)
 	}
 	registry.Pricing = &api.ObjectStoragePricing{Currency: "EUR"}
-	if err := validateObjectStorageBillingSetup(provider, registry); err != nil {
+	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err != nil {
 		t.Fatalf("EUR pricing error = %v", err)
 	}
 }
@@ -101,10 +102,10 @@ func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
 // adr: 627
 func TestGatewaySafetyAccountingRejectsBilling(t *testing.T) {
 	registry := &objectstorage.Registry{Accounting: api.ObjectStoragePolicy{AccountingMode: api.ObjectStorageGatewaySafetyV1}}
-	if err := validateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "billing to be off") {
+	if err := object.ValidateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "billing to be off") {
 		t.Fatal("gateway safety admitted live billing", err)
 	}
-	if err := validateObjectStorageBillingSetup(nil, registry); err != nil {
+	if err := object.ValidateObjectStorageBillingSetup(nil, registry); err != nil {
 		t.Fatal("billing-off qualification rejected", err)
 	}
 }
@@ -181,7 +182,7 @@ func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
 			setS3Flag(t, e, true)
 			bucketResponse(t, e.do(t, "POST", "/v1/apps/inventory/buckets", map[string]any{"name": "assets"}, nil), 201)
 			outcome := ""
-			if err := e.s.reconcileObjectInventories(context.Background(), func(v string) { outcome = v }); err != nil {
+			if err := e.s.object.ReconcileObjectInventories(context.Background(), func(v string) { outcome = v }); err != nil {
 				t.Fatal(err)
 			}
 			snapshot, err := e.store.ObjectUsage(context.Background(), e.acct.ID, time.Now())

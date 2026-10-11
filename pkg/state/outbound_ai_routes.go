@@ -12,7 +12,7 @@ import (
 // ErrOutboundAIRouteLimit reports an account at its AI route ceiling.
 var ErrOutboundAIRouteLimit = errors.New("state: outbound AI route limit reached")
 
-// OutboundAIRouteTarget is one ordered fallback step (ADR-983).
+// OutboundAIRouteTarget is one ordered fallback step (ADR-990).
 type OutboundAIRouteTarget struct {
 	IntegrationID string
 	Model         string
@@ -24,7 +24,7 @@ type OutboundAIRoute struct {
 	ID        string
 	AccountID string
 	Name      string
-	// Format is "native" or "openai" (ADR-984).
+	// Format is "native" or "openai" (ADR-991).
 	Format    string
 	Targets   []OutboundAIRouteTarget
 	CreatedAt time.Time
@@ -62,7 +62,7 @@ func normalizeOutboundAIRouteFormat(format string) (string, bool) {
 // outboundAIRouteTargetsAllowed checks that every target is a known AI
 // integration the route format can serve. A native route needs one wire
 // format; an openai route accepts translatable providers and needs a model
-// for every non-OpenAI target (ADR-984). providers maps integration ID to
+// for every non-OpenAI target (ADR-991). providers maps integration ID to
 // its ai_provider.
 func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarget, providers map[string]string) bool {
 	first := ""

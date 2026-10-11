@@ -134,7 +134,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "ai", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
+	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -1159,7 +1159,7 @@ var cliCommands = []cliCommand{
 				{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"},
 				{Name: "json", Short: "Print the machine-readable app cost report"},
 			}, Examples: []string{"gregale app my-api costs", "gregale app my-api costs --month 2026-10 --json"}},
-			{Name: "rename", Short: "Rename an app"},
+			{Name: "rename", Short: "Rename an app; the old hostname stops routing", Positionals: []string{"<new-slug>"}, Examples: []string{"gregale app my-api rename my-api-v2"}},
 			{Name: "restart", Short: "Request a snapshot restart, or track a fresh runtime-configuration restart", Flags: []cliFlag{
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},
@@ -2927,6 +2927,17 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{{Name: "status", Positionals: []string{"<slug>"}, Short: "Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps", Examples: []string{"gregale routes status my-api", "gregale routes status my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "deployment", Value: "ID", Short: "serving deployment UUID or vN (default: the app's serving deployment)"},
 			{Name: "since", Value: "DURATION", Short: "observed usage window (default 168h; also accepts 7d or RFC3339)"},
+		}}, {Name: "advise", Positionals: []string{"<slug>"}, Short: "Suggest cache, async and throttle edge rules from observed traffic, with what-if estimates", Examples: []string{"gregale routes advise my-api", "gregale routes advise my-api --cache-max-age 300", "gregale routes advise my-api --apply 3f9a1c2b7d4e"}, Flags: []cliFlag{
+			{Name: "since", Value: "DURATION", Short: "traffic window to analyze (default 7d; clamped to telemetry retention)"},
+			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
+			{Name: "cache-max-age", Value: "SECONDS", Short: "what-if cache lifetime for cache suggestions (default 60)"},
+			{Name: "apply", Value: "ID", Short: "create the edge rules of this suggestion (disabled for review)"},
+			{Name: "enable", Short: "with --apply, create the rules enabled"},
+		}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
+			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
+			{Name: "clear", Short: "save no priorities, not even the route-health default"},
+			{Name: "reset", Short: "delete saved priorities and use the route-health default"},
 		}}, {Name: "requirements", Short: "Save or read versioned route requirements for an app", Subcommands: []cliSub{
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save version 2 route intent after comparing the current revision", Examples: []string{"gregale routes requirements set my-api --requirements gregale-routes.yaml --expected-revision 0"}, Flags: []cliFlag{
 				{Name: "requirements", Short: "version 2 requirements YAML or JSON file", Value: "PATH", Req: true},
@@ -3711,7 +3722,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "park",
 		DocSlug:     "park-wake",
-		Short:       "Park an app cold (kill all live instances)",
+		Short:       "Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request",
 		Positionals: []string{"<slug>"},
 		Examples:    []string{"gregale park my-api"},
 	},
@@ -3743,6 +3754,8 @@ var cliCommands = []cliCommand{
 				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
 				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},
 				{Name: "check-breaking", Short: "reject breaking changes; requires an existing baseline"},
+				{Name: "approval", Value: "FILE", Short: "reviewed compatibility approvals; requires --baseline and --check-breaking"},
+				{Name: "accepted-contracts", Value: "FILE", Short: "project-relative reviewed runtime contract policy"},
 				{Name: "replay", Value: "FILE", Short: "replay saved requests relative to the project (requires --once)"},
 				{Name: "scenario", Value: "NAME", Short: "select one named scenario (requires --replay)"},
 			}, Examples: []string{"gregale data-api dev --check", "gregale data-api dev --port 0 --check --once"}},
@@ -3765,7 +3778,10 @@ var cliCommands = []cliCommand{
 			{Name: "diff", Short: "Compare the current schema with a saved JSON baseline", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
 				{Name: "baseline", Value: "FILE", Req: true, Short: "JSON snapshot exported with types --snapshot"},
 				{Name: "current", Value: "FILE", Short: "compare a saved current contract offline; omit the app name"},
-				{Name: "check", Short: "fail on breaking contract changes"},
+				{Name: "check", Short: "fail on unapproved breaking contract changes"},
+				{Name: "check-compatible", Short: "fail on unapproved breaking changes (alias of --check)"},
+				{Name: "approval", Value: "FILE", Short: "reviewed changes bound to both contract fingerprints"},
+				{Name: "accept-contract", Value: "FILE", Short: "write an owner runtime policy; requires zero breaking changes"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}, Examples: []string{"gregale data-api diff notes-data --baseline schema.json --check"}},
 			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}, Flags: []cliFlag{
@@ -3773,6 +3789,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Value: "DURATION", Short: "complete wait deadline (default 5m, maximum 1h; requires --wait)"},
 			}, Examples: []string{"gregale data-api refresh notes-data --wait --timeout 5m"}},
 			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "resume-only", Short: "reverify an owned paused refresh without rerunning migrations"},
 				{Name: "config", Value: "FILE", Req: true, Short: "JSON workflow with output, migrate and check argument arrays"},
 				{Name: "timeout", Value: "DURATION", Short: "entire workflow deadline (default 20m, maximum 1h)"},
 			}, Examples: []string{"gregale data-api sync notes-data --config data-api.json"}},
@@ -4398,6 +4415,13 @@ var cliCommands = []cliCommand{
 			{Name: "poll-interval", Short: "interval between instance status checks (default 250ms)", Value: "DURATION"},
 		},
 		Examples: []string{"gregale wake my-api", "gregale wake --wait --timeout 2m my-api"},
+	},
+	{
+		Name:        "wake-ahead",
+		DocSlug:     "service-wake-ahead",
+		Short:       "Wake the services an app calls while the app itself wakes (opt-in)",
+		Positionals: []string{"<slug>", "[on|off]"},
+		Examples:    []string{"gregale wake-ahead my-api", "gregale wake-ahead my-api on", "gregale wake-ahead my-api off --json"},
 	},
 	{
 		Name:    "traffic",

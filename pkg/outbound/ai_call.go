@@ -7,7 +7,7 @@ import (
 )
 
 // aiCallPlan is the gateway's view of one AI call before admission
-// (ADR-984): its format, model, output ceiling and reservation.
+// (ADR-991): its format, model, output ceiling and reservation.
 type aiCallPlan struct {
 	endpoint aiEndpoint
 	facts    aiCallFacts
@@ -78,7 +78,7 @@ func applyOutputCeiling(plan *aiCallPlan, ai *aiRequest, ceiling int64) *aiCallR
 }
 
 // estimateAIReservation charges four body bytes per input token plus the
-// output ceiling, or the default reserve, and prices both (ADR-984).
+// output ceiling, or the default reserve, and prices both (ADR-991).
 func estimateAIReservation(r *http.Request, integration Integration, plan *aiCallPlan, ai *aiRequest, hasBody bool) aiReservation {
 	var inputBytes int64
 	switch {

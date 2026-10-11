@@ -96,7 +96,7 @@ func TestBucketVersioningRecoveryEndToEndPG(t *testing.T) {
 		t.Fatal(j, err)
 	}
 	f.enabled.Store(false) // Recovery must still converge with data ingress disabled.
-	if err = restarted().reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	durable, err := f.st.GetObjectBucketVersioning(ctx, f.account.ID, f.app.ID, f.bucket.ID)
@@ -106,7 +106,7 @@ func TestBucketVersioningRecoveryEndToEndPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_bucket_versioning SET retry_at=now() WHERE bucket_id=$1`, f.bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = client.GetObjectBucketVersioning(ctx, f.app.Slug, f.bucket.ID)
@@ -116,14 +116,14 @@ func TestBucketVersioningRecoveryEndToEndPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_bucket_versioning SET retry_at=now(),propagation_until=now()-interval '1 second' WHERE bucket_id=$1`, f.bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = client.GetObjectBucketVersioning(ctx, f.app.Slug, f.bucket.ID)
 	if err != nil || j.State != "inventory" || j.CapacityJobID == "" {
 		t.Fatal(j, err)
 	}
-	if err = restarted().reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c, err := f.st.GetObjectCapacityReconciliation(ctx, f.account.ID, f.bucket.ID, j.CapacityJobID)
@@ -137,13 +137,13 @@ func TestBucketVersioningRecoveryEndToEndPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_capacity_reconciliations SET retry_at=now() WHERE id=$1`, c.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.pool.Exec(ctx, `UPDATE object_bucket_versioning SET retry_at=now() WHERE bucket_id=$1`, f.bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = client.GetObjectBucketVersioning(ctx, f.app.Slug, f.bucket.ID)

@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 983 — Runs stream through the relay and stay bound to their grant.
+// adr: 990 — Runs stream through the relay and stay bound to their grant.
 
 import (
 	"bytes"

@@ -25,7 +25,7 @@ class CreateOutboundAIRouteRequest:
     targets: list[OutboundAIRouteTarget]
     format_: CreateOutboundAIRouteRequestFormat | Unset = UNSET
     """native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and
-    gemini targets, and every target but openai must name its model (ADR-984)."""
+    gemini targets, and every target but openai must name its model (ADR-991)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

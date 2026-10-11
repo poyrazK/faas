@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/operations"
@@ -86,7 +87,7 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyPath := filepath.Join(t.TempDir(), "preview.json")
-	srv.operationsAdmissionEnabled = true // startup must override this private fixture fallback
+	srv.operation.AdmissionEnabled = true // startup must override this private fixture fallback
 	if err := srv.configureOperations(Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
@@ -156,13 +157,13 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	verifier, backend := srv.operationsWorkloadVerifier, srv.operationArtifactStorage
-	srv.operationsWorkloadVerifier = nil
+	verifier, backend := srv.operation.WorkloadVerifier, srv.operation.ArtifactStorage
+	srv.operation.WorkloadVerifier = nil
 	check(do(http.MethodPost, "/v1/platform-tenant-self/customer-operations", tokens[0], start, "unready-trust"), http.StatusServiceUnavailable)
-	srv.operationsWorkloadVerifier = verifier
-	srv.operationArtifactStorage = nil
+	srv.operation.WorkloadVerifier = verifier
+	srv.operation.ArtifactStorage = nil
 	check(do(http.MethodPost, "/v1/platform-tenant-self/customer-operations", tokens[0], start, "unready-storage"), http.StatusServiceUnavailable)
-	srv.operationArtifactStorage = backend
+	srv.operation.ArtifactStorage = backend
 	for _, raw := range [][]byte{[]byte(`{"version":1,"enabled":false}`), []byte(`{"version":1,"enabled":`)} {
 		if err := os.WriteFile(policyPath, raw, 0600); err != nil {
 			t.Fatal(err)

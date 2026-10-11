@@ -8,7 +8,7 @@ import (
 )
 
 // AIBudgetAlert is one budget threshold a settlement reached for the first
-// time in its period (ADR-984). Limit and Used are tokens for token budgets
+// time in its period (ADR-991). Limit and Used are tokens for token budgets
 // and millicents for cost budgets.
 type AIBudgetAlert struct {
 	ID               string

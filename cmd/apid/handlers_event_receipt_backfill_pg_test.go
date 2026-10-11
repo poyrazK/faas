@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -55,7 +57,7 @@ func TestEventReceiptBackfillRecoveryPostgresHTTP(t *testing.T) {
 	if err := s.FinishPublishedEventRecipient(ctx, work, state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: work.TotalAttempts, UpdatedAt: time.Now(), FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, http.MethodGet, eventReceiptURL("orders", "backfill-http"), nil, nil)
+	rec := e.do(t, http.MethodGet, appevents.EventReceiptURL("orders", "backfill-http"), nil, nil)
 	var receipt api.EventReceiptResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &receipt) != nil || receipt.RecipientCount != 0 || receipt.BackfillRecipientCount != 1 || len(receipt.Recipients) != 1 {
 		t.Fatalf("receipt=%d %s", rec.Code, rec.Body)

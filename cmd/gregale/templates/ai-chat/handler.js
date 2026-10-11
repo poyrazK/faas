@@ -11,7 +11,7 @@
 //
 //	Gregale AI gateway (recommended; no key in the app):
 //	GREGALE_AI_INTEGRATION_ID — managed outbound integration bound to this
-//	                   app, created with ai_provider set (ADR-979/981).
+//	                   app, created with ai_provider set (ADR-988/981).
 //	GREGALE_AI_PROVIDER — "openai" or "anthropic", matching that integration.
 //	                   Calls go through GREGALE_OUTBOUND_URL, which Gregale
 //	                   sets inside the VM; the gateway injects the provider

@@ -55,15 +55,15 @@ type Handler struct {
 	WorkflowAuthorizer        WorkflowAuthorizer
 	workflowClient            *http.Client
 	CredentialResolver        ManagedCredentialResolver
-	// Routes resolves AI fallback routes (ADR-983); nil disables /r/.
+	// Routes resolves AI fallback routes (ADR-990); nil disables /r/.
 	Routes               RouteResolver
 	managedAuthorization map[string]string
 	responseCache        *outboundResponseCache
-	// vertexTokens caches exchanged Google access tokens (ADR-984).
+	// vertexTokens caches exchanged Google access tokens (ADR-991).
 	vertexTokens vertexTokenCache
 	// keyPools holds local key cooldowns and round-robin positions.
 	keyPools keyPoolState
-	// AIGatewayEnabled is the AI gateway release gate (ADR-984). While it
+	// AIGatewayEnabled is the AI gateway release gate (ADR-991). While it
 	// is off, AI integrations and routes are refused rather than served
 	// without their budgets and accounting. NewHandler turns it on; the
 	// daemon sets it from its configuration, where it defaults to off.
@@ -292,7 +292,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
 		bindingDailyAITokenLimit = integration.BindingDailyAITokenLimits[appID]
 	}
-	// ADR-984: guardrails run before admission; the plan carries the call's
+	// ADR-991: guardrails run before admission; the plan carries the call's
 	// reservation into it.
 	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq)
 	if rejection != nil {
@@ -365,7 +365,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.AIGatewayEnabled {
-			// ADR-984: a pool of keys rotates per call and on 429s.
+			// ADR-991: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
 				poolKeys = h.keyPools.order(integration.ID, keys, time.Now())
@@ -413,7 +413,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var cacheBody []byte
 	if aiReq != nil {
-		// ADR-983: a buffered AI body is replayable for retries and fallback.
+		// ADR-990: a buffered AI body is replayable for retries and fallback.
 		setReplayableBody(upstreamReq, aiReq.body)
 		cacheBody = aiReq.body
 	}
@@ -422,7 +422,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cacheKey := ""
 	if cacheEligible {
 		// Keyed before the credential is applied: every key of a pool, and
-		// every signed or exchanged token, shares one entry (ADR-984).
+		// every signed or exchanged token, shares one entry (ADR-991).
 		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq, cacheBody)
 	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
@@ -603,7 +603,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
 	if identity, ok := relayIdentityFromContext(r.Context()); ok {
-		// ADR-982: the relay connection's platform identity is the caller.
+		// ADR-989: the relay connection's platform identity is the caller.
 		// Token-authenticated integrations stay unreachable through it.
 		if integration.ProviderAuthMode != ProviderAuthManaged {
 			writeProblem(w, http.StatusForbidden, "outbound_relay_not_supported", "This outbound integration is not available through the app relay", "")
@@ -632,7 +632,7 @@ func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integratio
 
 func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request, integration Integration) (ExecutionIdentity, bool, bool) {
 	if identity, granted, ok := relayExecutionFromContext(r.Context()); ok {
-		// ADR-983: a Run's relay connection names the integrations its grant
+		// ADR-990: a Run's relay connection names the integrations its grant
 		// allowed; the execution authorizer below still checks the current
 		// grant and lease on every request.
 		_, allowed := granted[integration.ID]

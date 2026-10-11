@@ -210,7 +210,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	return i, nil
 }
 
-// currentAIPrices loads the newest price list already in effect (ADR-983).
+// currentAIPrices loads the newest price list already in effect (ADR-990).
 func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uuid.UUID) ([]AIPrice, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,

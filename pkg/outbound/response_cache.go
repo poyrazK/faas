@@ -74,7 +74,7 @@ func (c *outboundResponseCache) key(integrationID, appID string, policyRevision 
 	writeCacheKeyPart(mac, strconv.Itoa(ttlSeconds))
 	writeCacheKeyPart(mac, req.Method)
 	writeCacheKeyPart(mac, req.URL.String())
-	// ADR-983: an exact-match AI POST entry is keyed by its whole body.
+	// ADR-990: an exact-match AI POST entry is keyed by its whole body.
 	bodyDigest := sha256.Sum256(body)
 	writeCacheKeyPart(mac, hex.EncodeToString(bodyDigest[:]))
 

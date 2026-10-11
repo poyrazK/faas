@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/operations"
@@ -187,8 +188,8 @@ func TestOperationJobArtifactHTTP(t *testing.T) {
 			// Disabling new admission must leave reporting/downloads available.
 			policyPath := filepath.Join(t.TempDir(), "preview.json")
 			writeOperationPreviewPolicy(t, policyPath, f.account.ID, f.app.ID, f.op.Scope, f.tenant.ID)
-			f.server.operationsPreview, err = operations.NewPreviewAdmission(policyPath)
-			if err != nil || f.server.operationsPreview.AllowsTenantKind(f.account.ID, f.app.ID, f.op.Scope, f.tenant.ID, operations.ExecutionJob) {
+			f.server.operation.Preview, err = operations.NewPreviewAdmission(policyPath)
+			if err != nil || f.server.operation.Preview.AllowsTenantKind(f.account.ID, f.app.ID, f.op.Scope, f.tenant.ID, operations.ExecutionJob) {
 				t.Fatal("HTTP-only policy admitted a Job", err)
 			}
 			if _, err := runtime.PrepareJobOperationResult(ctx, f.op.ID, f.proof, api.OperationJobReportRequest{ReportID: "result", Result: json.RawMessage(`{"file":"export.csv"}`)}); err != nil {
@@ -219,7 +220,7 @@ func TestOperationJobArtifactOwnerRevokedDuringCopy(t *testing.T) {
 			f := newJobArtifactHTTPFixture(t, kind)
 			ctx := t.Context()
 			_, declaration := operationArtifactFixture(t, f.server, f.store.(operationArtifactFixtureStore), f.account, f.app, f.op.Scope)
-			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operationArtifactStorage, after: func() {
+			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: func() {
 				if _, err := f.store.(state.PlatformTenantStore).SetPlatformTenantStatus(ctx, f.account.ID, f.tenant.ID, state.PlatformTenantSuspended); err != nil {
 					t.Error(err)
 				}

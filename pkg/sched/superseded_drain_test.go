@@ -175,3 +175,73 @@ func TestRunReaperEvictsCancelledRollbackTarget(t *testing.T) {
 		t.Fatalf("Wake live revision after repair: %v", err)
 	}
 }
+
+// TestRunReaperDrainsAbortedCanaryCandidate reproduces production-us hunt #9:
+// the circuit breaker aborted a canary (live, 0% traffic) whose instance stayed
+// resident until the idle timeout, holding the rollout grant slot so the next
+// deploy's hosting smoke answered 429 for four minutes.
+func TestRunReaperDrainsAbortedCanaryCandidate(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanFree, 128, 1)
+	canary, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:canary",
+		Status: state.DeployPending, TrafficPercent: 1, CanaryTotalSteps: 4, Scope: stable.Scope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, canary.ID); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := e.Wake(ctx, app.ID, canary.ID, "", "")
+	if err != nil {
+		t.Fatalf("Wake canary: %v", err)
+	}
+	if _, _, err := store.RecoverRolloutForDeployment(ctx, app.ID, canary.ID, stable.ID, "abort", "circuit breaker: 5xx error rate regression"); err != nil {
+		t.Fatalf("abort canary: %v", err)
+	}
+	aborted, err := store.DeploymentByID(ctx, canary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reaperAbortedCanary(aborted) {
+		t.Fatalf("aborted canary = status %q traffic %d rollout %q; fixture does not match prod", aborted.Status, aborted.TrafficPercent, aborted.RolloutState)
+	}
+
+	now := time.Now().Add(time.Second)
+	loop := NewLoop(nil, e, testLog()).WithClock(func() time.Time { return now })
+	loop.runReaper(ctx)
+
+	if got := instanceState(t, store, res.InstanceID); got != string(state.StateParked) {
+		t.Fatalf("aborted canary instance state = %q, want parked", got)
+	}
+	if vmm.snapshots != 1 {
+		t.Fatalf("snapshots = %d, want 1 (an operator may still recover the candidate)", vmm.snapshots)
+	}
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake stable after drain: %v", err)
+	}
+}
+
+func TestReaperAbortedCanary(t *testing.T) {
+	completed := time.Now()
+	cases := []struct {
+		name string
+		d    state.Deployment
+		want bool
+	}{
+		{"aborted canary at 0%", state.Deployment{Status: state.DeployLive, CanaryTotalSteps: 4, RolloutState: "aborted"}, true},
+		{"canary still rolling out", state.Deployment{Status: state.DeployLive, TrafficPercent: 1, CanaryTotalSteps: 4, RolloutState: "rolling_out"}, false},
+		{"staged 0% revision without a canary", state.Deployment{Status: state.DeployLive, RolloutState: "aborted"}, false},
+		{"completed release later rolled back", state.Deployment{Status: state.DeployLive, CanaryTotalSteps: 4, RolloutState: "aborted", RolloutCompletedAt: &completed}, false},
+		{"aborted canary still carrying traffic", state.Deployment{Status: state.DeployLive, TrafficPercent: 5, CanaryTotalSteps: 4, RolloutState: "aborted"}, false},
+	}
+	for _, tc := range cases {
+		if got := reaperAbortedCanary(tc.d); got != tc.want {
+			t.Errorf("%s: reaperAbortedCanary = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

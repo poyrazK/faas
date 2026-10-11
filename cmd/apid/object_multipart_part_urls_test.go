@@ -273,7 +273,7 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if err = recovery.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.reconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+1 || lists.Load() != initialLists+1 {
+	if err = recovery.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+1 || lists.Load() != initialLists+1 {
 		t.Fatal("restart cleanup of remaining parts", err, aborts.Load(), lists.Load())
 	}
 	assertReservation()
@@ -281,7 +281,7 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=now() WHERE id=$1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.reconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {
+	if err = recovery.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {
 		t.Fatal("verified cleanup", err, aborts.Load(), lists.Load())
 	}
 	// Legacy fixed-size uploads keep their untracked key grant even after

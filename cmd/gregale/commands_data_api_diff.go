@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ type dataAPIChange struct {
 	Path     string `json:"path"`
 	Breaking bool   `json:"breaking"`
 	Reason   string `json:"reason"`
+	Approved bool   `json:"approved,omitempty"`
 }
 
 func parseDataAPIContract(content []byte) (dataAPIContract, error) { return dataapi.Parse(content) }
@@ -45,20 +47,40 @@ func cmdDataAPIDiff(args []string) int {
 	fs := newFlagSet("data-api diff", flag.ContinueOnError)
 	baseline := fs.String("baseline", "", "saved JSON contract from data-api types --snapshot")
 	current := fs.String("current", "", "compare a saved current contract offline instead of inspecting an app")
-	check := fs.Bool("check", false, "fail if the database contract contains breaking changes")
+	check := fs.Bool("check", false, "fail if the database contract contains unapproved breaking changes")
+	checkCompatible := fs.Bool("check-compatible", false, "fail on unapproved breaking changes (alias of --check)")
+	approvalPath := fs.String("approval", "", "reviewed JSON approvals bound to baseline and current fingerprints")
+	acceptContract := fs.String("accept-contract", "", "write an owner runtime policy only when there are zero breaking changes")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum private inspection task wait")
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
 	validTarget := (*current == "" && fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))) || (*current != "" && fs.NArg() == 0)
 	if !validTarget || *baseline == "" || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check] [--timeout DURATION]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check | --check-compatible] [--approval FILE] [--accept-contract FILE] [--timeout DURATION]", "data-api")
 		return 1
+	}
+	if *acceptContract != "" {
+		for _, input := range []string{*baseline, *current, *approvalPath} {
+			if input != "" && dataAPIContractOutputAliases(*acceptContract, input) {
+				return printErr("Invalid accepted contract output", errors.New("output must not replace a comparison input"))
+			}
+		}
 	}
 	// Read and validate the baseline before starting any remote task.
 	before, err := readDataAPIContractFile(*baseline)
 	if err != nil {
 		return printErr("Invalid baseline", err)
+	}
+	var approval *dataAPIApproval
+	if *approvalPath != "" {
+		approval, err = readDataAPIApprovalFile(*approvalPath)
+		if err != nil {
+			return printErr("Invalid compatibility approval", err)
+		}
+		if approval.BaselineFingerprint != before.Fingerprint {
+			return printErr("Invalid compatibility approval", errors.New("baseline fingerprint does not match"))
+		}
 	}
 	var after dataAPIContract
 	var task api.AppTaskResponse
@@ -81,14 +103,30 @@ func cmdDataAPIDiff(args []string) int {
 		return printErr("Invalid current contract", err)
 	}
 	changes := diffDataAPISnapshots(before.Parsed, after.Parsed)
+	if err := applyDataAPIApproval(approval, before.Fingerprint, after.Fingerprint, changes); err != nil {
+		return printErr("Invalid compatibility approval", err)
+	}
 	breaking := 0
+	approved := 0
 	for _, change := range changes {
 		if change.Breaking {
 			breaking++
+			if change.Approved {
+				approved++
+			}
+		}
+	}
+	if *acceptContract != "" {
+		policy, err := dataAPIAcceptedContractPolicy(before.Fingerprint, after.Fingerprint, changes)
+		if err != nil {
+			return printErr("Cannot accept older contract", err)
+		}
+		if err := writeDataAPITypes(*acceptContract, false, string(policy)); err != nil {
+			return printErr("Could not write accepted contract policy", err)
 		}
 	}
 	if jsonOutput {
-		if err := writeJSON(map[string]any{"app": fs.Arg(0), "task_id": task.ID, "deployment_id": task.DeploymentID, "baseline_fingerprint": before.Fingerprint, "current_fingerprint": after.Fingerprint, "breaking": breaking, "changes": changes}); err != nil {
+		if err := writeJSON(map[string]any{"app": fs.Arg(0), "task_id": task.ID, "deployment_id": task.DeploymentID, "baseline_fingerprint": before.Fingerprint, "current_fingerprint": after.Fingerprint, "breaking": breaking, "approved": approved, "unapproved": breaking - approved, "changes": changes}); err != nil {
 			return 1
 		}
 	} else {
@@ -97,15 +135,18 @@ func cmdDataAPIDiff(args []string) int {
 			if change.Breaking {
 				label = "breaking"
 			}
+			if change.Approved {
+				label = "approved breaking"
+			}
 			if _, err := fmt.Fprintf(osStdout, "%s %q: %s\n", label, change.Path, change.Reason); err != nil {
 				return printErr("Could not write diff", err)
 			}
 		}
-		if _, err := fmt.Fprintf(osStdout, "%d changes, %d breaking\n", len(changes), breaking); err != nil {
+		if _, err := fmt.Fprintf(osStdout, "%d changes, %d breaking, %d approved, %d unapproved\n", len(changes), breaking, approved, breaking-approved); err != nil {
 			return 1
 		}
 	}
-	if *check && breaking > 0 {
+	if (*check || *checkCompatible) && breaking > approved {
 		return 1
 	}
 	return 0
@@ -127,7 +168,7 @@ func readDataAPIContractFile(path string) (dataAPIContract, error) {
 func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 	changes := []dataAPIChange{}
 	add := func(path, reason string, breaking bool) {
-		changes = append(changes, dataAPIChange{path, breaking, reason})
+		changes = append(changes, dataAPIChange{Path: path, Breaking: breaking, Reason: reason})
 	}
 	tables := map[string]dataAPITable{}
 	for _, table := range after.Tables {
@@ -144,9 +185,7 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 		if old.View != current.View {
 			add(key, "relation changed between table and view", true)
 		}
-		if compactDataAPIJSON(old.Relationships) != compactDataAPIJSON(current.Relationships) {
-			add(key, "relationship metadata changed; review embedded queries", true)
-		}
+		changes = append(changes, diffDataAPIRelationships(before, old, current)...)
 		columns := map[string]dataAPIColumn{}
 		for _, column := range current.Columns {
 			columns[column.Name] = column
@@ -270,7 +309,7 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 func diffDataAPIComposites(before, after []dataAPIComposite) []dataAPIChange {
 	changes := []dataAPIChange{}
 	add := func(path, reason string, breaking bool) {
-		changes = append(changes, dataAPIChange{path, breaking, reason})
+		changes = append(changes, dataAPIChange{Path: path, Breaking: breaking, Reason: reason})
 	}
 	types := map[string]dataAPIComposite{}
 	for _, composite := range after {

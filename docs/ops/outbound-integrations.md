@@ -377,7 +377,7 @@ status codes.
 >   - integrations cannot set `ai_provider`;
 >   - outboundd refuses AI integrations (`503 outbound_ai_gateway_disabled`) and routes.
 >
-> See [ADR-984](../adr/984-ai-gateway-hard-caps-providers-visibility.md#release-gate).
+> See [ADR-991](../adr/991-ai-gateway-hard-caps-providers-visibility.md#release-gate).
 
 An integration in front of an LLM provider can declare `ai_provider`. Use
 `openai` for OpenAI and any provider that speaks its wire format, or
@@ -385,7 +385,7 @@ An integration in front of an LLM provider can declare `ai_provider`. Use
 model and token usage while forwarding each `POST` response, records UTC-day
 usage per caller and model, and can stop new calls at a daily token limit. The
 provider key, workload identity, route policy and every request policy above
-still apply. See [ADR-979](../adr/979-ai-gateway-outbound-integrations.md).
+still apply. See [ADR-988](../adr/988-ai-gateway-outbound-integrations.md).
 
 Set it when creating a customer integration, or later:
 
@@ -469,7 +469,7 @@ Every app VM has `GREGALE_OUTBOUND_URL=http://127.0.0.1:2774`. Requests to
 `$GREGALE_OUTBOUND_URL/i/<integration-id>/<provider path>` reach `outboundd` as
 the calling app, with no network route, gateway token or identity header.
 Streaming works in both directions. See
-[ADR-982](../adr/982-app-outbound-relay.md).
+[ADR-989](../adr/989-app-outbound-relay.md).
 
 How a request travels:
 
@@ -510,7 +510,7 @@ connections. Qualification candidates never get the relay.
 
 ## AI gateway budgets, prices and cost
 
-See [ADR-983](../adr/983-ai-gateway-budgets-fallback-cost.md). All settings
+See [ADR-990](../adr/990-ai-gateway-budgets-fallback-cost.md). All settings
 below require MFA and deploy-write scope. The `gregale ai` command wraps
 them.
 
@@ -586,7 +586,7 @@ A route is an ordered list of one to five managed AI integrations of one
 
 ## AI hard caps and per-app guardrails
 
-See [ADR-984](../adr/984-ai-gateway-hard-caps-providers-visibility.md).
+See [ADR-991](../adr/991-ai-gateway-hard-caps-providers-visibility.md).
 
 **Reservations.** Before admission, every AI `POST` reserves tokens and cost:
 

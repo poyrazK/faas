@@ -22,7 +22,7 @@ T = TypeVar("T", bound="OutboundAIBudgetThresholdWebhookPayload")
 
 @_attrs_define
 class OutboundAIBudgetThresholdWebhookPayload:
-    """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-984).
+    """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991).
     alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app.
 
     """

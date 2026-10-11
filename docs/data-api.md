@@ -1308,6 +1308,131 @@ exceptions do not change the response. These are gateway request records, not
 distributed traces or measurements of platform wake latency. Log retention and
 live staging verification remain deployment concerns.
 
+### Runtime contract guard
+
+Generated TypeScript exports `schemaFingerprint` alongside the application
+types. Use it to opt in to an exact serving-contract check for reads, writes
+and RPC calls:
+
+```ts
+import { createDataClient } from '@gregale/data'
+import { schemaFingerprint, type Database } from './database.types.js'
+
+const db = createDataClient<Database>({
+  url: 'https://my-data.gregale.dev',
+  accessToken: () => session.getAccessToken(),
+  expectedSchemaFingerprint: schemaFingerprint,
+}).schema('api')
+
+const result = await db.from('notes').insert({ subject: session.user.id, body: 'Hello' })
+if (result.error?.code === 'schema_contract_mismatch') {
+  // Resolve the client/deployment mismatch before submitting the write again.
+}
+```
+
+The SDK validates the fingerprint as 64 lowercase hexadecimal characters and
+routes requests through `/__gregale/contract/<fingerprint>/rest/v1/...`.
+After verifying the application token, the gateway compares it with the
+immutable contract captured at startup. A mismatch returns HTTP 409
+`schema_contract_mismatch` without contacting PostgREST. An unavailable serving
+fingerprint returns HTTP 503 `serving_contract_unavailable`. HEAD responses have
+no JSON body; use the status. Request IDs, CORS, RLS, grants, profile headers,
+query typing and native error handling continue to apply. Guarded OpenAPI
+documents retain the qualified base path.
+
+The distinct path matters during upgrades: older runtimes reject it with 404
+instead of ignoring an optional header and executing a write. Upgrade the
+runtime before enabling the option. Clients never fall back to an unguarded
+route, automatically accept a new fingerprint, or replay rejected writes.
+Clients without the option retain `/rest/v1` behavior. No extra schema fetch or
+per-request database inspection is required.
+
+This is an exact serving-contract check. Additive schema changes also require
+regenerated types and a coordinated client rollout when the guard is enabled.
+Uncoordinated database DDL or an engine-only cache reload can make the captured
+contract stale; use `data-api sync`/fresh runtime refresh and release verification.
+The guard does not establish behavioral or authorization compatibility or make
+HTTP requests atomic with database migrations. Structural compatibility checks
+and application authorization tests remain separate checks.
+
+### Accept older clients during a compatible rollout
+
+Exact matching remains the default. To allow a selected older client contract,
+compare its saved snapshot against the intended serving snapshot:
+
+```sh
+gregale data-api diff --baseline old-schema.json --current new-schema.json \
+  --accept-contract accepted-contracts.json
+```
+
+`--accept-contract` writes an owner policy atomically only when there are **zero
+structural breaking changes**. Reviewed breaking-change approvals do not waive
+this requirement. Failed checks leave an existing output untouched. The output
+must differ from all comparison inputs. Identical contracts need no policy.
+You can also compare against an owner-authenticated app instead of `--current`.
+
+The policy has this shape (substitute the actual generated fingerprints):
+
+```json
+{
+  "version": 1,
+  "current_fingerprint": "<new serving fingerprint>",
+  "accepted_fingerprints": ["<reviewed older fingerprint>"]
+}
+```
+
+After reviewing application and authorization tests for the rollout, configure
+`DATA_API_ACCEPTED_CONTRACTS` with the **JSON contents**, then deploy/refresh the
+runtime. This is owner configuration, never a client-provided allowlist. To
+accept several older versions, check each directly against the same current
+snapshot and combine their reviewed fingerprints into one policy. Acceptance
+is not transitive. Clients keep their existing `expectedSchemaFingerprint`.
+
+The runtime validates the policy and captures it at startup. Malformed, duplicate
+or self-referential entries and a `current_fingerprint` that differs from the
+inspected serving contract prevent startup before PostgREST is launched. A later
+schema change requires a new comparison and policy; an old policy cannot silently
+carry forward. Authentication, RPC eligibility, grants and RLS still apply.
+Unapproved fingerprints receive 409 before SQL executes. OpenAPI keeps the
+requested qualified route, while `/__gregale/schema` advertises the actual
+current fingerprint. Remove the policy and refresh to revoke older contracts.
+
+Structural comparison does not cover policy semantics, function bodies,
+default behavior or every application assumption. Acceptance authorizes old
+clients to use the current API; it does not restore an older response schema.
+Use explicit projections when your application depends on exact response keys.
+This policy shares the startup-contract guard's live-DDL limitation.
+
+### Test contract rollouts locally
+
+Load the reviewed policy without staging credentials:
+
+```sh
+gregale data-api dev --directory . --accepted-contracts accepted-contracts.json
+# CI, with pinned old/current clients in the request collection:
+gregale data-api dev --directory . --accepted-contracts accepted-contracts.json \
+  --once --replay rollout.requests.json
+```
+
+The policy path is relative to the project, must be a bounded regular file, and
+must differ from generated types, baselines and other workflow inputs. Invalid
+policies fail before services start; stale policies fail before types or contracts
+are saved. With watching enabled, edits to the policy trigger the same serialized
+reload and authorization checks as migrations. A stale policy pauses the gateway
+and preserves the disposable database, identity tokens, saved contract and types.
+Save a policy reviewed against the migrated schema to recover. Deleting or
+corrupting the configured file also pauses requests. To return to exact matching
+without an acceptance list, restart without `--accepted-contracts`.
+
+Each saved request may include an optional `expectedSchemaFingerprint` containing
+64 lowercase hexadecimal characters. Paths remain relative `/rest/v1/...` paths;
+replay builds the guarded route, preserves query parameters, and never falls back.
+Use the old fingerprint for old-client requests, the current fingerprint for
+current clients, and an unapproved fingerprint with an expected 409 to prove
+rejection. Test RLS using distinct identities in the same scenario. The inspector
+can send, save and load pinned requests too. Unpinned collections keep their
+existing behavior; collection versions 1 and 2 remain supported.
+
 ### Typed client response diagnostics
 
 `createDataClient` accepts an optional `onResponse` callback so applications can
@@ -1372,26 +1497,87 @@ runtime deployments fail rather than report a compatible schema. The baseline
 is validated before starting a remote task and is never rewritten by diff.
 
 Without `--check`, a completed comparison exits zero even if it finds breaking
-changes. With `--check`, breaking changes exit one after printing the report;
+changes. With `--check` (or its `--check-compatible` alias), unapproved breaking changes exit one after printing the report;
 invalid baselines and failed inspections also exit nonzero. JSON output includes
 baseline/current fingerprints, task/deployment identifiers, the breaking count
-and a deterministic array of changes. No changes produces an empty array.
+and a deterministic array of changes. The `approved` and `unapproved` counts
+partition the total `breaking` count. No changes produces an empty array.
 
 Removed schemas, relations, columns, RPCs, RPC arguments, composite types and
 composite fields are breaking. Composite field type/nullability changes and new
 required object keys are also breaking, even when the containing table or RPC
 still references the same named type. New composite types are compatible.
 Type changes (including enum changes), nullability changes in either direction,
-removed write privileges, table/view changes, relationship changes, newly
+removed write privileges, table/view changes, removed or modified relationships, newly
 required insert fields, and required RPC arguments are conservatively breaking.
 Optional fields, new relations/RPCs, optional RPC arguments and relaxed write
 requirements are compatible. Defaults are checked through insert optionality;
 changing a default expression while retaining optionality is not detected.
 
+Relationship array order and JSON object key order do not constitute changes.
+Reports identify each relationship by constraint name and target. A new connection
+is compatible unless it could make an existing unqualified embed or foreign-key
+column/name hint ambiguous. A second connection between the same relations is
+conservatively breaking, including a connection in the reverse direction.
+Repeated view aliases or other metadata that cannot be matched uniquely retain
+a conservative relation-level report.
+
 Update queries, writes and generated types for breaking changes, then approve a
 new baseline explicitly. This is a structural contract check: policies, function
 bodies, default values and data-dependent behavior need separate tests. It does
 not verify the serving fingerprint; use `data-api sync` for that release check.
+
+### Approve an intentional breaking migration
+
+Keep the existing baseline when you want CI to retain a visible record of an
+intentional break. First obtain the candidate contract and JSON report:
+
+```sh
+gregale data-api types notes-data --snapshot --output candidate.json
+gregale --json data-api diff --baseline schema.json --current candidate.json
+```
+
+Create a reviewed `compatibility-approval.json` using the report's exact
+fingerprints, paths and reasons. Include only the breaking changes you intend
+to accept, with a rationale for each:
+
+```json
+{
+  "version": 1,
+  "baseline_fingerprint": "<64 lowercase hex characters from the report>",
+  "current_fingerprint": "<64 lowercase hex characters from the report>",
+  "changes": [
+    {
+      "path": "api.notes.priority",
+      "reason": "column removed; update projections and writes",
+      "rationale": "The deployed client no longer reads or writes priority."
+    }
+  ]
+}
+```
+
+Commit the approval alongside the baseline and migration, then check the candidate:
+
+```sh
+gregale --json data-api diff --baseline schema.json --current candidate.json \
+  --check-compatible --approval compatibility-approval.json
+gregale data-api dev --once --baseline schema.json --check-breaking \
+  --approval compatibility-approval.json
+```
+
+For local development, approval paths are project-relative; an explicit baseline
+and `--check-breaking` are required. Diff can also apply approvals during hosted
+inspection. It reads and validates the baseline and approval before starting a
+remote task. Both commands leave the baseline and approval file unchanged.
+
+An approved change remains `breaking: true` and gains `approved: true`; it is
+printed as `approved breaking` in text reports. The check succeeds only when
+every breaking change is approved. Missing files, invalid JSON, duplicate or
+unmatched path/reason pairs, missing rationales, and stale fingerprints fail.
+Even an unrelated schema change invalidates the candidate fingerprint: review
+the full report before replacing the approval. There are no wildcard approvals.
+An approval records an intentional break; it does not establish compatibility
+for clients that still depend on the removed contract or bypass authorization tests.
 
 ### Runtime JSON validation
 
@@ -1481,3 +1667,109 @@ The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
 `cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
 timestamp/id validation remain the same, including PostgreSQL microseconds.
 Upgrade the installed SDK bundle alongside the starter to use these helpers.
+
+### Coordinated hosted schema updates
+
+Opt-in coordinated sync keeps ordinary SQL traffic paused until compatibility,
+client and authorization checks finish. Install its private database barrier
+before enabling the runtime. Use a materialized `data-api` template as the local
+owner tool directory; install its pinned Node dependencies there:
+
+```sh
+gregale init data-api-runtime --template data-api
+npm ci --prefix data-api-runtime
+# Configure MIGRATION_DATABASE_URL locally with owner credentials.
+node data-api-runtime/refresh.mjs install YOUR_BINDING_LOGIN_ROLE
+# Deploy the current runtime to every instance using this binding first.
+gregale env set --app notes-data DATA_API_COORDINATED_REFRESH=1
+gregale data-api refresh notes-data --wait
+gregale data-api types notes-data --snapshot --output schema.before.json
+```
+
+The owner connection must be able to create the private control schema and
+`SET ROLE` to the binding login for role-filtered inspection. Set matching
+`DATA_API_SCHEMAS` in the local owner environment when exposing multiple schemas.
+Do not expose `gregale_data_api` or grant serving credentials control-table
+access. All runtimes sharing this role must enable coordination and expose the
+same schemas; use separate binding roles for distinct exposures.
+
+Extend the existing sync JSON with `coordination`:
+
+```json
+{
+  "output": "web/database.types.ts",
+  "migrate": { "directory": "migrations", "command": ["npm", "run", "migrate"] },
+  "check": { "directory": "web", "command": ["npm", "run", "typecheck"] },
+  "coordination": {
+    "baseline": "schema.before.json",
+    "pause": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "pause", "YOUR_BINDING_LOGIN_ROLE"] },
+    "resume": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "resume", "YOUR_BINDING_LOGIN_ROLE"] },
+    "authorization": { "directory": "web", "command": ["npm", "run", "test:data-api-authorization"] }
+  }
+}
+```
+
+Set an unpredictable private `GREGALE_DATA_API_REFRESH_TOKEN` (64 lowercase
+hexadecimal characters, generated from 32 random bytes), use a fresh token for
+each new refresh, keep that token for recovery,
+and configure the application JWT in `GREGALE_DATA_API_ACCESS_TOKEN` as before.
+Do not commit either token or put it in a URL. An optional `token_env` selects
+another local environment variable. Commands receive the private token under
+`GREGALE_DATA_API_REFRESH_TOKEN`; client/authorization/resume commands also
+receive `GREGALE_DATA_API_REFRESH_FINGERPRINT`. Only a client that sends both its
+normal application JWT and `X-Gregale-Refresh-Token` can execute verification
+requests while paused. The token grants no extra SQL or RLS permissions. Run
+multi-user and multi-tenant denial scenarios with the respective application
+identities; the token alone is insufficient. These are trusted owner checks,
+not headers to ship in an ordinary browser application.
+
+```sh
+gregale data-api sync notes-data --config data-api.json
+# After correcting a failed check or reviewing a breaking change:
+gregale data-api sync notes-data --config data-api.json --resume-only
+```
+
+A normal run verifies the saved baseline against live inspection and the
+serving runtime, acquires the durable pause, runs migrations/permissions,
+refreshes the engine, and verifies the generated and serving fingerprints.
+The baseline is compared structurally with the new snapshot. Unapproved
+breaking changes stop the workflow; optional `coordination.approval` points to
+an exact reviewed approval file in the existing `data-api diff` format. Existing
+accepted-client deployment policies must also match the new runtime; stale
+policies fail startup. The workflow then runs client and authorization checks
+before releasing the barrier. Release re-inspects the live schema as the binding
+role and rejects drift. The database records the verified fingerprint, so runtimes whose serving fingerprint differs receive 409 before executing
+application SQL. This fences structural contract drift; it does not identify
+every old runtime version when the structural fingerprint is unchanged.
+
+Pause waits for transactions admitted by the PostgREST pre-request hook,
+including read-only GET transactions. Coordinated mode requires read committed
+transaction isolation. Repeatable-read and serializable requests receive 503
+`data_api_refresh_isolation_unsupported` before application SQL, because their
+snapshots can predate a waited-for pause. This includes RPCs that configure a
+stronger isolation level. Ordinary requests receive 503 while
+paused; a queued request cannot slip through when the barrier commits.
+Competing coordinators cannot replace an existing pause. The barrier is stored
+in PostgreSQL and survives fresh restarts. `/healthz` remains a transport/engine
+health check and adds `refresh_paused`; it does not mean ordinary SQL traffic
+is admitted. The authenticated schema endpoint adds `refresh_protocol`,
+`refresh_paused`, `refresh_verified` (whether this request owns the pause), and
+`refresh_fingerprint`; it never returns the token/hash.
+
+Migration, startup, compatibility, client, or authorization failures leave the
+barrier paused. Recovery must use the same private token and baseline;
+`--resume-only` skips migrations and permission setup, but repeats refresh and
+all verification. No step automatically clears a pause on cancellation or
+failure. If the resume command loses its acknowledgement, release may already
+have committed: inspect the serving contract before taking further action.
+Generated types are retained after a client-check failure, and completed DDL
+is not rolled back. Losing the private token requires owner-controlled recovery
+of the database barrier; the CLI does not adopt another session automatically.
+
+This mode reserves one of the existing two connections for its control reader
+and one for PostgREST. Engine-only SIGUSR1 reloads are rejected; use coordinated
+sync. Owner/superuser DDL and direct database connections remain outside this
+barrier. Serialize DDL through the workflow; fingerprints do not cover policy
+bodies or every behavioral change. Upgrade every runtime sharing the binding
+before relying on the barrier. Real hosted multi-replica qualification remains
+pending until staging is configured.

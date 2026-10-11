@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -128,7 +129,7 @@ func objectGatewaySafetyE2E(t *testing.T, s *server, st state.Store, acct state.
 	if err := accounting.ClaimObjectInventory(t.Context(), bucket.ID, "initial"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.scanObjectInventory(t.Context(), accounting, catalog, "initial"); err != nil {
+	if err := s.object.ScanObjectInventory(t.Context(), accounting, catalog, "initial"); err != nil {
 		t.Fatal(err)
 	}
 	size := int64(3)

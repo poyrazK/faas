@@ -740,6 +740,43 @@ func TestEdgeRuleThrottleReturns429(t *testing.T) {
 	assertRateLimitedProblem(t, rec2, 1)
 }
 
+// A fractional rate is a real policy (the CLI's login example uses 0.1 rps).
+// Hunt #9 (rc.252) found compileThrottleRules raised every rate below 1 rps
+// to 1, so a 0.1 rps login throttle admitted ten times its configured rate,
+// and every 429 said Retry-After: 1. The 429 must carry the configured rate
+// and the time until the next token.
+func TestEdgeRuleThrottle_FractionalRateRetryAfter(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.setLegacyHot()
+	b.app.Plan = api.PlanPro
+	b.app.AccountID = "acct-1"
+	h.WithLimiter(NewLimiter().WithNoop())
+	h.WithAccountLimiter(NewLimiter().WithNoop())
+	h.edgeRules = stubEdgeRuleMatcher{
+		throttle: &EdgeRuleThrottleResolved{
+			ID: "rule-login", AccountID: "acct-1", AppID: b.app.ID,
+			RequestsPerSecond: 0.1, Burst: 1,
+		},
+	}
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/login", nil)
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, req)
+	if first.Code == http.StatusTooManyRequests {
+		t.Fatal("first request consumed the burst token and must pass")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request = %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "10" {
+		t.Errorf("Retry-After = %q, want 10 (one token per 10 s)", got)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "allows 0.1 requests per second") {
+		t.Errorf("429 body does not state the configured rate: %s", body)
+	}
+}
+
 type stubCountryReader struct {
 	country string
 	found   bool

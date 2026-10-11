@@ -27,7 +27,7 @@ class PutOutboundAIPolicyRequest:
     daily_cost_limit_millicents: int | None | Unset = UNSET
     monthly_cost_limit_millicents: int | None | Unset = UNSET
     request_log_enabled: bool | Unset = UNSET
-    """Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-984). Requires
+    """Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires
     ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

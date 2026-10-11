@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -80,7 +81,7 @@ func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 	restarted := func() *server {
 		return newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
 	}
-	if err = restarted().reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = f.st.GetObjectCapacityReconciliation(ctx, f.account.ID, f.bucket.ID, j.ID)
@@ -112,7 +113,7 @@ func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_capacity_reconciliations SET retry_at=now()-interval '1 second' WHERE id=$1`, j.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = f.st.GetObjectCapacityReconciliation(ctx, f.account.ID, f.bucket.ID, j.ID)
@@ -141,10 +142,10 @@ func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_bucket_usage SET attempt_at=now()-interval '10 minutes' WHERE bucket_id=$1`, f.bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectInventories(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectInventories(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted().reconcileObjectCapacity(ctx, nil); err != nil {
+	if err = restarted().object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	snap, err = f.st.ObjectUsage(ctx, f.account.ID, time.Now())
@@ -185,13 +186,13 @@ func TestNativePeriodicBlockedInventoryCadencePG(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-	if err := s.reconcileObjectInventories(ctx, nil); err != nil {
+	if err := s.object.ReconcileObjectInventories(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.reconcileObjectCapacity(ctx, nil); err != nil {
+	if err := s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.reconcileObjectInventories(ctx, nil); err != nil {
+	if err := s.object.ReconcileObjectInventories(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	var count int

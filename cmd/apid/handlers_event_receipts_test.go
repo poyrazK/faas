@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -103,7 +105,7 @@ func TestEventReceiptPaginationIsolationAndRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path := eventReceiptURL("orders", "receipt-1")
+	path := appevents.EventReceiptURL("orders", "receipt-1")
 	firstRec := e.do(t, "GET", path+"&limit=1", nil, nil)
 	var first api.EventReceiptResponse
 	if err := json.Unmarshal(firstRec.Body.Bytes(), &first); err != nil {
@@ -163,12 +165,12 @@ func TestEventReceiptPaginationIsolationAndRecovery(t *testing.T) {
 	if rec := e.do(t, "GET", path, nil, map[string]string{"Authorization": "Bearer " + token}); rec.Code != 404 {
 		t.Fatalf("cross-account: %d %s", rec.Code, rec.Body)
 	}
-	for _, invalid := range []string{eventReceiptURL("other", "receipt-1") + "&after=" + url.QueryEscape(first.NextAfter), path + "&after=bad", path + "&limit=201", "/v1/events/receipt?id=receipt-1", "/v1/events/receipt?source=" + strings.Repeat("a", 257) + "&id=receipt-1"} {
+	for _, invalid := range []string{appevents.EventReceiptURL("other", "receipt-1") + "&after=" + url.QueryEscape(first.NextAfter), path + "&after=bad", path + "&limit=201", "/v1/events/receipt?id=receipt-1", "/v1/events/receipt?source=" + strings.Repeat("a", 257) + "&id=receipt-1"} {
 		if rec := e.do(t, "GET", invalid, nil, nil); rec.Code != 400 {
 			t.Fatalf("invalid %s: %d %s", invalid, rec.Code, rec.Body)
 		}
 	}
-	if rec := e.do(t, "GET", eventReceiptURL("unknown", "receipt-1"), nil, nil); rec.Code != 404 {
+	if rec := e.do(t, "GET", appevents.EventReceiptURL("unknown", "receipt-1"), nil, nil); rec.Code != 404 {
 		t.Fatalf("missing source: %d", rec.Code)
 	}
 }
@@ -181,7 +183,7 @@ func TestEventReceiptReadScope(t *testing.T) {
 	}{{api.ScopeAppsRead, 404}, {api.ScopeEventsPublish, 403}, {api.ScopeUsageRead, 403}} {
 		t.Run(test.scope, func(t *testing.T) {
 			e := setupWithScopes(t, []string{test.scope})
-			rec := e.do(t, "GET", eventReceiptURL("orders", "unknown"), nil, nil)
+			rec := e.do(t, "GET", appevents.EventReceiptURL("orders", "unknown"), nil, nil)
 			if rec.Code != test.status {
 				t.Fatalf("scope: %d %s", rec.Code, rec.Body)
 			}
@@ -192,8 +194,8 @@ func TestEventReceiptReadScope(t *testing.T) {
 // adr: 607
 func TestEventReceiptCursorSupportsMaximumEncodedIdentity(t *testing.T) {
 	receipt := state.EventReceipt{OutboxID: 1, NextPosition: 1, EventSource: strings.Repeat("&", 256), EventID: strings.Repeat("<", 256)}
-	cursor := encodeEventReceiptCursor("00000000-0000-0000-0000-000000000001", receipt)
-	decoded, err := decodeEventReceiptCursor(cursor, "00000000-0000-0000-0000-000000000001", receipt.EventSource, receipt.EventID)
+	cursor := appevents.EncodeEventReceiptCursor("00000000-0000-0000-0000-000000000001", receipt)
+	decoded, err := appevents.DecodeEventReceiptCursor(cursor, "00000000-0000-0000-0000-000000000001", receipt.EventSource, receipt.EventID)
 	if err != nil || decoded.OutboxID != 1 || decoded.Position != 1 {
 		t.Fatalf("accepted identity produced unusable cursor: %d %v", len(cursor), err)
 	}

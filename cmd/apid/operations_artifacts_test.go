@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -112,31 +113,4 @@ func operationArtifactFixture(t *testing.T, s *server, store operationArtifactFi
 		t.Fatal(err)
 	}
 	return p, api.OperationArtifactRequest{ReportID: "export-file", Name: "export.csv", URI: fmt.Sprintf("obj://%s/%s/export.csv", app.ID, bucket.ID), SizeBytes: int64(len(body)), SHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(body))}
-}
-
-func TestOperationArtifactSpoolCapacityAndCleanup(t *testing.T) {
-	budget := operationArtifactBudget{}
-	for i := 0; i < api.OperationArtifactTransfersPerAccount; i++ {
-		if !budget.reserve("one", 0) {
-			t.Fatal("slot unavailable")
-		}
-	}
-	if budget.reserve("one", 0) {
-		t.Fatal("unbounded zero-byte transfers")
-	}
-	for i := 0; i < api.OperationArtifactTransfersPerAccount; i++ {
-		if !budget.reserve("two", 0) {
-			t.Fatal("other account blocked")
-		}
-	}
-	if budget.reserve("three", 0) {
-		t.Fatal("node transfer limit bypassed")
-	}
-	budget.release("one", 0)
-	if !budget.reserve("three", 0) {
-		t.Fatal("slot not released")
-	}
-	if budget.reserve("four", api.OperationArtifactSpoolMaxBytes) {
-		t.Fatal("spool capacity bypassed")
-	}
 }

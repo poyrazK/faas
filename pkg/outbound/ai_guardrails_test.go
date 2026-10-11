@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 984 — per-app guardrails, per-minute limits and reservation hard caps.
+// adr: 991 — per-app guardrails, per-minute limits and reservation hard caps.
 
 import (
 	"context"

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -98,7 +99,7 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	if err != nil || policy.State != "waiting" || policy.Revision != 1 || policy.Encryption != nil || policy.DesiredEncryption == nil || policy.DesiredEncryption.KeyID != selection.KeyID {
 		t.Fatal("owned intent missing", policy, err)
 	}
-	if err = s.reconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	policy, err = client.GetObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)
@@ -117,7 +118,7 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.reconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal("disabled ingress blocked recovery", err)
 	}
 	policy, err = client.GetObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)
@@ -185,7 +186,7 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	if err != nil || policy.State != "waiting" || policy.Revision != 2 {
 		t.Fatal("disabled ingress blocked clear", policy, err)
 	}
-	if err = s.reconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	policy, err = client.GetObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)

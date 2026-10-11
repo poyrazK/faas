@@ -9,7 +9,7 @@ import (
 )
 
 // OutboundRelayEndpoint is the app-facing base URL for managed outbound
-// integrations (ADR-982). Requests use /i/{integration-id}/{provider path};
+// integrations (ADR-989). Requests use /i/{integration-id}/{provider path};
 // guest-init forwards the connection bytes to the host without reading them.
 const OutboundRelayEndpoint = "http://" + outboundRelayListenAddr
 

@@ -676,7 +676,7 @@ const (
 // below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
-// AI gateway bounds on outbound integrations (ADR-979). The token limit is a
+// AI gateway bounds on outbound integrations (ADR-988). The token limit is a
 // structural bound on a customer-selected spend guard for the customer's own
 // provider key, not a plan allowance. Usage rows are UTC-day rollups; the
 // model cap stops a customer-chosen origin from inflating them.
@@ -691,27 +691,27 @@ const (
 	// a misbehaving origin cannot overflow the daily rollup counters.
 	OutboundAIMaxTokensPerResponse int64 = 1_000_000_000
 	// OutboundAIRequestBufferMaxBytes bounds the AI POST body the gateway
-	// keeps for retries, exact-match caching and route fallback (ADR-983).
+	// keeps for retries, exact-match caching and route fallback (ADR-990).
 	// Larger bodies stream unbuffered without those features.
 	OutboundAIRequestBufferMaxBytes int64 = 4 << 20
-	// Customer price lists and cost budgets (ADR-983). Prices are millicents
+	// Customer price lists and cost budgets (ADR-990). Prices are millicents
 	// per million tokens; cost limits are millicents per UTC day or month.
 	MaxOutboundAICostMillicents         int64 = 1_000_000_000_000
 	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
 	OutboundAIPriceEntriesMax                 = 64
-	// AI fallback routes (ADR-983).
+	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
-	// Admission-time reservations (ADR-984): the output reserve when a call
+	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
 	OutboundAIReserveBytesPerToken       int64 = 4
-	// Per-app AI guardrails on a binding (ADR-984).
+	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
 	MaxOutboundAIMaxOutputTokens         = 1_000_000
 	OutboundAIAllowedModelsMax           = 32
-	// Extra sealed provider keys per integration (ADR-984) and the local
+	// Extra sealed provider keys per integration (ADR-991) and the local
 	// cooldown a key gets after a 429 without Retry-After.
 	OutboundIntegrationCredentialKeysMax        = 8
 	OutboundCredentialKeyDefaultCooldownSeconds = 30
@@ -9370,12 +9370,75 @@ const (
 	RouteHealthProbeUnauthenticatedShare = 0.5
 )
 
+// ServiceWakeAhead bounds opt-in wake-ahead along measured service edges
+// (ADR-977). A cold wake of a caller app opens a follow window; a service call
+// from that caller inside it is a hit for the edge. A target is woken ahead
+// only after ServiceWakeAheadMinWakes observed caller wakes, when at least
+// ServiceWakeAheadMinCallShare of them called it and at least
+// ServiceWakeAheadMinColdShare of those calls found it parked (or warm only
+// because of a wake-ahead). Wake-ahead never starts while fleet residency is
+// at or above ServiceWakeAheadMaxResidentPercent of the admission ceiling.
+const (
+	ServiceWakeAheadFollowWindow       = 10 * time.Second
+	ServiceWakeAheadMinWakes           = 20
+	ServiceWakeAheadMinCallShare       = 0.5
+	ServiceWakeAheadMinColdShare       = 0.5
+	ServiceWakeAheadMaxTargets         = 3
+	ServiceWakeAheadMaxDepth           = 2
+	ServiceWakeAheadMaxResidentPercent = 60
+	ServiceWakeAheadMaxApps            = 4096
+	ServiceWakeAheadMaxEdgesPerApp     = 16
+	// Edge statistics halve once a caller has this many observed wakes, so
+	// the prediction follows changes in the call pattern.
+	ServiceWakeAheadDecayWakes  = 200
+	ServiceWakeAheadWakeTimeout = 30 * time.Second
+	// The opt-in setting and fleet residency are cached this long.
+	ServiceWakeAheadCacheTTL = 30 * time.Second
+)
+
+// RoutePriority bounds per-app route priorities for the warm-capacity queue
+// (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
+// RoutePriorityCacheTTL and read only when a request has to queue.
+const (
+	RoutePriorityMaxRules = 20
+	RoutePriorityCacheTTL = 30 * time.Second
+	RoutePriorityMaxApps  = 4096
+)
+
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
 // (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
 // covering at most the newest RouteHealthPooledMaxSpan of the stage.
 const (
 	RouteHealthPooledMinSpan = 4 * time.Minute
 	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
+// RouteAdvice bounds the route advisor (ADR-976): it reads retained request
+// telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
+// rule for a route with at least RouteAdviceMinRequests in the window.
+const (
+	RouteAdviceDefaultSince = 7 * 24 * time.Hour
+	RouteAdviceMaxRoutes    = 50
+	RouteAdviceMinRequests  = 200
+	// A cache suggestion needs this share of anonymous 2xx traffic and an
+	// estimated hit share of at least RouteAdviceCacheMinHitShare.
+	RouteAdviceCacheMinAnonymousShare = 0.95
+	RouteAdviceCacheMinHitShare       = 0.2
+	// An async suggestion needs this share of timed-out requests (and at
+	// least RouteAdviceAsyncMinTimeouts of them) or a p95 at or above
+	// RouteAdviceAsyncMinP95.
+	RouteAdviceAsyncMinTimeoutShare = 0.01
+	RouteAdviceAsyncMinTimeouts     = 5
+	RouteAdviceAsyncMinP95          = 10 * time.Second
+	// A throttle suggestion needs one consumer with at least this share of
+	// the route, another consumer to protect, anonymous traffic at or below
+	// RouteAdviceThrottleMaxAnonymousShare, and an estimated throttled share
+	// of at least RouteAdviceThrottleMinExcessShare. The suggested limit is
+	// RouteAdviceThrottleHeadroom times the next busiest consumer's peak.
+	RouteAdviceThrottleMinTopShare       = 0.5
+	RouteAdviceThrottleMaxAnonymousShare = 0.01
+	RouteAdviceThrottleMinExcessShare    = 0.01
+	RouteAdviceThrottleHeadroom          = 2
 )
 
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).

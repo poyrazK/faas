@@ -84,7 +84,7 @@ func (r *PostgresSealedCredentialResolver) Authorization(ctx context.Context, in
 }
 
 // Authorizations returns the primary credential and every extra key of the
-// integration's pool (ADR-984), primary first, then extra keys by age. Like
+// integration's pool (ADR-991), primary first, then extra keys by age. Like
 // Authorization it reads the database on every call, so a removed key stops
 // being used at once.
 func (r *PostgresSealedCredentialResolver) Authorizations(ctx context.Context, integrationID string) ([]ManagedKey, error) {

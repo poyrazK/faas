@@ -1,5 +1,5 @@
 -- filename: 20261011164753536_outbound_ai_hard_caps_providers_visibility.sql
--- ADR-984: admission-time AI reservations, per-app per-minute limits and
+-- ADR-991: admission-time AI reservations, per-app per-minute limits and
 -- guardrails, four more AI providers, OpenAI-format routes, extra provider
 -- keys, budget alerts and the opt-in AI request log. Additive and replay-safe.
 

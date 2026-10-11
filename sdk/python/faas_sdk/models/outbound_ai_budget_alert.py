@@ -19,7 +19,7 @@ T = TypeVar("T", bound="OutboundAIBudgetAlert")
 
 @_attrs_define
 class OutboundAIBudgetAlert:
-    """The first settlement that reached a budget threshold in its period (ADR-984). limit and used are tokens for token
+    """The first settlement that reached a budget threshold in its period (ADR-991). limit and used are tokens for token
     budgets and millicents for cost budgets.
 
     """

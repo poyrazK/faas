@@ -30,6 +30,16 @@ func reaperDeploymentEnded(status state.DeploymentStatus) bool {
 	return status == state.DeployCancelled || status == state.DeployFailed
 }
 
+// reaperAbortedCanary reports a canary candidate the circuit breaker aborted:
+// still live but at 0% traffic, so nothing routes to it again unless an
+// operator recovers it. Production-us hunt #9: the aborted candidate's idle
+// instance kept the rollout grant slot of a max_concurrency=1 app until the
+// idle timeout, so the next deploy's hosting smoke answered 429 for four
+// minutes. It drains like a superseded revision, keeping its snapshot.
+func reaperAbortedCanary(d state.Deployment) bool {
+	return d.Status == state.DeployLive && d.TrafficPercent == 0 && state.AbortedCanaryCandidate(d)
+}
+
 type reaperDeploymentPolicy struct {
 	app           state.App
 	deployment    state.Deployment
@@ -99,7 +109,7 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				row.PolicyUnavailable = true
 				continue
 			}
-			if policy.deployment.Status == state.DeploySuperseded {
+			if policy.deployment.Status == state.DeploySuperseded || reaperAbortedCanary(policy.deployment) {
 				row.DeploymentSuperseded = true
 				continue
 			}

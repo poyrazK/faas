@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+
 	// Test-only downstream orchestration exercises the full workflow HTTP boundary.
 	// Production apid remains control-plane-only.
 	//nolint:depguard // The integration harness drives schedd-owned workflow execution.
@@ -106,7 +108,7 @@ func TestOperationWorkflowArtifactHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			srv.operationsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+			srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 			if err != nil {
 				t.Fatal(err)
 			}

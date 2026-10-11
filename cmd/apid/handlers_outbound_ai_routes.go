@@ -54,7 +54,7 @@ func (s *server) listOutboundAIRoutes(w http.ResponseWriter, r *http.Request, ac
 	writeJSON(w, http.StatusOK, out)
 }
 
-// createOutboundAIRoute stores an ordered fallback route (ADR-983).
+// createOutboundAIRoute stores an ordered fallback route (ADR-990).
 func (s *server) createOutboundAIRoute(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateOutboundAIRouteRequest
 	if err := decodeJSONSized(r, &req, 8<<10); err != nil || !api.ValidOutboundAIRouteName(req.Name) ||

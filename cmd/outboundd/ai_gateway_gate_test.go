@@ -1,6 +1,6 @@
 package main
 
-// adr: 984 — the AI gateway release gate is off unless enabled.
+// adr: 991 — the AI gateway release gate is off unless enabled.
 
 import (
 	"testing"

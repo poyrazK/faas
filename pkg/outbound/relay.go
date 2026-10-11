@@ -14,7 +14,7 @@ import (
 )
 
 // RelayIdentityVerifier authenticates the connection-scoped assertion vmmd
-// attaches to an app (ADR-982) or Run (ADR-983) relay connection.
+// attaches to an app (ADR-989) or Run (ADR-990) relay connection.
 type RelayIdentityVerifier interface {
 	VerifyRelay(rawToken string) (WorkloadIdentity, error)
 	VerifyExecutionRelay(rawToken string) (ExecutionIdentity, error)
@@ -183,7 +183,7 @@ func (l *relayListener) handshake(conn net.Conn) {
 // readRelayPrincipal reads the preamble under a deadline. For a TLS listener
 // this first Read also completes the mTLS handshake and node verification.
 // An app assertion carries no grant list; a Run assertion must carry its
-// granted integrations (ADR-983).
+// granted integrations (ADR-990).
 func readRelayPrincipal(conn net.Conn, verifier RelayIdentityVerifier) (relayPrincipal, error) {
 	if err := conn.SetDeadline(time.Now().Add(relayPreambleTimeout)); err != nil {
 		return relayPrincipal{}, err

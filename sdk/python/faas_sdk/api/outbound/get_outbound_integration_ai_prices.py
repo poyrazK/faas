@@ -78,7 +78,7 @@ def sync_detailed(
 ) -> Response[OutboundAIPriceListResponse | Problem]:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope (ADR-983).
+     Requires MFA and read scope (ADR-990).
 
     Args:
         integration (UUID):
@@ -109,7 +109,7 @@ def sync(
 ) -> OutboundAIPriceListResponse | Problem | None:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope (ADR-983).
+     Requires MFA and read scope (ADR-990).
 
     Args:
         integration (UUID):
@@ -135,7 +135,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIPriceListResponse | Problem]:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope (ADR-983).
+     Requires MFA and read scope (ADR-990).
 
     Args:
         integration (UUID):
@@ -164,7 +164,7 @@ async def asyncio(
 ) -> OutboundAIPriceListResponse | Problem | None:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope (ADR-983).
+     Requires MFA and read scope (ADR-990).
 
     Args:
         integration (UUID):

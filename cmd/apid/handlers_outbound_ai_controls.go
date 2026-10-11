@@ -25,7 +25,7 @@ func (s *server) outboundAIControlStore(w http.ResponseWriter) (state.OutboundAI
 }
 
 // putOutboundBindingAIGuardrails replaces one app's per-minute limits, model
-// allow-list and output ceiling on an AI integration it is bound to (ADR-984).
+// allow-list and output ceiling on an AI integration it is bound to (ADR-991).
 func (s *server) putOutboundBindingAIGuardrails(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -79,7 +79,7 @@ func (s *server) listOutboundCredentialKeys(w http.ResponseWriter, r *http.Reque
 }
 
 // createOutboundCredentialKey seals and stores an extra provider key for a
-// customer-sealed integration (ADR-984).
+// customer-sealed integration (ADR-991).
 func (s *server) createOutboundCredentialKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := outboundIntegrationPathID(w, r)
 	if !ok {
@@ -169,7 +169,7 @@ func queryLimit(r *http.Request, maximum int) (int, bool) {
 }
 
 // listOutboundAIBudgetAlerts lists the budget thresholds outboundd recorded,
-// newest first (ADR-984).
+// newest first (ADR-991).
 func (s *server) listOutboundAIBudgetAlerts(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := outboundIntegrationPathID(w, r)
 	if !ok {
@@ -208,7 +208,7 @@ func (s *server) listOutboundAIBudgetAlerts(w http.ResponseWriter, r *http.Reque
 }
 
 // listOutboundAIRequestLog pages the opt-in request log newest first;
-// ?before= takes the previous page's next_before (ADR-984).
+// ?before= takes the previous page's next_before (ADR-991).
 func (s *server) listOutboundAIRequestLog(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := outboundIntegrationPathID(w, r)
 	if !ok {

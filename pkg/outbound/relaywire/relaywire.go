@@ -1,5 +1,5 @@
 // Package relaywire is the preamble vmmd writes at the start of an app relay
-// connection to outboundd (ADR-982). After the preamble the connection
+// connection to outboundd (ADR-989). After the preamble the connection
 // carries the guest's HTTP bytes unchanged, so this is the only framing
 // either side owns.
 package relaywire
@@ -17,7 +17,7 @@ import (
 const MaxPreambleBytes = 12 << 10
 
 // Preamble carries the vmmd-minted relay assertion for the connection. For a
-// Run (ADR-983) it also lists the integrations granted to that Run; the
+// Run (ADR-990) it also lists the integrations granted to that Run; the
 // mTLS channel from vmmd authenticates the list like the assertion itself.
 type Preamble struct {
 	Assertion             string   `json:"assertion"`

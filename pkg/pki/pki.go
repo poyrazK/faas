@@ -205,7 +205,7 @@ func Roles() []Role {
 		{CommonName: "apid.faas", Kind: KindServer, Directory: "apid", Filename: "advisory", AltNames: ProductionSANs("apid.faas")},
 		{CommonName: "githubd.faas", Kind: KindServer, Directory: "githubd", Filename: "server", AltNames: ProductionSANs("githubd.faas")},
 		{CommonName: "meterd.faas", Kind: KindServer, Directory: "meterd", Filename: "server", AltNames: ProductionSANs("meterd.faas")},
-		// ADR-982: outboundd's app relay listener; compute vmmd dials it with
+		// ADR-989: outboundd's app relay listener; compute vmmd dials it with
 		// the vmmd/outboundd-client node-identity leaf.
 		{CommonName: "outboundd.faas", Kind: KindServer, Directory: "outboundd", Filename: "server", AltNames: ProductionSANs("outboundd.faas")},
 		// Tier A9 / ADR-084: the cross-box standby write-
@@ -338,7 +338,7 @@ func rolesForControlPlane() []Role {
 		"meterd":          true, // meterd/server + meterd/{schedd-client,egress-client}
 		"githubd":         true, // githubd/server (apid dials it from this box)
 		"gatewayd-public": true, // leader-server (fsn-1's listener)
-		"outboundd":       true, // outboundd/server (ADR-982 relay listener)
+		"outboundd":       true, // outboundd/server (ADR-989 relay listener)
 	}
 	return filterRolesByDirectory(keep)
 }
