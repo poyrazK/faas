@@ -134,3 +134,26 @@ Check receipt retries retain exact identities, quotas precede restore/alarm gues
 execution, and no expired grant returns after a CAS conflict or restart. Inventory
 legacy entity storage before migration and verify prefix cleanup/version-history
 policy independently. Source fixture tests do not establish these native results.
+
+## Source qualification
+
+[CI run 38134656670](https://github.com/poyrazK/faas/actions/runs/38134656670)
+passed for source `259962cd74d907089ea06bc33e7e356f1de8b19b`.
+The Node build, 16 focused SDK tests, packed-starter acceptance, four Go
+race-tested durable packages (including eight new quota tests), focused CLI
+checks, and 20 top-level socket/quota/alarm/restore API tests passed. API fixture
+execution took 2.026 seconds; the cold compilation accounted for the long job.
+
+Coverage includes shared-bucket concurrent acquisition by separate managers,
+crash-expired/released leases, isolated tenant scopes, namespace/key rotation,
+fixed-window rate admission, grant byte accounting/expiry/revocation, read-only
+compaction visibility, persisted policy tightening and mismatched entity caps,
+legacy credential rejection, and uncertain writes that never dispatch. Actual
+HTTP/WebSocket fixtures verify shared service/browser capacity, scoped grant
+revocation, numeric backpressure, and invocation/restore admission.
+
+An earlier cold-cache CI build terminated with SIGTERM before reporting API test
+results. The successful rerun uses a 3 GiB compiler budget, retains race coverage,
+and bounds verbose API fixture execution to two minutes. No local tests/builds
+or native host/bucket acceptance were run. Production preview enablement and
+existing-data migration remain gated on the independent acceptance above.
