@@ -5392,6 +5392,20 @@ type ProjectEnvironmentCloneMigrationAdoption struct {
 	DispatchedAt      pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneMigrationResume struct {
+	DispatchID     pgtype.UUID
+	InstanceID     pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WakeID         pgtype.UUID
+	RequestReason  string
+	LeaseToken     string
+	SourceNodeID   string
+	LeaseCreatedAt pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	DispatchedAt   pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneObjectCredential struct {
 	OperationID        pgtype.UUID
 	SourceCredentialID pgtype.UUID

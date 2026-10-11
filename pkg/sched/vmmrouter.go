@@ -231,6 +231,7 @@ type VMMRouter struct {
 	// every per-node execution stream and never travels to vmmd or the guest.
 	outboundRelay     ExecutionOutboundRelay
 	wakeDispatch      func(context.Context, string, string, string, string, string) error
+	migrationResume   func(context.Context, string, string, string) error
 	migrationAdoption func(context.Context, string, string, string, string, string, string, string) error
 }
 
@@ -285,6 +286,13 @@ func (r *VMMRouter) recordCloneWakeDispatch(ctx context.Context, nodeID, instanc
 // Production wires PgStore before serving migration requests.
 func (r *VMMRouter) WithCloneMigrationAdoptionRecorder(record func(context.Context, string, string, string, string, string, string, string) error) *VMMRouter {
 	r.migrationAdoption = record
+	return r
+}
+
+// WithCloneMigrationResumeRecorder installs source cancel/resume dispatch admission.
+// Production wires PgStore before serving migration requests.
+func (r *VMMRouter) WithCloneMigrationResumeRecorder(record func(context.Context, string, string, string) error) *VMMRouter {
+	r.migrationResume = record
 	return r
 }
 
@@ -826,6 +834,11 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 	cli, err := r.resolveFor(ctx, dyingNodeID)
 	if err != nil {
 		return err
+	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, instanceID, dyingNodeID, leaseToken); err != nil {
+			return err
+		}
 	}
 	return cli.CancelLiveMigration(ctx, dyingNodeID, instanceID, leaseToken)
 }

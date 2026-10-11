@@ -5302,7 +5302,10 @@ SELECT EXISTS(SELECT 1 FROM retirement) AND
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AND
  NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_migration_adoptions a
  WHERE a.request_reason='environment-clone:'||r.operation_id::text OR
- r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text)))) AS closed
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_migration_resumes s
+ WHERE s.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',s.deployment_id::text)))) AS closed
 `
 
 // No instance state label proves native closure. Any remaining original row or
@@ -55296,6 +55299,21 @@ func (q *Queries) RecordCloneCheckpointMigrationAdoption(ctx context.Context, db
 		arg.VmstateStorageKey,
 		arg.LeaseToken,
 	)
+	return err
+}
+
+const recordCloneCheckpointMigrationResume = `-- name: RecordCloneCheckpointMigrationResume :exec
+SELECT record_clone_checkpoint_migration_resume($1::uuid,$2::text,$3::text)
+`
+
+type RecordCloneCheckpointMigrationResumeParams struct {
+	InstanceID   pgtype.UUID
+	SourceNodeID string
+	LeaseToken   string
+}
+
+func (q *Queries) RecordCloneCheckpointMigrationResume(ctx context.Context, db DBTX, arg RecordCloneCheckpointMigrationResumeParams) error {
+	_, err := db.Exec(ctx, recordCloneCheckpointMigrationResume, arg.InstanceID, arg.SourceNodeID, arg.LeaseToken)
 	return err
 }
 

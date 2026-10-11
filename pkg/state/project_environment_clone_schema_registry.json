@@ -6204,6 +6204,23 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_migration_resumes",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "dispatch_id",
+      "dispatched_at",
+      "instance_id",
+      "lease_created_at",
+      "lease_expires_at",
+      "lease_token",
+      "request_reason",
+      "source_node_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_object_credentials",
     "columns": [
       "operation_id",

@@ -9989,3 +9989,28 @@ and proof-backed release still need a qualified native protocol. PostgreSQL test
 exercise catalog absence, namespace isolation, paging, private serialization,
 worker authentication and handoff. No native VM or live provider was exercised;
 public full-stage admission remains gated.
+
+### Retained source cancel/resume dispatch ownership
+
+The production scheduler router records clone source cancellation before its
+vmmd RPC, because cancellation can resume the source workload. Admission is
+serialized with the permanent retirement fence and requires a current database
+snapshot. The journal binds original instance, app, deployment, wake, request
+namespace and source lease identity. It permits the normal durable rollback to
+parked, which clears the instance token, while authenticating the retained source
+lease. Pending and expired leases remain ownership evidence on this cancel path.
+
+One dispatch is allowed per instance and original lease token. Lost replies do
+not authorize redispatch. Records are immutable, survive source cleanup and
+prevent an all-clear retirement receipt independently of current catalog rows.
+Evidence-bearing rollback is rejected. Unrelated deployments keep their existing
+cancel behavior without clone journaling; missing instance ownership fails closed
+because it cannot exclude a fenced clone request.
+
+PostgreSQL tests cover source ownership, parked rollback, pending/expired leases,
+queued fence races, stale snapshots, retention and migration replay. Router tests
+verify record-before-RPC ordering and rejection after an unknown reply. This is
+control-plane dispatch evidence, not proof of native closure. Authenticated
+source resume recovery and host-generation proof-backed release remain pending.
+Native KVM acceptance and live provider qualification were not performed;
+public full-stage admission remains gated.
