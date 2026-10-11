@@ -657,6 +657,15 @@
    section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
    const reportingURL=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(p.reporting_operation_id));reportingURL.searchParams.set('scope',active.get('scope'));const reportingLink=node('a','Original reporting operation');reportingLink.href=reportingURL.href;section.append(reportingLink);
    if(!p.items.length)section.append(node('p','No evidence items were declared; checklist completion is not asserted.'));
+   const applicability=p.applicability;
+   if(applicability){
+    section.append(node('p','Applicability: '+applicability.status.replace(/_/g,' ')+' · '+applicability.summary),node('p',applicability.suggested_action));
+    section.append(node('p',applicability.remaining_item_count+' checklist items remain pending · Checked '+clock(applicability.checked_at)));
+    if(applicability.current_contract_version)section.append(node('p','Observed workflow contract v'+applicability.current_contract_version+(applicability.state_revision?' · Report revision '+applicability.state_revision:'')));
+    if(applicability.definition_changed)section.append(node('p','The reporting definition changed; this checklist keeps its original guidance and reviews.'));
+    if(applicability.status==='applicable'&&!applicability.evidence_complete)section.append(node('p','The trigger was observed, but evaluated evidence coverage is incomplete.'));
+    if(applicability.reporting_operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(applicability.reporting_operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Applicability reporting operation');link.href=url.href;section.append(link);}
+   }else section.append(node('p','Applicability has not been checked in this response. Reload the case overview for current evidence.'));
    if(p.checklist_complete)section.append(node('p','Checklist complete (human review).'));
    if(p.history_truncated)section.append(node('p','Older checklist reviews are no longer retained.'));
    p.items.forEach((item,index)=>{

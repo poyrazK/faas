@@ -2978,3 +2978,37 @@ includes starts and the latest 64 item review snapshots per checklist; truncatio
 explicit. Evidence is validated on edits, not continuously, and retention may later
 remove referenced facts. Human review and checklist completion do not change
 application-owned blockers, readiness, authorization, execution or business outcomes.
+
+### Check whether pinned playbooks still apply
+
+Every checklist returned in a workflow case overview now includes an optional
+`applicability` observation. Its status distinguishes `applicable`, `trigger_absent`,
+`terminal_reported`, `contract_changed`, `guidance_changed`, `evidence_unavailable`,
+`definition_unavailable` and `evidence_incomplete`. The observation includes a server
+check clock, current report identity and revision where available, reporting-definition
+change information, a review suggestion, and the number of pending checklist items.
+The dashboard renders the observation and links to its reporting operation. Go, Node
+and Python SDKs expose the same response metadata.
+
+Checks use the current exact-case application report and its immutable reporting
+definition, sharing the evidence used to match case guidance. Missing, stale or
+incomparable state cannot establish applicability or trigger absence. A changed
+workflow contract requires review. Within the same workflow version, compare the
+whole canonical rule, including its rule version, evidence labels and links; changed
+or removed guidance is reported even if its old trigger still appears. A new reporting
+definition with identical guidance can still be applicable and is explicitly flagged.
+
+Positive trigger matches can be observed in incomplete evaluations; `evidence_complete`
+records that limitation. An absent trigger is reported only with complete relevant
+coverage: full current blockers, full internal verification observations, or all
+current-state evaluated transitions as appropriate. Verification uses the complete
+internal observations rather than the public proof preview. A workflow with no
+current-state transitions has no transition-based trigger in that retained evaluation.
+Terminal reports remain distinct from both successful outcomes and trigger absence.
+
+These are live advisory reads, not durable audit events. Observations are not stored,
+do not advance checklist revisions, and are omitted from start/update responses.
+They never close or reopen checklist items, replace frozen guidance, alter reviews,
+change application-owned blockers/readiness, or infer business success. Existing
+attached evidence is not revalidated by this trigger check. Refresh the case before
+acting; the application continues to own verification, outcome interpretation and execution.

@@ -2213,6 +2213,8 @@ from .operation_workflow_planned_decision import OperationWorkflowPlannedDecisio
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
 from .operation_workflow_playbook import OperationWorkflowPlaybook
+from .operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
+from .operation_workflow_playbook_applicability_status import OperationWorkflowPlaybookApplicabilityStatus
 from .operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
 from .operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
 from .operation_workflow_playbook_match_kind import OperationWorkflowPlaybookMatchKind
@@ -5835,6 +5837,8 @@ __all__ = (
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
     "OperationWorkflowPlaybook",
+    "OperationWorkflowPlaybookApplicability",
+    "OperationWorkflowPlaybookApplicabilityStatus",
     "OperationWorkflowPlaybookEvidence",
     "OperationWorkflowPlaybookGuidance",
     "OperationWorkflowPlaybookMatchKind",

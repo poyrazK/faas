@@ -1506,3 +1506,27 @@ cascade with account/application/customer deletion and otherwise remain durable.
 No user-supplied reviewer, automatic action execution, readiness mutation or inferred
 business success is introduced. Evidence validation describes edit-time checks and
 must not imply continuing fact availability or business correctness.
+
+## Live applicability of pinned playbook checklists
+
+Case overviews project a read-only applicability observation for each retained
+checklist from the same exact current state and reporting-definition lookup used
+for matched guidance. Do not refetch newer deployment definitions or silently upgrade
+frozen rules. Require fresh comparable state, and distinguish changed workflow
+contracts, changed/removed canonical rules, terminal reports, definition unavailability
+and incomplete evaluations. Full-rule comparison includes version, owner, evidence
+labels, summary and safe links. An identical rule from a newer reporting definition
+can remain applicable, with the definition change explicitly recorded.
+
+A positive trigger match is evidence of applicability even when coverage is incomplete;
+absence requires complete relevant coverage. Blockers use the current full report,
+verification uses all internal observations instead of its public preview, and
+transition-based triggers require the complete current-state readiness overview.
+Expose observation identity/clocks, review suggestions and remaining human checklist
+work. Keep terminal state, trigger absence, human completion and business success
+separate. Existing attachments are not continuously revalidated by this check.
+
+Applicability is ephemeral response metadata on case reads, not persisted progress
+or a durable timeline event. It never advances revisions, edits or closes checklists,
+changes guidance/history, or mutates application-owned evidence and execution authority.
+No new migration or quota is required: checklists remain bounded by existing limits.

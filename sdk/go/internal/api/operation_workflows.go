@@ -106,6 +106,7 @@ type OperationWorkflowPlaybookProgressChange struct {
 	Actor     string                                `json:"actor"`
 }
 type OperationWorkflowPlaybookProgress struct {
+	Applicability        *OperationWorkflowPlaybookApplicability   `json:"applicability,omitempty"`
 	ID                   string                                    `json:"id"`
 	Revision             int64                                     `json:"revision"`
 	Playbook             OperationWorkflowPlaybook                 `json:"playbook"`
@@ -120,4 +121,20 @@ type OperationWorkflowPlaybookProgress struct {
 	UpdatedAt            time.Time                                 `json:"updated_at"`
 	History              []OperationWorkflowPlaybookProgressChange `json:"history"`
 	HistoryTruncated     bool                                      `json:"history_truncated"`
+}
+
+// OperationWorkflowPlaybookApplicability is an ephemeral exact-case check, never a checklist mutation.
+type OperationWorkflowPlaybookApplicability struct {
+	Status                 string    `json:"status"`
+	Summary                string    `json:"summary"`
+	SuggestedAction        string    `json:"suggested_action"`
+	CheckedAt              time.Time `json:"checked_at"`
+	CurrentContractVersion int       `json:"current_contract_version,omitempty"`
+	StateRevision          int64     `json:"state_revision,omitempty"`
+	ReportingOperationID   string    `json:"reporting_operation_id,omitempty"`
+	DefinitionID           string    `json:"definition_id,omitempty"`
+	DefinitionChanged      bool      `json:"definition_changed"`
+	TriggerMatched         bool      `json:"trigger_matched"`
+	EvidenceComplete       bool      `json:"evidence_complete"`
+	RemainingItemCount     int       `json:"remaining_item_count"`
 }

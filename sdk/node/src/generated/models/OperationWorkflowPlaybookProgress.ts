@@ -3,12 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybook } from './OperationWorkflowPlaybook.js';
+import type { OperationWorkflowPlaybookApplicability } from './OperationWorkflowPlaybookApplicability.js';
 import type { OperationWorkflowPlaybookProgressChange } from './OperationWorkflowPlaybookProgressChange.js';
 import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
 /**
  * OperationWorkflowPlaybookProgress. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgress = {
+  /**
+   * OperationWorkflowPlaybookProgress.applicability. Live advisory observation included in case overviews only; absent from stored progress and mutation responses. Frozen guidance, revision and history remain unchanged.
+   */
+  applicability?: OperationWorkflowPlaybookApplicability;
   /**
    * OperationWorkflowPlaybookProgress.id. Stable checklist identity; repeated starts for the same pinned case and definition return the existing record.
    */

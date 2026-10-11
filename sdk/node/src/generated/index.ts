@@ -1160,6 +1160,7 @@ export type { OperationWorkflowPlannedDecision } from './models/OperationWorkflo
 export type { OperationWorkflowPlannedEffect } from './models/OperationWorkflowPlannedEffect.js';
 export type { OperationWorkflowPlannedInvariant } from './models/OperationWorkflowPlannedInvariant.js';
 export type { OperationWorkflowPlaybook } from './models/OperationWorkflowPlaybook.js';
+export type { OperationWorkflowPlaybookApplicability } from './models/OperationWorkflowPlaybookApplicability.js';
 export type { OperationWorkflowPlaybookEvidence } from './models/OperationWorkflowPlaybookEvidence.js';
 export type { OperationWorkflowPlaybookGuidance } from './models/OperationWorkflowPlaybookGuidance.js';
 export type { OperationWorkflowPlaybookProgress } from './models/OperationWorkflowPlaybookProgress.js';

@@ -8,37 +8,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func projectWorkflowCasePlaybooks(ctx context.Context, store workflowCaseBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, out *api.OperationWorkflowCase) error {
+type workflowCasePlaybookContext struct {
+	Rules        []api.OperationWorkflowPlaybook
+	DefinitionID string
+}
+
+func projectWorkflowCasePlaybooks(ctx context.Context, store workflowCaseBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, out *api.OperationWorkflowCase) (workflowCasePlaybookContext, error) {
+	source := workflowCasePlaybookContext{}
 	out.Guidance = []api.OperationWorkflowPlaybookGuidance{}
 	out.GuidanceStatus = "evidence_unavailable"
 	instance := out.Instance
 	if instance == nil || instance.State == nil || instance.State.Stale || instance.ContractVersion != effectiveWorkflowContractVersion(instance.State.ContractVersion) {
-		return nil
+		return source, nil
 	}
 	state := instance.State
 	op, err := store.OperationByID(ctx, account, tenant, state.OperationID)
 	if errors.Is(err, ErrNotFound) {
 		out.GuidanceStatus = "definition_unavailable"
-		return nil
+		return source, nil
 	}
 	if err != nil {
-		return err
+		return source, err
 	}
 	if !sameOperationHistoryIdentity(op.AppID, opts.AppID) || op.Scope != opts.Scope || op.Subject == nil || *op.Subject != out.Timeline.Subject || !sameOperationHistoryIdentity(op.PlatformTenantID, tenant) {
 		out.GuidanceStatus = "definition_unavailable"
-		return nil
+		return source, nil
 	}
 	def, err := store.OperationDefinitionByID(ctx, account, op.DefinitionID)
 	if errors.Is(err, ErrNotFound) {
 		out.GuidanceStatus = "definition_unavailable"
-		return nil
+		return source, nil
 	}
 	if err != nil {
-		return err
+		return source, err
 	}
 	if !sameOperationHistoryIdentity(def.AppID, op.AppID) || def.Scope != op.Scope {
 		out.GuidanceStatus = "definition_unavailable"
-		return nil
+		return source, nil
 	}
 	rules := map[string]api.OperationWorkflowPlaybook{}
 	for _, step := range def.Spec.WorkflowSteps {
@@ -48,7 +54,7 @@ func projectWorkflowCasePlaybooks(ctx context.Context, store workflowCaseBackend
 		for _, r := range step.Playbooks {
 			if prior, ok := rules[r.ID]; ok && readinessDigest(prior) != readinessDigest(r) {
 				out.GuidanceStatus = "definition_unavailable"
-				return nil
+				return source, nil
 			}
 			rules[r.ID] = r
 		}
@@ -60,15 +66,17 @@ func projectWorkflowCasePlaybooks(ctx context.Context, store workflowCaseBackend
 	candidates, err = api.CanonicalOperationWorkflowPlaybooks(candidates)
 	if err != nil {
 		out.GuidanceStatus = "definition_unavailable"
-		return nil
+		return source, nil
 	}
+	source.Rules = candidates
+	source.DefinitionID = def.ID
 	out.GuidanceStatus = "not_declared"
 	if len(candidates) == 0 {
-		return nil
+		return source, nil
 	}
 	out.GuidanceStatus = "available"
 	if state.Terminal {
-		return nil
+		return source, nil
 	}
 	if instance.Readiness != nil && instance.Readiness.HasMore {
 		out.GuidanceTruncated = true
@@ -83,7 +91,7 @@ func projectWorkflowCasePlaybooks(ctx context.Context, store workflowCaseBackend
 		}
 		out.Guidance = append(out.Guidance, api.OperationWorkflowPlaybookGuidance{Playbook: r, ContractVersion: instance.ContractVersion, ReportingOperationID: state.OperationID})
 	}
-	return nil
+	return source, nil
 }
 func workflowCasePlaybookMatches(instance *api.OperationWorkflowInstanceSnapshot, r api.OperationWorkflowPlaybook) bool {
 	if r.MatchKind == "blocker" {

@@ -321,3 +321,5 @@ type OperationWorkflowPlaybookProgressItem = api.OperationWorkflowPlaybookProgre
 type OperationWorkflowPlaybookProgressChange = api.OperationWorkflowPlaybookProgressChange
 
 type OperationWorkflowPlaybookProgress = api.OperationWorkflowPlaybookProgress
+
+type OperationWorkflowPlaybookApplicability = api.OperationWorkflowPlaybookApplicability

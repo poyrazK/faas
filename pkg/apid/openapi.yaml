@@ -77688,6 +77688,9 @@ components:
       - history
       - history_truncated
       properties:
+        applicability:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookApplicability'
+          description: OperationWorkflowPlaybookProgress.applicability. Live advisory observation included in case overviews only; absent from stored progress and mutation responses. Frozen guidance, revision and history remain unchanged.
         id:
           type: string
           format: uuid
@@ -77752,6 +77755,88 @@ components:
           type: boolean
           description: OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the
             bounded history.
+
+    OperationWorkflowPlaybookApplicability:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
+        current exact-case evidence. No progress, review history, readiness or outcome is mutated.
+      required:
+      - status
+      - summary
+      - suggested_action
+      - checked_at
+      - definition_changed
+      - trigger_matched
+      - evidence_complete
+      - remaining_item_count
+      properties:
+        status:
+          type: string
+          enum:
+          - applicable
+          - trigger_absent
+          - terminal_reported
+          - contract_changed
+          - guidance_changed
+          - evidence_unavailable
+          - definition_unavailable
+          - evidence_incomplete
+          description: OperationWorkflowPlaybookApplicability.status. Current advisory disposition; absent triggers
+            and terminal reports are not business success.
+        summary:
+          type: string
+          description: OperationWorkflowPlaybookApplicability.summary. Evidence interpretation, including uncertainty
+            and authority boundaries.
+        suggested_action:
+          type: string
+          description: OperationWorkflowPlaybookApplicability.suggested_action. Human review suggestion; never execution
+            permission or an automatic checklist closure.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookApplicability.checked_at. Shared server observation clock for the current
+            case checklists; sources are independently read.
+        current_contract_version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: OperationWorkflowPlaybookApplicability.current_contract_version. Current projected workflow contract
+            version, if a report exists; status determines comparability.
+        state_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookApplicability.state_revision. Observed application state revision, when
+            available; stale reports remain explicitly unavailable.
+        reporting_operation_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookApplicability.reporting_operation_id. Current state-report operation,
+            when available; distinct from the frozen original reporting operation.
+        definition_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookApplicability.definition_id. Exact current reporting definition validated
+            under account, application, customer, environment and subject fences, if available.
+        definition_changed:
+          type: boolean
+          description: OperationWorkflowPlaybookApplicability.definition_changed. An observed reporting definition differs
+            from the pinned original. False does not establish availability; inspect definition_id and status.
+        trigger_matched:
+          type: boolean
+          description: OperationWorkflowPlaybookApplicability.trigger_matched. The unchanged pinned rule positively
+            matches current retained evidence. False may mean unevaluated or incomplete evidence; inspect status.
+        evidence_complete:
+          type: boolean
+          description: OperationWorkflowPlaybookApplicability.evidence_complete. Relevant trigger coverage is complete
+            for this retained evaluation. Does not validate existing checklist attachments or infer business correctness.
+        remaining_item_count:
+          type: integer
+          minimum: 0
+          maximum: 16
+          description: OperationWorkflowPlaybookApplicability.remaining_item_count. Count of frozen checklist items
+            not human-reviewed as completed; independent of current trigger or business outcome.
 
   responses:
     OperationConflict:

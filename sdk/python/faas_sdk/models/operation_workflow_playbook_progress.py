@@ -7,8 +7,11 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
+    from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
     from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
     from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
 
@@ -57,6 +60,9 @@ class OperationWorkflowPlaybookProgress:
     history_truncated: bool
     """OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
     history."""
+    applicability: OperationWorkflowPlaybookApplicability | Unset = UNSET
+    """OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
+    current exact-case evidence. No progress, review history, readiness or outcome is mutated."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -93,6 +99,10 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = self.history_truncated
 
+        applicability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.applicability, Unset):
+            applicability = self.applicability.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -113,12 +123,15 @@ class OperationWorkflowPlaybookProgress:
                 "history_truncated": history_truncated,
             }
         )
+        if applicability is not UNSET:
+            field_dict["applicability"] = applicability
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
+        from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
         from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
         from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
 
@@ -161,6 +174,13 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = d.pop("history_truncated")
 
+        _applicability = d.pop("applicability", UNSET)
+        applicability: OperationWorkflowPlaybookApplicability | Unset
+        if isinstance(_applicability, Unset):
+            applicability = UNSET
+        else:
+            applicability = OperationWorkflowPlaybookApplicability.from_dict(_applicability)
+
         operation_workflow_playbook_progress = cls(
             id=id,
             revision=revision,
@@ -176,6 +196,7 @@ class OperationWorkflowPlaybookProgress:
             updated_at=updated_at,
             history=history,
             history_truncated=history_truncated,
+            applicability=applicability,
         )
 
         return operation_workflow_playbook_progress
