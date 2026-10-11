@@ -121,3 +121,38 @@ requires a future explicit recovery-retention contract.
 Native GCS/KVM, ownership failure, interrupted cleanup, clock and fleet acceptance
 remain required before production enablement. No production gate is enabled by
 this workflow.
+
+## Independent native acceptance handoff
+
+Bind evidence to the exact qualified source commit, bucket/backend placement,
+serving-node quota configuration and clock bounds. Keep credentials and customer
+payloads out of the evidence. Use a dedicated private acceptance scope.
+
+| Scenario | Required observation |
+| --- | --- |
+| Concurrent owner acquisition and retirement | One manifest CAS wins; retirement never overwrites a live/newer claim or allows an obsolete owner to publish afterwards. |
+| Tombstone acknowledgement loss | Status shows the committed operation when accepted; exact start replay resumes it with the original actor and no second fence operation. |
+| Failure between tombstone and quota tracking | Identity remains retired, the original reservation stays charged, and exact start/step can finish tracking after blockers are resolved. |
+| Receipt proof across restart | Proof pages resume under the same root; all committed request receipts remain authenticated and reachable after state scrubbing. |
+| Delete/checkpoint acknowledgement loss | Admission stays fenced, cursor/revision inspection resolves uncertainty, and retry only deletes immutable obsolete keys. |
+| Expired native listing cursor | No quota credit occurs; revision-checked cleanup restart discards the cursor and can finish a new full verification pass. |
+| Late obsolete upload during verification | Verification restarts cleanup; tombstone and current recovery references are never deleted or replaced. |
+| Quota credit acknowledgement loss | Ledger completion receipt and active-slot removal are both visible or both absent; exact replay never credits bytes twice. |
+| Cross-node admission after completion | Old identity returns 410 without dispatch; a new identity can use the recovered active slot within the remaining byte budget. |
+| Fleet/schema rollback | Older readers reject manifest schema 7 and quota schema 3; no reset, TTL or rollback of authority objects is permitted. |
+| Native version history and backups | Retained history is reported separately; current-key cleanup is not accepted as evidence of complete erasure. |
+
+## Source qualification
+
+[CI run 38154875231](https://github.com/poyrazK/faas/actions/runs/38154875231)
+passed for source commit `7818516de160b4d355e4fb0edf6befc5203c2e3e`.
+It passed the Node build, 16 focused SDK tests, packed-starter acceptance, four
+Go durable packages under the race detector, focused CLI checks, and 27 top-level
+API tests under the race detector. Retirement coverage includes bounded receipt
+proof, state scrubbing, stale-owner/admission rejection, original-operation replay,
+uncertain tombstone/delete/credit recovery, checkpoint restart, API authorization,
+capacity reuse and both retained-byte and legacy snapshot-size boundaries.
+
+No local tests, native GCS/KVM runs, PR creation, merge, deployment or production
+enablement were performed. The independent native acceptance matrix remains
+pending for the testing agent. Green source CI does not authorize ingress.
