@@ -36,4 +36,3 @@ AND sequence = ANY(sqlc.arg(sequences)::bigint[]);
 -- name: SaveInboxExpiration :exec
 INSERT INTO managed_realtime_inbox_message_expirations(endpoint_id, channel, sequence, ttl_seconds, expires_at)
 VALUES(sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(channel)::text, sqlc.arg(sequence)::bigint, sqlc.arg(ttl_seconds)::integer, sqlc.arg(expires_at)::timestamptz);
-
