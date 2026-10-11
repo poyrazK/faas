@@ -91,7 +91,9 @@ filenames only after adding them to both source-control and deployment ignores.
 
 ## Qualification
 
-CI coverage accompanies authenticated socket routing, reconnect replay, per-frame
+[CI run 38124353085](https://github.com/poyrazK/faas/actions/runs/38124353085)
+passed for source `2422e3b765195342b234510ea9d69c8bbea3f6b2`.
+Coverage includes authenticated socket routing, reconnect replay, per-frame
 app eligibility, origin rejection, connection slots and malformed frames. SDK and
 packed-starter coverage exercises lost acknowledgements, state restoration, sequence
 gaps, closed sessions, bounded identity retention and isolated restore validation.

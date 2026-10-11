@@ -1,7 +1,7 @@
 # Durable entity release qualification
 
-Scope: the Node developer workflow, typed client generation and operational
-visibility. This is a release review and an acceptance handoff, not evidence that
+Scope: the Node developer workflow, typed client generation, operational
+visibility and reconnectable service-session preview. This is a release review and an acceptance handoff, not evidence that
 native storage or runtime behavior has passed. Production preview gates remain
 off until the operator's native qualification is recorded.
 
@@ -44,6 +44,23 @@ covers the focused workflow, not every repository CI gate. Native KVM/GCS cases
 below remain unverified. Later documentation-only commits do not change the
 qualified source; later code or workflow changes need a fresh successful run.
 
+## Recorded reconnectable-session qualification
+
+[CI run 38124353085](https://github.com/poyrazK/faas/actions/runs/38124353085)
+passed both jobs for source commit
+`2422e3b765195342b234510ea9d69c8bbea3f6b2`.
+
+The Node job passed compilation, package build, 11 SDK tests and the packed
+starter suite with 7 nested cases, including room checkpoint/replay and isolated
+restore validation. Go race checks passed for all four durableentity packages,
+the focused CLI checks and five socket API tests covering reconnect replay,
+changed app admission, disabled preview, revoked credentials, immutable-scope
+fencing and the preview-flag prerequisite.
+
+API integration uses fake execution and in-memory storage. It does not establish
+native GCS publication, restart or multi-owner behavior. Socket admission remains
+separately disabled by default. Local tests/builds were not run.
+
 ## Acceptance environment
 
 The acceptance agent should use the dedicated Gregale internal node and private
@@ -70,6 +87,10 @@ Use isolated test identities; do not inject failures into production workloads.
 | Inspection isolation | Inspect/watch while invocations and relay work continue | Inspection does not acquire ownership, invoke handlers or mutate metadata; tenant/environment selectors remain isolated |
 | Validator/release binding | Build/deploy the starter, validate a candidate, change/roll back the immutable release binding | Correct artifact digest/deployment binding is used; missing/stale/incompatible artifacts fail closed |
 | Credential isolation | Examine the permitted guest protocol and packaged source | No host bucket credential or storage object locator crosses into customer execution |
+| Socket reconnect and restart | Save a pending session frame; interrupt its acknowledgement after publication, restart services and reconnect through another owner | Identical frame replays the original receipt; sequence advances once; durable state survives |
+| Socket admission changes | Revoke the service credential, disable app sockets or suspend the tenant between frames | Next frame cannot dispatch; no acknowledged state change |
+| Socket scope replacement | Replace the selected environment or app while a connection remains open | Existing connection cannot dispatch into a new immutable scope; deliberate reconnect is required |
+| Socket bounds | Fill the configured process/account/entity slots, send oversized or malformed frames, and leave connections idle | Caps hold, rejected frames do not dispatch, and closed connections release slots |
 
 A simulator test cannot replace any native case. Owner takeover needs an actual
 second ownership path and provider CAS evidence, not just killing the local dev
@@ -81,7 +102,8 @@ storage commit merely from a handler response or a successful webhook response.
 CI success qualifies the developer workflow for review. Native acceptance is a
 separate gate for enabling the object-storage-backed preview. The inspection API
 still omits ownership/lease status, replay receipt history and application payloads.
-Generated clients target checked Node JavaScript; browser clients, WebSockets and
+Generated clients target checked Node JavaScript. The new WebSocket preview serves
+owner-authenticated service clients; browser authorization, broadcast, presence and
 hibernation remain outside this release. Alarms and delivery use bounded retry
 contracts; HTTP delivery is not an exactly-once side-effect guarantee.
 

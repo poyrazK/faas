@@ -1,8 +1,9 @@
 # Durable entity developer workflow (Node)
 
-This starter registers three namespaces: `counters` for customer coordination,
-`reservations` for state plus an outgoing webhook intent, and `sessions` for
-scheduled automation. State is schema-versioned. Handlers compute transitions
+This starter registers four namespaces: `counters` for customer coordination,
+`reservations` for state plus an outgoing webhook intent, `sessions` for
+scheduled automation, and `rooms` for reconnectable ordered sessions. State is
+schema-versioned. Handlers compute transitions
 synchronously; external delivery belongs to the platform outbox.
 
 ## Create and prepare

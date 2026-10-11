@@ -1,6 +1,6 @@
 # ADR-970: Reconnectable durable entity sessions
 
-Status: Implemented in source; CI and native acceptance pending.
+Status: Implemented and qualified by focused CI; native acceptance pending.
 
 ## Decision
 
@@ -27,8 +27,10 @@ expiry/reclamation, fleet-wide connection quotas or hibernation.
 
 ## Validation
 
-Author transport slot/origin/frame tests, authenticated API reconnect/admission
+[CI run 38124353085](https://github.com/poyrazK/faas/actions/runs/38124353085)
+passed for source `2422e3b765195342b234510ea9d69c8bbea3f6b2`: transport
+slot/origin/frame tests, authenticated API reconnect/admission/revocation/scope
 checks, SDK lost-acknowledgement and ordered-state tests, and packed-starter restore
-validation. Extend focused CI; local tests/builds remain deferred. Native credential
+validation. Go checks ran with race detection. Local tests/builds remain deferred. Native credential
 revocation, multi-owner routing and restart qualification remain release gates.
 See [session protocol and limits](../durable-entity-sessions.md).
