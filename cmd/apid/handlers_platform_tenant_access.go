@@ -9,7 +9,9 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -173,14 +175,9 @@ func (s *server) revokePlatformTenantAccessToken(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, platformTenantAccessTokenResponse(token))
 }
 
+// platformTenantSelfID is a facade over httpkit.PlatformTenantSelfID (ADR-977).
 func platformTenantSelfID(w http.ResponseWriter, r *http.Request) (string, bool) {
-	principal, ok := principalFrom(r)
-	if !ok || principal.Key == nil || principal.Key.PlatformTenantID == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-			"Platform tenant token required", "use a token issued for this downstream tenant"))
-		return "", false
-	}
-	return principal.Key.PlatformTenantID, true
+	return httpkit.PlatformTenantSelfID(w, r)
 }
 
 func (s *server) getPlatformTenantSelfUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {

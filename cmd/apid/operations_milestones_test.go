@@ -3,15 +3,18 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestOperationMilestoneQueryBoundaries(t *testing.T) {
@@ -29,7 +32,7 @@ func TestOperationMilestoneQueryBoundaries(t *testing.T) {
 		{"subject_type=order&subject_id=42", true, false, false},
 		{"owner=bob", false, false, false},
 	} {
-		_, err := operationMilestoneHistoryOptions(httptest.NewRequest("GET", "/?"+tc.query, nil), tc.operator, tc.reference, "app")
+		_, err := operation.OperationMilestoneHistoryOptions(httptest.NewRequest("GET", "/?"+tc.query, nil), tc.operator, tc.reference, "app")
 		if (err == nil) != tc.valid {
 			t.Fatalf("query %s: %v", tc.query, err)
 		}

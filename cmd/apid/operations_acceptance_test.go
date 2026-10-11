@@ -69,7 +69,7 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := newServer(store, logger, "gregale.dev", noopNotifier{})
-	srv.operationsAdmissionEnabled = true
+	srv.operation.AdmissionEnabled = true
 	owner := httptest.NewServer(srv.handler())
 	t.Cleanup(owner.Close)
 	call := func(method, path, bearer string, body any) *httptest.ResponseRecorder {
@@ -159,7 +159,7 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operationsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	if err := srv.configureOperations(Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
-	srv.operationsAdmissionEnabled = false
+	srv.operation.AdmissionEnabled = false
 	identity := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("audience") != workloadidentity.OperationsAudience {
 			http.Error(w, "audience", 400)
@@ -297,7 +297,7 @@ const server=http.createServer(async(req,res)=>{
 		t.Fatal("Node Operations startup failed")
 	}
 	backend := &operationsAcceptanceBackend{store: store, app: app, plan: acct.Plan}
-	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), logger).WithConsumerAuth(operationsAcceptanceConsumerStore{store}).WithOperationRoutes(gateway.DurableOperationRoutes{Store: store, Admission: srv.operationsPreview})
+	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), logger).WithConsumerAuth(operationsAcceptanceConsumerStore{store}).WithOperationRoutes(gateway.DurableOperationRoutes{Store: store, Admission: srv.operation.Preview})
 	request := func(payload string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "https://"+app.Slug+".gregale.dev/exports", strings.NewReader(payload))
 		r.Header.Set("Authorization", "Bearer "+ingressKeys[0])

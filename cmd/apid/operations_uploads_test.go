@@ -97,7 +97,7 @@ func newHTTPUploadFixture(t *testing.T, kind string) httpUploadFixture {
 		t.Fatal(err)
 	}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	srv.operationsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestOperationHTTPDirectUploadConcurrentCopies(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newHTTPUploadFixture(t, kind)
-			backend := &competingDirectStorage{StorageBackend: f.server.operationArtifactStorage, ready: make(chan struct{})}
+			backend := &competingDirectStorage{StorageBackend: f.server.operation.ArtifactStorage, ready: make(chan struct{})}
 			f.server.WithOperationArtifactStorage(backend)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -267,21 +267,21 @@ func TestOperationHTTPDirectUploadCancellationFence(t *testing.T) {
 					}
 				}
 				if stage == "copied" {
-					f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operationArtifactStorage, after: cancel})
+					f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: cancel})
 				}
 				body := io.NopCloser(strings.NewReader(directJobCSV))
 				if stage == "receiving" {
 					body = io.NopCloser(&cancelDirectRead{Reader: body, cancel: cancel})
 				}
 				a := state.OperationExecutionAuthority{AccountID: f.op.AccountID, AppID: f.op.AppID, InstanceID: f.inv.InstanceID, InvocationID: f.inv.ID, Attempt: f.proof.Attempt, Capability: f.proof.Capability}
-				_, err := f.server.retainOperationUpload(t.Context(), f.store.(state.OperationArtifactStore), f.current(t), a, directJobDeclaration(), body, func() error { return nil })
+				_, err := f.server.operation.RetainOperationUpload(t.Context(), f.store.(state.OperationArtifactStore), f.current(t), a, directJobDeclaration(), body, func() error { return nil })
 				if !errors.Is(err, state.ErrConflict) {
 					t.Fatal("cancelled upload committed", err)
 				}
 				if op := f.current(t); len(op.Artifacts) != 0 || op.ReportCount != 0 || len(op.ArtifactStorageKeys) != 0 {
 					t.Fatal("cancelled upload retained receipt")
 				}
-				if f.server.operationArtifactBudget.bytes != 0 || f.server.operationArtifactBudget.transfers != 0 {
+				if transfers, bytes := f.server.operation.ArtifactBudgetInUse(); bytes != 0 || transfers != 0 {
 					t.Fatal("cancelled transfer leaked budget")
 				}
 			})
@@ -335,7 +335,7 @@ func TestOperationHTTPDirectUploadClaimLostAfterCopy(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newHTTPUploadFixture(t, kind)
-			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operationArtifactStorage, after: func() {
+			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: func() {
 				reaper := f.store.(interface {
 					RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
 				})

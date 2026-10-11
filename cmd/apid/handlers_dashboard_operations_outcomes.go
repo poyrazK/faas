@@ -1,14 +1,16 @@
 package main
 
 import (
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/dashboard"
-	"github.com/onebox-faas/faas/pkg/httpsec"
-	"github.com/onebox-faas/faas/pkg/state"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) renderAppWorkflowOutcomes(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, app state.App) {
@@ -20,7 +22,7 @@ func (s *server) renderAppWorkflowOutcomes(w http.ResponseWriter, r *http.Reques
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeOperationError(w, state.ErrInvalidArgument)
+		operation.WriteOperationError(w, state.ErrInvalidArgument)
 		return
 	}
 	for _, key := range []string{"tenant_id", "workflow", "code"} {
@@ -34,7 +36,7 @@ func (s *server) renderAppWorkflowOutcomes(w http.ResponseWriter, r *http.Reques
 	summaryCursor := ""
 	if values, ok := query["summary_cursor"]; ok {
 		if len(values) != 1 || values[0] == "" {
-			writeOperationError(w, state.ErrInvalidArgument)
+			operation.WriteOperationError(w, state.ErrInvalidArgument)
 			return
 		}
 		summaryCursor = values[0]
@@ -44,9 +46,9 @@ func (s *server) renderAppWorkflowOutcomes(w http.ResponseWriter, r *http.Reques
 	u := *r.URL
 	clone.URL = &u
 	clone.URL.RawQuery = query.Encode()
-	options, err := operationWorkflowOutcomeOptions(clone, true, app.ID, true)
+	options, err := operation.OperationWorkflowOutcomeOptions(clone, true, app.ID, true)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	if options.GroupBy == "" {
@@ -57,14 +59,14 @@ func (s *server) renderAppWorkflowOutcomes(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := store.ListAccountWorkflowOutcomes(r.Context(), acct.ID, options.OperationWorkflowOutcomeOptions)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	summaryOpts := options
 	summaryOpts.Cursor = summaryCursor
 	summary, err := store.SummarizeAccountWorkflowOutcomes(r.Context(), acct.ID, summaryOpts)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	data := dashboard.WorkflowOutcomesData{AppSlug: app.Slug, Scope: options.Scope, TenantID: options.TenantID, Workflow: options.Workflow, Code: options.Code, GroupBy: options.GroupBy, Limit: options.Limit, EvaluatedAt: dashboardJobsTime(result.EvaluatedAt), Summary: summary, ListURL: dashboardCustomerOperationsURL(app.Slug), QueueURL: dashboardCustomerOperationsURL(app.Slug) + "/outcomes"}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -127,7 +128,7 @@ func testOperationDeliveryHTTP(t *testing.T, store operationOperatorTestStore, o
 	}
 	check(call("GET", path+"/delivery-attempts?limit=1&cursor="+page.NextCursor, read, nil), 200)
 	decoded, _ := base64.RawURLEncoding.DecodeString(page.NextCursor)
-	var bound operationDeliveryCursor
+	var bound operation.OperationDeliveryCursor
 	if err := json.Unmarshal(decoded, &bound); err != nil {
 		t.Fatal(err)
 	}

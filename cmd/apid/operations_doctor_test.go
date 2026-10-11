@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -85,20 +86,20 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 			t.Fatalf("doctor selector/ownership %s HTTP %d want %d", item.path, w.Code, item.code)
 		}
 	}
-	oldGate, oldVerifier, oldStorage := srv.operationsPreview, srv.operationsWorkloadVerifier, srv.operationArtifactStorage
+	oldGate, oldVerifier, oldStorage := srv.operation.Preview, srv.operation.WorkloadVerifier, srv.operation.ArtifactStorage
 	defer func() {
-		srv.operationsPreview, srv.operationsWorkloadVerifier, srv.operationArtifactStorage = oldGate, oldVerifier, oldStorage
+		srv.operation.Preview, srv.operation.WorkloadVerifier, srv.operation.ArtifactStorage = oldGate, oldVerifier, oldStorage
 	}()
 	policyPath := filepath.Join(t.TempDir(), "preview.json")
 	gate, _ := operations.NewPreviewAdmission(policyPath)
-	srv.operationsPreview = gate
+	srv.operation.Preview = gate
 	// Presence is configuration evidence only; no JWT/storage I/O is claimed.
-	srv.operationsWorkloadVerifier = &workloadidentity.Verifier{}
+	srv.operation.WorkloadVerifier = &workloadidentity.Verifier{}
 	backend, err := storage.NewLocalStorageBackend(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operationArtifactStorage = backend
+	srv.operation.ArtifactStorage = backend
 	now := time.Now().UTC()
 	policy := operations.PreviewPolicy{Version: 1, Enabled: true, NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), Cohorts: []operations.PreviewCohort{{AccountID: uuid.MustParse(acct.ID).String(), AppID: uuid.MustParse(dep.AppID).String(), Scope: dep.Scope, PlatformTenantIDs: []string{tenant.ID}}}}
 	writePolicy := func(p operations.PreviewPolicy) {
@@ -147,7 +148,7 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 	writePolicy(policy)
 	r = get()
 	check(r, "preview_expired", "blocked", "submission")
-	if srv.operationTenantKindAdmission(acct.ID, dep.AppID, dep.Scope, tenant.ID, operations.ExecutionHTTP) {
+	if srv.operation.OperationTenantKindAdmission(acct.ID, dep.AppID, dep.Scope, tenant.ID, operations.ExecutionHTTP) {
 		t.Fatal("doctor altered closed policy")
 	}
 	if err := os.WriteFile(policyPath, []byte("invalid-policy-containing-secret"), 0600); err != nil {
@@ -179,7 +180,7 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 	}{{int64(api.MustLimitsFor(acct.Plan).Operations.PendingPerAccount), nil, "blocked", "pending_capacity_exhausted"}, {0, errors.New("private database address"), "unknown", "pending_capacity_unavailable"}} {
 		original := srv.store
 		srv.store = operationDoctorCounterFixture{operationOperatorTestStore: store, count: tc.count, err: tc.err}
-		c := srv.observeOperationPending(t.Context(), acct.ID, int64(api.MustLimitsFor(acct.Plan).Operations.PendingPerAccount))
+		c := srv.operation.ObserveOperationPending(t.Context(), acct.ID, int64(api.MustLimitsFor(acct.Plan).Operations.PendingPerAccount))
 		srv.store = original
 		if c.Status != tc.status || c.Code != tc.code || strings.Contains(c.Message, "private database") {
 			t.Fatal("quota uncertainty misclassified", c)
@@ -219,19 +220,19 @@ func TestOperationDoctorUnusableContractAndReleasePins(t *testing.T) {
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
 	changed := d
 	changed.Revision = "changed"
-	checks := srv.observeOperationDefinition(t.Context(), acct, dep, changed)
+	checks := srv.operation.ObserveOperationDefinition(t.Context(), acct, dep, changed)
 	if checks[0].Status != "blocked" || checks[0].Code != "definition_contract_unusable" {
 		t.Fatal("invalid revision observed as usable", checks)
 	}
 	changed = d
 	changed.ReleaseID = uuid.NewString()
-	checks = srv.observeOperationDefinition(t.Context(), acct, dep, changed)
+	checks = srv.operation.ObserveOperationDefinition(t.Context(), acct, dep, changed)
 	if checks[1].Status != "blocked" || checks[1].Code != "release_pin_unavailable" {
 		t.Fatal("missing release observed as usable", checks)
 	}
 	changed = d
 	changed.Spec.CompletionWebhookID = uuid.NewString()
-	check := srv.observeOperationCompletion(t.Context(), acct.ID, app.ID, changed.Spec.CompletionWebhookID)
+	check := srv.operation.ObserveOperationCompletion(t.Context(), acct.ID, app.ID, changed.Spec.CompletionWebhookID)
 	if check.Impact != "delivery" || check.Status != "warning" {
 		t.Fatal("missing completion conflated with business work", check)
 	}

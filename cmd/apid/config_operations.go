@@ -8,7 +8,7 @@ import (
 )
 
 func (s *server) configureOperations(cfg Config, getenv func(string) string) error {
-	s.operationsPreview = &operations.PreviewAdmission{}
+	s.operation.Preview = &operations.PreviewAdmission{}
 	gate, err := operations.NewPreviewAdmission(cfg.OperationsPreviewPolicyPath)
 	if err != nil {
 		return err
@@ -34,7 +34,7 @@ func (s *server) configureOperations(cfg Config, getenv func(string) string) err
 	if err != nil {
 		return fmt.Errorf("configure Operations workload trust: %w", err)
 	}
-	s.operationsWorkloadVerifier = verifier
-	s.operationsPreview = gate
+	s.operation.WorkloadVerifier = verifier
+	s.operation.Preview = gate
 	return nil
 }

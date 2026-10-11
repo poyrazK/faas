@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -84,7 +85,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := newServer(store, logger, "gregale.dev", noopNotifier{})
-	srv.operationsAdmissionEnabled = true
+	srv.operation.AdmissionEnabled = true
 	owner := httptest.NewServer(srv.handler())
 	t.Cleanup(owner.Close)
 	call := func(method, path, bearer string, body any) *httptest.ResponseRecorder {
@@ -168,7 +169,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operationsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	if err := srv.configureOperations(Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
-	srv.operationsAdmissionEnabled = false
+	srv.operation.AdmissionEnabled = false
 	identity := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("audience") != workloadidentity.OperationsAudience {
 			http.Error(w, "audience", 400)
@@ -201,7 +202,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	t.Cleanup(identity.Close)
 
 	return &orderAcceptanceFixture{store: store, account: acct, app: app, definition: def, logger: logger,
-		preview: srv.operationsPreview, ownerKey: key, apiURL: owner.URL, identityURL: identity.URL, node: node, tenants: tenants,
+		preview: srv.operation.Preview, ownerKey: key, apiURL: owner.URL, identityURL: identity.URL, node: node, tenants: tenants,
 		customerTokens: customerTokens, ingressKeys: ingressKeys, call: call}
 }
 

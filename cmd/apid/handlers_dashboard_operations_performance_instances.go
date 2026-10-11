@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -58,9 +59,9 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("workflow performance unavailable"))
 		return
 	}
-	opts, err := operationWorkflowPerformanceInstanceOptions(r, true, app.ID)
+	opts, err := operation.OperationWorkflowPerformanceInstanceOptions(r, true, app.ID)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	}
 	data := dashboard.WorkflowPerformanceData{AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, ListURL: dashboardCustomerOperationsURL(app.Slug), SummaryURL: dashboardCustomerOperationsURL(app.Slug) + "/performance", GroupLabel: workflowPerformanceGroupLabel(opts.OperationWorkflowPerformanceGroup)}
@@ -73,7 +74,7 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 	if errors.Is(err, state.ErrWorkflowPerformanceCohortChanged) {
 		data.CohortChanged = true
 	} else if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return
 	} else {
 		data.Drilldown = &result

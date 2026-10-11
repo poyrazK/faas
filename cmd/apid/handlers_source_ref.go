@@ -289,7 +289,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		OperationDefinitions:      sourceOperationSpecs(manifest),
-		OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
+		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
 		AppID:                     app.ID,
 		Kind:                      state.DeploymentKindGitHub,

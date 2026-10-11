@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -49,7 +50,7 @@ func (s *server) renderAppCustomerOperations(w http.ResponseWriter, r *http.Requ
 		s.renderAppWorkflowAttention(w, r, log, acct, app)
 		return
 	}
-	store, ok := s.operationStore(w)
+	store, ok := s.operation.OperationStore(w)
 	if !ok {
 		return
 	}
@@ -122,7 +123,7 @@ func dashboardOperationListOptions(r *http.Request, appID string) (api.Operation
 	u := *r.URL
 	clone.URL = &u
 	clone.URL.RawQuery = query.Encode()
-	opts, err := accountOperationHistoryOptions(clone, appID)
+	opts, err := operation.AccountOperationHistoryOptions(clone, appID)
 	if opts.Limit == 0 {
 		opts.Limit = api.OperationHistoryPageDefault
 	}
@@ -132,12 +133,12 @@ func dashboardOperationListOptions(r *http.Request, appID string) (api.Operation
 func populateDashboardOperationList(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, store state.OperationStore, data *dashboard.CustomerOperationsData) bool {
 	opts, err := dashboardOperationListOptions(r, app.ID)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return false
 	}
 	page, err := store.ListAccountOperations(r.Context(), acct.ID, opts)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return false
 	}
 	data.SubjectType, data.SubjectID = opts.SubjectType, opts.SubjectID
@@ -252,7 +253,7 @@ func dashboardOperationDetailCursors(r *http.Request) (int64, int, error) {
 func populateDashboardOperationDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, app state.App, id string, store state.OperationStore, data *dashboard.CustomerOperationsData) bool {
 	op, err := store.OperationByID(r.Context(), acct.ID, "", id)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return false
 	}
 	if op.AppID != app.ID {
@@ -261,7 +262,7 @@ func populateDashboardOperationDetail(w http.ResponseWriter, r *http.Request, lo
 	}
 	eventAfter, executionAfter, err := dashboardOperationDetailCursors(r)
 	if err != nil {
-		writeOperationError(w, err)
+		operation.WriteOperationError(w, err)
 		return false
 	}
 	data.Scope = op.Scope

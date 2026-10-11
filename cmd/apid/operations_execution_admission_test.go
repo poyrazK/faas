@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -82,14 +83,14 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 				specs, defs = append(specs, spec), append(defs, def)
 			}
 			srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-			srv.operationsAdmissionEnabled = true // a configured gate overrides private fixtures
-			srv.operationsWorkloadVerifier = &workloadidentity.Verifier{}
-			srv.operationArtifactStorage, err = storage.NewLocalStorageBackend(t.TempDir())
+			srv.operation.AdmissionEnabled = true // a configured gate overrides private fixtures
+			srv.operation.WorkloadVerifier = &workloadidentity.Verifier{}
+			srv.operation.ArtifactStorage, err = storage.NewLocalStorageBackend(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(t.TempDir(), "preview.json")
-			srv.operationsPreview, _ = operations.NewPreviewAdmission(path)
+			srv.operation.Preview, _ = operations.NewPreviewAdmission(path)
 			now := time.Now().UTC()
 			policy := operations.PreviewPolicy{Version: 1, Enabled: true, NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), Cohorts: []operations.PreviewCohort{{AccountID: uuid.MustParse(account.ID).String(), AppID: uuid.MustParse(app.ID).String(), Scope: dep.Scope, PlatformTenantIDs: []string{tenant.ID}}}}
 			write := func(kinds []string) {
@@ -122,7 +123,7 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			customer := api.NewClient(httpServer.URL, token.Token)
-			routes := gateway.DurableOperationRoutes{Store: store.(gateway.OperationRouteStore), Admission: srv.operationsPreview}
+			routes := gateway.DurableOperationRoutes{Store: store.(gateway.OperationRouteStore), Admission: srv.operation.Preview}
 			closed := func(err error) {
 				t.Helper()
 				problem := api.AsProblem(err)
@@ -160,7 +161,7 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 			}
 			_, err = srv.retryOperationDefinitions(ctx, app, dep)
 			closed(err)
-			_, err = apidsource.Enqueue(ctx, store, noopNotifier{}, apidsource.EnqueueParams{OperationDefinitions: specs, OperationAdmissionEnabled: srv.operationDefinitionsAdmission(account.ID, app.ID, dep.Scope, specs)})
+			_, err = apidsource.Enqueue(ctx, store, noopNotifier{}, apidsource.EnqueueParams{OperationDefinitions: specs, OperationAdmissionEnabled: srv.operation.OperationDefinitionsAdmission(account.ID, app.ID, dep.Scope, specs)})
 			closed(err)
 			for _, def := range defs {
 				kind := operations.DefinitionExecutionKind(def.Spec)

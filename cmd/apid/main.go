@@ -738,7 +738,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runCheckedRollbackWorker(ctx)
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runRollbackOn5xxWorker(ctx)
-		go srv.runOperationArtifactCleanup(ctx)
+		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
@@ -1460,7 +1460,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
 		return err
 	}
-	srv.startOperationNotifications(ctx)
+	srv.operation.StartOperationNotifications(ctx)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,6 +21,18 @@ func APIKeyCarriesScope(key state.APIKey, want string) bool {
 		}
 	}
 	return false
+}
+
+// PlatformTenantSelfID returns the downstream tenant a platform-tenant token
+// was issued for. Any other caller gets a 403 written to w and ok=false.
+func PlatformTenantSelfID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	principal, ok := PrincipalFrom(r)
+	if !ok || principal.Key == nil || principal.Key.PlatformTenantID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Platform tenant token required", "use a token issued for this downstream tenant"))
+		return "", false
+	}
+	return principal.Key.PlatformTenantID, true
 }
 
 // Principal is the authenticated caller. Key is nil when the caller
