@@ -2908,8 +2908,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
 		}
 		defer cleanup()
+		handlerSource, handlerErr := functionHandlerSourcePath(runtime, dep.Handler, sourcePath)
+		if handlerErr != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, handlerErr, "select function handler file")
+			return fmt.Errorf("imaged: select function handler file: %w", handlerErr)
+		}
 		buildInput.Layers = layers
-		buildInput.FunctionHandlerSourcePath = sourcePath
+		buildInput.FunctionHandlerSourcePath = handlerSource
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.

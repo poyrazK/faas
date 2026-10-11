@@ -31,8 +31,8 @@ rejects function declarations.
    ```yaml
    functions:
      - name: thumbs              # required, lowercase label
-       root: functions/thumbs    # required, relative directory
-       runtime: node24           # optional; inferred from root otherwise
+       root: functions/thumbs    # relative directory
+       runtime: node24           # optional; inferred otherwise
        idle_timeout_s: 60        # optional
        bucket_events:
          - bucket: uploads       # name or ID
@@ -54,6 +54,15 @@ rejects function declarations.
    `functions` and cron `triggers`. Every other section is rejected, so the
    deploy never silently ignores a declaration it can't apply per function.
 
+   A function has its own `root:` with the runtime's conventional handler
+   file, or it names its file with `handler:` inside a source tree it shares
+   with other functions. `root:` then defaults to the project directory.
+   Shared-tree handlers are `.js`/`.mjs` (Node) or `.py` (Python) files. A
+   missing runtime is inferred from the extension (`.js` → node22,
+   `.py` → python312, matching zero-config). Go functions keep their own
+   root, because each is a separate `main` package. Two functions may share
+   a root only when their handlers differ.
+
 2. **One app per function.** Each entry deploys as its own function app,
    with slug `<project>-<name>`. The project part is the slug a plain deploy
    would use: `--name`, or the source directory's name. The result must be a
@@ -62,10 +71,20 @@ rejects function declarations.
 
 3. **CLI fan-out over the existing path.** `gregale deploy` in a directory
    whose manifest has `functions:` runs the existing single-function deploy
-   once per entry, with `--path <root> --name <slug> --function`, and
-   forwards the remaining flags. Builds, uploads, workspace build contexts,
-   previews and `--dry-run` behave exactly as they do for one function. No
-   server, builder or imaged change is needed.
+   once per entry, with `--path <root> --name <slug> --function --runtime
+   <runtime> --handler <handler> --no-triggers`, and forwards the remaining
+   flags. Builds, uploads, workspace build contexts, previews and
+   `--dry-run` behave exactly as they do for one function. The fan-out
+   applies triggers itself, so a child deploy never stages them.
+
+   For a shared-tree handler, the deployment's `handler` names the file.
+   `api.FunctionHandlerFile` recognises it, apid validates it, imaged uses
+   it as the function's source file, and the generated Node and Python
+   adapters load it where it lives. The Node adapter imports it by relative
+   path. The Python adapter loads it in place and puts its directory on
+   `sys.path`. The historical handler values (`handler.handler`) and Go keep
+   the runtime's default file, and the default adapters are unchanged byte
+   for byte.
 
    Entries deploy in manifest order and stop at the first failure. The
    summary names the functions that are live and the ones not attempted.
@@ -101,20 +120,26 @@ rejects function declarations.
    its app. The deploy lists apps named `<project>-*` that it did not
    deploy, and deleting them stays explicit (`gregale apps --yes <slug>`).
 
-7. **Repository deploys.** apid rejects a source-ref manifest that contains
-   `functions:` with an explanation. Repository deploys apply one manifest to
-   one app, and silently deploying the repository root would be wrong.
+7. **Server-side manifests.** apid reads the manifest from every source
+   upload. A `functions:` manifest describes the project, not one app, so for
+   a function app it applies nothing; the CLI applies each function's
+   settings. A function's upload carries the project manifest whenever it
+   shares the project root or a workspace root. For any other app, apid
+   rejects the manifest with an explanation, because deploying the
+   repository root as that app would be wrong.
 
 ## Consequences
 
 - One manifest and one command deploy a set of functions, each with its own
   cron, bucket and webhook triggers.
-- A function's code lives in its own root. Monorepo workspaces work as they
-  already do for `--path`: the workspace root is the build context. A
-  handler file inside a shared tree, without a root of its own, is follow-up
-  work.
-- N functions mean N builds. Builds run serially through the guaranteed
-  builder slot.
+- Node and Python functions can share one source tree and plain relative
+  imports. Monorepo workspaces work as they already do for `--path`: the
+  workspace root is the build context.
+- N functions mean N builds, and shared-tree functions each upload the whole
+  tree. Builds run serially through the guaranteed builder slot.
+- A deploy that passes a `.js`/`.mjs`/`.py` path as `--handler` now selects
+  that file. The documented handler value was `handler.handler`, so existing
+  deploys keep the default file.
 - Bucket notifications still need the existing permissions: storage manage,
   MFA, and the bucket write grant. The deploy reports the API's refusal
   instead of working around it.

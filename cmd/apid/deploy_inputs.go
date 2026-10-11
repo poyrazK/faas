@@ -491,6 +491,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrHandlerMissing())
 			return
 		}
+		if _, _, handlerErr := api.FunctionHandlerFile(app.Runtime, handler); handlerErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid handler", handlerErr.Error()))
+			return
+		}
 	}
 
 	if sourcePath != "" {
