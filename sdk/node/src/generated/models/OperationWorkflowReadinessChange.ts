@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReadinessEvidenceChange } from './OperationWorkflowReadinessEvidenceChange.js';
 import type { OperationWorkflowReadinessQueueEntry } from './OperationWorkflowReadinessQueueEntry.js';
 import type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflowReadinessSnapshotEntry.js';
 /**
@@ -38,5 +39,13 @@ export type OperationWorkflowReadinessChange = {
    * ReadinessChange. Human-readable meaning and comparison boundary.
    */
   explanation: string;
+  /**
+   * Individual retained evidence changes; missing verification is never inferred fulfilled.
+   */
+  evidence_changes: Array<OperationWorkflowReadinessEvidenceChange>;
+  /**
+   * True only when both evidence inventories are complete and requirements remain comparable.
+   */
+  evidence_comparison_complete: boolean;
 };
 

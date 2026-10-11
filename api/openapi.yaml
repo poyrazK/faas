@@ -73358,7 +73358,8 @@ components:
           description: ReadinessSnapshot. Saved transition observations.
           maxItems: 100
     OperationWorkflowReadinessSnapshotEntry:
-      description: One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
+      description: One saved transition identity and stable evidence summaries for comparison within the same ownership
+        scope.
       type: object
       additionalProperties: false
       required:
@@ -73446,7 +73447,7 @@ components:
           type: array
           items:
             type: string
-            enum: &readiness_compare_001
+            enum:
             - state_unknown
             - terminal
             - transition_undeclared
@@ -73479,7 +73480,8 @@ components:
             - condition_reports_overdue
             - condition_reporting_unknown
             - verification_pending
-          description: ReadinessSnapshotEntry. Saved reporting and verification context; advisories never determine readiness.
+          description: ReadinessSnapshotEntry. Saved reporting and verification context; advisories never determine
+            readiness.
           maxItems: 6
           uniqueItems: true
         blocker_codes:
@@ -73531,22 +73533,34 @@ components:
           pattern: ^[a-f0-9]{64}$
         prerequisites_fingerprint:
           type: string
-          description: ReadinessSnapshotEntry. Digest of prerequisite statuses and evidence identities excluding moving ages and evaluation clocks.
+          description: ReadinessSnapshotEntry. Digest of prerequisite statuses and evidence identities excluding moving
+            ages and evaluation clocks.
           minLength: 64
           maxLength: 64
           pattern: ^[a-f0-9]{64}$
         verifications_fingerprint:
           type: string
-          description: ReadinessSnapshotEntry. Order-independent digest of all retained pending target obligations before previews.
+          description: ReadinessSnapshotEntry. Order-independent digest of all retained pending target obligations before
+            previews.
           minLength: 64
           maxLength: 64
           pattern: ^[a-f0-9]{64}$
         reporting_fingerprint:
           type: string
-          description: ReadinessSnapshotEntry. Digest of reporting coverage counts and timing advisories excluding pending verification.
+          description: ReadinessSnapshotEntry. Digest of reporting coverage counts and timing advisories excluding pending
+            verification.
           minLength: 64
           maxLength: 64
           pattern: ^[a-f0-9]{64}$
+        evidence:
+          type: array
+          description: Bounded saved evidence inventory; older snapshots may omit it.
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessEvidence'
+        evidence_complete:
+          type: boolean
+          description: True only when the saved evidence inventory covers every applicable observation.
     OperationWorkflowReadinessComparisonRequest:
       description: Scoped request to reread and compare saved transitions. The baseline is caller-supplied advisory data.
       type: object
@@ -73584,7 +73598,8 @@ components:
           maximum: 100
           default: 20
     OperationWorkflowReadinessChange:
-      description: Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are explicit.
+      description: Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries
+        are explicit.
       type: object
       additionalProperties: false
       required:
@@ -73594,6 +73609,8 @@ components:
       - resolved_reasons
       - changed_categories
       - explanation
+      - evidence_changes
+      - evidence_comparison_complete
       properties:
         current_operation_id:
           type: string
@@ -73608,7 +73625,8 @@ components:
           $ref: '#/components/schemas/OperationWorkflowReadinessQueueEntry'
         status:
           type: string
-          description: ReadinessChange. Classification; only comparable unchanged requirements can become newly ready or newly blocked.
+          description: ReadinessChange. Classification; only comparable unchanged requirements can become newly ready
+            or newly blocked.
           enum:
           - newly_ready
           - newly_blocked
@@ -73623,7 +73641,25 @@ components:
           type: array
           items:
             type: string
-            enum: *readiness_compare_001
+            enum:
+            - state_unknown
+            - terminal
+            - transition_undeclared
+            - from_state_mismatch
+            - revision_mismatch
+            - contract_version_mismatch
+            - application_blocked
+            - dependency_unmet
+            - milestone_required
+            - policy_evidence_required
+            - dependency_required
+            - invariant_evidence_required
+            - effect_evidence_required
+            - retained_milestone_required
+            - retained_milestone_invalidated
+            - retained_milestone_expired
+            - retained_milestone_group_unmet
+            - path_selection_invalid
           description: ReadinessChange. Declared requirement codes now unmet that were absent from the saved reasons.
           maxItems: 18
           uniqueItems: true
@@ -73631,8 +73667,27 @@ components:
           type: array
           items:
             type: string
-            enum: *readiness_compare_001
-          description: ReadinessChange. Saved requirement codes that are no longer unmet; this does not prove application authorization.
+            enum:
+            - state_unknown
+            - terminal
+            - transition_undeclared
+            - from_state_mismatch
+            - revision_mismatch
+            - contract_version_mismatch
+            - application_blocked
+            - dependency_unmet
+            - milestone_required
+            - policy_evidence_required
+            - dependency_required
+            - invariant_evidence_required
+            - effect_evidence_required
+            - retained_milestone_required
+            - retained_milestone_invalidated
+            - retained_milestone_expired
+            - retained_milestone_group_unmet
+            - path_selection_invalid
+          description: ReadinessChange. Saved requirement codes that are no longer unmet; this does not prove application
+            authorization.
           maxItems: 18
           uniqueItems: true
         changed_categories:
@@ -73648,6 +73703,15 @@ components:
         explanation:
           type: string
           description: ReadinessChange. Human-readable meaning and comparison boundary.
+        evidence_changes:
+          type: array
+          description: Individual retained evidence changes; missing verification is never inferred fulfilled.
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessEvidenceChange'
+        evidence_comparison_complete:
+          type: boolean
+          description: True only when both evidence inventories are complete and requirements remain comparable.
     OperationWorkflowReadinessComparisonResponse:
       description: Live comparison counts before filtering with bounded matching changes and the next available-edge snapshot.
       type: object
@@ -73719,6 +73783,97 @@ components:
           type: boolean
           description: ReadinessComparisonResponse. More matching changes exist than the returned row limit.
 
+    OperationWorkflowReadinessEvidence:
+      description: Compact app-reported evidence observation preserving prerequisite group/path or verification obligation
+        identity.
+      type: object
+      additionalProperties: false
+      required:
+      - category
+      - key
+      - name
+      - status
+      - fingerprint
+      properties:
+        category:
+          type: string
+          description: Evidence category.
+          enum:
+          - blockers
+          - prerequisites
+          - verification
+        key:
+          type: string
+          description: Stable scoped evidence identity digest.
+          pattern: ^[0-9a-f]{64}$
+        name:
+          type: string
+          description: Human-readable requirement or blocker identity.
+          maxLength: 256
+          minLength: 1
+        status:
+          type: string
+          description: Retained observation status.
+          enum:
+          - active
+          - required
+          - verified
+          - invalidated
+          - expired
+          - awaiting_verification
+          - unknown
+          - waiting
+          - terminal
+          - satisfied
+          - outcome_mismatch
+        owner:
+          type: string
+          description: Reported evidence owner.
+          maxLength: 256
+        operation_id:
+          type: string
+          description: Operation containing the reported evidence or expected verification.
+          format: uuid
+        invalidation_operation_id:
+          type: string
+          description: Operation containing the invalidating milestone.
+          format: uuid
+        fingerprint:
+          type: string
+          description: Stable evidence content digest excluding moving age counters.
+          pattern: ^[0-9a-f]{64}$
+    OperationWorkflowReadinessEvidenceChange:
+      description: Individual comparison; absence is unavailable unless complete inventories establish blocker clearance.
+      type: object
+      additionalProperties: false
+      required:
+      - kind
+      properties:
+        kind:
+          type: string
+          description: Evidence change classification.
+          enum:
+          - observed
+          - added
+          - changed
+          - reassigned
+          - required
+          - verified
+          - invalidated
+          - expired
+          - awaiting_verification
+          - fulfilled
+          - unavailable
+          - cleared
+          - unknown
+          - waiting
+          - terminal
+          - satisfied
+          - outcome_mismatch
+        before:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEvidence'
+        after:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEvidence'
   responses:
     OperationConflict:
       description: A pinned contract, idempotency payload or execution generation conflicts with the retained state.

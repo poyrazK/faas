@@ -61,7 +61,9 @@ func readinessSnapshotEntry(row api.OperationWorkflowReadinessQueueEntry, instan
 	if r.Reporting != nil {
 		reporting = []any{r.Reporting.Status, r.Reporting.ExpectedConditionCount, r.Reporting.ReportedConditionCount, r.Reporting.MissingConditionCount, r.Reporting.OverdueConditionCount}
 	}
+	evidence, complete := readinessEvidence(row, instance, r)
 	return api.OperationWorkflowReadinessSnapshotEntry{
+		Evidence: evidence, EvidenceComplete: complete,
 		PlatformTenantID: row.PlatformTenantID, Subject: row.Subject, Workflow: row.Workflow, InstanceID: row.InstanceID, OperationID: row.OperationID, StateRevision: row.StateRevision, ContractVersion: row.ContractVersion, Operation: row.Transition.Operation, FromState: row.Transition.From, ToState: row.Transition.To, EvaluatedAt: row.EvaluatedAt, Ready: row.Ready, Reasons: append([]string{}, row.Reasons...), Advisories: append([]string{}, row.Advisories...), BlockerCodes: codes, MissingMilestones: missingMilestones, MissingDependencyWorkflows: missingDependencies, PendingVerificationCount: row.PendingVerificationCount,
 		RequirementsFingerprint: readinessDigest([]any{row.ContractVersion, row.Transition}), BlockersFingerprint: readinessSetDigest(row.Blockers), PrerequisitesFingerprint: readinessPrerequisitesDigest(r), VerificationsFingerprint: readinessSetDigest(verification), ReportingFingerprint: readinessDigest([]any{reporting, advisories}),
 	}

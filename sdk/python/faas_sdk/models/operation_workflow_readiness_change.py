@@ -25,6 +25,7 @@ from ..models.operation_workflow_readiness_change_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
     from ..models.operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
     from ..models.operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
 
@@ -50,6 +51,10 @@ class OperationWorkflowReadinessChange:
     """ReadinessChange. Evidence categories whose complete stable summaries changed."""
     explanation: str
     """ReadinessChange. Human-readable meaning and comparison boundary."""
+    evidence_changes: list[OperationWorkflowReadinessEvidenceChange]
+    """Individual retained evidence changes; missing verification is never inferred fulfilled."""
+    evidence_comparison_complete: bool
+    """True only when both evidence inventories are complete and requirements remain comparable."""
     current_operation_id: UUID | Unset = UNSET
     """ReadinessChange. Latest retained reporting Operation when current state is available."""
     current_state: str | Unset = UNSET
@@ -79,6 +84,13 @@ class OperationWorkflowReadinessChange:
 
         explanation = self.explanation
 
+        evidence_changes = []
+        for evidence_changes_item_data in self.evidence_changes:
+            evidence_changes_item = evidence_changes_item_data.to_dict()
+            evidence_changes.append(evidence_changes_item)
+
+        evidence_comparison_complete = self.evidence_comparison_complete
+
         current_operation_id: str | Unset = UNSET
         if not isinstance(self.current_operation_id, Unset):
             current_operation_id = str(self.current_operation_id)
@@ -99,6 +111,8 @@ class OperationWorkflowReadinessChange:
                 "resolved_reasons": resolved_reasons,
                 "changed_categories": changed_categories,
                 "explanation": explanation,
+                "evidence_changes": evidence_changes,
+                "evidence_comparison_complete": evidence_comparison_complete,
             }
         )
         if current_operation_id is not UNSET:
@@ -112,6 +126,7 @@ class OperationWorkflowReadinessChange:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
         from ..models.operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
         from ..models.operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
 
@@ -147,6 +162,15 @@ class OperationWorkflowReadinessChange:
 
         explanation = d.pop("explanation")
 
+        evidence_changes = []
+        _evidence_changes = d.pop("evidence_changes")
+        for evidence_changes_item_data in _evidence_changes:
+            evidence_changes_item = OperationWorkflowReadinessEvidenceChange.from_dict(evidence_changes_item_data)
+
+            evidence_changes.append(evidence_changes_item)
+
+        evidence_comparison_complete = d.pop("evidence_comparison_complete")
+
         _current_operation_id = d.pop("current_operation_id", UNSET)
         current_operation_id: UUID | Unset
         if isinstance(_current_operation_id, Unset):
@@ -170,6 +194,8 @@ class OperationWorkflowReadinessChange:
             resolved_reasons=resolved_reasons,
             changed_categories=changed_categories,
             explanation=explanation,
+            evidence_changes=evidence_changes,
+            evidence_comparison_complete=evidence_comparison_complete,
             current_operation_id=current_operation_id,
             current_state=current_state,
             current=current,

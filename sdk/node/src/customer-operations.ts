@@ -619,7 +619,10 @@ export interface OperationWorkflowReadinessQueueResponse {
 }
 
 export interface OperationWorkflowReadinessSnapshot { version: number; query: string; captured_at: string; items: OperationWorkflowReadinessSnapshotEntry[] }
+export interface OperationWorkflowReadinessEvidence { category: string; key: string; name: string; status: string; owner?: string; operation_id?: string; invalidation_operation_id?: string; fingerprint: string }
+export interface OperationWorkflowReadinessEvidenceChange { kind: string; before?: OperationWorkflowReadinessEvidence; after?: OperationWorkflowReadinessEvidence }
 export interface OperationWorkflowReadinessSnapshotEntry {
+ evidence?: OperationWorkflowReadinessEvidence[]; evidence_complete?: boolean;
  platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; operation_id: string; state_revision: number; contract_version: number;
  operation: string; from_state: string; to_state: string; evaluated_at: string; ready: boolean; reasons: string[]; advisories: string[];
  blocker_codes: string[]; missing_milestones: string[]; missing_dependency_workflows: string[]; pending_verification_count: number;
@@ -628,6 +631,7 @@ export interface OperationWorkflowReadinessSnapshotEntry {
 export type OperationWorkflowReadinessChangeStatus = 'newly_ready' | 'newly_blocked' | 'changed' | 'unchanged' | 'state_unknown' | 'terminal' | 'transition_unavailable' | 'contract_changed' | 'baseline_ahead';
 export interface OperationWorkflowReadinessComparisonRequest { app_id?: string; tenant_id?: string; scope: string; baseline: OperationWorkflowReadinessSnapshot; change?: 'newly_ready' | 'newly_blocked' | 'changed' | 'unchanged' | 'unavailable'; limit?: number }
 export interface OperationWorkflowReadinessChange {
+ evidence_changes: OperationWorkflowReadinessEvidenceChange[]; evidence_comparison_complete: boolean;
  baseline: OperationWorkflowReadinessSnapshotEntry; current?: OperationWorkflowReadinessQueueEntry; current_operation_id?: string; current_state?: string;
  status: OperationWorkflowReadinessChangeStatus; added_reasons: string[]; resolved_reasons: string[]; changed_categories: string[]; explanation: string;
 }

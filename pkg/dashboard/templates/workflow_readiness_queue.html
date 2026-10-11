@@ -134,7 +134,16 @@
     for (const reason of item.added_reasons) text(change, 'Now unmet: ' + reason);
     for (const reason of item.resolved_reasons) text(change, 'No longer unmet: ' + reason);
     for (const category of item.changed_categories) text(evidence, categories[category] || category);
-    if (item.current) {
+    if (!item.evidence_comparison_complete) text(evidence, 'Evidence inventory is incomplete or unavailable. Absence does not establish resolution.');
+    for (const delta of item.evidence_changes || []) {
+     const fact = delta.after || delta.before;
+     text(evidence, fact.category + ' · ' + fact.name + ': ' + delta.kind + (delta.before && delta.after ? ' (' + delta.before.status + ' → ' + delta.after.status + ')' : ' (' + fact.status + ')'));
+     if (delta.before && delta.after && delta.before.owner !== delta.after.owner) text(evidence, 'Owner: ' + (delta.before?.owner || 'unassigned') + ' → ' + (delta.after?.owner || 'unassigned'));
+     operationLink(evidence, delta.before?.operation_id, 'Saved evidence Operation');
+     operationLink(evidence, delta.after?.operation_id, 'Current evidence Operation');
+     operationLink(evidence, delta.after?.invalidation_operation_id, 'Invalidation Operation');
+    }
+    if (item.current && !['contract_changed', 'terminal', 'transition_unavailable', 'baseline_ahead', 'state_unknown'].includes(item.status)) {
      for (const blocker of item.current.blockers) text(evidence, 'Current blocker: ' + blocker.code + ' · ' + (blocker.owner || 'unassigned') + (blocker.next_action ? ' · ' + blocker.next_action : ''));
      text(evidence, 'Pending verification: ' + item.baseline.pending_verification_count + ' → ' + item.current.pending_verification_count);
      for (const code of item.current.blockers.map(b => b.code).filter(code => !item.baseline.blocker_codes.includes(code))) text(evidence, 'Added blocker: ' + code);

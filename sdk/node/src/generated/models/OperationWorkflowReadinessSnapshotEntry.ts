@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowReadinessEvidence } from './OperationWorkflowReadinessEvidence.js';
 /**
  * One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
  */
@@ -96,5 +97,13 @@ export type OperationWorkflowReadinessSnapshotEntry = {
    * ReadinessSnapshotEntry. Digest of reporting coverage counts and timing advisories excluding pending verification.
    */
   reporting_fingerprint: string;
+  /**
+   * Bounded saved evidence inventory; older snapshots may omit it.
+   */
+  evidence?: Array<OperationWorkflowReadinessEvidence>;
+  /**
+   * True only when the saved evidence inventory covers every applicable observation.
+   */
+  evidence_complete?: boolean;
 };
 

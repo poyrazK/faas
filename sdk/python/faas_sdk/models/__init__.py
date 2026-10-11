@@ -2214,6 +2214,11 @@ from .operation_workflow_readiness_change_status import OperationWorkflowReadine
 from .operation_workflow_readiness_comparison_request import OperationWorkflowReadinessComparisonRequest
 from .operation_workflow_readiness_comparison_request_change import OperationWorkflowReadinessComparisonRequestChange
 from .operation_workflow_readiness_comparison_response import OperationWorkflowReadinessComparisonResponse
+from .operation_workflow_readiness_evidence import OperationWorkflowReadinessEvidence
+from .operation_workflow_readiness_evidence_category import OperationWorkflowReadinessEvidenceCategory
+from .operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
+from .operation_workflow_readiness_evidence_change_kind import OperationWorkflowReadinessEvidenceChangeKind
+from .operation_workflow_readiness_evidence_status import OperationWorkflowReadinessEvidenceStatus
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
 from .operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
 from .operation_workflow_readiness_queue_response import OperationWorkflowReadinessQueueResponse
@@ -5745,6 +5750,11 @@ __all__ = (
     "OperationWorkflowReadinessComparisonRequest",
     "OperationWorkflowReadinessComparisonRequestChange",
     "OperationWorkflowReadinessComparisonResponse",
+    "OperationWorkflowReadinessEvidence",
+    "OperationWorkflowReadinessEvidenceCategory",
+    "OperationWorkflowReadinessEvidenceChange",
+    "OperationWorkflowReadinessEvidenceChangeKind",
+    "OperationWorkflowReadinessEvidenceStatus",
     "OperationWorkflowReadinessOverview",
     "OperationWorkflowReadinessQueueEntry",
     "OperationWorkflowReadinessQueueResponse",

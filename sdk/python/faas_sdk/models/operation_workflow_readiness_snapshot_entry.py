@@ -19,6 +19,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_readiness_evidence import OperationWorkflowReadinessEvidence
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessSnapshotEntry")
@@ -77,6 +78,10 @@ class OperationWorkflowReadinessSnapshotEntry:
     verification."""
     platform_tenant_id: UUID | Unset = UNSET
     """ReadinessSnapshotEntry. Customer UUID present only in account snapshots."""
+    evidence: list[OperationWorkflowReadinessEvidence] | Unset = UNSET
+    """Bounded saved evidence inventory; older snapshots may omit it."""
+    evidence_complete: bool | Unset = UNSET
+    """True only when the saved evidence inventory covers every applicable observation."""
 
     def to_dict(self) -> dict[str, Any]:
         subject = self.subject.to_dict()
@@ -133,6 +138,15 @@ class OperationWorkflowReadinessSnapshotEntry:
         if not isinstance(self.platform_tenant_id, Unset):
             platform_tenant_id = str(self.platform_tenant_id)
 
+        evidence: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.evidence, Unset):
+            evidence = []
+            for evidence_item_data in self.evidence:
+                evidence_item = evidence_item_data.to_dict()
+                evidence.append(evidence_item)
+
+        evidence_complete = self.evidence_complete
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -163,12 +177,17 @@ class OperationWorkflowReadinessSnapshotEntry:
         )
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
+        if evidence is not UNSET:
+            field_dict["evidence"] = evidence
+        if evidence_complete is not UNSET:
+            field_dict["evidence_complete"] = evidence_complete
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_readiness_evidence import OperationWorkflowReadinessEvidence
 
         d = dict(src_dict)
         subject = OperationSubject.from_dict(d.pop("subject"))
@@ -232,6 +251,17 @@ class OperationWorkflowReadinessSnapshotEntry:
         else:
             platform_tenant_id = UUID(_platform_tenant_id)
 
+        _evidence = d.pop("evidence", UNSET)
+        evidence: list[OperationWorkflowReadinessEvidence] | Unset = UNSET
+        if _evidence is not UNSET:
+            evidence = []
+            for evidence_item_data in _evidence:
+                evidence_item = OperationWorkflowReadinessEvidence.from_dict(evidence_item_data)
+
+                evidence.append(evidence_item)
+
+        evidence_complete = d.pop("evidence_complete", UNSET)
+
         operation_workflow_readiness_snapshot_entry = cls(
             subject=subject,
             workflow=workflow,
@@ -256,6 +286,8 @@ class OperationWorkflowReadinessSnapshotEntry:
             verifications_fingerprint=verifications_fingerprint,
             reporting_fingerprint=reporting_fingerprint,
             platform_tenant_id=platform_tenant_id,
+            evidence=evidence,
+            evidence_complete=evidence_complete,
         )
 
         return operation_workflow_readiness_snapshot_entry

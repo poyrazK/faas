@@ -1152,6 +1152,8 @@ export type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowP
 export type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
 export type { OperationWorkflowReadinessComparisonRequest } from './OperationWorkflowReadinessComparisonRequest.js';
 export type { OperationWorkflowReadinessComparisonResponse } from './OperationWorkflowReadinessComparisonResponse.js';
+export type { OperationWorkflowReadinessEvidence } from './OperationWorkflowReadinessEvidence.js';
+export type { OperationWorkflowReadinessEvidenceChange } from './OperationWorkflowReadinessEvidenceChange.js';
 export type { OperationWorkflowReadinessOverview } from './OperationWorkflowReadinessOverview.js';
 export type { OperationWorkflowReadinessQueueEntry } from './OperationWorkflowReadinessQueueEntry.js';
 export type { OperationWorkflowReadinessQueueResponse } from './OperationWorkflowReadinessQueueResponse.js';

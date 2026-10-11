@@ -88,6 +88,8 @@ type (
 	OperationWorkflowReadinessSnapshot            = api.OperationWorkflowReadinessSnapshot
 	OperationWorkflowReadinessSnapshotEntry       = api.OperationWorkflowReadinessSnapshotEntry
 	OperationWorkflowReadinessComparisonRequest   = api.OperationWorkflowReadinessComparisonRequest
+	OperationWorkflowReadinessEvidence            = api.OperationWorkflowReadinessEvidence
+	OperationWorkflowReadinessEvidenceChange      = api.OperationWorkflowReadinessEvidenceChange
 	OperationWorkflowReadinessChange              = api.OperationWorkflowReadinessChange
 	OperationWorkflowReadinessComparisonResponse  = api.OperationWorkflowReadinessComparisonResponse
 	OperationWorkflowReadinessQueueOptions        = api.OperationWorkflowReadinessQueueOptions

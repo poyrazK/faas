@@ -66,6 +66,9 @@ func validateReadinessBaseline(b api.OperationWorkflowReadinessSnapshot, expecte
 		if !readinessUniqueNames(row.Reasons, len(readinessRequirementCodes()), readinessRequirementCodes()) || !readinessUniqueNames(row.Advisories, 6, []string{"state_stale", "deadline_overdue", "condition_reports_missing", "condition_reports_overdue", "condition_reporting_unknown", "verification_pending"}) || !readinessUniqueNames(row.BlockerCodes, api.OperationMilestoneDeclarationsMax, nil) || !readinessUniqueNames(row.MissingMilestones, api.OperationMilestoneDeclarationsMax, nil) || !readinessUniqueNames(row.MissingDependencyWorkflows, api.OperationMilestoneDeclarationsMax, nil) {
 			return ErrInvalidArgument
 		}
+		if !validReadinessEvidence(row) {
+			return ErrInvalidArgument
+		}
 		key := readinessSnapshotKey(row)
 		if seen[key] {
 			return ErrInvalidArgument
@@ -128,7 +131,7 @@ func compareWorkflowReadiness(ctx context.Context, store OperationMilestoneStore
 	return out, nil
 }
 func readinessTransitionChange(before api.OperationWorkflowReadinessSnapshotEntry, instance *api.OperationWorkflowInstanceSnapshot, operator bool) (api.OperationWorkflowReadinessChange, *api.OperationWorkflowReadinessSnapshotEntry) {
-	change := api.OperationWorkflowReadinessChange{Baseline: before, Status: "state_unknown", AddedReasons: []string{}, ResolvedReasons: []string{}, ChangedCategories: []string{}, Explanation: "Current retained state is unavailable; this is not evidence that requirements were resolved."}
+	change := api.OperationWorkflowReadinessChange{EvidenceChanges: []api.OperationWorkflowReadinessEvidenceChange{}, Baseline: before, Status: "state_unknown", AddedReasons: []string{}, ResolvedReasons: []string{}, ChangedCategories: []string{}, Explanation: "Current retained state is unavailable; this is not evidence that requirements were resolved."}
 	if instance == nil || instance.State == nil {
 		return change, nil
 	}
@@ -175,6 +178,7 @@ func readinessTransitionChange(before api.OperationWorkflowReadinessSnapshotEntr
 		change.Explanation = "The pinned contract or declared requirements changed. Readiness is not compared across that boundary."
 		return change, &after
 	}
+	change.EvidenceChanges, change.EvidenceComparisonComplete = compareReadinessEvidence(before, after)
 	change.AddedReasons = readinessDifference(after.Reasons, before.Reasons)
 	change.ResolvedReasons = readinessDifference(before.Reasons, after.Reasons)
 	for _, category := range []struct{ name, before, after string }{{"blockers", before.BlockersFingerprint, after.BlockersFingerprint}, {"prerequisites", before.PrerequisitesFingerprint, after.PrerequisitesFingerprint}, {"verification", before.VerificationsFingerprint, after.VerificationsFingerprint}, {"reporting", before.ReportingFingerprint, after.ReportingFingerprint}} {
@@ -190,7 +194,7 @@ func readinessTransitionChange(before api.OperationWorkflowReadinessSnapshotEntr
 	} else if !before.Ready && after.Ready {
 		change.Status = "newly_ready"
 		change.Explanation = "Previously unmet declared requirements are now met without planned evidence. The application must still authorize execution."
-	} else if len(change.AddedReasons) > 0 || len(change.ResolvedReasons) > 0 || len(change.ChangedCategories) > 0 {
+	} else if len(change.AddedReasons) > 0 || len(change.ResolvedReasons) > 0 || len(change.ChangedCategories) > 0 || len(change.EvidenceChanges) > 0 {
 		change.Status = "changed"
 		change.Explanation = "Evidence or advisories changed while the declared readiness result stayed the same."
 	}
