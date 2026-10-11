@@ -491,7 +491,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
-		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch)
+		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
+		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the

@@ -6184,6 +6184,26 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_migration_adoptions",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "destination_node_id",
+      "dispatch_id",
+      "dispatched_at",
+      "instance_id",
+      "lease_created_at",
+      "lease_expires_at",
+      "lease_token",
+      "mem_storage_key",
+      "request_reason",
+      "source_node_id",
+      "vmstate_storage_key",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_object_credentials",
     "columns": [
       "operation_id",

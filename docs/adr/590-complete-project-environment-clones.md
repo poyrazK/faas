@@ -9940,3 +9940,28 @@ No native VM or live provider is exercised. Destination adoption dispatch
 ownership, source/destination host-generation correlation and proof-backed
 collection still need a qualified native protocol; public full-stage admission
 remains gated.
+
+### Retained migration destination dispatch ownership
+
+The production scheduler router now records clone migration adoption before the
+vmmd RPC. PostgreSQL authenticates the original migrating instance, completed
+unexpired source lease, snapshot handles and distinct existing destination node.
+The record binds original instance, app, deployment, wake and request identities
+to source and destination ownership. The permanent retirement fence serializes
+with dispatch admission; stale transaction snapshots cannot admit adoption.
+
+One dispatch is admitted per original instance and source lease token. A lost RPC
+reply does not authorize retry or redirection. Records are immutable, have no
+catalog cascade and survive source lease and instance cleanup. Scheduler closure
+checks this retained inventory independently of current catalog rows, so an
+unresolved destination prevents an all-clear retirement receipt. Evidence-bearing
+migration rollback is rejected. Unrelated deployments retain their existing
+adoption behavior without creating clone records.
+
+PostgreSQL tests cover ownership, pending snapshots, queued fence races, stale
+snapshots, retry/redirection, evidence retention and rollback. Router tests check
+record-before-RPC ordering and unknown replies. This records dispatch ownership,
+not native completion. Authenticated destination recovery, source cancel/resume
+closure, host-generation correlation and proof-backed release remain pending.
+No native VM or live provider qualification was performed; public full-stage
+admission remains gated.

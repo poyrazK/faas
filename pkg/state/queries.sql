@@ -16046,7 +16046,10 @@ SELECT EXISTS(SELECT 1 FROM retirement) AND
  d.reason='environment-clone:'||r.operation_id::text OR
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AND NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_wake_dispatches w
  WHERE w.request_reason='environment-clone:'||r.operation_id::text OR
- r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AS closed;
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_migration_adoptions a
+ WHERE a.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text)))) AS closed;
 
 -- name: LockEnvironmentQualificationCleanupWriters :exec
 SELECT lock_environment_qualification_cleanup_writers();
@@ -16078,3 +16081,8 @@ WHERE r.state IN ('requested','retired') AND (
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',i.deployment_id::text))))
 AND (sqlc.arg(after_instance_id)::text='' OR m.instance_id>NULLIF(sqlc.arg(after_instance_id)::text,'')::uuid)
 ORDER BY m.instance_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: RecordCloneCheckpointMigrationAdoption :exec
+SELECT record_clone_checkpoint_migration_adoption(sqlc.arg(instance_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(deployment_id)::uuid,sqlc.arg(destination_node_id)::uuid,sqlc.arg(mem_storage_key)::text,
+ sqlc.arg(vmstate_storage_key)::text,sqlc.arg(lease_token)::text);

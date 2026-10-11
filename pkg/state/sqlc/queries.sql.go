@@ -5299,7 +5299,10 @@ SELECT EXISTS(SELECT 1 FROM retirement) AND
  d.reason='environment-clone:'||r.operation_id::text OR
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AND NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_wake_dispatches w
  WHERE w.request_reason='environment-clone:'||r.operation_id::text OR
- r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AS closed
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_migration_adoptions a
+ WHERE a.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text)))) AS closed
 `
 
 // No instance state label proves native closure. Any remaining original row or
@@ -55213,6 +55216,35 @@ func (q *Queries) RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DB
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordCloneCheckpointMigrationAdoption = `-- name: RecordCloneCheckpointMigrationAdoption :exec
+SELECT record_clone_checkpoint_migration_adoption($1::uuid,$2::uuid,
+ $3::uuid,$4::uuid,$5::text,
+ $6::text,$7::text)
+`
+
+type RecordCloneCheckpointMigrationAdoptionParams struct {
+	InstanceID        pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	DestinationNodeID pgtype.UUID
+	MemStorageKey     string
+	VmstateStorageKey string
+	LeaseToken        string
+}
+
+func (q *Queries) RecordCloneCheckpointMigrationAdoption(ctx context.Context, db DBTX, arg RecordCloneCheckpointMigrationAdoptionParams) error {
+	_, err := db.Exec(ctx, recordCloneCheckpointMigrationAdoption,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.DestinationNodeID,
+		arg.MemStorageKey,
+		arg.VmstateStorageKey,
+		arg.LeaseToken,
+	)
+	return err
 }
 
 const recordCloneCheckpointObjectTarget = `-- name: RecordCloneCheckpointObjectTarget :execrows

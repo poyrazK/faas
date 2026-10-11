@@ -229,8 +229,9 @@ type VMMRouter struct {
 	tls     *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
-	outboundRelay ExecutionOutboundRelay
-	wakeDispatch  func(context.Context, string, string, string, string, string) error
+	outboundRelay     ExecutionOutboundRelay
+	wakeDispatch      func(context.Context, string, string, string, string, string) error
+	migrationAdoption func(context.Context, string, string, string, string, string, string, string) error
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →
@@ -278,6 +279,13 @@ func (r *VMMRouter) recordCloneWakeDispatch(ctx context.Context, nodeID, instanc
 		return nil
 	}
 	return r.wakeDispatch(ctx, instance, app.AppID, app.DeploymentID, nodeID, method)
+}
+
+// WithCloneMigrationAdoptionRecorder installs durable destination dispatch admission.
+// Production wires PgStore before serving migration requests.
+func (r *VMMRouter) WithCloneMigrationAdoptionRecorder(record func(context.Context, string, string, string, string, string, string, string) error) *VMMRouter {
+	r.migrationAdoption = record
+	return r
 }
 
 // ComputeNodeInfo is the slim subset of state.ComputeNode the
@@ -786,6 +794,11 @@ func (r *VMMRouter) AdoptMigratedInstance(ctx context.Context, newOwnerNodeID, i
 	cli, err := r.resolveFor(ctx, newOwnerNodeID)
 	if err != nil {
 		return LiveMigrationAdopt{}, err
+	}
+	if r.migrationAdoption != nil {
+		if err := r.migrationAdoption(ctx, instanceID, app.AppID, app.DeploymentID, newOwnerNodeID, memKey, vmstateKey, leaseToken); err != nil {
+			return LiveMigrationAdopt{}, err
+		}
 	}
 	return cli.AdoptMigratedInstance(ctx, newOwnerNodeID, instanceID, app, memKey, vmstateKey, leaseToken)
 }
