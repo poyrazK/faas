@@ -17,30 +17,32 @@ mkdir -p "$socket_dir" "$bin_dir"
 chmod 0777 "$socket_dir"
 
 docker run --detach --name "$container" --network none \
-	--mount "type=bind,source=$socket_dir,target=$socket_dir" \
+	--mount "type=bind,source=$socket_dir,target=/var/run/postgresql" \
 	--env POSTGRES_USER=faas \
 	--env POSTGRES_PASSWORD=faas \
 	--env POSTGRES_DB=faas \
 	--env 'POSTGRES_INITDB_ARGS=-c max_locks_per_transaction=512' \
 	mirror.gcr.io/library/postgres:16 \
-	postgres -c "unix_socket_directories=$socket_dir" \
-		-c listen_addresses='' -c max_locks_per_transaction=512
+	postgres -c max_locks_per_transaction=512
 cleanup() { docker rm --force "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 ready=false
 for attempt in $(seq 1 60); do
-	if docker exec "$container" pg_isready -h "$socket_dir" -U faas -d faas >/dev/null 2>&1; then
+	if docker exec "$container" pg_isready -h /var/run/postgresql -U faas -d faas >/dev/null 2>&1; then
 		ready=true
 		break
 	fi
 	sleep 1
 done
 if [[ "$ready" != true ]]; then
+	docker exec "$container" pg_isready -h /var/run/postgresql -U faas -d faas || true
+	docker exec "$container" ls -la /var/run/postgresql || true
 	docker logs "$container"
 	echo "::error::local PostgreSQL 16 recovery socket did not become ready"
 	exit 1
 fi
+docker exec "$container" psql -h /var/run/postgresql -U faas -d faas -Atqc 'SELECT 1' >/dev/null
 
 # Recovery deliberately refuses TCP. Run the test's pg_dump with the matching
 # PostgreSQL 16 binary inside the isolated, socket-only database container.
@@ -48,7 +50,7 @@ cat > "$bin_dir/pg_dump" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 exec docker exec \
-	--env "PGHOST=${PGHOST:?}" \
+	--env PGHOST=/var/run/postgresql \
 	--env "PGPORT=${PGPORT:?}" \
 	--env "PGDATABASE=${PGDATABASE:?}" \
 	--env "PGUSER=${PGUSER:?}" \
