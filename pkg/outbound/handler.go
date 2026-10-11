@@ -252,6 +252,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the same cap applies when the caller omits a length or lies about it.
 		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
 	}
+	aiReq, err := readAIRequest(r, integration, path)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
+			return
+		}
+		writeProblem(w, http.StatusBadRequest, "outbound_request_unreadable", "Outbound request body could not be read", "")
+		return
+	}
 	bindingAppID := ""
 	var bindingDailyRequestLimit *int64
 	_, explicitlyBound := integration.BindingAppIDs[appID]
@@ -351,13 +361,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		upstreamReq.Body = http.NoBody
 	}
-	cacheEligible := workflowIdentity == nil && outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds)
+	var cacheBody []byte
+	if aiReq != nil {
+		// ADR-983: a buffered AI body is replayable for retries and fallback.
+		setReplayableBody(upstreamReq, aiReq.body)
+		cacheBody = aiReq.body
+	}
+	cacheEligible := workflowIdentity == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
+		aiCacheEligible(upstreamReq, aiReq, integration.ResponseCacheTTLSeconds))
 	cacheKey := ""
 	var resp *http.Response
 	attempts := 0
 	cacheHit := false
 	if cacheEligible {
-		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq)
+		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq, cacheBody)
 		if cached, ok := h.responseCache.get(cacheKey, time.Now()); ok {
 			resp = cached
 			cacheHit = true
@@ -473,7 +490,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
-	if aiObserver := observeAIResponse(integration, r, resp, cacheHit); aiObserver != nil {
+	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
 		defer h.settleAIUsage(ctx, integration, appID, resp.StatusCode, aiObserver, upstreamStarted, dependencySpan, metricIntegrationID)
 	}

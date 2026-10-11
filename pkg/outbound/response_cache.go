@@ -63,7 +63,7 @@ func newOutboundResponseCache() (*outboundResponseCache, error) {
 	return cache, nil
 }
 
-func (c *outboundResponseCache) key(integrationID, appID string, policyRevision int64, ttlSeconds int, req *http.Request) string {
+func (c *outboundResponseCache) key(integrationID, appID string, policyRevision int64, ttlSeconds int, req *http.Request, body []byte) string {
 	if c == nil || req == nil || req.URL == nil {
 		return ""
 	}
@@ -74,6 +74,9 @@ func (c *outboundResponseCache) key(integrationID, appID string, policyRevision 
 	writeCacheKeyPart(mac, strconv.Itoa(ttlSeconds))
 	writeCacheKeyPart(mac, req.Method)
 	writeCacheKeyPart(mac, req.URL.String())
+	// ADR-983: an exact-match AI POST entry is keyed by its whole body.
+	bodyDigest := sha256.Sum256(body)
+	writeCacheKeyPart(mac, hex.EncodeToString(bodyDigest[:]))
 
 	headerValues := make(map[string][]string, len(req.Header))
 	for name, values := range req.Header {

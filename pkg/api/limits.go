@@ -690,6 +690,10 @@ const (
 	// OutboundAIMaxTokensPerResponse clamps each provider-reported count so
 	// a misbehaving origin cannot overflow the daily rollup counters.
 	OutboundAIMaxTokensPerResponse int64 = 1_000_000_000
+	// OutboundAIRequestBufferMaxBytes bounds the AI POST body the gateway
+	// keeps for retries, exact-match caching and route fallback (ADR-983).
+	// Larger bodies stream unbuffered without those features.
+	OutboundAIRequestBufferMaxBytes int64 = 4 << 20
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

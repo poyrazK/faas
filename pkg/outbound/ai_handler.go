@@ -86,12 +86,17 @@ func applyManagedCredential(header http.Header, integration Integration, credent
 
 // observeAIResponse starts usage extraction for an AI integration's
 // generation call. It returns nil when the response is not an AI call.
-func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool) *aiUsageObserver {
+func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest) *aiUsageObserver {
 	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil {
 		return nil
 	}
 	observer := newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	resp.Body = &observedBody{ReadCloser: resp.Body, observer: observer}
+	if ai != nil && ai.usageInjected && streamingMediaType(resp.Header.Get("Content-Type")) {
+		// ADR-983: the caller never asked for the usage chunk; hide it after
+		// the observer has counted it.
+		resp.Body = newUsageChunkFilter(resp.Body)
+	}
 	return observer
 }
 

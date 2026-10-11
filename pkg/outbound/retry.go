@@ -112,7 +112,12 @@ func waitForOutboundRetry(ctx context.Context, delay time.Duration) error {
 }
 
 func canRetryRequest(req *http.Request) bool {
-	if req == nil || (req.Method != http.MethodGet && req.Method != http.MethodHead) {
+	if req == nil {
+		return false
+	}
+	// ADR-983: a buffered AI POST carries a replayable body (GetBody).
+	replayablePost := req.Method == http.MethodPost && req.GetBody != nil
+	if req.Method != http.MethodGet && req.Method != http.MethodHead && !replayablePost {
 		return false
 	}
 	for _, name := range []string{"X-HTTP-Method-Override", "X-Method-Override", "X-HTTP-Method"} {
@@ -123,7 +128,7 @@ func canRetryRequest(req *http.Request) bool {
 	if req.URL != nil && req.URL.Query().Has("_method") {
 		return false
 	}
-	return req.Body == nil || req.Body == http.NoBody
+	return replayablePost || req.Body == nil || req.Body == http.NoBody
 }
 
 // outboundCircuitOutcome counts one logical request after its bounded retry
@@ -226,6 +231,13 @@ func (h *Handler) doWithRetries(
 		retries++
 		req = req.Clone(ctx)
 		req.Body = http.NoBody
+		if req.GetBody != nil {
+			body, bodyErr := req.GetBody()
+			if bodyErr != nil {
+				return nil, attempts, bodyErr
+			}
+			req.Body = body
+		}
 	}
 }
 
