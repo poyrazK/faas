@@ -39,12 +39,22 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
+			// Spec §11 fence pins: keep the per-VM cgroup controllers
+			// enabled across systemd reloads (roles/systemd_slices).
+			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
+			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
+			"faas-cp-build-fence.slice",
 			"nftables.service", "br-tenants-up.service",
 		},
 		Wants: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
+			// Spec §11 fence pins: keep the per-VM cgroup controllers
+			// enabled across systemd reloads (roles/systemd_slices).
+			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
+			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
+			"faas-cp-build-fence.slice",
 			"nftables.service", "br-tenants-up.service",
 		},
 		StartLimitIntervalSec: "60s",
