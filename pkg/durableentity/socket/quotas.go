@@ -342,6 +342,9 @@ func (q *Quotas) AdmitInvocation(ctx context.Context, id durableentity.ID) error
 	}
 	key := entityKey(id)
 	return q.mutate(ctx, scopeKey(scope), &scope, func(r *quotaRecord, now time.Time) error {
+		if q.Limits.EntityBytes > r.Limits.EntityBytes {
+			return durableentity.ErrUnsupported
+		}
 		if r.Invocations >= r.Limits.InvocationsPerMinute {
 			return quotaErr("invocations", int64(r.Limits.InvocationsPerMinute), int64(r.Invocations+1), retryWindow(*r, now))
 		}

@@ -314,3 +314,21 @@ func TestTenantQuotaInspectDoesNotWriteOrHideExpiredStorage(t *testing.T) {
 		t.Fatal("read hid physical compaction backlog or mutated authority", usage, err)
 	}
 }
+
+func TestTenantQuotaLargerEntityCapCannotWeakenPersistedPolicy(t *testing.T) {
+	q, id, _ := quotaFixture()
+	if err := q.AdmitInvocation(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	larger := *q
+	larger.Limits.EntityBytes = 2048
+	other := id
+	other.Key = "another-document"
+	if err := larger.AdmitInvocation(t.Context(), other); !errors.Is(err, durableentity.ErrUnsupported) {
+		t.Fatal("larger local execution cap bypassed persisted policy", err)
+	}
+	usage, err := q.Inspect(t.Context(), id)
+	if err != nil || usage.EntityReservations != 1 || usage.Invocations != 1 || usage.Limits.EntityBytes != 1024 {
+		t.Fatal("rejected configuration charged admission", usage, err)
+	}
+}

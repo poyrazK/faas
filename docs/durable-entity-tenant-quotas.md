@@ -48,8 +48,9 @@ Quota denials do not dispatch customer code.
 
 On first invocation, the ledger reserves the entity's **entire configured
 per-entity retained-byte cap**, independent of its current actual size. Further
-calls reuse that reservation. A node with a larger entity cap increases the
-reservation before execution. Reservations remain across restarts, receipt GC,
+calls reuse that reservation. A node configured with an entity cap above the persisted policy fails closed
+until a controlled policy migration; it cannot quietly enlarge the execution
+cap. Existing larger reservations remain as high-water charges when caps lower. Reservations remain across restarts, receipt GC,
 cohort reclamation, failed guest execution and window expiry. This deliberately
 trades utilization for a safe admission decision without a cross-object commit.
 There is no automatic entity-reservation release or tenant aggregate inventory
