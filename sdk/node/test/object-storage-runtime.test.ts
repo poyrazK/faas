@@ -56,27 +56,30 @@ test('invalid binding configuration cannot invoke a factory',async()=>{
   assert.throws(()=>new ObjectStorageBinding('invalid-prefix',()=>null));
 });
 
-test('atomic secret reload ACK follows client adoption; failed candidates receive only a failed ACK',async()=>{
-  const {applyLatestSecretSnapshot}=await import(new URL('../../../../cmd/gregale/templates/secret-reload-node/secret-reload.js',import.meta.url).href);
-  const binding=new ObjectStorageBinding('ASSETS',async config=>{
-    if(config.credentials.secretAccessKey==='private-rejected') throw new Error('private-driver-error');
+test('invalidation fences queued and late factories without retiring acquired clients', async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>(resolve => {release=resolve;});
+  const started = new Promise<void>(resolve => {entered=resolve;});
+  let calls=0;
+  const b = new ObjectStorageBinding('ASSETS', async config => {
+    calls++;
+    if(config.credentials.secretAccessKey==='private-late') {entered(); await held;}
     return config.credentials.secretAccessKey;
   });
-  const generation='b'.repeat(32),revision='a'.repeat(64);
-  const env={FAAS_SECRETS_SNAPSHOT_FILE:'/snapshot',FAAS_SECRETS_RELOAD_ACK_ENDPOINT:'http://local/ack',FAAS_SECRETS_RELOAD_GENERATION:generation};
-  const receipts: unknown[]=[];
-  await applyLatestSecretSnapshot({env,readFile:async()=>JSON.stringify({revision,secrets:values()}),
-    apply:async(snapshot: {secrets:Record<string,string>})=>binding.reload(snapshot.secrets),
-    fetchImpl:async(_url:unknown,request:{body:string})=>{
-      assert.equal(binding.current().client,'private-secret');
-      receipts.push(JSON.parse(request.body));return new Response(null,{status:202});
-    }});
-  assert.deepEqual(receipts,[{revision,status:'applied',generation}]);
-  await assert.rejects(applyLatestSecretSnapshot({env,readFile:async()=>JSON.stringify({revision,secrets:{...values(),ASSETS_SECRET_ACCESS_KEY:'private-rejected'}}),
-    apply:async(snapshot:{secrets:Record<string,string>})=>binding.reload(snapshot.secrets),
-    fetchImpl:async(_url:unknown,request:{body:string})=>{
-      assert.throws(()=>binding.current());receipts.push(JSON.parse(request.body));return new Response(null,{status:202});
-    }}),/could not be applied/);
-  assert.deepEqual(receipts[1],{revision,status:'failed',generation});
-  assert.ok(!JSON.stringify(receipts).includes('private-'));
+  await b.reload(values());
+  const acquired=b.current();
+  const late=b.reload({...values(),ASSETS_SECRET_ACCESS_KEY:'private-late'});
+  await started;
+  const queued=b.reload(values());
+  b.invalidate();
+  assert.throws(()=>b.current());
+  release();
+  await assert.rejects(late,/cancelled/);
+  await assert.rejects(queued,/cancelled/);
+  assert.equal(calls,2);
+  assert.equal(acquired.client,'private-secret');
+  assert.throws(()=>b.current());
+  await b.reload({...values(),ASSETS_SECRET_ACCESS_KEY:'private-recovered'});
+  assert.equal(b.current().client,'private-recovered');
 });

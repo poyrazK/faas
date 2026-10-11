@@ -2618,3 +2618,10 @@ Current `sla` data includes optional `warning_percent` and, when retained entry 
 
 Managed compute storage client loading and rotation are described in the
 [object storage compute guide](../../docs/object-storage-compute.md).
+Use `SecretReloadCoordinator` from `@gregale/sdk-node/secrets/runtime` with each
+`ObjectStorageBinding.secretConsumer()` to install SIGHUP before readiness,
+serialize atomic snapshot adoption and ACK only after all registered consumers
+succeed. Require the current guest atomic snapshot, readiness and generation
+contract; register all other secret users as well. Start serving after
+`await coordinator.start()` and pass your shutdown signal. Both runtime subpaths
+are server-only and have no added package dependencies.

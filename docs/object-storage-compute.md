@@ -83,6 +83,68 @@ call `await storage.reload(snapshot.secrets, signal)` from its application
 callback. A helper that merely reads startup environment variables cannot
 adopt a later credential rotation.
 
+### Node reload coordinator
+
+The Node SDK's server-only `@gregale/sdk-node/secrets/runtime` subpath provides
+`SecretReloadCoordinator`. Use it instead of reading startup environment values
+when a workload opts into `secret_reload_signal: SIGHUP` and
+`secret_reload_readiness: true` in its manifest:
+
+```js
+import { SecretReloadCoordinator } from '@gregale/sdk-node/secrets/runtime';
+import { ObjectStorageBinding } from '@gregale/sdk-node/object-storage/runtime';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+
+const shutdown = new AbortController();
+const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', options => new S3Client(options));
+const reload = new SecretReloadCoordinator({
+  consumers: [storage.secretConsumer()],
+  signal: shutdown.signal,
+  onError: error => console.error(error.message), // Sanitized signal-reload errors.
+});
+process.once('SIGTERM', () => shutdown.abort());
+process.once('SIGINT', () => shutdown.abort());
+await reload.start(); // Start serving requests only after this succeeds.
+
+async function readAsset(key) {
+  const { client, bucket } = storage.current();
+  return client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+}
+```
+
+Register **every** secret consumer in the workload, including other storage
+bindings and application-owned database or HTTP clients. A custom consumer
+implements `apply(snapshot, signal)` and synchronous, idempotent `invalidate()`
+that returns no value. An asynchronous invalidation cannot qualify adoption. Invalidation
+must prevent new acquisition and fence late candidates; application code must
+check cancellation before publishing resources. The storage adapter implements
+these safeguards. The coordinator only attests to its registered callbacks.
+
+`start()` installs its SIGHUP listener before writing the readiness marker, waits
+up to 30 seconds for a versioned atomic snapshot, then applies consumers in order.
+It sends an exact-revision `applied` ACK only after every callback succeeds. A
+consumer failure disables all registered consumers and sends only a `failed`
+ACK. Malformed/unavailable snapshots cannot be acknowledged. Missing atomic
+snapshot, readiness or process-generation contracts fail closed; the older
+template helper remains available for legacy guests.
+
+Signal bursts coalesce with one follow-up refresh; manual `await reload.reload()`
+uses the same serialized queue. A stale ACK triggers an authoritative reread;
+transport failures and 503 responses retry the same closed metadata body, with
+at most ten attempts per ACK and five seconds per request. Other HTTP failures
+stop immediately. The coordinator captures this process's generation and paths
+once and uses a dedicated metadata transport, unaffected by API fetch wrappers.
+An unconfirmed ACK disables clients. A later SIGHUP or manual refresh can recover
+from a reload failure; failed startup and `stop()` are terminal.
+
+The startup deadline bounds only waiting for a versioned snapshot. Factories and
+custom consumers must supply their own readiness deadlines and honor the shared
+abort signal. Shutdown removes this coordinator's listener, aborts pending work
+and disables new acquisition without waiting for arbitrary application code or
+destroying acquired clients. It does not install termination handlers, close the
+HTTP server or exit the process; the application owns graceful shutdown.
+Go and Python currently retain the manual snapshot/ACK integration shown above.
+
 Acquire `current()`/`Current()` for each new request. In-flight requests may
 finish using a previously acquired client; the application owns retired-client
 lifetime and must not destroy a client still in use. Reloads are serialized.

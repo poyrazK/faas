@@ -790,3 +790,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-970: Binding preflight against stored release policies](970-binding-preflight-stored-release-policy.md)
 
 - [ADR-971: Policy-driven storage canary verification](971-policy-driven-storage-canary-verification.md)
+
+- [ADR-972: Node compute secret reload coordinator](972-node-compute-secret-reload-coordinator.md)

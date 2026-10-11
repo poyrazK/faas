@@ -1,3 +1,5 @@
+import type {SecretConsumer} from './secret-reload-runtime.js';
+
 /** Server-side helper. The factory supplies the application's S3 implementation;
  * it must use these explicit credentials, never ambient provider credentials. */
 export interface ObjectStorageClientConfig {
@@ -40,6 +42,7 @@ export class ObjectStorageBinding<T> {
   readonly #factory: (config: ObjectStorageClientConfig, bucket: string, signal?: AbortSignal) => T | Promise<T>;
   #active: Readonly<{client: T; bucket: string}> | undefined;
   #pending: Promise<void> = Promise.resolve();
+  #epoch = 0;
 
   constructor(prefix: string, factory: (config: ObjectStorageClientConfig, bucket: string, signal?: AbortSignal) => T | Promise<T>) {
     if (!/^[A-Z][A-Z0-9_]{0,47}$/.test(prefix) || typeof factory !== 'function') throw new ObjectStorageBindingError('Invalid object-storage binding');
@@ -52,20 +55,38 @@ export class ObjectStorageBinding<T> {
    * own retired clients. Failure disables acquisition, including revocation. */
   reload(values: Readonly<Record<string, string | undefined>>, signal?: AbortSignal): Promise<void> {
     const snapshot = {...values};
+    const epoch = this.#epoch;
     const apply = async (): Promise<void> => {
+      if (epoch !== this.#epoch) throw new ObjectStorageBindingError('Object-storage reload cancelled');
       this.#active = undefined;
       if (signal?.aborted) throw new ObjectStorageBindingError('Object-storage reload cancelled');
       const {config, bucket} = configuration(this.#prefix, snapshot);
       let client: T;
       try { client = await this.#factory(config, bucket, signal); }
       catch { throw new ObjectStorageBindingError('Object-storage client could not be configured'); }
-      if (signal?.aborted) throw new ObjectStorageBindingError('Object-storage reload cancelled');
+      if (signal?.aborted || epoch !== this.#epoch) throw new ObjectStorageBindingError('Object-storage reload cancelled');
       if (client === undefined || client === null) throw new ObjectStorageBindingError('Object-storage client is unavailable');
       this.#active = Object.freeze({client, bucket});
     };
     const result = this.#pending.then(apply);
     this.#pending = result.catch(() => {});
     return result;
+  }
+
+  /** Disable new acquisition and fence in-progress/queued candidates. Existing
+   * acquired clients remain owned by callers. A future reload may recover. */
+  invalidate(): void {
+    this.#epoch++;
+    this.#active = undefined;
+  }
+
+  /** Register with SecretReloadCoordinator alongside every other secret user. */
+  secretConsumer(): SecretConsumer {
+    const consumer: SecretConsumer = {
+      apply: (snapshot, signal) => this.reload(snapshot.secrets, signal),
+      invalidate: () => this.invalidate(),
+    };
+    return Object.freeze(consumer);
   }
 
   current(): Readonly<{client: T; bucket: string}> {
