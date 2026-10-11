@@ -1,5 +1,7 @@
+-- filename: 20261011230231383_workflow_readiness_subscriptions.sql
+
 -- +goose Up
-CREATE TABLE customer_workflow_readiness_subscriptions (
+CREATE TABLE IF NOT EXISTS customer_workflow_readiness_subscriptions (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -14,9 +16,9 @@ CREATE TABLE customer_workflow_readiness_subscriptions (
  CHECK (operator OR tenant_id IS NOT NULL),
  CHECK ((lease_token IS NULL) = (lease_until IS NULL))
 );
-CREATE INDEX customer_workflow_readiness_subscription_due ON customer_workflow_readiness_subscriptions (next_evaluation_at, id);
-CREATE INDEX customer_workflow_readiness_subscription_owner ON customer_workflow_readiness_subscriptions (account_id, app_id, operator, scope);
-CREATE TABLE customer_workflow_readiness_notifications (
+CREATE INDEX IF NOT EXISTS customer_workflow_readiness_subscription_due ON customer_workflow_readiness_subscriptions (next_evaluation_at, id);
+CREATE INDEX IF NOT EXISTS customer_workflow_readiness_subscription_owner ON customer_workflow_readiness_subscriptions (account_id, app_id, operator, scope);
+CREATE TABLE IF NOT EXISTS customer_workflow_readiness_notifications (
  subscription_id uuid NOT NULL REFERENCES customer_workflow_readiness_subscriptions(id) ON DELETE CASCADE,
  sequence bigint NOT NULL CHECK (sequence > 0),
  payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
@@ -24,5 +26,5 @@ CREATE TABLE customer_workflow_readiness_notifications (
 );
 
 -- +goose Down
-DROP TABLE customer_workflow_readiness_notifications;
-DROP TABLE customer_workflow_readiness_subscriptions;
+DROP TABLE IF EXISTS customer_workflow_readiness_notifications;
+DROP TABLE IF EXISTS customer_workflow_readiness_subscriptions;
