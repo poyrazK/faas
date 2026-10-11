@@ -2333,22 +2333,42 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if profile.Framework == "" {
 		profile.Framework = "unknown"
 	}
-	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
+	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "unknown"}
+	if len(dep.InferredProfile) != 0 {
+		if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+			return fmt.Errorf("imaged: decode image runtime profile: %w", err)
+		}
+	}
+	if profile.Version == "" {
+		profile.Version = frameworkprofile.Version
+	}
+	if profile.Framework == "" {
+		profile.Framework = "unknown"
+	}
+	profileChanged := false
+	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 && profile.Port != manifest.Port {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
 		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
 		// Without this handoff, the guest can listen successfully while every
 		// first-boot readiness probe targets the wrong guest port.
 		profile.Port = manifest.Port
+		profileChanged = true
 	}
-	profile.ImageHealthcheckRequired = imageManifestHealthcheckRequired(manifest.Healthcheck)
-	runtimeProfile, marshalErr := json.Marshal(profile)
-	if marshalErr != nil {
-		return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
+	requiredHealthcheck := imageManifestHealthcheckRequired(manifest.Healthcheck)
+	if profile.ImageHealthcheckRequired != requiredHealthcheck {
+		profile.ImageHealthcheckRequired = requiredHealthcheck
+		profileChanged = true
 	}
-	if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, runtimeProfile); err != nil {
-		_ = h.markDeployFailed(ctx, dep.ID, err, "persist image runtime profile")
-		return fmt.Errorf("imaged: persist image runtime profile: %w", err)
+	if profileChanged {
+		runtimeProfile, marshalErr := json.Marshal(profile)
+		if marshalErr != nil {
+			return fmt.Errorf("imaged: encode image runtime profile: %w", marshalErr)
+		}
+		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, runtimeProfile); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "persist image runtime profile")
+			return fmt.Errorf("imaged: persist image runtime profile: %w", err)
+		}
 	}
 
 	// M6 wired-up build path: when the puller implements oci.ManifestPuller
