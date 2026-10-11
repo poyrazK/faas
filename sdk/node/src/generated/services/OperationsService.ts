@@ -1084,6 +1084,7 @@ export class OperationsService {
     scope,
     workflow,
     tenantId,
+    baselineToken,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1101,6 +1102,10 @@ export class OperationsService {
      * Optional account-owned customer selector on an operator milestone timeline.
      */
     tenantId?: string,
+    /**
+     * Account optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+     */
+    baselineToken?: string,
   }): CancelablePromise<OperationWorkflowPerformanceSummary> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1112,6 +1117,7 @@ export class OperationsService {
         'scope': scope,
         'workflow': workflow,
         'tenant_id': tenantId,
+        'baseline_token': baselineToken,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -1135,6 +1141,7 @@ export class OperationsService {
     appId,
     scope,
     workflow,
+    baselineToken,
   }: {
     /**
      * App selected within the authenticated customer's milestone feed.
@@ -1148,6 +1155,10 @@ export class OperationsService {
      * Business workflow to compare within the authenticated customer app and environment.
      */
     workflow: string,
+    /**
+     * Customer optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+     */
+    baselineToken?: string,
   }): CancelablePromise<OperationWorkflowPerformanceSummary> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1156,6 +1167,7 @@ export class OperationsService {
         'app_id': appId,
         'scope': scope,
         'workflow': workflow,
+        'baseline_token': baselineToken,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,

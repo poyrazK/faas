@@ -223,6 +223,7 @@ export class GregaleOperationClient {
     return this.request('/v1/platform-tenant-self/workflow-attention/summary?' + query, 'GET', undefined, undefined, signal);
   }
   workflowPerformanceInstances(options: OperationWorkflowPerformanceInstanceOptions, signal?: AbortSignal): Promise<OperationWorkflowPerformanceInstancesResponse> {
+ if (options.baselineToken !== undefined) throw new Error("Baseline comparisons require a performance summary");
     if (!UUID.test(options.appID) || typeof options.scope !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
     if (typeof options.workflow !== 'string' || !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Explicit workflow required');
     if (!['completed', 'ongoing'].includes(options.cohort) || !['state_time', 'blocked_time', 'verification_wait', 'state', 'blocker', 'verification_owner', 'decision_completion', 'decision_blocked', 'condition_completion', 'condition_blocked', 'active_condition_elapsed', 'active_condition_blocked', 'condition_refresh_owner', 'condition_refresh_age', 'condition_refresh_blocked'].includes(options.dimension)) throw new Error('Invalid performance cohort or dimension');
@@ -236,6 +237,7 @@ export class GregaleOperationClient {
     if (!UUID.test(options.appID) || typeof options.scope !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
     if (typeof options.workflow !== 'string' || !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Explicit workflow required');
     const query = new URLSearchParams({ app_id: options.appID, scope: options.scope, workflow: options.workflow });
+    if (options.baselineToken !== undefined) query.set('baseline_token', options.baselineToken);
     return this.request('/v1/platform-tenant-self/workflow-performance/summary?' + query, 'GET', undefined, undefined, signal);
   }
   workflowOutcomes(options: OperationWorkflowOutcomeOptions, signal?: AbortSignal): Promise<OperationWorkflowOutcomesResponse> {
@@ -454,8 +456,8 @@ export interface OperationWorkflowStateDuration { contract_version: number; stat
 export interface OperationWorkflowBlockerDuration { contract_version: number; operation: string; code: string; owner: string; observed_seconds: number; observation_count: number; ongoing: boolean }
 export interface OperationWorkflowVerificationDuration { owner: string; observed_seconds: number; resolution_count: number; pending_count: number; unknown_start_count: number }
 
-export interface OperationWorkflowPerformanceOptions { appID: string; scope: string; workflow: string }
-export interface OperationWorkflowPerformanceSummary { active_conditions?: OperationWorkflowActiveConditionSummary; condition_outcomes?: OperationWorkflowConditionOutcomeSummary; decision_outcomes?: OperationWorkflowDecisionOutcomeSummary; cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
+export interface OperationWorkflowPerformanceOptions { baselineToken?: string; appID: string; scope: string; workflow: string }
+export interface OperationWorkflowPerformanceSummary { refresh_progress?: OperationWorkflowConditionRefreshProgress; active_conditions?: OperationWorkflowActiveConditionSummary; condition_outcomes?: OperationWorkflowConditionOutcomeSummary; decision_outcomes?: OperationWorkflowDecisionOutcomeSummary; cohort_token: string; evaluated_at: string; workflow: string; cohort_limit: number; completed: OperationWorkflowPerformanceCohort; ongoing: OperationWorkflowPerformanceCohort }
 export interface OperationWorkflowDurationDistribution { workflow_count: number; total_seconds: number; p50_seconds: number; p95_seconds: number }
 export interface OperationWorkflowPerformanceCoverageReason { reason: string; workflow_count: number }
 export interface OperationWorkflowPerformanceCohort { sla_configured_workflow_count: number; sla_evaluated_workflow_count: number; sla_breached_workflow_count: number; sla_unknown_workflow_count: number; matching_workflow_count: number; sampled_workflow_count: number; complete_history_workflow_count: number; excluded_incomplete_workflow_count: number; cohort_truncated: boolean; exclusions: OperationWorkflowPerformanceCoverageReason[]; state_time: OperationWorkflowDurationDistribution; blocked_time: OperationWorkflowDurationDistribution; verification_wait: OperationWorkflowDurationDistribution; states: OperationWorkflowStatePerformance[]; blockers: OperationWorkflowBlockerPerformance[]; verification_owners: OperationWorkflowVerificationPerformance[]; states_truncated: boolean; blockers_truncated: boolean; verification_owners_truncated: boolean }
@@ -506,3 +508,8 @@ export interface OperationWorkflowConditionFreshness { refresh_owner?: string; r
 export interface OperationWorkflowConditionRefreshOwnerGroup { owner?: string; unassigned: boolean; overdue_condition_count: number; elapsed_time: OperationWorkflowDurationDistribution; blocked_time: OperationWorkflowDurationDistribution }
 
 export interface OperationWorkflowConditionRefreshPriority { oldest_evidence: OperationWorkflowDecisionOutcomeEvidence; oldest_evidence_age_seconds: number; blocked_seconds: number; refresh_owners: string[]; unassigned_condition_count: number; explanation: string }
+
+export interface OperationWorkflowConditionRefreshProgress { baseline_at: string; evaluated_at: string; sampled_workflow_count: number; compared_workflow_count: number; no_baseline_workflow_count: number; no_overdue_baseline_workflow_count: number; excluded_incomplete_workflow_count: number; excluded_ambiguous_workflow_count: number; excluded_condition_evidence_workflow_count: number; newer_report_condition_count: number; statuses: OperationWorkflowConditionRefreshProgressCount[]; items: OperationWorkflowConditionRefreshProgressInstance[] }
+export interface OperationWorkflowConditionRefreshProgressCount { status: 'refreshed'|'still_overdue'|'unreported'|'contract_changed'|'budget_removed'; condition_count: number }
+export interface OperationWorkflowConditionRefreshProgressInstance { platform_tenant_id?: string; subject: OperationSubject; state: OperationWorkflowState; baseline_overdue_condition_count: number; newer_report_condition_count: number; statuses: OperationWorkflowConditionRefreshProgressCount[]; changes_truncated: boolean; changes: OperationWorkflowConditionRefreshProgressChange[] }
+export interface OperationWorkflowConditionRefreshProgressChange { status: 'refreshed'|'still_overdue'|'unreported'|'contract_changed'|'budget_removed'; newer_report: boolean; before: OperationWorkflowDecisionOutcomeEvidence; after?: OperationWorkflowDecisionOutcomeEvidence; explanation: string }

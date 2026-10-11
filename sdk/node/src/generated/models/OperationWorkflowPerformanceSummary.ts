@@ -4,12 +4,14 @@
 /* eslint-disable */
 import type { OperationWorkflowActiveConditionSummary } from './OperationWorkflowActiveConditionSummary.js';
 import type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
+import type { OperationWorkflowConditionRefreshProgress } from './OperationWorkflowConditionRefreshProgress.js';
 import type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
 import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
 /**
  * Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
  */
 export type OperationWorkflowPerformanceSummary = {
+  refresh_progress?: OperationWorkflowConditionRefreshProgress;
   active_conditions?: OperationWorkflowActiveConditionSummary;
   condition_outcomes?: OperationWorkflowConditionOutcomeSummary;
   decision_outcomes?: OperationWorkflowDecisionOutcomeSummary;

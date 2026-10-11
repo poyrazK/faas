@@ -1100,6 +1100,10 @@ export type { OperationWorkflowConditionOutcomeGroup } from './models/OperationW
 export type { OperationWorkflowConditionOutcomeSummary } from './models/OperationWorkflowConditionOutcomeSummary.js';
 export type { OperationWorkflowConditionRefreshOwnerGroup } from './models/OperationWorkflowConditionRefreshOwnerGroup.js';
 export type { OperationWorkflowConditionRefreshPriority } from './models/OperationWorkflowConditionRefreshPriority.js';
+export type { OperationWorkflowConditionRefreshProgress } from './models/OperationWorkflowConditionRefreshProgress.js';
+export type { OperationWorkflowConditionRefreshProgressChange } from './models/OperationWorkflowConditionRefreshProgressChange.js';
+export type { OperationWorkflowConditionRefreshProgressCount } from './models/OperationWorkflowConditionRefreshProgressCount.js';
+export type { OperationWorkflowConditionRefreshProgressInstance } from './models/OperationWorkflowConditionRefreshProgressInstance.js';
 export type { OperationWorkflowControlResponse } from './models/OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './models/OperationWorkflowDecision.js';
 export type { OperationWorkflowDecisionOutcomeEvidence } from './models/OperationWorkflowDecisionOutcomeEvidence.js';

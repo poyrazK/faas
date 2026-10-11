@@ -216,13 +216,21 @@ func (m *MemStore) summarizeWorkflowPerformance(ctx context.Context, account, te
 	if err != nil {
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
+	baseline, err := workflowRefreshProgressBaseline(account, tenant, opts, operator, at)
+	if err != nil {
+		return api.OperationWorkflowPerformanceSummary{}, err
+	}
 	instances, err := m.readWorkflowPerformance(ctx, account, tenant, opts, operator, at)
 	if err != nil {
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
 	out := workflowPerformanceSummary(instances, opts, at)
+	if baseline != nil {
+		out.RefreshProgress = workflowRefreshProgress(instances, *baseline, at)
+	}
 	if !operator {
 		hideRuleOverlapTenants(&out)
+		hideRefreshProgressTenants(out.RefreshProgress)
 	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)
 	return out, nil

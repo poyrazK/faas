@@ -2375,3 +2375,34 @@ history. These observations do not assign business severity, infer causation,
 expire facts, or trigger verification or actions. Applications keep execution
 and authorization. Existing definition/history metadata is sufficient; no
 migration or new persistence is introduced.
+
+
+### Condition refresh progress
+
+Performance summaries optionally accept `baseline_token` from a previously saved
+summary. The token binds the query and evaluation time; comparison deliberately
+accepts changed evidence fingerprints. It does not store historical cohort
+membership. Progress reconstructs evidence visible at the baseline from retained
+report publication timestamps for today's bounded latest-100 completed and
+latest-100 ongoing workflow samples. Workflows absent from today's sample are
+not treated as cleared backlog.
+
+Coverage explicitly counts compared workflows, workflows without a baseline or
+baseline overdue conditions, and exclusions for incomplete history, ambiguous
+condition results or evidence limits. Missing publication timestamps and gaps
+exclude comparison. Contract boundaries are permitted for progress classification
+without relaxing existing duration or active-condition eligibility.
+
+Exact condition and decision/rule identities compare baseline overdue facts with
+current explicit contexts. Results may change. Statuses are `refreshed` (newer
+report within its pinned budget), `still_overdue` (including newer reports already
+overdue), `unreported`, `contract_changed`, and `budget_removed`. Cross-contract
+facts are not compared. Newer-report counts and all status totals precede the
+16-change preview cap. Workflow completion, missing conditions and removed
+budgets do not establish successful business verification.
+
+Dashboard bookmark links preserve the baseline and show coverage, before/after
+results, reporting timestamps, pinned deadlines and guidance, reporting Operation
+links and workflow history. Customer projections omit tenant identifiers. Go,
+Node and Python SDKs expose the optional summary comparison. No new persistence,
+migration, automatic verification or application action is introduced.

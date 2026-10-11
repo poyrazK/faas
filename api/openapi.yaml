@@ -8486,6 +8486,11 @@ paths:
         description: Declared workflow name to compare across instances.
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      - name: baseline_token
+        in: query
+        required: false
+        description: Account optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+        schema: {type: string, minLength: 1, maxLength: 512}
       responses:
         '200':
           description: Separate completed and ongoing cohorts with coverage and ranked durations.
@@ -8511,6 +8516,11 @@ paths:
         required: true
         description: Business workflow to compare within the authenticated customer app and environment.
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      - name: baseline_token
+        in: query
+        required: false
+        description: Customer optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+        schema: {type: string, minLength: 1, maxLength: 512}
       responses:
         '200':
           description: Authenticated customer performance cohorts with observed durations and retained-history coverage.
@@ -39203,6 +39213,7 @@ components:
       additionalProperties: false
       required: [cohort_token, evaluated_at, workflow, cohort_limit, completed, ongoing]
       properties:
+        refresh_progress: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgress'}
         active_conditions: {$ref: '#/components/schemas/OperationWorkflowActiveConditionSummary'}
         condition_outcomes: {$ref: '#/components/schemas/OperationWorkflowConditionOutcomeSummary'}
         decision_outcomes: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeSummary'}
@@ -39212,6 +39223,71 @@ components:
         cohort_limit: {type: integer, minimum: 1, maximum: 100}
         completed: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
         ongoing: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+    OperationWorkflowConditionRefreshProgress:
+      type: object
+      additionalProperties: false
+      description: Report freshness progress reconstructed at baseline_token evaluation time using publication visibility in current retained completed and ongoing cohorts. This is not a stored baseline cohort, a total historical backlog, or business verification. Only continuous retained report history qualifies; contract boundaries are permitted for explicit contract_changed classification without relaxing existing duration or active-summary eligibility. Unknown history and conflicting or over-limit evidence are excluded. Status totals include all baseline overdue identities before per-workflow preview limits. Completed workflows remain visible as terminal reports without implying cleared verification.
+      required: [baseline_at, evaluated_at, sampled_workflow_count, compared_workflow_count, no_baseline_workflow_count, no_overdue_baseline_workflow_count, excluded_incomplete_workflow_count, excluded_ambiguous_workflow_count, excluded_condition_evidence_workflow_count, newer_report_condition_count, statuses, items]
+      properties:
+        baseline_at: {type: string, format: date-time}
+        evaluated_at: {type: string, format: date-time}
+        sampled_workflow_count: {type: integer, format: int64, minimum: 0}
+        compared_workflow_count: {type: integer, format: int64, minimum: 0}
+        no_baseline_workflow_count: {type: integer, format: int64, minimum: 0}
+        no_overdue_baseline_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_incomplete_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_ambiguous_workflow_count: {type: integer, format: int64, minimum: 0}
+        excluded_condition_evidence_workflow_count: {type: integer, format: int64, minimum: 0}
+        newer_report_condition_count: {type: integer, format: int64, minimum: 0}
+        statuses:
+          type: array
+          maxItems: 5
+          items: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgressCount'}
+        items:
+          type: array
+          maxItems: 200
+          description: Compared workflows in stable workflow identity order from current samples of up to 100 completed and 100 ongoing runs. Missing original baseline members are not classified as cleared.
+          items: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgressInstance'}
+    OperationWorkflowConditionRefreshProgressCount:
+      type: object
+      additionalProperties: false
+      description: Exact condition count for one reporting progress status, computed before preview truncation. Refreshed means a newer report within its pinned age budget; still_overdue includes newer reports already overdue. Unreported denotes an absent exact condition and decision/rule identity, not proof of a cleared business condition. Contract changes are not compared across definitions. Budget removal is not a refresh.
+      required: [status, condition_count]
+      properties:
+        status: {type: string, enum: [refreshed, still_overdue, unreported, contract_changed, budget_removed]}
+        condition_count: {type: integer, format: int64, minimum: 0}
+    OperationWorkflowConditionRefreshProgressInstance:
+      type: object
+      additionalProperties: false
+      description: One currently sampled workflow with overdue reporting evidence at the reconstructed baseline. Subject, current state and optional operator tenant context support workflow links. Customer projections omit tenant identifiers. Current terminal state does not imply reporting freshness or business verification success.
+      required: [subject, state, baseline_overdue_condition_count, newer_report_condition_count, statuses, changes_truncated, changes]
+      properties:
+        platform_tenant_id: {type: string, format: uuid}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        state: {$ref: '#/components/schemas/OperationWorkflowState'}
+        baseline_overdue_condition_count: {type: integer, format: int64, minimum: 0}
+        newer_report_condition_count: {type: integer, format: int64, minimum: 0}
+        statuses:
+          type: array
+          maxItems: 5
+          items: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgressCount'}
+        changes_truncated: {type: boolean}
+        changes:
+          type: array
+          maxItems: 16
+          description: First 16 overdue baseline identities in canonical order with before and optional exact-identity after evidence; status counts remain exact.
+          items: {$ref: '#/components/schemas/OperationWorkflowConditionRefreshProgressChange'}
+    OperationWorkflowConditionRefreshProgressChange:
+      type: object
+      additionalProperties: false
+      description: Before and optional after reports for one baseline overdue condition. Results may change while matching exact contract and decision/rule/version and condition ID/description. Newer report is independent of current freshness. Removed identities and budgets are not evidence of refreshed verification. Contract changes have no comparable after fact.
+      required: [status, newer_report, before, explanation]
+      properties:
+        status: {type: string, enum: [refreshed, still_overdue, unreported, contract_changed, budget_removed]}
+        newer_report: {type: boolean}
+        before: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeEvidence'}
+        after: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeEvidence'}
+        explanation: {type: string}
     OperationWorkflowConditionFreshness:
       type: object
       additionalProperties: false

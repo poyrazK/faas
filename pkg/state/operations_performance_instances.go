@@ -173,7 +173,7 @@ func workflowPerformanceContribution(b *api.OperationWorkflowBottlenecks, g api.
 }
 func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerformanceReader, account, tenant string, opts api.OperationWorkflowPerformanceInstanceOptions, operator bool) (api.OperationWorkflowPerformanceInstancesResponse, error) {
 	base, at, err := prepareWorkflowPerformance(account, tenant, opts.OperationWorkflowPerformanceOptions, operator)
-	if err != nil || opts.Cohort != "completed" && opts.Cohort != "ongoing" || validateWorkflowPerformanceGroup(opts.OperationWorkflowPerformanceGroup) != nil {
+	if err != nil || opts.BaselineToken != "" || opts.Cohort != "completed" && opts.Cohort != "ongoing" || validateWorkflowPerformanceGroup(opts.OperationWorkflowPerformanceGroup) != nil {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
 	if businessOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {

@@ -2087,6 +2087,16 @@ from .operation_workflow_condition_outcome_group_condition_result import (
 from .operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
 from .operation_workflow_condition_refresh_owner_group import OperationWorkflowConditionRefreshOwnerGroup
 from .operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
+from .operation_workflow_condition_refresh_progress import OperationWorkflowConditionRefreshProgress
+from .operation_workflow_condition_refresh_progress_change import OperationWorkflowConditionRefreshProgressChange
+from .operation_workflow_condition_refresh_progress_change_status import (
+    OperationWorkflowConditionRefreshProgressChangeStatus,
+)
+from .operation_workflow_condition_refresh_progress_count import OperationWorkflowConditionRefreshProgressCount
+from .operation_workflow_condition_refresh_progress_count_status import (
+    OperationWorkflowConditionRefreshProgressCountStatus,
+)
+from .operation_workflow_condition_refresh_progress_instance import OperationWorkflowConditionRefreshProgressInstance
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
@@ -5571,6 +5581,12 @@ __all__ = (
     "OperationWorkflowConditionOutcomeSummary",
     "OperationWorkflowConditionRefreshOwnerGroup",
     "OperationWorkflowConditionRefreshPriority",
+    "OperationWorkflowConditionRefreshProgress",
+    "OperationWorkflowConditionRefreshProgressChange",
+    "OperationWorkflowConditionRefreshProgressChangeStatus",
+    "OperationWorkflowConditionRefreshProgressCount",
+    "OperationWorkflowConditionRefreshProgressCountStatus",
+    "OperationWorkflowConditionRefreshProgressInstance",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionOutcomeEvidence",

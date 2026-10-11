@@ -23,7 +23,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 		s.renderAppWorkflowPerformanceInstances(w, r, log, acct, app)
 		return
 	}
-	for _, key := range []string{"tenant_id", "workflow"} {
+	for _, key := range []string{"tenant_id", "workflow", "baseline_token"} {
 		if values := q[key]; len(values) == 1 && values[0] == "" {
 			q.Del(key)
 		}
@@ -53,6 +53,8 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.BaselineToken = opts.BaselineToken
+		data.CompareRefreshURL, data.RefreshProgressInstances = workflowRefreshProgressLinks(data.SummaryURL, data.ListURL, opts, summary)
 		data.RefreshAgeURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_age"})
 		data.RefreshBlockedURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_blocked"})
 		data.RefreshOwnerGroups = workflowConditionRefreshOwnerLinks(data.SummaryURL, opts, summary)
@@ -182,4 +184,19 @@ func workflowConditionRefreshOwnerLinks(path string, opts api.OperationWorkflowP
 		links = append(links, dashboard.WorkflowConditionRefreshOwnerLink{OperationWorkflowConditionRefreshOwnerGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
 	}
 	return links
+}
+
+func workflowRefreshProgressLinks(path, listPath string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) (string, []dashboard.WorkflowRefreshProgressLink) {
+	q := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}, "baseline_token": {summary.CohortToken}}
+	if opts.TenantID != "" {
+		q.Set("tenant_id", opts.TenantID)
+	}
+	views := []dashboard.WorkflowRefreshProgressLink{}
+	if summary.RefreshProgress != nil {
+		for _, item := range summary.RefreshProgress.Items {
+			history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+			views = append(views, dashboard.WorkflowRefreshProgressLink{OperationWorkflowConditionRefreshProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+		}
+	}
+	return path + "?" + q.Encode(), views
 }

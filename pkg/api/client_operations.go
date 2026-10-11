@@ -490,6 +490,9 @@ func (c *Client) PreviewPlatformTenantSelfWorkflowActions(ctx context.Context, r
 
 func operationWorkflowPerformanceQuery(opts OperationWorkflowPerformanceOptions, customer bool) string {
 	q := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}}
+	if opts.BaselineToken != "" {
+		q.Set("baseline_token", opts.BaselineToken)
+	}
 	if customer {
 		q.Set("app_id", opts.AppID)
 	} else if opts.TenantID != "" {
