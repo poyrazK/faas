@@ -4757,10 +4757,20 @@ func ErrSecretInvalidKey(detail string) *Problem {
 // Limits.SecretValueMaxBytes. apid checks the byte length of the request body
 // BEFORE sealing so the cap is enforced on the wire (no over-quota ciphertext
 // ever lands in PG).
+// secretValueTooLargeDetail names the plan only when the caller knows it.
+// Most callers pass just the byte cap, which printed " plan caps ..." with
+// an empty plan name (hunt #9 H9-70).
+func secretValueTooLargeDetail(l Limits, observedBytes int) string {
+	if l.Plan != "" {
+		return fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)
+	}
+	return fmt.Sprintf("Secret values are capped at %d bytes; got %d.", l.SecretValueMaxBytes, observedBytes)
+}
+
 func ErrSecretValueTooLarge(l Limits, observedBytes int) *Problem {
 	return NewProblem(http.StatusRequestEntityTooLarge, CodeSecretValueTooLarge,
 		"Secret value too large",
-		fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)).
+		secretValueTooLargeDetail(l, observedBytes)).
 		WithLimit(int64(l.SecretValueMaxBytes), int64(observedBytes)).
 		WithDocs(docsBase + "/secrets#limits")
 }

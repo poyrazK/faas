@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Fail when cmd/apid's non-test Go code grows past its committed baseline.
+# Fail when the apid server's non-test Go code grows past its committed baseline.
 #
-# cmd/apid is one package, so every `go test ./cmd/apid` compiles all of it at
-# once (~16 GB compiler peak). ADR-977 moves domains into pkg/apid/<domain>; this
-# gate keeps new code from refilling package main while that happens.
+# pkg/apid/apidserver is one package, so every `go test ./pkg/apid/apidserver`
+# compiles all of it at once (~16 GB compiler peak). ADR-977 moves domains into
+# pkg/apid/<domain>; this gate keeps new code from refilling the server package
+# while that happens.
 #
 # Growth is allowed only by raising the number in the baseline file in the same
 # PR, so reviewers see it. Shrinking passes with a notice: lower the baseline
@@ -20,7 +21,7 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 }
 cd "$repo_root"
 
-apid_dir="${APID_DIR:-cmd/apid}"
+apid_dir="${APID_DIR:-pkg/apid/apidserver}"
 baseline_file="${APID_SIZE_BASELINE_FILE:-scripts/ci/apid_size_baseline.txt}"
 
 [[ -d "$apid_dir" ]] || {
@@ -50,7 +51,7 @@ if (( current > baseline )); then
   cat >&2 <<EOF
 ::error::apid-size: $apid_dir grew from $baseline to $current non-test lines (+$((current - baseline))).
 
-  New apid code goes in a pkg/apid/<domain> package (ADR-977); cmd/apid
+  New apid code goes in a pkg/apid/<domain> package (ADR-977); $apid_dir
   keeps wiring, the route table and middleware. If this growth is intended,
   raise the number in $baseline_file in this PR.
 EOF

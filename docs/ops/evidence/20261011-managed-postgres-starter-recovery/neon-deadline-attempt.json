@@ -1,0 +1,16 @@
+{
+  "scope": "Exact generated Node starter in local HTTP processes against real Neon direct/pooled endpoints; provider-level credential replacement; no native guest, scheduler receipt, public CLI, approval or rollout.",
+  "passed": [
+    "actual_migration_credential_release",
+    "direct_concurrent_http_writes"
+  ],
+  "metrics": [
+    {
+      "phase": "direct_disconnect",
+      "endpoint": "direct",
+      "status": 503,
+      "latency_ms": 1505
+    }
+  ],
+  "failed": "direct_disconnect"
+}

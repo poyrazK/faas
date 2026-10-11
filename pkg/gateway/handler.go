@@ -4416,7 +4416,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if !allowed {
-		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
@@ -4430,6 +4429,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			// The central counter decided; the local bucket has no view.
 			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
 		}
+		w.Header().Set("Retry-After", strconv.Itoa(routeThrottleRetryAfter(rule.RequestsPerSecond)))
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
@@ -4567,18 +4567,36 @@ func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	return ip, true
 }
 
+// clientIPAliasHeaders are the client-address headers web frameworks read
+// instead of, or before, X-Forwarded-For (Go chi's RealIP checks
+// True-Client-IP first, then X-Real-IP). The gateway forwarded client-supplied
+// values unchanged, so a workload behind it could be handed a forged client
+// address (hunt #9 H9-67, production-us rc.252).
+var clientIPAliasHeaders = []string{"True-Client-IP", "X-Real-IP", "X-Client-IP", "X-Cluster-Client-IP", "Fastly-Client-IP"}
+
 // stampTrustedClientIP replaces the customer-controlled value of
 // x-faas-client-ip with the one address established by the public listener's
 // single trusted X-Forwarded-For hop. Invalid or ambiguous forwarding chains
 // fail closed by removing the header entirely; the existing IP allowlist and
 // geo paths retain their own deny/unknown handling.
+//
+// The client-address aliases get the same treatment: True-Client-IP and
+// X-Real-IP carry the trusted address, the others and the client's RFC 7239
+// Forwarded header are dropped (Forwarded is not rebuilt, so its proto and
+// host cannot drift from X-Forwarded-*).
 func stampTrustedClientIP(r *http.Request) {
 	if r == nil {
 		return
 	}
 	r.Header.Del(wire.ClientIPHeader)
+	r.Header.Del("Forwarded")
+	for _, name := range clientIPAliasHeaders {
+		r.Header.Del(name)
+	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		r.Header.Set(wire.ClientIPHeader, ip.String())
+		r.Header.Set("True-Client-IP", ip.String())
+		r.Header.Set("X-Real-IP", ip.String())
 	}
 }
 

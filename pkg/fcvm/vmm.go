@@ -396,7 +396,7 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) || guestInitStageLine(line) {
+		if firecrackerControlLine(line) || guestInitStageLine(line) || benignGuestKernelLine(line) {
 			continue
 		}
 		if _, err := w.ring.Write("stdout", line); err != nil {
@@ -412,6 +412,21 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 // guest-init's app restart and crash lines stay customer-visible.
 func guestInitStageLine(line []byte) bool {
 	return bytes.HasPrefix(bytes.TrimSpace(line), []byte("guest-init: stage "))
+}
+
+// benignGuestKernelLine matches kernel messages every guest prints that only
+// describe Gregale's VM shape. The guest kernel needs CONFIG_PCI to parse
+// Firecracker's ACPI tables, but Firecracker runs without its PCI transport,
+// so pci_arch_init reports the missing config space at KERN_ERR on every boot
+// (ADR-983). The unfiltered console file keeps it for operators.
+func benignGuestKernelLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	if strings.HasPrefix(text, "[") {
+		if end := strings.IndexByte(text, ']'); end >= 0 {
+			text = strings.TrimSpace(text[end+1:])
+		}
+	}
+	return text == "PCI: Fatal: No config space access function found"
 }
 
 // stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
@@ -452,6 +467,12 @@ func firecrackerControlLine(line []byte) bool {
 		if strings.Contains(header, origin) {
 			return true
 		}
+	}
+	// vCPU threads log as "[instance:fc_vcpu N]": resume bookkeeping and the
+	// guest port I/O Firecracker does not emulate, such as the PCI probes a
+	// Firecracker 1.17 guest makes at boot.
+	if strings.Contains(header, ":fc_vcpu ") {
+		return true
 	}
 	// The :main origin carries both Firecracker startup/restore diagnostics and
 	// guest serial output. Keep the latter unless the message contains a

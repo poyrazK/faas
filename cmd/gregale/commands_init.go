@@ -229,7 +229,9 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	PrintProgress(stdout, "Wrote %s template to %s", tpl, absDest)
 	PrintProgress(stdout, "Next:")
 	for _, line := range nextStepsFor(tpl) {
-		_, _ = fmt.Fprintf(stdout, "  %s\n", line)
+		// The steps are written with a <dest> placeholder; show the
+		// directory the user just created (hunt #9 H9-62).
+		_, _ = fmt.Fprintf(stdout, "  %s\n", strings.ReplaceAll(line, "<dest>", recoveryArgument(dest)))
 	}
 	PrintProgress(stdout, "Docs: %s", docsURLForTemplate(tpl))
 

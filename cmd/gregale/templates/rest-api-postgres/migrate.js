@@ -1,10 +1,14 @@
 import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { poolConfig } from "./database.js";
 
 export async function migrate(connectionString) {
   if (!connectionString) throw new Error("MIGRATION_DATABASE_URL is required");
   const { default: pg } = await import("pg");
-  const client = new pg.Client({ connectionString, connectionTimeoutMillis: 5000 });
+  const client = new pg.Client(poolConfig(connectionString));
+  // Active connection errors also reject the pending SQL operation. Handle
+  // their event so the CLI can report its stable failure without a raw stack.
+  client.on("error", () => {});
   try {
     await client.connect();
     await client.query("SET statement_timeout = '120s'");
