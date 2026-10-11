@@ -3520,6 +3520,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+		return gateErr
+	}
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3629,6 +3632,29 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return nil
 	}
 	if promoteErr != nil {
+		var routeRemovalBlocker *state.RouteRemovalBlockedError
+		if errors.As(promoteErr, &routeRemovalBlocker) {
+			_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeRouteRemovalRequired, routeRemovalBlocker.Error())
+			if markErr != nil {
+				return fmt.Errorf("imaged: record route removal blocker: %w", markErr)
+			}
+			if h.audit != nil {
+				h.audit.Emit(ctx, "deployment.route_removal_blocked", &app.AccountID, map[string]any{"app_id": app.ID, "deployment_id": dep.ID, "detail": routeRemovalBlocker.Reason})
+			}
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+			return fmt.Errorf("imaged: route removal policy: %w", promoteErr)
+		}
+		var dependencyBlocker *state.DependencyGateError
+		if errors.As(promoteErr, &dependencyBlocker) {
+			// Refresh the durable blocker after a dependency changed during
+			// smoke, before finalizing the failed or deferred activation.
+			if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
+				return gateErr
+			}
+		}
+		if stop, gateErr := h.handleProjectDependencyBlocker(ctx, dep, promoteErr); stop {
+			return gateErr
+		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)

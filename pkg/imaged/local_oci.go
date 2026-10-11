@@ -457,7 +457,7 @@ func localOCIBlobName(digest string) (string, error) {
 // layers from this content-verified local artifact are applied here. Content
 // verification alone does not establish an approved publisher's identity.
 func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep *state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
-	digest, err := localOCIManifestDigest(dep.RootfsPath)
+	digest, err := localOCIManifestDigestContext(ctx, dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: verify source build digest: %w", err)
 	}

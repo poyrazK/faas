@@ -148,10 +148,18 @@ func verifyImageSignatureAttachment(attachment ImageSignatureAttachment, digest 
 // PublisherKeySHA256 hashes canonical SPKI DER. Names and mutable PEM spelling
 // are never key identity. The current publisher resource vocabulary is P256.
 func PublisherKeySHA256(pub *ecdsa.PublicKey) (string, error) {
-	if pub == nil || pub.Curve != elliptic.P256() || pub.X == nil || pub.Y == nil || !pub.IsOnCurve(pub.X, pub.Y) {
+	if pub == nil || pub.Curve != elliptic.P256() {
 		return "", errors.New("cosign: publisher key is not valid ECDSA P256")
 	}
-	der, err := x509.MarshalPKIXPublicKey(pub)
+	encoded, err := pub.Bytes()
+	if err != nil {
+		return "", errors.New("cosign: publisher key is not valid ECDSA P256")
+	}
+	canonical, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded)
+	if err != nil {
+		return "", errors.New("cosign: publisher key is not valid ECDSA P256")
+	}
+	der, err := x509.MarshalPKIXPublicKey(canonical)
 	if err != nil {
 		return "", fmt.Errorf("cosign: encode publisher key: %w", err)
 	}

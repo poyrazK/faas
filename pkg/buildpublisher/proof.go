@@ -32,19 +32,31 @@ func Sign(ctx context.Context, claims Claims, name string, key *ecdsa.PrivateKey
 		return Proof{}, err
 	}
 	payload, err := Payload(claims)
-	if err != nil || key == nil || key.D == nil || key.D.Sign() <= 0 || key.Curve != elliptic.P256() || key.D.Cmp(elliptic.P256().Params().N) >= 0 || !boundedLabel(name, false) {
+	if err != nil || key == nil || key.Curve != elliptic.P256() || !boundedLabel(name, false) {
 		return Proof{}, ErrInvalid
 	}
-	fingerprint, err := imagepublisher.PublisherKeySHA256(&key.PublicKey)
+	privateBytes, err := key.Bytes()
 	if err != nil {
 		return Proof{}, ErrInvalid
 	}
-	x, y := key.ScalarBaseMult(key.D.Bytes())
-	if x.Cmp(key.X) != 0 || y.Cmp(key.Y) != 0 {
+	canonicalKey, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), privateBytes)
+	if err != nil {
+		return Proof{}, ErrInvalid
+	}
+	providedPublic, err := key.PublicKey.Bytes()
+	if err != nil {
+		return Proof{}, ErrInvalid
+	}
+	canonicalPublic, err := canonicalKey.PublicKey.Bytes()
+	if err != nil || !bytes.Equal(providedPublic, canonicalPublic) {
+		return Proof{}, ErrInvalid
+	}
+	fingerprint, err := imagepublisher.PublisherKeySHA256(&canonicalKey.PublicKey)
+	if err != nil {
 		return Proof{}, ErrInvalid
 	}
 	hash := sha256.Sum256(payload)
-	signature, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+	signature, err := ecdsa.SignASN1(rand.Reader, canonicalKey, hash[:])
 	if err != nil {
 		return Proof{}, err
 	}
