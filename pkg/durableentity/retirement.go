@@ -160,6 +160,10 @@ func (m *Manager) StartRetirement(ctx context.Context, id ID, request Retirement
 		if err != nil {
 			return nil, err
 		}
+		projected := base.StorageUsage.TotalBytes() - base.StorageUsage.SnapshotBytes + int64(len(body))
+		if projected > 64<<20 || base.StorageLimitBytes > 0 && projected > base.StorageLimitBytes {
+			return nil, ErrLimit
+		}
 		key := fmt.Sprintf("%ssnapshots/%d/%s.json", id.prefix(), base.Generation, uuid.NewString())
 		version, err := m.store.Put(ctx, key, body, "")
 		if err != nil || version == "" {

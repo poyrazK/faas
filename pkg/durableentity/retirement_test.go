@@ -2,6 +2,7 @@ package durableentity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -211,4 +212,31 @@ func TestRetirementUnknownManifestAndDeleteResumeWithoutLosingReceipts(t *testin
 		t.Fatal("stale cursor reset accepted", err)
 	}
 	finishRetirement(t, f, m, status)
+}
+
+func TestRetirementCannotGrowRecoverySnapshotBeyondExistingCap(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.manager.Execute(t.Context(), f.claim, request("scalar"), func(context.Context, View) (Transition, error) {
+		return Transition{Data: json.RawMessage(`0`), Result: json.RawMessage(`{}`)}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	base, _, err := f.manager.readManifest(t.Context(), f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.manager.SetStorageLimit(t.Context(), f.claim, base.StorageUsage.TotalBytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.manager.Release(t.Context(), f.claim); err != nil {
+		t.Fatal(err)
+	}
+	p := retirementRequest(t, f)
+	if _, err = f.manager.StartRetirement(t.Context(), f.id, p, "operator"); !errors.Is(err, ErrLimit) {
+		t.Fatal("retirement exceeded retained cap", err)
+	}
+	preview, err := f.manager.PreviewRetirement(t.Context(), f.id)
+	if err != nil || preview.Retirement != nil || preview.RecoveryRevision != p.Revision {
+		t.Fatal("rejected retirement changed authority", preview, err)
+	}
 }

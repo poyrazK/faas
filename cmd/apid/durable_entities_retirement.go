@@ -74,6 +74,15 @@ func (s *server) startEntityRetirement(w http.ResponseWriter, r *http.Request, a
 		writeEntityRetirementProblem(w, durableentity.ErrInventoryPending)
 		return
 	}
+	preview, err := s.durableEntities.PreviewRetirement(ctx, id)
+	if err != nil {
+		writeEntityRetirementProblem(w, err)
+		return
+	}
+	if preview.Retirement == nil && (!preview.Ready || preview.ProjectedRecoveryBytes > quota.ReservedBytes) {
+		writeEntityRetirementProblem(w, durableentity.ErrInventoryPending)
+		return
+	}
 	actor := acct.ID
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		actor += "/api-key:" + p.Key.ID

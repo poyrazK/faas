@@ -68,10 +68,17 @@ func validQuotaRetirements(r quotaRecord) bool {
 		if item.Phase == "held" && (item.RetainedBytes != 0 || item.ReleasedBytes != 0) {
 			return false
 		}
+		found := false
 		for _, e := range r.Entities {
+			if e.Key == item.EntityKey {
+				found = true
+			}
 			if e.Key == item.EntityKey && item.Phase == "complete" {
 				return false
 			}
+		}
+		if item.Phase == "held" && !found {
+			return false
 		}
 		seen[item.EntityKey], operations[item.OperationID] = true, true
 	}
