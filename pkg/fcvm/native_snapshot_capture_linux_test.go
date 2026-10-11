@@ -396,7 +396,7 @@ func assertNativeCaptureSequenceClosed(t *testing.T, f *nativeCaptureSequenceFix
 		}
 	}
 	capture, err := f.q.readCapture(f.incoming)
-	if err != nil || capture != f.capture || f.store.ordinary != 0 || f.store.deletes != 0 || f.v.checkEnvironmentQualificationSnapshotSupport() == nil {
+	if err != nil || !reflect.DeepEqual(capture, f.capture) || f.store.ordinary != 0 || f.store.deletes != 0 || f.v.checkEnvironmentQualificationSnapshotSupport() == nil {
 		t.Fatal("internal producer supplied completion, legacy effects or an enabled native gate", err)
 	}
 }

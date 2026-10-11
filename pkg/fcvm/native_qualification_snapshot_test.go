@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -304,7 +305,7 @@ func TestNativeQualificationCaptureJournalPinsVersionAtStartAndCompletion(t *tes
 		t.Fatal("completed capture receipt was rewritten")
 	}
 	got, err := j.readCapture(incoming)
-	if err != nil || got != completed {
+	if err != nil || !reflect.DeepEqual(got, completed) {
 		t.Fatalf("capture receipt changed after completion: %+v %v", got, err)
 	}
 }

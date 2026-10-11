@@ -9494,7 +9494,7 @@ Manage versioned application standards
 
 Inspect current versions and revisions, including inactive assignments
 
-`gregale orgs standards assignments`
+`gregale orgs standards assignments <list|show>`
 
 Examples:
 
@@ -9530,7 +9530,7 @@ Read the current assignment revision and admission version
 
 Preview assignment changes and inspect saved reviews
 
-`gregale orgs standards reviews`
+`gregale orgs standards reviews <preview|show|approve>`
 
 ##### orgs standards reviews preview
 
@@ -9570,7 +9570,7 @@ Approve the exact saved review; admin only, release gated
 
 Inspect rollout progress or apply gated operator controls
 
-`gregale orgs standards operation --org <SLUG> --id <UUID>`
+`gregale orgs standards operation <pause|resume|abort> --org <SLUG> --id <UUID>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9617,7 +9617,7 @@ Stop outstanding targets and retain installed settings; admin only, release gate
 
 Inspect history or manage bounded exceptions
 
-`gregale orgs standards exceptions --org <SLUG> --app <UUID> [--after <UUID>] [--limit <N>]`
+`gregale orgs standards exceptions <approve|revoke> --org <SLUG> --app <UUID> [--after <UUID>] [--limit <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9678,7 +9678,7 @@ Inspect application adoption and installed standards
 
 Manage immutable logging destination references
 
-`gregale orgs standards destinations`
+`gregale orgs standards destinations <list|show|create>`
 
 ##### orgs standards destinations list
 
@@ -9718,7 +9718,7 @@ Create an immutable resource from JSON
 
 Manage immutable trusted publisher references
 
-`gregale orgs standards publishers`
+`gregale orgs standards publishers <list|show|create>`
 
 ##### orgs standards publishers list
 
