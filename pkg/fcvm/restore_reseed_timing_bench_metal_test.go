@@ -61,6 +61,10 @@ func TestMetalRestoreReseedTimingBench(t *testing.T) {
 		// it too.
 		{name: "node-npm", rootfsEnv: "FAAS_TEST_RNG_NODE_ROOTFS", file: "srv/rng-app.js", script: rngNodeApp,
 			entrypoint: []string{"/bin/sh", "-c", "PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp npm_config_cache=/tmp/.npm npm exec --offline --yes=false -- node /srv/rng-app.js"}},
+		// An app that never calls randomUUID or randomInt: what the barrier
+		// costs when nothing reads the RNG caches after a restore.
+		{name: "node-plain", rootfsEnv: "FAAS_TEST_RNG_NODE_ROOTFS", file: "srv/rng-app.js", script: plainNodeApp,
+			entrypoint: []string{"/usr/local/bin/node", "/srv/rng-app.js"}},
 		{name: "python", rootfsEnv: "FAAS_TEST_RNG_PYTHON_ROOTFS", file: "srv/rng-app.py", script: rngPythonApp,
 			entrypoint: []string{"/usr/bin/python3", "/srv/rng-app.py"}},
 	}
@@ -170,3 +174,6 @@ func restoreSnapshotN(t *testing.T, kernel, tarball, file, script string, entryp
 	}
 	return capture.rows(), firstRequest
 }
+
+const plainNodeApp = `require("http").createServer((req, res) => res.end("ok")).listen(8080, "0.0.0.0");
+`
