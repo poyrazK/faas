@@ -311,6 +311,7 @@ export type { CreateObjectUploadRouteRequest } from './CreateObjectUploadRouteRe
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
 export type { CreateOutboundAIRouteRequest } from './CreateOutboundAIRouteRequest.js';
+export type { CreateOutboundCredentialKeyRequest } from './CreateOutboundCredentialKeyRequest.js';
 export type { CreateOutboundIntegrationRequest } from './CreateOutboundIntegrationRequest.js';
 export type { CreatePlatformTenantAccessTokenRequest } from './CreatePlatformTenantAccessTokenRequest.js';
 export type { CreatePlatformTenantAccessTokenResponse } from './CreatePlatformTenantAccessTokenResponse.js';
@@ -1202,8 +1203,13 @@ export type { OrgMembershipExportResponse } from './OrgMembershipExportResponse.
 export type { OrgResponse } from './OrgResponse.js';
 export type { OrgSlug } from './OrgSlug.js';
 export type { OrgWithRole } from './OrgWithRole.js';
+export type { OutboundAIBudgetAlert } from './OutboundAIBudgetAlert.js';
+export type { OutboundAIBudgetAlertList } from './OutboundAIBudgetAlertList.js';
+export type { OutboundAIBudgetThresholdWebhookPayload } from './OutboundAIBudgetThresholdWebhookPayload.js';
 export type { OutboundAIPriceEntry } from './OutboundAIPriceEntry.js';
 export type { OutboundAIPriceListResponse } from './OutboundAIPriceListResponse.js';
+export type { OutboundAIRequestLogEntry } from './OutboundAIRequestLogEntry.js';
+export type { OutboundAIRequestLogList } from './OutboundAIRequestLogList.js';
 export type { OutboundAIRoute } from './OutboundAIRoute.js';
 export type { OutboundAIRouteList } from './OutboundAIRouteList.js';
 export type { OutboundAIRouteTarget } from './OutboundAIRouteTarget.js';
@@ -1213,6 +1219,8 @@ export type { OutboundAppBinding } from './OutboundAppBinding.js';
 export type { OutboundAppBindingList } from './OutboundAppBindingList.js';
 export type { OutboundBindingProbePolicy } from './OutboundBindingProbePolicy.js';
 export type { OutboundBindingUsageResponse } from './OutboundBindingUsageResponse.js';
+export type { OutboundCredentialKey } from './OutboundCredentialKey.js';
+export type { OutboundCredentialKeyList } from './OutboundCredentialKeyList.js';
 export type { OutboundIntegrationOffer } from './OutboundIntegrationOffer.js';
 export type { OutboundIntegrationOfferList } from './OutboundIntegrationOfferList.js';
 export type { OutboundIntegrationUsageResponse } from './OutboundIntegrationUsageResponse.js';
@@ -1464,6 +1472,7 @@ export type { PutOutboundAIPolicyRequest } from './PutOutboundAIPolicyRequest.js
 export type { PutOutboundAIPricesRequest } from './PutOutboundAIPricesRequest.js';
 export type { PutOutboundAIRouteTargetsRequest } from './PutOutboundAIRouteTargetsRequest.js';
 export type { PutOutboundBindingAIBudgetRequest } from './PutOutboundBindingAIBudgetRequest.js';
+export type { PutOutboundBindingAIGuardrailsRequest } from './PutOutboundBindingAIGuardrailsRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './PutOutboundCredentialRequest.js';
 export type { PutOutboundDailyRequestBudgetRequest } from './PutOutboundDailyRequestBudgetRequest.js';

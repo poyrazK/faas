@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const outboundAIRouteInvalidDetail = "a route needs a DNS-label name and 1 to 5 targets that are this account's enabled managed AI integrations of one ai_provider"
+const outboundAIRouteInvalidDetail = "a route needs a DNS-label name, a format of native or openai, and 1 to 5 targets that are this account's enabled managed AI integrations: one ai_provider for native routes, or openai, azure_openai, anthropic and gemini targets (all but openai naming a model) for openai routes"
 
 func (s *server) outboundAIRouteStore(w http.ResponseWriter) (state.OutboundAIRouteStore, bool) {
 	store, ok := s.store.(state.OutboundAIRouteStore)
@@ -20,7 +20,7 @@ func (s *server) outboundAIRouteStore(w http.ResponseWriter) (state.OutboundAIRo
 }
 
 func outboundAIRouteResponse(route state.OutboundAIRoute) api.OutboundAIRoute {
-	out := api.OutboundAIRoute{ID: route.ID, Name: route.Name, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
+	out := api.OutboundAIRoute{ID: route.ID, Name: route.Name, Format: route.Format, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 		Targets: make([]api.OutboundAIRouteTarget, 0, len(route.Targets))}
 	for _, target := range route.Targets {
 		out.Targets = append(out.Targets, api.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model})
@@ -57,7 +57,8 @@ func (s *server) listOutboundAIRoutes(w http.ResponseWriter, r *http.Request, ac
 // createOutboundAIRoute stores an ordered fallback route (ADR-983).
 func (s *server) createOutboundAIRoute(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateOutboundAIRouteRequest
-	if err := decodeJSONSized(r, &req, 8<<10); err != nil || !api.ValidOutboundAIRouteName(req.Name) || !api.ValidOutboundAIRouteTargetShape(req.Targets) {
+	if err := decodeJSONSized(r, &req, 8<<10); err != nil || !api.ValidOutboundAIRouteName(req.Name) ||
+		!api.ValidOutboundAIRouteFormat(req.Format) || !api.ValidOutboundAIRouteTargetShape(req.Targets) {
 		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, outboundAIRouteInvalidDetail)
 		return
 	}
@@ -66,7 +67,7 @@ func (s *server) createOutboundAIRoute(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	created, err := store.CreateOutboundAIRoute(r.Context(), state.OutboundAIRoute{
-		ID: uuid.NewString(), AccountID: acct.ID, Name: req.Name, Targets: stateOutboundAIRouteTargets(req.Targets),
+		ID: uuid.NewString(), AccountID: acct.ID, Name: req.Name, Format: req.Format, Targets: stateOutboundAIRouteTargets(req.Targets),
 	})
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):

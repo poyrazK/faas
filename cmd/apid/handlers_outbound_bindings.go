@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound"
-	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,6 +34,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		// ADR-983 cost limits, priced from the integration's price list.
 		AIDailyCostLimitMillicents:   copyOutboundDailyLimit(offer.AIDailyCostLimit),
 		AIMonthlyCostLimitMillicents: copyOutboundDailyLimit(offer.AIMonthlyCostLimit),
+		AIRequestLogEnabled:          offer.AIRequestLogEnabled,
 	}
 }
 
@@ -55,7 +55,19 @@ func outboundBindingResponse(binding state.OutboundAppBinding) api.OutboundAppBi
 		AllowedMethods:      append([]string{}, binding.RouteMethods...),
 		AllowedPathPrefixes: append([]string{}, binding.RoutePathPrefixes...),
 		AIDailyTokenLimit:   copyOutboundDailyLimit(binding.BindingAIDailyTokenLimit),
+		// ADR-984 per-app guardrails.
+		AIRequestsPerMinute: copyOutboundDailyLimit(binding.BindingAIRequestsPerMinute),
+		AITokensPerMinute:   copyOutboundDailyLimit(binding.BindingAITokensPerMinute),
+		AIAllowedModels:     outboundAllowedModels(binding.BindingAIAllowedModels),
+		AIMaxOutputTokens:   copyOutboundDailyLimit(binding.BindingAIMaxOutputTokens),
 	}
+}
+
+func outboundAllowedModels(models []string) []string {
+	if models == nil {
+		return nil
+	}
+	return append([]string{}, models...)
 }
 
 func (s *server) outboundBindingStore(w http.ResponseWriter) (state.OutboundBindingStore, bool) {
@@ -486,19 +498,8 @@ func (s *server) putOutboundCredential(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return
 	}
-	if outboundCredentialRecipient == nil {
-		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
-		return
-	}
-	recipient := outboundCredentialRecipient()
-	if recipient == nil {
-		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, outbound.ManagedAuthorizationSealNamespace,
-		[]byte(req.Authorization), outbound.ManagedAuthorizationMaxBytes)
-	if err != nil {
-		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
+	sealed, ok := sealOutboundCredential(w, req.Authorization)
+	if !ok {
 		return
 	}
 	if err := store.SetOutboundCredential(r.Context(), acct.ID, integrationID, sealed); errors.Is(err, state.ErrNotFound) {

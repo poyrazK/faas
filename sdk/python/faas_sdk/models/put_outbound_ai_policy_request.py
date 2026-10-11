@@ -26,6 +26,9 @@ class PutOutboundAIPolicyRequest:
     daily_token_limit: int | None
     daily_cost_limit_millicents: int | None | Unset = UNSET
     monthly_cost_limit_millicents: int | None | Unset = UNSET
+    request_log_enabled: bool | Unset = UNSET
+    """Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-984). Requires
+    ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +49,8 @@ class PutOutboundAIPolicyRequest:
         else:
             monthly_cost_limit_millicents = self.monthly_cost_limit_millicents
 
+        request_log_enabled = self.request_log_enabled
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +63,8 @@ class PutOutboundAIPolicyRequest:
             field_dict["daily_cost_limit_millicents"] = daily_cost_limit_millicents
         if monthly_cost_limit_millicents is not UNSET:
             field_dict["monthly_cost_limit_millicents"] = monthly_cost_limit_millicents
+        if request_log_enabled is not UNSET:
+            field_dict["request_log_enabled"] = request_log_enabled
 
         return field_dict
 
@@ -93,11 +100,14 @@ class PutOutboundAIPolicyRequest:
             d.pop("monthly_cost_limit_millicents", UNSET)
         )
 
+        request_log_enabled = d.pop("request_log_enabled", UNSET)
+
         put_outbound_ai_policy_request = cls(
             ai_provider=ai_provider,
             daily_token_limit=daily_token_limit,
             daily_cost_limit_millicents=daily_cost_limit_millicents,
             monthly_cost_limit_millicents=monthly_cost_limit_millicents,
+            request_log_enabled=request_log_enabled,
         )
 
         put_outbound_ai_policy_request.additional_properties = d

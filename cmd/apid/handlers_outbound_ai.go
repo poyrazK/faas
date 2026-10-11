@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const outboundAIPolicyInvalidDetail = "ai_provider must be openai or anthropic; token limits (1 to 100,000,000,000) and cost limits (1 to 1,000,000,000,000 millicents) require a provider"
+const outboundAIPolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider"
 
 func (s *server) outboundAIStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.store.(state.OutboundAIStore)
@@ -62,6 +62,7 @@ func (s *server) putOutboundAIPolicy(w http.ResponseWriter, r *http.Request, acc
 	err := store.SetOutboundAIPolicy(r.Context(), acct.ID, integrationID, state.OutboundAIPolicy{
 		Provider: req.AIProvider, DailyTokenLimit: req.DailyTokenLimit,
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
+		RequestLogEnabled: req.RequestLogEnabled,
 	})
 	s.writeOutboundAIWriteResult(w, err, "customer outbound integration not found", outboundAIPolicyInvalidDetail)
 }

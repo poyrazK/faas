@@ -51,8 +51,9 @@ class OutboundIntegrationOffer:
     request_policy: OutboundRequestPolicy
     """Effective customer-selected per-integration policy, bounded by the account plan."""
     ai_provider: OutboundIntegrationOfferAiProvider | Unset = UNSET
-    """Present for AI gateway integrations (ADR-979). openai is the OpenAI-compatible wire format; the gateway
-    extracts token usage in that provider's response format."""
+    """Present for AI gateway integrations (ADR-979, ADR-984). openai is the OpenAI-compatible wire format; the
+    provider also selects how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-
+    account token for vertex) and how token usage is read."""
     ai_daily_token_limit: int | None | Unset = UNSET
     """UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means
     no limit."""
@@ -60,6 +61,8 @@ class OutboundIntegrationOffer:
     """UTC-day cost limit priced from the integration's price list (ADR-983)."""
     ai_monthly_cost_limit_millicents: int | None | Unset = UNSET
     """Calendar-month cost limit priced from the integration's price list (ADR-983)."""
+    ai_request_log_enabled: bool | Unset = UNSET
+    """Whether every settled AI call writes one metadata row to the request log (ADR-984). Never stores content."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,6 +113,8 @@ class OutboundIntegrationOffer:
         else:
             ai_monthly_cost_limit_millicents = self.ai_monthly_cost_limit_millicents
 
+        ai_request_log_enabled = self.ai_request_log_enabled
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -136,6 +141,8 @@ class OutboundIntegrationOffer:
             field_dict["ai_daily_cost_limit_millicents"] = ai_daily_cost_limit_millicents
         if ai_monthly_cost_limit_millicents is not UNSET:
             field_dict["ai_monthly_cost_limit_millicents"] = ai_monthly_cost_limit_millicents
+        if ai_request_log_enabled is not UNSET:
+            field_dict["ai_request_log_enabled"] = ai_request_log_enabled
 
         return field_dict
 
@@ -211,6 +218,8 @@ class OutboundIntegrationOffer:
             d.pop("ai_monthly_cost_limit_millicents", UNSET)
         )
 
+        ai_request_log_enabled = d.pop("ai_request_log_enabled", UNSET)
+
         outbound_integration_offer = cls(
             id=id,
             name=name,
@@ -228,6 +237,7 @@ class OutboundIntegrationOffer:
             ai_daily_token_limit=ai_daily_token_limit,
             ai_daily_cost_limit_millicents=ai_daily_cost_limit_millicents,
             ai_monthly_cost_limit_millicents=ai_monthly_cost_limit_millicents,
+            ai_request_log_enabled=ai_request_log_enabled,
         )
 
         outbound_integration_offer.additional_properties = d

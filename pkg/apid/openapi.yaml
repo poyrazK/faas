@@ -596,6 +596,138 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/credential-keys:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the account's managed integration.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundCredentialKeys
+      summary: List an integration's extra provider keys.
+      description: Requires MFA and read scope (ADR-984). Values are write-only and never returned.
+      responses:
+        '200':
+          description: Extra keys, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundCredentialKeyList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundCredentialKey
+      summary: Add an extra provider key to a customer-sealed integration.
+      description: Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to the next key when one returns 429. At most 8 extra keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundCredentialKeyRequest' }
+      responses:
+        '201':
+          description: Key sealed and stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundCredentialKey' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '409': { description: A key with this label already exists. }
+        '429': { description: The integration has reached its extra key limit. }
+
+  /v1/outbound/integrations/{integration}/credential-keys/{key}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the account's managed integration.
+        schema: { type: string, format: uuid }
+      - name: key
+        in: path
+        required: true
+        description: UUID of the extra key.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundCredentialKey
+      summary: Remove an extra provider key.
+      description: Requires MFA and deploy-write scope (ADR-984). outboundd stops using it on its next call.
+      responses:
+        '204': { description: Key removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-alerts:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the account's managed integration.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIBudgetAlerts
+      summary: List AI budget alerts recorded at 80% and 100%.
+      description: Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size, 1 to 100 (default 100).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Budget alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIBudgetAlertList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the account's managed integration.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIRequestLog
+      summary: Page the opt-in AI request log.
+      description: Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata only.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size, 1 to 200 (default 200).
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: before
+          in: query
+          required: false
+          description: The previous page's next_before.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: One page of logged calls.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRequestLogList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/ai-routes:
     get:
       tags: [outbound]
@@ -613,8 +745,8 @@ paths:
     post:
       tags: [outbound]
       operationId: createOutboundAIRoute
-      summary: Create an AI fallback route over same-format managed AI integrations.
-      description: Requires MFA and deploy-write scope (ADR-983). Every target must be an enabled managed AI integration of this account with the same ai_provider. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+      summary: Create an AI fallback route over managed AI integrations.
+      description: Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI integration of this account; a native route needs one ai_provider, an openai route translates OpenAI chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
       requestBody:
         required: true
         content:
@@ -677,7 +809,7 @@ paths:
       tags: [outbound]
       operationId: setOutboundAIRouteTargets
       summary: Replace an AI route's ordered targets.
-      description: Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+      description: Requires MFA and deploy-write scope. The same ownership and route-format rules as creation apply.
       requestBody:
         required: true
         content:
@@ -967,6 +1099,30 @@ paths:
             schema: { $ref: '#/components/schemas/PutOutboundBindingAIBudgetRequest' }
       responses:
         '204': { description: App AI token limit updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the app's bound AI integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundBindingAIGuardrails
+      summary: Replace an app's AI guardrails on an AI integration.
+      description: Requires MFA and deploy-write scope (ADR-984). Sets per-minute request and token limits, a model allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundBindingAIGuardrailsRequest' }
+      responses:
+        '204': { description: Guardrails replaced; no body returned. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -45110,8 +45266,8 @@ components:
         request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
         ai_provider:
           type: string
-          enum: [openai, anthropic]
-          description: Present for AI gateway integrations (ADR-979). openai is the OpenAI-compatible wire format; the gateway extracts token usage in that provider's response format.
+          enum: [openai, anthropic, gemini, azure_openai, bedrock, vertex]
+          description: Present for AI gateway integrations (ADR-979, ADR-984). openai is the OpenAI-compatible wire format; the provider also selects how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-account token for vertex) and how token usage is read.
         ai_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -45130,6 +45286,9 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: Calendar-month cost limit priced from the integration's price list (ADR-983).
+        ai_request_log_enabled:
+          type: boolean
+          description: Whether every settled AI call writes one metadata row to the request log (ADR-984). Never stores content.
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -45160,8 +45319,8 @@ components:
           description: Optional full request policy. Omission selects the default 10 RPS, burst 20, 10 in flight, and 30-second timeout.
         ai_provider:
           type: string
-          enum: [openai, anthropic]
-          description: Optional AI gateway mode (ADR-979). Enables token usage extraction for that provider's response format.
+          enum: [openai, anthropic, gemini, azure_openai, bedrock, vertex]
+          description: Optional AI gateway mode (ADR-979, ADR-984). Enables token usage extraction for that provider's response format.
         ai_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -45175,7 +45334,7 @@ components:
       properties:
         ai_provider:
           type: string
-          enum: ['', openai, anthropic]
+          enum: ['', openai, anthropic, gemini, azure_openai, bedrock, vertex]
         daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -45191,6 +45350,9 @@ components:
           format: int64
           minimum: 1
           maximum: 1000000000000
+        request_log_enabled:
+          type: boolean
+          description: Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-984). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
@@ -45364,6 +45526,13 @@ components:
           minimum: 1
           maximum: 100000000000
           description: This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983).
+        ai_requests_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 100000, description: Admitted calls per UTC minute for this app (ADR-984). }
+        ai_tokens_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000000, description: Settled tokens plus live reservations per UTC minute for this app (ADR-984). }
+        ai_allowed_models:
+          type: [array, 'null']
+          description: Exact model names or prefixes ending in "*" this app may call; null allows every model (ADR-984).
+          items: { type: string, maxLength: 128 }
+        ai_max_output_tokens: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000, description: Per-request output-token ceiling; added to requests that name none (ADR-984). }
     PutOutboundBindingAIBudgetRequest:
       type: object
       description: Set or clear (null) an app binding's daily AI token limit.
@@ -45411,11 +45580,12 @@ components:
         model: { type: string, maxLength: 128 }
     OutboundAIRoute:
       type: object
-      description: An ordered list of same-format managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-983).
-      required: [id, name, targets, created_at, updated_at]
+      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-983). An openai-format route accepts OpenAI chat completions and translates them for Anthropic and Gemini targets (ADR-984).
+      required: [id, name, format, targets, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+        format: { type: string, enum: [native, openai] }
         targets:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
@@ -45433,6 +45603,10 @@ components:
       required: [name, targets]
       properties:
         name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        format:
+          type: string
+          enum: [native, openai]
+          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and gemini targets, and every target but openai must name its model (ADR-984).
         targets:
           type: array
           minItems: 1
@@ -45447,6 +45621,89 @@ components:
           minItems: 1
           maxItems: 5
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+    PutOutboundBindingAIGuardrailsRequest:
+      type: object
+      description: Replace an app's AI guardrails on one integration (ADR-984). Null fields remove that guardrail.
+      properties:
+        requests_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 100000 }
+        tokens_per_minute: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000000 }
+        allowed_models:
+          type: [array, 'null']
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        max_output_tokens: { type: [integer, 'null'], format: int64, minimum: 1, maximum: 1000000 }
+    OutboundCredentialKey:
+      type: object
+      description: One extra provider key of an integration's pool (ADR-984). The value is write-only.
+      required: [id, label, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        created_at: { type: string, format: date-time }
+    OutboundCredentialKeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundCredentialKey' }
+    CreateOutboundCredentialKeyRequest:
+      type: object
+      required: [label, authorization]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' }
+        authorization: { type: string, minLength: 1, maxLength: 8192, description: Same format as the integration's primary credential; sealed for outboundd and never returned. }
+    OutboundAIBudgetAlert:
+      type: object
+      description: The first settlement that reached a budget threshold in its period (ADR-984). limit and used are tokens for token budgets and millicents for cost budgets.
+      required: [id, integration_id, budget, app_id, period_start, threshold_percent, limit, used, crossed_at]
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost] }
+        app_id: { type: [string, 'null'], format: uuid }
+        period_start: { type: string, format: date }
+        threshold_percent: { type: integer, format: int32, enum: [80, 100] }
+        limit: { type: integer, format: int64, minimum: 1 }
+        used: { type: integer, format: int64, minimum: 0 }
+        crossed_at: { type: string, format: date-time }
+    OutboundAIBudgetAlertList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIBudgetAlert' }
+    OutboundAIRequestLogEntry:
+      type: object
+      description: One settled AI call's metadata (ADR-984). No request or response content is kept.
+      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        caller: { type: string, description: 'App UUID, or "runs".' }
+        route_id: { type: [string, 'null'], format: uuid }
+        model: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        outcome: { type: string, enum: [known, unknown, error] }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        cached_input_tokens: { type: integer, format: int64, minimum: 0 }
+        cache_write_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        attempts: { type: integer, minimum: 0 }
+    OutboundAIRequestLogList:
+      type: object
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIRequestLogEntry' }
+        next_before: { type: [string, 'null'], format: date-time, description: Pass as before to read the next page; null on the last page. }
     UpdateOutboundBindingPolicyRequest:
       type: object
       description: Explicit nonempty method and path subsets for a bound app.
@@ -70681,6 +70938,22 @@ components:
         limit_units: { type: integer, format: int64, minimum: 1 }
         used_units: { type: integer, format: int64, minimum: 0 }
         month_start: { type: string, format: date-time }
+        crossed_at: { type: string, format: date-time }
+
+    OutboundAIBudgetThresholdWebhookPayload:
+      type: object
+      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-984). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app.
+      required: [alert_id, integration_id, integration_name, budget, app_id, period_start, threshold_percent, limit, used, crossed_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        integration_name: { type: string }
+        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost] }
+        app_id: { type: [string, 'null'], format: uuid }
+        period_start: { type: string, format: date }
+        threshold_percent: { type: integer, format: int32, enum: [80, 100] }
+        limit: { type: integer, format: int64, minimum: 1 }
+        used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
 
     APIConsumerUsageStatementFinalizedWebhookPayload:

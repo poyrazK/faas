@@ -23,7 +23,7 @@ func TestOutboundAIPolicyAndUsage(t *testing.T) {
 	policyPath := "/v1/outbound/integrations/" + id + "/ai"
 	limit := int64(2_000_000)
 	for _, invalid := range []api.PutOutboundAIPolicyRequest{
-		{AIProvider: "gemini"},
+		{AIProvider: "cohere"},
 		{AIProvider: "", DailyTokenLimit: &limit},
 		{AIProvider: api.OutboundAIProviderAnthropic, DailyTokenLimit: outboundAITokens(0)},
 		{AIProvider: api.OutboundAIProviderAnthropic, DailyTokenLimit: outboundAITokens(api.MaxOutboundAITokensPerDay + 1)},

@@ -24,6 +24,8 @@ type OutboundAIRoute struct {
 	ID        string
 	AccountID string
 	Name      string
+	// Format is "native" or "openai" (ADR-984).
+	Format    string
 	Targets   []OutboundAIRouteTarget
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -49,13 +51,31 @@ func validOutboundAIRouteShape(targets []OutboundAIRouteTarget) bool {
 	return api.ValidOutboundAIRouteTargetShape(wire)
 }
 
-// sameOutboundAIProvider checks that every target is a known AI integration
-// of one wire format. providers maps integration ID to its ai_provider.
-func sameOutboundAIProvider(targets []OutboundAIRouteTarget, providers map[string]string) bool {
+// normalizeOutboundAIRouteFormat defaults an empty format to native.
+func normalizeOutboundAIRouteFormat(format string) (string, bool) {
+	if format == "" {
+		return api.OutboundAIRouteFormatNative, true
+	}
+	return format, api.ValidOutboundAIRouteFormat(format)
+}
+
+// outboundAIRouteTargetsAllowed checks that every target is a known AI
+// integration the route format can serve. A native route needs one wire
+// format; an openai route accepts translatable providers and needs a model
+// for every non-OpenAI target (ADR-984). providers maps integration ID to
+// its ai_provider.
+func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarget, providers map[string]string) bool {
 	first := ""
 	for _, target := range targets {
 		provider, ok := providers[target.IntegrationID]
-		if !ok || provider == "" || (first != "" && provider != first) {
+		if !ok || provider == "" {
+			return false
+		}
+		allowed, needsModel := api.OutboundAIRouteFormatTargetProvider(format, provider)
+		if !allowed || (needsModel && target.Model == "") {
+			return false
+		}
+		if format != api.OutboundAIRouteFormatOpenAI && first != "" && provider != first {
 			return false
 		}
 		first = provider

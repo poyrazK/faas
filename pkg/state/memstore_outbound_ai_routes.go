@@ -66,9 +66,11 @@ func (m *MemStore) CreateOutboundAIRoute(_ context.Context, route OutboundAIRout
 	if count >= api.MaxOutboundAIRoutesPerAccount {
 		return OutboundAIRoute{}, ErrOutboundAIRouteLimit
 	}
-	if !sameOutboundAIProvider(route.Targets, m.memOutboundAIProviders(route.AccountID, route.Targets)) {
+	format, ok := normalizeOutboundAIRouteFormat(route.Format)
+	if !ok || !outboundAIRouteTargetsAllowed(format, route.Targets, m.memOutboundAIProviders(route.AccountID, route.Targets)) {
 		return OutboundAIRoute{}, ErrInvalidArgument
 	}
+	route.Format = format
 	now := time.Now().UTC()
 	route.CreatedAt, route.UpdatedAt = now, now
 	m.outboundAIRoutes[route.ID] = copyOutboundAIRoute(route)
@@ -85,7 +87,7 @@ func (m *MemStore) SetOutboundAIRouteTargets(_ context.Context, accountID, route
 	if !ok || route.AccountID != accountID {
 		return ErrNotFound
 	}
-	if !sameOutboundAIProvider(targets, m.memOutboundAIProviders(accountID, targets)) {
+	if !outboundAIRouteTargetsAllowed(route.Format, targets, m.memOutboundAIProviders(accountID, targets)) {
 		return ErrInvalidArgument
 	}
 	route.Targets = append([]OutboundAIRouteTarget(nil), targets...)

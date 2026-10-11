@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/url"
+	"strconv"
+	"time"
 )
 
 func (c *Client) ListOutboundIntegrationOffers(ctx context.Context) (OutboundIntegrationOfferList, error) {
@@ -64,6 +66,53 @@ func (c *Client) SetOutboundIntegrationAIPrices(ctx context.Context, integration
 func (c *Client) SetOutboundBindingAIBudget(ctx context.Context, slug, integrationID string, dailyTokenLimit *int64) error {
 	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/ai-budget"
 	return c.do(ctx, "PUT", path, PutOutboundBindingAIBudgetRequest{DailyTokenLimit: dailyTokenLimit}, nil)
+}
+
+// SetOutboundBindingAIGuardrails replaces one app's AI guardrails (ADR-984).
+func (c *Client) SetOutboundBindingAIGuardrails(ctx context.Context, slug, integrationID string, req PutOutboundBindingAIGuardrailsRequest) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/ai-guardrails"
+	return c.do(ctx, "PUT", path, req, nil)
+}
+
+func (c *Client) ListOutboundCredentialKeys(ctx context.Context, integrationID string) (OutboundCredentialKeyList, error) {
+	var out OutboundCredentialKeyList
+	return out, c.do(ctx, "GET", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/credential-keys", nil, &out)
+}
+
+func (c *Client) CreateOutboundCredentialKey(ctx context.Context, integrationID string, req CreateOutboundCredentialKeyRequest) (OutboundCredentialKey, error) {
+	var out OutboundCredentialKey
+	return out, c.do(ctx, "POST", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/credential-keys", req, &out)
+}
+
+func (c *Client) DeleteOutboundCredentialKey(ctx context.Context, integrationID, keyID string) error {
+	return c.do(ctx, "DELETE", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/credential-keys/"+url.PathEscape(keyID), nil, nil)
+}
+
+func (c *Client) ListOutboundAIBudgetAlerts(ctx context.Context, integrationID string, limit int) (OutboundAIBudgetAlertList, error) {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-alerts"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var out OutboundAIBudgetAlertList
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListOutboundAIRequestLog pages the AI request log; pass the previous
+// page's NextBefore to continue.
+func (c *Client) ListOutboundAIRequestLog(ctx context.Context, integrationID string, limit int, before *time.Time) (OutboundAIRequestLogList, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if before != nil {
+		query.Set("before", before.UTC().Format(time.RFC3339Nano))
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-requests"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out OutboundAIRequestLogList
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 func (c *Client) ListOutboundAIRoutes(ctx context.Context) (OutboundAIRouteList, error) {

@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_outbound_ai_route_request_format import (
+    CreateOutboundAIRouteRequestFormat,
+    check_create_outbound_ai_route_request_format,
+)
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.outbound_ai_route_target import OutboundAIRouteTarget
 
@@ -17,6 +23,9 @@ T = TypeVar("T", bound="CreateOutboundAIRouteRequest")
 class CreateOutboundAIRouteRequest:
     name: str
     targets: list[OutboundAIRouteTarget]
+    format_: CreateOutboundAIRouteRequestFormat | Unset = UNSET
+    """native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and
+    gemini targets, and every target but openai must name its model (ADR-984)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -27,6 +36,10 @@ class CreateOutboundAIRouteRequest:
             targets_item = targets_item_data.to_dict()
             targets.append(targets_item)
 
+        format_: str | Unset = UNSET
+        if not isinstance(self.format_, Unset):
+            format_ = self.format_
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -35,6 +48,8 @@ class CreateOutboundAIRouteRequest:
                 "targets": targets,
             }
         )
+        if format_ is not UNSET:
+            field_dict["format"] = format_
 
         return field_dict
 
@@ -52,9 +67,17 @@ class CreateOutboundAIRouteRequest:
 
             targets.append(targets_item)
 
+        _format_ = d.pop("format", UNSET)
+        format_: CreateOutboundAIRouteRequestFormat | Unset
+        if isinstance(_format_, Unset):
+            format_ = UNSET
+        else:
+            format_ = check_create_outbound_ai_route_request_format(_format_)
+
         create_outbound_ai_route_request = cls(
             name=name,
             targets=targets,
+            format_=format_,
         )
 
         create_outbound_ai_route_request.additional_properties = d

@@ -82,7 +82,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Replace an AI route's ordered targets.
 
-     Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+     Requires MFA and deploy-write scope. The same ownership and route-format rules as creation apply.
 
     Args:
         route (UUID):
@@ -116,7 +116,7 @@ def sync(
 ) -> Any | Problem | None:
     """Replace an AI route's ordered targets.
 
-     Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+     Requires MFA and deploy-write scope. The same ownership and route-format rules as creation apply.
 
     Args:
         route (UUID):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Replace an AI route's ordered targets.
 
-     Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+     Requires MFA and deploy-write scope. The same ownership and route-format rules as creation apply.
 
     Args:
         route (UUID):
@@ -177,7 +177,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Replace an AI route's ordered targets.
 
-     Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+     Requires MFA and deploy-write scope. The same ownership and route-format rules as creation apply.
 
     Args:
         route (UUID):

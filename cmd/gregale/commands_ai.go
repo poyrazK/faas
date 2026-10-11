@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|app-limit|prices|usage|routes> ..."
+const aiUsageText = "usage: gregale ai <policy|app-limit|guardrails|prices|usage|routes|keys|alerts|logs> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -36,6 +36,14 @@ func cmdAI(args []string) int {
 		return cmdAIUsage(args[1:])
 	case "routes":
 		return cmdAIRoutes(args[1:])
+	case "guardrails":
+		return cmdAIGuardrails(args[1:])
+	case "keys":
+		return cmdAIKeys(args[1:])
+	case "alerts":
+		return cmdAIAlerts(args[1:])
+	case "logs":
+		return cmdAILogs(args[1:])
 	}
 	printCommandValidation(osStderr, "unknown ai subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
@@ -111,11 +119,13 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 	return api.OutboundIntegrationOffer{}, fmt.Errorf("integration %s was not found on this account", integrationID)
 }
 
-const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|off] [--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none]"
+const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
+	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
-	provider := fs.String("provider", "", "AI wire format: openai, anthropic, or off")
+	provider := fs.String("provider", "", "AI provider: openai, anthropic, gemini, azure_openai, bedrock, vertex, or off")
+	requestLog := fs.String("request-log", "", "log per-call metadata for 7 days: on or off")
 	dailyTokens := fs.String("daily-tokens", "", "UTC-day input+output token limit, or none")
 	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in EUR, or none")
 	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in EUR, or none")
@@ -131,13 +141,23 @@ func cmdAIPolicy(args []string) int {
 		return printErr("Could not read integration", err)
 	}
 	req := api.PutOutboundAIPolicyRequest{AIProvider: current.AIProvider, DailyTokenLimit: current.AIDailyTokenLimit,
-		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents}
+		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents,
+		RequestLogEnabled: current.AIRequestLogEnabled}
 	switch *provider {
 	case "":
 	case "off":
 		req = api.PutOutboundAIPolicyRequest{}
 	default:
 		req.AIProvider = *provider
+	}
+	switch *requestLog {
+	case "":
+	case "on":
+		req.RequestLogEnabled = true
+	case "off":
+		req.RequestLogEnabled = false
+	default:
+		return printErr("Invalid --request-log", errors.New("use on or off"))
 	}
 	if req.DailyTokenLimit, err = optionalLimit(*dailyTokens, req.DailyTokenLimit, parseTokenCount); err == nil {
 		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseEuroMillicents); err == nil {

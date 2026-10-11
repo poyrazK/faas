@@ -14,7 +14,7 @@ var _ OutboundAIRouteStore = (*PgStore)(nil)
 // ListOutboundAIRoutes returns an account's routes with ordered targets.
 func (s *PgStore) ListOutboundAIRoutes(ctx context.Context, accountID string) ([]OutboundAIRoute, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT route.id, route.name, route.created_at, route.updated_at,
+		SELECT route.id, route.name, route.format, route.created_at, route.updated_at,
 		       target.integration_id, COALESCE(target.model, '')
 		  FROM outbound_ai_routes route
 		  LEFT JOIN outbound_ai_route_targets target ON target.route_id = route.id
@@ -30,7 +30,7 @@ func (s *PgStore) ListOutboundAIRoutes(ctx context.Context, accountID string) ([
 		var routeID, integrationID pgtype.UUID
 		var route OutboundAIRoute
 		var model string
-		if err := rows.Scan(&routeID, &route.Name, &route.CreatedAt, &route.UpdatedAt, &integrationID, &model); err != nil {
+		if err := rows.Scan(&routeID, &route.Name, &route.Format, &route.CreatedAt, &route.UpdatedAt, &integrationID, &model); err != nil {
 			return nil, mapErr(err)
 		}
 		id := pgUUIDString(routeID)
@@ -107,9 +107,11 @@ func insertOutboundAIRouteTargets(ctx context.Context, tx pgx.Tx, routeID string
 // CreateOutboundAIRoute validates ownership and wire-format agreement of
 // every target, then stores the route.
 func (s *PgStore) CreateOutboundAIRoute(ctx context.Context, route OutboundAIRoute) (OutboundAIRoute, error) {
-	if !api.ValidOutboundAIRouteName(route.Name) || !validOutboundAIRouteShape(route.Targets) {
+	format, ok := normalizeOutboundAIRouteFormat(route.Format)
+	if !ok || !api.ValidOutboundAIRouteName(route.Name) || !validOutboundAIRouteShape(route.Targets) {
 		return OutboundAIRoute{}, ErrInvalidArgument
 	}
+	route.Format = format
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return OutboundAIRoute{}, mapErr(err)
@@ -130,12 +132,12 @@ func (s *PgStore) CreateOutboundAIRoute(ctx context.Context, route OutboundAIRou
 	if err != nil {
 		return OutboundAIRoute{}, err
 	}
-	if !sameOutboundAIProvider(route.Targets, providers) {
+	if !outboundAIRouteTargetsAllowed(route.Format, route.Targets, providers) {
 		return OutboundAIRoute{}, ErrInvalidArgument
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO outbound_ai_routes (id, account_id, name) VALUES ($1, $2, $3)
-		RETURNING created_at, updated_at`, mustPgUUID(route.ID), mustPgUUID(route.AccountID), route.Name).
+		INSERT INTO outbound_ai_routes (id, account_id, name, format) VALUES ($1, $2, $3, $4)
+		RETURNING created_at, updated_at`, mustPgUUID(route.ID), mustPgUUID(route.AccountID), route.Name, route.Format).
 		Scan(&route.CreatedAt, &route.UpdatedAt); err != nil {
 		return OutboundAIRoute{}, mapErr(err)
 	}
@@ -158,9 +160,9 @@ func (s *PgStore) SetOutboundAIRouteTargets(ctx context.Context, accountID, rout
 		return mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var locked pgtype.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM outbound_ai_routes WHERE account_id = $1 AND id = $2 FOR UPDATE`,
-		mustPgUUID(accountID), mustPgUUID(routeID)).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+	var format string
+	if err := tx.QueryRow(ctx, `SELECT format FROM outbound_ai_routes WHERE account_id = $1 AND id = $2 FOR UPDATE`,
+		mustPgUUID(accountID), mustPgUUID(routeID)).Scan(&format); errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return mapErr(err)
@@ -169,7 +171,7 @@ func (s *PgStore) SetOutboundAIRouteTargets(ctx context.Context, accountID, rout
 	if err != nil {
 		return err
 	}
-	if !sameOutboundAIProvider(targets, providers) {
+	if !outboundAIRouteTargetsAllowed(format, targets, providers) {
 		return ErrInvalidArgument
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_ai_route_targets WHERE route_id = $1`, mustPgUUID(routeID)); err != nil {

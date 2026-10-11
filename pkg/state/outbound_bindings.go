@@ -37,6 +37,8 @@ type OutboundIntegrationOffer struct {
 	AIDailyTokenLimit    *int64
 	AIDailyCostLimit     *int64
 	AIMonthlyCostLimit   *int64
+	// AIRequestLogEnabled records per-call metadata (ADR-984).
+	AIRequestLogEnabled bool
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
@@ -75,15 +77,17 @@ type OutboundAIUsage struct {
 // OutboundAIPolicy is the complete customer AI gateway setting (ADR-979,
 // ADR-983). An empty Provider turns AI handling off and requires no limits.
 type OutboundAIPolicy struct {
-	Provider         string
-	DailyTokenLimit  *int64
-	DailyCostLimit   *int64
-	MonthlyCostLimit *int64
+	Provider          string
+	DailyTokenLimit   *int64
+	DailyCostLimit    *int64
+	MonthlyCostLimit  *int64
+	RequestLogEnabled bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
-		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit)
+		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
+		(!p.RequestLogEnabled || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when
@@ -142,9 +146,14 @@ type OutboundAppBinding struct {
 	BindingDailyRequestLimit *int64
 	// BindingAIDailyTokenLimit is this app's own AI token limit (ADR-983).
 	BindingAIDailyTokenLimit *int64
-	RouteMethods             []string
-	RoutePathPrefixes        []string
-	CreatedAt                time.Time
+	// Per-app AI guardrails (ADR-984); nil means unrestricted.
+	BindingAIRequestsPerMinute *int64
+	BindingAITokensPerMinute   *int64
+	BindingAIAllowedModels     []string
+	BindingAIMaxOutputTokens   *int64
+	RouteMethods               []string
+	RoutePathPrefixes          []string
+	CreatedAt                  time.Time
 }
 
 // OutboundBindingStore owns customer-created integration lifecycle, app

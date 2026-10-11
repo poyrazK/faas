@@ -2,7 +2,12 @@ package main
 
 // adr: 983 — euro amounts become integer millicents without floating point.
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 func TestParseEuroMillicents(t *testing.T) {
 	for in, want := range map[string]int64{
@@ -30,6 +35,36 @@ func TestParseAIPriceSpec(t *testing.T) {
 		if _, err := parseAIPriceSpec(bad); err == nil {
 			t.Errorf("parseAIPriceSpec(%q) accepted", bad)
 		}
+	}
+}
+
+// adr: 984 — guardrail flags merge into the current set; keys come from stdin.
+func TestApplyAIGuardrailFlags(t *testing.T) {
+	rpm := int64(60)
+	current := api.PutOutboundBindingAIGuardrailsRequest{RequestsPerMinute: &rpm, AllowedModels: []string{"gpt-4o"}}
+	got, err := applyAIGuardrailFlags(current, "", "5000", "o3*, gpt-4o-mini", "none")
+	if err != nil || got.RequestsPerMinute == nil || *got.RequestsPerMinute != 60 || got.TokensPerMinute == nil || *got.TokensPerMinute != 5000 ||
+		len(got.AllowedModels) != 2 || got.AllowedModels[1] != "gpt-4o-mini" || got.MaxOutputTokens != nil || !got.Valid() {
+		t.Fatalf("merged guardrails = %+v, %v", got, err)
+	}
+	cleared, err := applyAIGuardrailFlags(got, "none", "", "none", "")
+	if err != nil || cleared.RequestsPerMinute != nil || cleared.AllowedModels != nil || cleared.TokensPerMinute == nil {
+		t.Fatalf("cleared guardrails = %+v, %v", cleared, err)
+	}
+	if _, err := applyAIGuardrailFlags(current, "fast", "", "", ""); err == nil {
+		t.Fatal("a non-numeric --rpm was accepted")
+	}
+}
+
+func TestReadCredentialLine(t *testing.T) {
+	if got, err := readCredentialLine(strings.NewReader("aws:AKID:secret\r\nignored\n")); err != nil || got != "aws:AKID:secret" {
+		t.Fatalf("line = %q, %v", got, err)
+	}
+	if _, err := readCredentialLine(strings.NewReader("")); err == nil {
+		t.Fatal("empty stdin accepted")
+	}
+	if aiRouteCallPath(api.OutboundAIRouteFormatOpenAI) != "v1/chat/completions" || aiRouteCallPath("native") != "<provider path>" {
+		t.Fatal("route call path")
 	}
 }
 

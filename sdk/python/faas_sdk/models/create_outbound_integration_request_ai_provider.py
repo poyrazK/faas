@@ -1,10 +1,16 @@
 from typing import Literal
 
-CreateOutboundIntegrationRequestAiProvider = Literal["anthropic", "openai"]
+CreateOutboundIntegrationRequestAiProvider = Literal[
+    "anthropic", "azure_openai", "bedrock", "gemini", "openai", "vertex"
+]
 
 CREATE_OUTBOUND_INTEGRATION_REQUEST_AI_PROVIDER_VALUES: set[CreateOutboundIntegrationRequestAiProvider] = {
     "anthropic",
+    "azure_openai",
+    "bedrock",
+    "gemini",
     "openai",
+    "vertex",
 }
 
 

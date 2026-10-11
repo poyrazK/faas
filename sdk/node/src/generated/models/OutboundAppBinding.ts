@@ -26,5 +26,21 @@ export type OutboundAppBinding = {
    * This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983).
    */
   ai_daily_token_limit?: number | null;
+  /**
+   * Admitted calls per UTC minute for this app (ADR-984).
+   */
+  ai_requests_per_minute?: number | null;
+  /**
+   * Settled tokens plus live reservations per UTC minute for this app (ADR-984).
+   */
+  ai_tokens_per_minute?: number | null;
+  /**
+   * Exact model names or prefixes ending in "*" this app may call; null allows every model (ADR-984).
+   */
+  ai_allowed_models?: any[] | null;
+  /**
+   * Per-request output-token ceiling; added to requests that name none (ADR-984).
+   */
+  ai_max_output_tokens?: number | null;
 };
 

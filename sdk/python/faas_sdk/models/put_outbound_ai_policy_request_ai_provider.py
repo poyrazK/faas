@@ -1,11 +1,15 @@
 from typing import Literal
 
-PutOutboundAIPolicyRequestAiProvider = Literal["", "anthropic", "openai"]
+PutOutboundAIPolicyRequestAiProvider = Literal["", "anthropic", "azure_openai", "bedrock", "gemini", "openai", "vertex"]
 
 PUT_OUTBOUND_AI_POLICY_REQUEST_AI_PROVIDER_VALUES: set[PutOutboundAIPolicyRequestAiProvider] = {
     "",
     "anthropic",
+    "azure_openai",
+    "bedrock",
+    "gemini",
     "openai",
+    "vertex",
 }
 
 

@@ -175,9 +175,18 @@ func cmdAIRoutesList(client *api.Client) int {
 		for _, target := range route.Targets {
 			targets = append(targets, formatAIRouteTarget(target))
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s  %s  %s\n  call: $GREGALE_OUTBOUND_URL/r/%s/<provider path>\n", route.ID, route.Name, strings.Join(targets, " -> "), route.ID)
+		_, _ = fmt.Fprintf(osStdout, "%s  %s  [%s]  %s\n  call: $GREGALE_OUTBOUND_URL/r/%s/%s\n", route.ID, route.Name, route.Format,
+			strings.Join(targets, " -> "), route.ID, aiRouteCallPath(route.Format))
 	}
 	return 0
+}
+
+// aiRouteCallPath is the path apps append to the route URL.
+func aiRouteCallPath(format string) string {
+	if format == api.OutboundAIRouteFormatOpenAI {
+		return "v1/chat/completions"
+	}
+	return "<provider path>"
 }
 
 func formatAIRouteTarget(target api.OutboundAIRouteTarget) string {
@@ -202,23 +211,25 @@ func parseAIRouteTargets(values []string) ([]api.OutboundAIRouteTarget, error) {
 func cmdAIRoutesCreate(client *api.Client, args []string) int {
 	fs := newFlagSet("ai routes create", flag.ContinueOnError)
 	name := fs.String("name", "", "route name, a DNS label (required)")
+	format := fs.String("format", "", "native (default: one provider) or openai (translate OpenAI chat completions)")
 	var targetValues stringListFlag
 	fs.Var(&targetValues, "target", "<integration-id>[:<model>] in fallback order (repeatable, required)")
-	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 || !api.ValidOutboundAIRouteName(*name) {
-		return printErr("Invalid ai routes create arguments", errors.New("usage: gregale ai routes create --name <name> --target <integration-id>[:<model>] ..."))
+	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 || !api.ValidOutboundAIRouteName(*name) || !api.ValidOutboundAIRouteFormat(*format) {
+		return printErr("Invalid ai routes create arguments",
+			errors.New("usage: gregale ai routes create --name <name> [--format native|openai] --target <integration-id>[:<model>] ..."))
 	}
 	targets, err := parseAIRouteTargets(targetValues)
 	if err != nil {
 		return printErr("Invalid --target", err)
 	}
-	route, err := client.CreateOutboundAIRoute(context.Background(), api.CreateOutboundAIRouteRequest{Name: *name, Targets: targets})
+	route, err := client.CreateOutboundAIRoute(context.Background(), api.CreateOutboundAIRouteRequest{Name: *name, Format: *format, Targets: targets})
 	if err != nil {
 		return printErr("Could not create AI route", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(route))
 	}
-	_, _ = fmt.Fprintf(osStdout, "AI route %s created: call $GREGALE_OUTBOUND_URL/r/%s/<provider path>\n", route.Name, route.ID)
+	_, _ = fmt.Fprintf(osStdout, "AI route %s created: call $GREGALE_OUTBOUND_URL/r/%s/%s\n", route.Name, route.ID, aiRouteCallPath(route.Format))
 	return 0
 }
 

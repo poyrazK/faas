@@ -407,11 +407,16 @@ unknown-usage counts plus input, cached input, cache write and output tokens.
 Input tokens include cached reads and cache writes for both providers. Rollups
 are kept for 90 days; omit `date` for today.
 
-The token limit counts input plus output tokens. Tokens are known only after a
-response, so admission rejects new calls once the day's settled total reaches
-the limit (`429`, `X-Gregale-Outbound-Rejection: daily_token_limit`,
-`Retry-After` to the next UTC midnight). Calls already in flight finish and may
-end above the limit, so treat it as a spend guard rather than an exact cap.
+The token limit counts input plus output tokens. Admission rejects a call
+(`429`, `X-Gregale-Outbound-Rejection: daily_token_limit`, `Retry-After` to the
+next UTC midnight) when either:
+
+- the day's settled total has reached the limit; or
+- the settled total, plus the reservations of calls in flight, plus this
+  call's own reservation, would pass it.
+
+This makes the limit a hard cap (see "AI hard caps and per-app guardrails"
+below).
 
 Usage comes from the provider's own response:
 
@@ -527,7 +532,8 @@ list:
 `daily_cost_limit_millicents` and `monthly_cost_limit_millicents` (UTC day
 and calendar month). Once settled cost reaches a limit, new calls get `429`
 with `X-Gregale-Outbound-Rejection: daily_cost_limit` or
-`monthly_cost_limit`. As with token limits, calls already running finish.
+`monthly_cost_limit`. Like token limits, cost limits count each in-flight
+call's priced reservation, so they are hard caps.
 
 **Usage report.** `ai-usage` reports each item's `cost_millicents`, the day's
 and month-to-date settled cost, and both limits.
@@ -567,6 +573,148 @@ A route is an ordered list of one to five managed AI integrations of one
 - A `400`, `403` or `404` returns as is.
 - `X-Gregale-AI-Route-Target` names the integration that answered, and
   `outbound_ai_route_fallbacks_total` counts the hops.
+
+## AI hard caps and per-app guardrails
+
+See [ADR-984](../adr/984-ai-gateway-hard-caps-providers-visibility.md).
+
+**Reservations.** Before admission, every AI `POST` reserves tokens and cost:
+
+- **Input:** one token per 4 body bytes.
+- **Output:** the request's own output ceiling (`max_tokens`,
+  `max_completion_tokens`, `max_output_tokens`,
+  `generationConfig.maxOutputTokens` or `inferenceConfig.maxTokens`). When
+  there is none, the app's ceiling, else 4096.
+- **Cost:** the reservation priced from the current price list.
+
+The reservation lives on the call's admission lease and counts against every
+token and cost limit until the call settles. A request asking for more output
+than the remaining budget is refused instead of overshooting. Lower its
+output ceiling, or wait for the reset.
+
+**Per-app guardrails.**
+`PUT /v1/apps/{slug}/outbound-bindings/{id}/ai-guardrails` (or
+`gregale ai guardrails`) sets, for one app on one AI integration:
+
+- **`requests_per_minute`:** admitted calls per UTC minute. Over the limit:
+  `429 requests_per_minute_limit`.
+- **`tokens_per_minute`:** settled tokens plus live reservations per UTC
+  minute. Over the limit: `429 tokens_per_minute_limit`.
+- **`allowed_models`:** exact names or prefixes ending in `*`. Any other model
+  gets `403 outbound_ai_model_not_allowed`. For Gemini, Vertex, Bedrock and
+  Azure deployment paths the model comes from the path.
+- **`max_output_tokens`:** a higher requested ceiling gets
+  `400 outbound_ai_max_tokens_exceeded`. A request with no ceiling gets one
+  added in its format's field.
+
+A guarded app's AI bodies must be at most 4 MiB, so the gateway can read them.
+A Bedrock `invoke` body for a non-Anthropic model cannot take a ceiling; use
+Converse instead.
+
+## More AI providers
+
+| `ai_provider` | Origin | Stored credential |
+| --- | --- | --- |
+| `gemini` | `https://generativelanguage.googleapis.com` | the API key, sent in `x-goog-api-key` |
+| `azure_openai` | `https://<resource>.openai.azure.com` | the API key, sent in `api-key`; or `Bearer <Entra token>` |
+| `bedrock` | `https://bedrock-runtime.<region>.amazonaws.com` | `aws:<access-key-id>:<secret-access-key>[:<session-token>]`; every call is SigV4-signed |
+| `vertex` | `https://<region>-aiplatform.googleapis.com` | the service-account key JSON on one line (`jq -c . key.json`), or `Bearer <access token>` |
+
+Notes per provider:
+
+- **Bedrock:** request bodies must be at most 4 MiB, because signing hashes
+  the body. Usage is read from Converse `usage`, from the
+  `X-Amzn-Bedrock-*-Token-Count` headers, and from the binary event stream of
+  `converse-stream` and `invoke-with-response-stream`.
+- **Vertex:**
+  - outboundd exchanges the service-account key at
+    `https://oauth2.googleapis.com/token` and caches the access token. A key
+    naming any other `token_uri` is refused.
+  - The usage format follows the path: `publishers/google` is Gemini,
+    `publishers/anthropic` is Anthropic, and `endpoints/openapi` is OpenAI.
+- **Gemini:** thinking tokens count as output.
+
+## OpenAI-format routes
+
+`gregale ai routes create --name any-chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4 --target <gemini-id>:gemini-2.5-flash`
+creates a route that accepts OpenAI chat completions. Each target can be:
+
+- **`openai`:** receives the request as is.
+- **`azure_openai`:** receives it at `/openai/v1/chat/completions`, with the
+  target model as the deployment.
+- **`anthropic`:** translated to the Messages API, with the response
+  translated back.
+- **`gemini`:** translated to `generateContent`, with the response translated
+  back.
+
+The translation covers:
+
+- system and developer messages;
+- text and image parts (Gemini takes `data:` images only);
+- tools, tool calls, tool results and `tool_choice`;
+- `stop`, `temperature`, `top_p`, the output ceiling and streaming.
+
+Callers see OpenAI JSON and `chat.completion.chunk` events, with a usage chunk
+only when they ask for one. `n` above 1 gets
+`400 outbound_ai_translation_unsupported`.
+
+Point any OpenAI SDK at `$GREGALE_OUTBOUND_URL/r/<route-id>/v1`. Usage and cost
+are still read from each provider's native response.
+`outbound_ai_translations_total` counts translated attempts.
+
+## Provider key pools
+
+`gregale ai keys add <id> --label second --from-stdin` adds an extra sealed
+key. Pipe the value in; the CLI never accepts it as a flag. An integration may
+hold up to 8 extra keys in addition to its primary credential.
+
+- outboundd picks keys round-robin.
+- A key that returns `429` cools down for its `Retry-After`, or 30 seconds,
+  and the call moves at once to the next key. This costs neither a retry nor
+  the retry budget.
+- The integration-wide provider cooldown applies only when every key is
+  limited.
+- Keys are listed by ID and label only. `gregale ai keys rm` removes one, and
+  outboundd stops using it on its next call.
+- `outbound_credential_key_events_total` counts cooldowns, rotations and
+  exhausted pools.
+
+## AI budget alerts and request log
+
+**Budget alerts.** When settlement first reaches 80% or 100% of a budget in
+its period, outboundd records an alert. The budgets are:
+
+- the integration's daily tokens;
+- an app's daily tokens;
+- the daily cost;
+- the monthly cost.
+
+It also enqueues an `outbound.ai_budget.threshold` app webhook:
+
+- an integration budget notifies every bound app's subscribed webhooks;
+- an app budget notifies only that app's.
+
+`gregale ai alerts <id>` (or `GET .../ai-alerts`) lists alerts, which are kept
+for 90 days. `outbound_ai_budget_alerts_total` counts them.
+
+**Request log.** `gregale ai policy <id> --request-log on` makes every settled
+AI call write one metadata row:
+
+- caller, route, model and status;
+- usage outcome, tokens and cost;
+- duration, time to first byte and attempts.
+
+Prompts, completions and headers are never stored, and cache hits are not
+logged. `gregale ai logs <id>` (or `GET .../ai-requests`) pages the rows
+newest first. They are kept for 7 days.
+
+**Dashboard.** `deploy/grafana/ai-gateway.json` charts:
+
+- calls, tokens and cost;
+- time to first byte;
+- budget rejections and alerts;
+- route fallbacks and translations;
+- key pool events.
 
 ## Runs
 

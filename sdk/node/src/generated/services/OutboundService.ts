@@ -3,8 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateOutboundAIRouteRequest } from '../models/CreateOutboundAIRouteRequest.js';
+import type { CreateOutboundCredentialKeyRequest } from '../models/CreateOutboundCredentialKeyRequest.js';
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
+import type { OutboundAIBudgetAlertList } from '../models/OutboundAIBudgetAlertList.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
 import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
@@ -12,6 +15,8 @@ import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
 import type { OutboundBindingProbePolicy } from '../models/OutboundBindingProbePolicy.js';
 import type { OutboundBindingUsageResponse } from '../models/OutboundBindingUsageResponse.js';
+import type { OutboundCredentialKey } from '../models/OutboundCredentialKey.js';
+import type { OutboundCredentialKeyList } from '../models/OutboundCredentialKeyList.js';
 import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffer.js';
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
@@ -20,6 +25,7 @@ import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRe
 import type { PutOutboundAIPricesRequest } from '../models/PutOutboundAIPricesRequest.js';
 import type { PutOutboundAIRouteTargetsRequest } from '../models/PutOutboundAIRouteTargetsRequest.js';
 import type { PutOutboundBindingAIBudgetRequest } from '../models/PutOutboundBindingAIBudgetRequest.js';
+import type { PutOutboundBindingAIGuardrailsRequest } from '../models/PutOutboundBindingAIGuardrailsRequest.js';
 import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
@@ -426,6 +432,195 @@ export class OutboundService {
     });
   }
   /**
+   * List an integration's extra provider keys.
+   * Requires MFA and read scope (ADR-984). Values are write-only and never returned.
+   * @returns OutboundCredentialKeyList Extra keys, oldest first.
+   * @throws ApiError
+   */
+  public static listOutboundCredentialKeys({
+    integration,
+  }: {
+    /**
+     * UUID of the account's managed integration.
+     */
+    integration: string,
+  }): CancelablePromise<OutboundCredentialKeyList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/credential-keys',
+      path: {
+        'integration': integration,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Add an extra provider key to a customer-sealed integration.
+   * Requires MFA and deploy-write scope (ADR-984). outboundd picks keys round-robin and moves a call to the next key when one returns 429. At most 8 extra keys.
+   * @returns OutboundCredentialKey Key sealed and stored.
+   * @throws ApiError
+   */
+  public static createOutboundCredentialKey({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the account's managed integration.
+     */
+    integration: string,
+    requestBody: CreateOutboundCredentialKeyRequest,
+  }): CancelablePromise<OutboundCredentialKey> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/integrations/{integration}/credential-keys',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `A key with this label already exists.`,
+        429: `The integration has reached its extra key limit.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Remove an extra provider key.
+   * Requires MFA and deploy-write scope (ADR-984). outboundd stops using it on its next call.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOutboundCredentialKey({
+    integration,
+    key,
+  }: {
+    /**
+     * UUID of the account's managed integration.
+     */
+    integration: string,
+    /**
+     * UUID of the extra key.
+     */
+    key: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/integrations/{integration}/credential-keys/{key}',
+      path: {
+        'integration': integration,
+        'key': key,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List AI budget alerts recorded at 80% and 100%.
+   * Requires MFA and read scope (ADR-984). Newest first; kept for 90 days.
+   * @returns OutboundAIBudgetAlertList Budget alerts.
+   * @throws ApiError
+   */
+  public static listOutboundAiBudgetAlerts({
+    integration,
+    limit,
+  }: {
+    /**
+     * UUID of the account's managed integration.
+     */
+    integration: string,
+    /**
+     * Page size, 1 to 100 (default 100).
+     */
+    limit?: number,
+  }): CancelablePromise<OutboundAIBudgetAlertList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-alerts',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Page the opt-in AI request log.
+   * Requires MFA and read scope (ADR-984). Newest first; rows are kept for 7 days and hold metadata only.
+   * @returns OutboundAIRequestLogList One page of logged calls.
+   * @throws ApiError
+   */
+  public static listOutboundAiRequestLog({
+    integration,
+    limit,
+    before,
+  }: {
+    /**
+     * UUID of the account's managed integration.
+     */
+    integration: string,
+    /**
+     * Page size, 1 to 200 (default 200).
+     */
+    limit?: number,
+    /**
+     * The previous page's next_before.
+     */
+    before?: string,
+  }): CancelablePromise<OutboundAIRequestLogList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-requests',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * List the account's AI fallback routes.
    * Requires MFA and read scope (ADR-983).
    * @returns OutboundAIRouteList AI routes.
@@ -445,8 +640,8 @@ export class OutboundService {
     });
   }
   /**
-   * Create an AI fallback route over same-format managed AI integrations.
-   * Requires MFA and deploy-write scope (ADR-983). Every target must be an enabled managed AI integration of this account with the same ai_provider. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+   * Create an AI fallback route over managed AI integrations.
+   * Requires MFA and deploy-write scope (ADR-983, ADR-984). Every target must be an enabled managed AI integration of this account; a native route needs one ai_provider, an openai route translates OpenAI chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
    * @returns OutboundAIRoute Route created.
    * @throws ApiError
    */
@@ -536,7 +731,7 @@ export class OutboundService {
   }
   /**
    * Replace an AI route's ordered targets.
-   * Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+   * Requires MFA and deploy-write scope. The same ownership and route-format rules as creation apply.
    * @returns void
    * @throws ApiError
    */
@@ -876,6 +1071,47 @@ export class OutboundService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}/ai-budget',
+      path: {
+        'slug': slug,
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an app's AI guardrails on an AI integration.
+   * Requires MFA and deploy-write scope (ADR-984). Sets per-minute request and token limits, a model allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundBindingAiGuardrails({
+    slug,
+    integration,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the app's bound AI integration.
+     */
+    integration: string,
+    requestBody: PutOutboundBindingAIGuardrailsRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails',
       path: {
         'slug': slug,
         'integration': integration,

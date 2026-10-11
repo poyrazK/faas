@@ -8,6 +8,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.outbound_ai_route_format import OutboundAIRouteFormat, check_outbound_ai_route_format
+
 if TYPE_CHECKING:
     from ..models.outbound_ai_route_target import OutboundAIRouteTarget
 
@@ -17,13 +19,14 @@ T = TypeVar("T", bound="OutboundAIRoute")
 
 @_attrs_define
 class OutboundAIRoute:
-    """An ordered list of same-format managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}
-    (ADR-983).
+    """An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-983). An
+    openai-format route accepts OpenAI chat completions and translates them for Anthropic and Gemini targets (ADR-984).
 
     """
 
     id: UUID
     name: str
+    format_: OutboundAIRouteFormat
     targets: list[OutboundAIRouteTarget]
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -33,6 +36,8 @@ class OutboundAIRoute:
         id = str(self.id)
 
         name = self.name
+
+        format_: str = self.format_
 
         targets = []
         for targets_item_data in self.targets:
@@ -49,6 +54,7 @@ class OutboundAIRoute:
             {
                 "id": id,
                 "name": name,
+                "format": format_,
                 "targets": targets,
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -66,6 +72,8 @@ class OutboundAIRoute:
 
         name = d.pop("name")
 
+        format_ = check_outbound_ai_route_format(d.pop("format"))
+
         targets = []
         _targets = d.pop("targets")
         for targets_item_data in _targets:
@@ -80,6 +88,7 @@ class OutboundAIRoute:
         outbound_ai_route = cls(
             id=id,
             name=name,
+            format_=format_,
             targets=targets,
             created_at=created_at,
             updated_at=updated_at,

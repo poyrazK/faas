@@ -752,23 +752,34 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "ai",
 		DocSlug: "ai",
-		Short:   "AI gateway: provider, token and cost limits, prices, usage and fallback routes on outbound integrations",
+		Short:   "AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs",
 		Examples: []string{
-			"gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 --daily-cost 25",
+			"gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 --daily-cost 25 --request-log on",
+			"gregale ai guardrails <integration-id> --app my-api --rpm 60 --models 'gpt-4o-mini,o3*' --max-output-tokens 2048",
 			"gregale ai prices set <integration-id> --price model=gpt-4o-mini,input=0.15,cached=0.075,output=0.60",
 			"gregale ai usage <integration-id> --date 2026-10-11",
-			"gregale ai routes create --name chat --target <primary-id> --target <backup-id>:gpt-4o-mini",
+			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
+			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
+			"gregale ai logs <integration-id> --limit 20",
 		},
 		Subcommands: []cliSub{
 			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
-				{Name: "provider", Short: "AI wire format", Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "off"}},
+				{Name: "provider", Short: "AI provider", Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "gemini", "azure_openai", "bedrock", "vertex", "off"}},
 				{Name: "daily-tokens", Short: "UTC-day input+output token limit, or none", Value: "N"},
 				{Name: "daily-cost", Short: "UTC-day cost limit in EUR, or none", Value: "EUR"},
 				{Name: "monthly-cost", Short: "calendar-month cost limit in EUR, or none", Value: "EUR"},
+				{Name: "request-log", Short: "log per-call metadata for 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
 				{Name: "daily-tokens", Short: "token limit, or none", Req: true, Value: "N"},
+			}},
+			{Name: "guardrails", Short: "Set one app's per-minute limits, model allow-list and output-token ceiling (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
+				{Name: "rpm", Short: "admitted calls per UTC minute, or none", Value: "N"},
+				{Name: "tpm", Short: "tokens per UTC minute, or none", Value: "N"},
+				{Name: "models", Short: "comma-separated models or prefixes ending in *, or none", Value: "LIST"},
+				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
 			{Name: "prices", Short: "Show the price list, or replace it with `prices set <integration-id> --price ...`", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
@@ -778,7 +789,19 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes", Positionals: []string{"<list|create|set|rm>", "[<route-id>]"}, Flags: []cliFlag{
 				{Name: "name", Short: "route name for create", Value: "NAME"},
+				{Name: "format", Short: "route format for create: native or openai (translates OpenAI chat completions)", Value: "FORMAT", ClosedSet: []string{"native", "openai"}},
 				{Name: "target", Short: "<integration-id>[:<model>] in fallback order (repeat)", Value: "TARGET"},
+			}},
+			{Name: "keys", Short: "List, add (value from stdin) or remove (rm) extra provider keys", Positionals: []string{"<list|add|rm>", "<integration-id>", "[<key-id>]"}, Flags: []cliFlag{
+				{Name: "label", Short: "key label for add", Value: "LABEL"},
+				{Name: "from-stdin", Short: "read the key value from stdin for add", Bool: true},
+			}},
+			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
+			}},
+			{Name: "logs", Short: "Page the opt-in AI request log, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "calls to show, 1 to 200", Value: "N"},
+				{Name: "before", Short: "show calls before this RFC 3339 time", Value: "TIME"},
 			}},
 		},
 	},

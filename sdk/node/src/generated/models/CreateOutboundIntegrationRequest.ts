@@ -20,9 +20,9 @@ export type CreateOutboundIntegrationRequest = {
    */
   request_policy?: OutboundRequestPolicy;
   /**
-   * Optional AI gateway mode (ADR-979). Enables token usage extraction for that provider's response format.
+   * Optional AI gateway mode (ADR-979, ADR-984). Enables token usage extraction for that provider's response format.
    */
-  ai_provider?: 'openai' | 'anthropic';
+  ai_provider?: 'openai' | 'anthropic' | 'gemini' | 'azure_openai' | 'bedrock' | 'vertex';
   /**
    * Optional UTC-day input plus output token limit. Requires ai_provider.
    */
