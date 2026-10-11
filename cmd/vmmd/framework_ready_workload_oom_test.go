@@ -128,7 +128,7 @@ func TestParseFrameworkReadyDatagram_TypeClosedSet(t *testing.T) {
 	}{
 		{"type_0x00", []byte{0x00}},
 		{"type_0xFF", []byte{0xFF, 0x00, 0x00}},
-		{"type_0x0A_then_payload", []byte{0x0A, '{', '}'}},
+		{"type_0x0B_then_payload", []byte{0x0B, '{', '}'}},
 		{"type_0x10_then_long_payload", append([]byte{0x10}, []byte(strings.Repeat("x", 32))...)},
 	}
 	for _, tc := range cases {
