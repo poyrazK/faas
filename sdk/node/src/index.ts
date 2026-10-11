@@ -304,4 +304,4 @@ export { planCommitRecovery, CommitRecoveryPlanError, type CommitRecoveryPlan, t
 
 export { applyCommitRecovery, CommitRecoveryApplyError, type CommitRecoveryApplyResult, type CommitRecoveryApplyItem } from './commit-recovery-apply.js';
 
-export { watchCommitRecoveryStatus, commitRecoveryStatusSettled, getCommitRecoveryStatus, CommitRecoveryStatusError, type CommitRecoveryStatusResult, type CommitRecoveryStatusItem, type CommitRecoveryStatusSelection, type CommitRecoveryMonitoring, type CommitRecoveryStatusObservation, type CommitRecoveryStatusChange } from './commit-recovery-status.js';
+export { diagnoseCommitRecoveryStatus, type CommitRecoveryDiagnostics, watchCommitRecoveryStatus, commitRecoveryStatusSettled, getCommitRecoveryStatus, CommitRecoveryStatusError, type CommitRecoveryStatusResult, type CommitRecoveryStatusItem, type CommitRecoveryStatusSelection, type CommitRecoveryMonitoring, type CommitRecoveryStatusObservation, type CommitRecoveryStatusChange } from './commit-recovery-status.js';

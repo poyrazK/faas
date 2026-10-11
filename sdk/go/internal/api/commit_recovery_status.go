@@ -61,6 +61,7 @@ type CommitRecoveryStatusResult struct {
 	Complete       bool                       `json:"complete"`
 }
 type CommitRecoveryStatusItem struct {
+	Diagnostics         *CommitRecoveryDiagnostics       `json:"diagnostics,omitempty"`
 	PreviousObservation *CommitRecoveryStatusObservation `json:"previous_observation,omitempty"`
 	Changes             []CommitRecoveryStatusChange     `json:"changes,omitempty"`
 	ExecutionID         string                           `json:"execution_id,omitempty"`
@@ -201,6 +202,7 @@ func (c *Client) getCommitRecoveryStatusWithAge(ctx context.Context, reviewed Co
 					return out, err
 				}
 			}
+			row.Diagnostics = nil
 			out.Items[i] = row
 		}
 		out.Refreshing = saved.Previous.Refreshing

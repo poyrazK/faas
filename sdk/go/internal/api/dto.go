@@ -2642,3 +2642,69 @@ type ServiceRolloutHandoffResponse struct {
 	AcknowledgedAt          *time.Time                 `json:"acknowledged_at,omitempty"`
 	CompletedAt             *time.Time                 `json:"completed_at,omitempty"`
 }
+
+type EventOrderingBlocker struct {
+	EventSource    string     `json:"event_source"`
+	EventID        string     `json:"event_id"`
+	SubscriptionID string     `json:"subscription_id"`
+	AcceptedAt     time.Time  `json:"accepted_at"`
+	State          string     `json:"state"`
+	NextAttemptAt  *time.Time `json:"next_attempt_at,omitempty"`
+	AgeSeconds     float64    `json:"age_seconds"`
+	ReceiptURL     string     `json:"receipt_url"`
+}
+
+type EventBacklogRecipient struct {
+	DeliveryControlReason string                `json:"-"`
+	OrderingBlocker       *EventOrderingBlocker `json:"ordering_blocker,omitempty"`
+	EventSource           string                `json:"event_source"`
+	EventID               string                `json:"event_id"`
+	EventType             string                `json:"event_type"`
+	AcceptedAt            time.Time             `json:"accepted_at"`
+	AppID                 string                `json:"app_id"`
+	AppSlug               string                `json:"app_slug"`
+	TargetAvailable       bool                  `json:"target_available"`
+	SubscriptionID        string                `json:"subscription_id"`
+	ConsumerKind          string                `json:"consumer_kind"`
+	Origin                string                `json:"origin"`
+	WorkflowName          string                `json:"workflow_name,omitempty"`
+	RoutingMode           string                `json:"routing_mode"`
+	State                 string                `json:"state"`
+	CapacityScope         string                `json:"capacity_scope,omitempty"`
+	Attempts              int                   `json:"attempts"`
+	CapacityDeferrals     int                   `json:"capacity_deferrals"`
+	NextAttemptAt         *time.Time            `json:"next_attempt_at,omitempty"`
+	LeaseUntil            *time.Time            `json:"lease_until,omitempty"`
+	PendingAgeSeconds     float64               `json:"pending_age_seconds"`
+	WaitingReason         string                `json:"waiting_reason"`
+	ReceiptURL            string                `json:"receipt_url"`
+	FanoutHistoryURL      string                `json:"fanout_history_url,omitempty"`
+}
+
+type EventBacklogConsumer struct {
+	OrderingWaitingRecipients int64     `json:"ordering_waiting_recipients"`
+	AppID                     string    `json:"app_id"`
+	AppSlug                   string    `json:"app_slug"`
+	TargetAvailable           bool      `json:"target_available"`
+	SubscriptionID            string    `json:"subscription_id"`
+	ConsumerKind              string    `json:"consumer_kind"`
+	WaitingRecipients         int64     `json:"waiting_recipients"`
+	PendingRecipients         int64     `json:"pending_recipients"`
+	ProcessingRecipients      int64     `json:"processing_recipients"`
+	CapacityWaitingRecipients int64     `json:"capacity_waiting_recipients"`
+	OldestAcceptedAt          time.Time `json:"oldest_accepted_at"`
+	OldestAgeSeconds          float64   `json:"oldest_age_seconds"`
+}
+
+// Counts cover matching live recipients, independently of the recipient page.
+// WindowAt anchors acceptance/age filtering; ObservedAt describes this read.
+type EventBacklogResponse struct {
+	ObservedAt           time.Time               `json:"observed_at"`
+	WindowAt             time.Time               `json:"window_at"`
+	Coverage             string                  `json:"coverage"`
+	Recipients           []EventBacklogRecipient `json:"recipients"`
+	Consumers            []EventBacklogConsumer  `json:"consumers"`
+	UnattributedReceipts int64                   `json:"unattributed_receipts"`
+	NextAfter            string                  `json:"next_after,omitempty"`
+	NextConsumersAfter   string                  `json:"next_consumers_after,omitempty"`
+}

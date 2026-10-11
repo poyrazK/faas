@@ -403,6 +403,7 @@ type ReplayEventFanoutFailureResponse = api.ReplayEventFanoutFailureResponse
 // CommitRecoveryStatusResult keeps current delivery evidence separate from saved attempts.
 type CommitRecoveryStatusResult = api.CommitRecoveryStatusResult
 type CommitRecoveryStatusItem = api.CommitRecoveryStatusItem
+type CommitRecoveryDiagnostics = api.CommitRecoveryDiagnostics
 
 type CommitRecoveryStatusSelection = api.CommitRecoveryStatusSelection
 
@@ -419,3 +420,10 @@ type CommitRecoveryMonitoring = api.CommitRecoveryMonitoring
 
 // CommitRecoveryWatchOptions controls retries and optional observation freshness.
 type CommitRecoveryWatchOptions = api.CommitRecoveryWatchOptions
+
+type EventBacklogRecipient = api.EventBacklogRecipient
+type EventBacklogResponse = api.EventBacklogResponse
+type EventBacklogConsumer = api.EventBacklogConsumer
+type EventOrderingBlocker = api.EventOrderingBlocker
+type EventBacklogOptions = api.EventBacklogOptions
+type EventBacklogFilters = api.EventBacklogFilters

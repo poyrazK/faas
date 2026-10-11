@@ -818,3 +818,5 @@ Recovery watch results include `monitoring` with stop reason, started passes, co
 
 
 Optionally require recent recovery evidence with `CommitRecoveryWatchOptions.MaxObservationAge` (default disabled; 100ms..24h). Stale and missing/future-timestamp observations are reread within existing budgets before settlement. Monitoring includes freshness counts. See [freshness policy](../../docs/gregale-commit.md#require-recent-recovery-observations).
+
+Optional `CommitRecoveryWatchOptions.Diagnostics` includes bounded delivery blocker diagnostics, separate from replay attribution. Missing backlog rows never prove readiness or completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).

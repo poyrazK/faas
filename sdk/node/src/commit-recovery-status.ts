@@ -1,3 +1,6 @@
+import { EventsService } from './generated/services/EventsService.js';
+import type { EventBacklogResponse } from './generated/models/EventBacklogResponse.js';
+import type { EventBacklogRecipient } from './generated/models/EventBacklogRecipient.js';
 import { getCommitDeliveryReport, CommitDeliveryReportError } from './commit-delivery-report.js';
 import type { CommitDeliveryReportItem } from './commit-delivery-report.js';
 import { sameAcceptance } from './commit-recovery-plan.js';
@@ -16,7 +19,11 @@ export interface CommitRecoveryStatusObservation {
 export interface CommitRecoveryStatusChange {
   field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
 }
+export interface CommitRecoveryDiagnostics {
+  status: string; observed_at?: string; coverage?: string; truncated?: boolean; recipient?: EventBacklogRecipient;
+}
 export interface CommitRecoveryStatusItem {
+  diagnostics?: CommitRecoveryDiagnostics;
   previous_observation?: CommitRecoveryStatusObservation; changes?: CommitRecoveryStatusChange[];
   execution_id?: string; execution_state?: string;
   selection?: CommitRecoveryStatusSelection;
@@ -61,7 +68,7 @@ function observe(row: CommitRecoveryStatusItem, evidence?: CommitDeliveryReportI
 }
 /** Read guarded evidence only. An unknown attempt remains unknown even when delivery advances. */
 export async function getCommitRecoveryStatus(source: string, reviewed: CommitRecoveryPlan, applied: CommitRecoveryApplyResult,
-  options: { maxObservationAgeMs?: number; limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
+  options: { diagnostics?: boolean; maxObservationAgeMs?: number; limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal; resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult } = {}): Promise<CommitRecoveryStatusResult> {
   const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal, maxObservationAgeMs = 0 } = options;
   validateObservationAge(maxObservationAgeMs);
   if (options.resume && options.refresh) throw new TypeError('choose resume or refresh');
@@ -98,6 +105,7 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
       if (!['completed', 'active', 'failed', 'unresolved', 'unsupported_recipient', 'read_error', 'not_observed'].includes(row.status) || !['unproven', 'matches_acknowledged_execution'].includes(row.attribution) || (row.attribution === 'matches_acknowledged_execution' && row.attempt.status !== 'queued')) throw new TypeError('invalid saved observation or attribution');
       if (Boolean(previous.refreshing) !== Boolean(row.previous_observation)) throw new TypeError('invalid saved refresh baseline');
       if (row.previous_observation) validateObservation(row.previous_observation, row.attempt.status);
+      delete row.diagnostics;
     }
     out.items = previous.items;
     out.refreshing = previous.refreshing;
@@ -138,6 +146,7 @@ export async function getCommitRecoveryStatus(source: string, reviewed: CommitRe
         row.status = 'read_error'; row.reason = 'evidence_read_failed'; out.complete = false; cause = cause ? new AggregateError([cause, error], 'recovery status reads failed') : error;
       }
     }
+    if (options.diagnostics) Object.assign(out, await diagnoseCommitRecoveryStatus(out, controller.signal));
   } catch (error) { cause = error; }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   if (controller.signal.aborted) { cause ??= new Error('status interrupted'); for (const row of out.items) if (row.status === 'not_observed') row.reason = 'interrupted'; }
@@ -217,7 +226,7 @@ export function commitRecoveryStatusSettled(out: CommitRecoveryStatusResult): bo
 
 /** Poll a fixed selection; errors retain the last/partial result. */
 export async function watchCommitRecoveryStatus(source: string, plan: CommitRecoveryPlan, applied: CommitRecoveryApplyResult, options: {
-  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
+  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; diagnostics?: boolean; readRetries?: number; maxObservationAgeMs?: number; signal?: AbortSignal;
   resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult;
   onProgress?: (status: CommitRecoveryStatusResult) => void;
 } = {}): Promise<CommitRecoveryStatusResult> {
@@ -268,6 +277,7 @@ export async function watchCommitRecoveryStatus(source: string, plan: CommitReco
         usedRetries++; failed = true;
         delay = Math.max(Math.min(60000, intervalMs * 2 ** (usedRetries - 1)), retryAfter);
       }
+      if (options.diagnostics) out = await diagnoseCommitRecoveryStatus(out, controller.signal);
       out.monitoring = summarize('running');
       phase = 'callback';
       onProgress?.(structuredClone(out));
@@ -346,4 +356,35 @@ function freshnessCounts(out: CommitRecoveryStatusResult, age: number): Record<s
 }
 function observationsFresh(out: CommitRecoveryStatusResult, age: number): boolean {
   return age === 0 || freshnessCounts(out, age).fresh === out.items.length;
+}
+
+/** One bounded backlog page per subscription; only enrich freshly validated status. */
+export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusResult, signal?: AbortSignal): Promise<CommitRecoveryStatusResult> {
+  const out = structuredClone(status);
+  const cache = new Map<string, EventBacklogResponse | undefined>();
+  for (const row of out.items) {
+    const diagnostic: CommitRecoveryDiagnostics = { status: 'unavailable' };
+    row.diagnostics = diagnostic;
+    if (!row.selection || ['not_observed', 'read_error'].includes(row.status)) continue;
+    const subscription = row.attempt.subscription_id.toLowerCase();
+    if (!cache.has(subscription)) {
+      if (cache.size >= 50) { diagnostic.status = 'budget_exhausted'; continue; }
+      if (signal?.aborted) { diagnostic.status = 'read_error'; continue; }
+      const request = EventsService.getEventBacklog({ subscriptionId: subscription, limit: 200, consumerLimit: 1 });
+      const abort = () => request.cancel();
+      signal?.addEventListener('abort', abort, { once: true });
+      try { cache.set(subscription, await request); }
+      catch { cache.set(subscription, undefined); }
+      finally { signal?.removeEventListener('abort', abort); }
+    }
+    const page = cache.get(subscription);
+    if (!page) { diagnostic.status = 'read_error'; continue; }
+    diagnostic.observed_at = page.observed_at; diagnostic.coverage = page.coverage; diagnostic.truncated = Boolean(page.next_after);
+    if (page.coverage !== 'captured_and_backfill_recipients' || !Number.isFinite(Date.parse(page.observed_at))) continue;
+    diagnostic.status = 'not_found';
+    const publication = row.selection.publication;
+    const recipient = page.recipients.find(item => item.event_source === publication.source && item.event_id === publication.id && sameAcceptance(item.accepted_at, publication.accepted_at) && item.subscription_id.toLowerCase() === subscription && item.consumer_kind === 'application');
+    if (recipient) { diagnostic.status = 'available'; diagnostic.recipient = recipient; }
+  }
+  return out;
 }

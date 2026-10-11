@@ -14,9 +14,11 @@ from uuid import UUID
 
 import httpx
 
+from .api.events import get_event_backlog
 from .client import AuthenticatedClient
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
 from .commit_recovery_plan import _same_acceptance
+from .models.event_backlog_response import EventBacklogResponse
 
 
 class _CommitRecoveryReadErrors(Exception):
@@ -103,6 +105,7 @@ async def aget_commit_recovery_status(
     recipient_pages: int = 1,
     timeout: float = 120,
     max_observation_age: float = 0,
+    diagnostics: bool = False,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -224,6 +227,8 @@ async def aget_commit_recovery_status(
                 raise ValueError("invalid saved refresh baseline")
             if row.get("previous_observation") is not None:
                 _validate_observation(row["previous_observation"], row["attempt"]["status"])
+        for row in previous["items"]:
+            row.pop("diagnostics", None)
         out["items"] = previous["items"]
         out["refreshing"] = previous.get("refreshing", False)
     if refresh is not None:
@@ -304,6 +309,8 @@ async def aget_commit_recovery_status(
                     out["complete"] = False
                     cause = _CommitRecoveryReadErrors([cause, error]) if isinstance(cause, Exception) else error
                 reading_index = None
+            if diagnostics:
+                out = await adiagnose_commit_recovery_status(client, out)
     except (Exception, asyncio.CancelledError) as error:
         out["complete"] = False
         cause = error
@@ -470,6 +477,7 @@ async def awatch_commit_recovery_status(
     interval: float = 1,
     read_retries: int = 0,
     max_observation_age: float = 0,
+    diagnostics: bool = False,
     resume: dict[str, Any] | None = None,
     refresh: dict[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -546,6 +554,8 @@ async def awatch_commit_recovery_status(
                     used_retries += 1
                     failed = True
                     delay = max(min(60, interval * 2 ** (used_retries - 1)), retry_after)
+                if diagnostics:
+                    out = await adiagnose_commit_recovery_status(client, out)
                 out["monitoring"] = summarize("running")
                 phase = "callback"
                 if on_progress is not None:
@@ -660,3 +670,50 @@ def _freshness_counts(out: dict[str, Any], age: float) -> dict[str, int]:
 
 def _observations_fresh(out: dict[str, Any], age: float) -> bool:
     return age == 0 or _freshness_counts(out, age)["fresh"] == len(out["items"])
+
+
+async def adiagnose_commit_recovery_status(client: AuthenticatedClient, status: dict[str, Any]) -> dict[str, Any]:
+    """Enrich freshly validated status with bounded backlog evidence; caller owns timeout."""
+    out = copy.deepcopy(status)
+    cache: dict[str, dict[str, Any] | None] = {}
+    for row in out["items"]:
+        diagnostic: dict[str, Any] = {"status": "unavailable"}
+        row["diagnostics"] = diagnostic
+        if not row.get("selection") or row["status"] in {"not_observed", "read_error"}:
+            continue
+        subscription = row["attempt"]["subscription_id"].lower()
+        if subscription not in cache:
+            if len(cache) >= 50:
+                diagnostic["status"] = "budget_exhausted"
+                continue
+            try:
+                response = await get_event_backlog.asyncio_detailed(
+                    client=client, subscription_id=subscription, limit=200, consumer_limit=1
+                )
+                cache[subscription] = (
+                    response.parsed.to_dict() if isinstance(response.parsed, EventBacklogResponse) else None
+                )
+            except Exception:
+                cache[subscription] = None
+        page = cache[subscription]
+        if page is None:
+            diagnostic["status"] = "read_error"
+            continue
+        diagnostic.update(
+            observed_at=page.get("observed_at"), coverage=page.get("coverage"), truncated=bool(page.get("next_after"))
+        )
+        if page.get("coverage") != "captured_and_backfill_recipients" or not page.get("observed_at"):
+            continue
+        diagnostic["status"] = "not_found"
+        publication = row["selection"]["publication"]
+        for recipient in page["recipients"]:
+            if (
+                recipient["event_source"] == publication["source"]
+                and recipient["event_id"] == publication["id"]
+                and _same_acceptance(recipient["accepted_at"], publication["accepted_at"])
+                and recipient["subscription_id"].lower() == subscription
+                and recipient["consumer_kind"] == "application"
+            ):
+                diagnostic.update(status="available", recipient=recipient)
+                break
+    return out

@@ -1454,3 +1454,35 @@ completion and reach the overall timeout. Client wall-clock skew can produce
 future timestamps; observations are not an atomic snapshot.
 
 See [ADR-946](adr/946-freshness-aware-commit-recovery-monitoring.md).
+
+
+### Diagnose recovery delivery blockers
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --watch --diagnostics --timeout 10m
+~~~
+
+Optional `--diagnostics` adds a separate object to observed rows. A matched
+recipient reports its `waiting_reason`, ordering blocker, subscription/circuit
+controls, recorded capacity scope, and `next_attempt_at` when present. Diagnostics
+carry their own `observed_at`; they describe a current routing sample rather than
+proving which replay execution caused progress.
+
+Each pass samples one backlog page per subscription, up to 50 queries with 200
+recipients each. Exact event source, ID, acceptance timestamp and subscription
+must match. `truncated` marks a page with more recipients. `not_found` means the
+bounded page did not include the delivery; it does not prove that delivery is
+ready, expired or completed. `unavailable`, `read_error` and `budget_exhausted`
+make missing diagnostic evidence explicit. Diagnostic errors do not change
+receipt status, replay attribution, settlement or the receipt retry budget.
+A recorded `next_attempt_at` is a scheduled retry time, not a guarantee of
+eligibility while ordering, subscription or capacity controls still block work.
+The overall timeout still applies. Saved diagnostics are discarded on resume
+and resampled only when explicitly enabled.
+
+Go watches use `CommitRecoveryWatchOptions{Diagnostics: true}`; ordinary callers
+can enrich a freshly validated result with `DiagnoseCommitRecoveryStatus`.
+Node/Python status and watch helpers accept `diagnostics: true` / `diagnostics=True`.
+Standalone SDK helpers are `diagnoseCommitRecoveryStatus(status, signal)` and
+`adiagnose_commit_recovery_status(client, status)`; supply cancellation/timeouts.

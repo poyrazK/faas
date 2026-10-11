@@ -19,6 +19,7 @@ func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecov
 
 // CommitRecoveryWatchOptions controls optional retry and evidence-age policies.
 type CommitRecoveryWatchOptions struct {
+	Diagnostics       bool
 	ReadRetries       int
 	MaxObservationAge time.Duration
 }
@@ -72,6 +73,9 @@ func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan 
 	for {
 		passes++
 		out, err = c.getCommitRecoveryStatusWithAge(ctx, plan, applied, previous, refresh, limit, pages, maxAge)
+		if options.Diagnostics && err == nil && len(out.Items) > 0 {
+			out = c.DiagnoseCommitRecoveryStatus(ctx, out)
+		}
 		delay := interval
 		if err != nil {
 			retryAfter, retryable := commitRecoveryReadRetry(err)

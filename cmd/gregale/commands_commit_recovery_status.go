@@ -20,6 +20,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
 	checkpointPath := fs.String("checkpoint", "", "atomically save watch progress to this status JSON file")
+	diagnostics := fs.Bool("diagnostics", false, "include bounded live delivery blocker diagnostics")
 	maxAge := fs.Duration("max-observation-age", 0, "maximum watch evidence age (100ms-24h; default disabled)")
 	readRetries := fs.Int("read-retries", 0, "total transient watch read retries (0..20; default 0)")
 	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
@@ -124,7 +125,10 @@ func cmdCommitRecoveryStatus(args []string) int {
 				}
 			}
 		}
-		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge})
+		out, err = client.WatchCommitRecoveryStatusWithOptions(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress, api.CommitRecoveryWatchOptions{ReadRetries: *readRetries, MaxObservationAge: *maxAge, Diagnostics: *diagnostics})
+	}
+	if !*watch && err == nil && *diagnostics {
+		out = client.DiagnoseCommitRecoveryStatus(ctx, out)
 	}
 	var validation *api.Problem
 	invalidSelection := errors.As(err, &validation) && validation.Code == api.CodeValidation
