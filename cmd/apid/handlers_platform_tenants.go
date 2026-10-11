@@ -295,10 +295,18 @@ func (s *server) getPlatformTenantUsage(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, problem)
 		return
 	}
-	rows, err := store.ListPlatformTenantUsage(r.Context(), acct.ID, tenant.ID, since, until)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load platform tenant usage"))
-		return
+	// The window snaps to UTC midnight and is half-open, so a same-day
+	// window is empty; the store rejects it as an invalid argument, which
+	// answered 500 (hunt #9 H9-57, the H9-26 bug on this endpoint).
+	var rows []state.APIConsumerUsageBucket
+	if until.After(since) {
+		var err error
+		rows, err = store.ListPlatformTenantUsage(r.Context(), acct.ID, tenant.ID, since, until)
+		if err != nil {
+			s.log.ErrorContext(r.Context(), "list platform tenant usage", "tenant_id", tenant.ID, "err", err)
+			api.WriteProblem(w, api.ErrInternal("could not load platform tenant usage"))
+			return
+		}
 	}
 	out := api.PlatformTenantUsageResponse{TenantID: tenant.ID, PeriodStart: since, PeriodEnd: until,
 		Buckets: make([]api.PlatformTenantUsageBucketResponse, 0, len(rows)), AsOf: time.Now().UTC()}
