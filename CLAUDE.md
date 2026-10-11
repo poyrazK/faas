@@ -31,7 +31,7 @@ make lint           # golangci-lint + custom checks (see Conventions)
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
-Go 1.25.13 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
+Go 1.26.9 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
 change touches VM lifecycle, run `test-metal` and `leakcheck` before calling it
 done. Metal and snapshot acceptance is supported only on the dedicated native
 x86_64 Linux KVM hosts; macOS and nested virtualization are not supported
