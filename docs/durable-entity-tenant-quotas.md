@@ -67,6 +67,9 @@ keeps a record until expiry. Expired grants are removed in the next successful
 ledger mutation, and their current-record bytes become available in that same
 commit. Expiry never returns a credential to service.
 
+Each accepted mutation rewrites the shared ledger, so high contention can return
+503; these ceilings do not promise that throughput or a low-latency SLO.
+
 The storage budget covers admitted entities' reachable committed storage caps
 and current grant JSON. It excludes quota control metadata, provider version
 history, orphan objects, backups, and other storage excluded by the existing
@@ -95,7 +98,10 @@ GET /v1/apps/my-app/entities/quotas?namespace=rooms&key=document:123&env=product
 
 Use the normal exact selectors for one entity in the quota scope. The response
 has `limits`, `connections`, `grants`, `grant_bytes`, `entity_reservations`,
-`reserved_bytes`, `grants_issued`, `invocations`, and `window_ends`. It is a
+`reserved_bytes`, `grants_issued`, `invocations`, `window_ends`,
+`stored_grant_bytes`, and `expired_grants`. Grant/reserved usage projects the
+expiry filtering in the next successful mutation; stored bytes and expired-record
+counts show pending compaction without pretending a read deleted records. It is a
 read-only snapshot, excludes credentials and lease identities, and can diagnose
 suspended tenants. A missing record reports zero admissions without creating it.
 

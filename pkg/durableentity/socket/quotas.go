@@ -153,7 +153,13 @@ func prune(r *quotaRecord, now time.Time) {
 		r.Invocations = 0
 	}
 }
-func grantBytes(r quotaRecord) int64 { body, _ := json.Marshal(r.Grants); return int64(len(body)) }
+func grantBytes(r quotaRecord) int64 {
+	if len(r.Grants) == 0 {
+		return 0
+	}
+	body, _ := json.Marshal(r.Grants)
+	return int64(len(body))
+}
 func retainedBytes(r quotaRecord) int64 {
 	n := grantBytes(r)
 	for _, e := range r.Entities {
@@ -370,6 +376,8 @@ type TenantUsage struct {
 	GrantsIssued       int          `json:"grants_issued"`
 	Invocations        int          `json:"invocations"`
 	WindowEnds         time.Time    `json:"window_ends"`
+	StoredGrantBytes   int64        `json:"stored_grant_bytes"`
+	ExpiredGrants      int          `json:"expired_grants"`
 }
 
 func (q *Quotas) Inspect(ctx context.Context, id durableentity.ID) (TenantUsage, error) {
@@ -384,6 +392,14 @@ func (q *Quotas) Inspect(ctx context.Context, id durableentity.ID) (TenantUsage,
 		return TenantUsage{}, err
 	}
 	r.Limits = stricterLimits(r.Limits, q.Limits)
-	prune(&r, q.now())
-	return TenantUsage{r.Limits, len(r.Connections), len(r.Grants), grantBytes(r), len(r.Entities), retainedBytes(r), r.GrantsIssued, r.Invocations, r.Window.Add(quotaWindow)}, nil
+	stored := grantBytes(r)
+	expired := 0
+	now := q.now()
+	for _, g := range r.Grants {
+		if !now.Before(g.ExpiresAt) {
+			expired++
+		}
+	}
+	prune(&r, now)
+	return TenantUsage{r.Limits, len(r.Connections), len(r.Grants), grantBytes(r), len(r.Entities), retainedBytes(r), r.GrantsIssued, r.Invocations, r.Window.Add(quotaWindow), stored, expired}, nil
 }

@@ -295,3 +295,23 @@ func TestTenantQuotaWeakerNodeCannotResetPolicy(t *testing.T) {
 		t.Fatal("missing aggregate usage")
 	}
 }
+
+func TestTenantQuotaInspectDoesNotWriteOrHideExpiredStorage(t *testing.T) {
+	q, id, b := quotaFixture()
+	now := time.Now()
+	q.Now = func() time.Time { return now }
+	usage, err := q.Inspect(t.Context(), id)
+	if err != nil || usage.ReservedBytes != 0 || usage.StoredGrantBytes != 0 || b.revision != 0 {
+		t.Fatal("empty inspection wrote or charged usage", usage, err)
+	}
+	grants := &Grants{Store: b, Quotas: q}
+	if _, _, err = grants.Mint(t.Context(), testGrant(id), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	revision := b.revision
+	now = now.Add(2 * time.Second)
+	usage, err = q.Inspect(t.Context(), id)
+	if err != nil || usage.Grants != 0 || usage.GrantBytes != 0 || usage.ReservedBytes != 0 || usage.ExpiredGrants != 1 || usage.StoredGrantBytes <= 0 || b.revision != revision {
+		t.Fatal("read hid physical compaction backlog or mutated authority", usage, err)
+	}
+}
