@@ -1,4 +1,4 @@
-import {defineDurableSessionEntity} from '@gregale/sdk-node/durable-entities/session';
+import {defineDurableSessionEntity, defineRecoverableDurableSessionEntity} from '@gregale/sdk-node/durable-entities/session';
 import {defineDurableEntity} from '@gregale/sdk-node/durable-entities/runtime';
 import {counterState, reservationState, sessionState} from './state.mjs';
 import {counterContract, reservationContract, sessionContract} from './contracts.mjs';
@@ -46,6 +46,14 @@ export const session = defineDurableEntity({
 
 // Ordered, reconnectable application sessions; sockets are only a transport.
 export const room = defineDurableSessionEntity({namespace: 'rooms',
+  initialState: () => ({count: 0}), decodeState: counterState,
+  decodePayload(value) {if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError('integer delta required');return value;},
+  handle({state, payload}) {const next=counterState({count:state.count+payload});return {state:next,result:next.count};},
+});
+
+// Service-controlled logical ticks: expire idle sessions, retain tombstones, then reclaim a closed cohort.
+export const recoverableRoom = defineRecoverableDurableSessionEntity({namespace: 'recoverable-rooms',
+  idleTicks: 10, retentionTicks: 5,
   initialState: () => ({count: 0}), decodeState: counterState,
   decodePayload(value) {if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError('integer delta required');return value;},
   handle({state, payload}) {const next=counterState({count:state.count+payload});return {state:next,result:next.count};},

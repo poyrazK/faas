@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DurableEntitySimulator} from '@gregale/sdk-node/durable-entities/testing';
+import {durableSessionLifecycleFrame} from '@gregale/sdk-node/durable-entities/session';
 import {registry} from '../registry.mjs';
 import validateRestore from '../validator.mjs';
 import {createEntityServer} from '../server.mjs';
@@ -66,4 +67,27 @@ test('room session frames replay after checkpoint restart and validate isolated 
   assert.equal(validateRestore({protocol_version:1,event:'validate_restore',entity:{namespace:'rooms'},candidate}).valid,true);
   candidate.data.sessions[0].sequence=-1;
   assert.equal(validateRestore({protocol_version:1,event:'validate_restore',entity:{namespace:'rooms'},candidate}).valid,false);
+});
+
+test('recoverable room expires, reclaims and fences a retired generation after restart', async () => {
+  const sim = new DurableEntitySimulator(registry);
+  const id = '11111111-1111-4111-8111-111111111111';
+  const operation = n => `${n.toString(16).padStart(8,'0')}-1111-4111-8111-111111111111`;
+  const invoke = command => {const frame = durableSessionLifecycleFrame(command);return sim.invoke({namespace:'recoverable-rooms',key:'document:1',requestId:frame.request_id,payload:frame.payload});};
+  await invoke({kind:'open',session_id:id,generation:0});
+  await invoke({kind:'message',session_id:id,generation:0,sequence:1,payload:2});
+  const status = await invoke({kind:'status',session_id:id,query_id:operation(1)});
+  assert.equal(status.value.sequence,1);
+  await invoke({kind:'advance',generation:0,tick:10,operation_id:operation(2)});
+  await assert.rejects(invoke({kind:'reclaim',generation:0,operation_id:operation(3)}));
+  await invoke({kind:'advance',generation:0,tick:15,operation_id:operation(4)});
+  await invoke({kind:'reclaim',generation:0,operation_id:operation(5)});
+  const saved = JSON.parse(sim.checkpoint()); saved.entities[0].receipts = [];
+  const restored = new DurableEntitySimulator(registry);restored.restore(JSON.stringify(saved));
+  const old = durableSessionLifecycleFrame({kind:'open',session_id:id,generation:0});
+  await assert.rejects(restored.invoke({namespace:'recoverable-rooms',key:'document:1',requestId:old.request_id,payload:old.payload}));
+  const candidate = restored.inspect('recoverable-rooms','document:1').data;
+  const request = {protocol_version:1,event:'validate_restore',entity:{namespace:'recoverable-rooms'},candidate};
+  assert.equal(validateRestore(request).valid,true);
+  candidate.data.generation = -1;assert.equal(validateRestore(request).valid,false);
 });

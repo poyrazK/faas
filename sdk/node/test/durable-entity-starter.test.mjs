@@ -37,6 +37,6 @@ test('durable entity starter installs, typechecks, prepares its validator and ex
   assert.equal(descriptor.runtime, 'node22');
   for (const {path, content} of descriptor.files) assert.deepEqual(Buffer.from(content, 'base64'), readFileSync(join(dest, path)));
   const output = run(['test']);
-  assert.ok(Number(output.match(/tests (\d+)/)?.[1]) >= 6); assert.match(output, /fail 0/);
+  assert.ok(Number(output.match(/tests (\d+)/)?.[1]) >= 8); assert.match(output, /fail 0/);
   assert.ok(JSON.parse(readFileSync(join(dest, 'package-lock.json'), 'utf8')).packages['node_modules/@gregale/sdk-node'].integrity);
 });

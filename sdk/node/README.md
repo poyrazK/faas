@@ -2653,3 +2653,10 @@ session identity, sequence and closed tombstones with application state. Save ea
 pending frame before transport and replay its identical bytes after disconnect.
 See the [session guide](../../docs/durable-entity-sessions.md) for the separately
 gated owner-authenticated WebSocket endpoint and its limits.
+<!-- Durable session lifecycle -->
+The session module also exports `defineRecoverableDurableSessionEntity`,
+`durableSessionLifecycleFrame`, `decodeDurableSessionStatus` and
+`decodeDurableSessionLifecycleAcknowledgement`. This opt-in contract adds fresh
+status snapshots, service-driven logical-time expiry, generation-fenced cohort
+reclamation and pure application migrations. See
+[the lifecycle guide](../../docs/durable-entity-session-lifecycle.md).

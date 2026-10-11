@@ -5,6 +5,10 @@ application-session contract. It does not provide end-user socket credentials,
 server broadcasts, presence, push subscriptions or hibernation. Native KVM/GCS
 qualification remains required before production preview enablement.
 
+For status recovery, logical-time expiry, safe cohort reclamation and application
+migrations, use the opt-in [recoverable session contract](durable-entity-session-lifecycle.md).
+The version-1 helper below retains its original behavior.
+
 ## Transport
 
 The operator may enable `FAAS_DURABLE_ENTITY_SOCKETS_ENABLED=1` only alongside the

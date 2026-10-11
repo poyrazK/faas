@@ -36,3 +36,19 @@ export function roomState(value) {
   });
   return {application:counterState(state.application),sessions};
 }
+
+/** @param {unknown} value */
+export function recoverableRoomState(value) {
+  const state = record(value);
+  const integer = (/** @type {unknown} */ value) => Number.isSafeInteger(value) && /** @type {number} */ (value) >= 0;
+  if (Object.keys(state).length !== 4 || !integer(state.generation) || !integer(state.tick) || !Array.isArray(state.sessions) || state.sessions.length > 32) throw new TypeError('invalid recoverable room');
+  const ids = new Set();
+  for (const value of state.sessions) {
+    const item = record(value);
+    if (Object.keys(item).length !== 6 || typeof item.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(item.id) || ids.has(item.id) || !integer(item.sequence)
+      || typeof item.closed !== 'boolean' || typeof item.expired !== 'boolean' || !integer(item.active_at) || /** @type {number} */ (item.active_at) > /** @type {number} */ (state.tick)
+      || (item.closed ? !integer(item.closed_at) || /** @type {number} */ (item.closed_at) < /** @type {number} */ (item.active_at) || /** @type {number} */ (item.closed_at) > /** @type {number} */ (state.tick) : item.closed_at !== null || item.expired)) throw new TypeError('invalid recoverable session');
+    ids.add(item.id);
+  }
+  return {application: counterState(state.application), generation: state.generation, tick: state.tick, sessions: state.sessions};
+}

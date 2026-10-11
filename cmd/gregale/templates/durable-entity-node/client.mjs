@@ -16,3 +16,7 @@ import {roomContract as contract3} from "./contracts.mjs";
 /** @param {Omit<import('@gregale/sdk-node').DurableEntityHandleScope, 'namespace'>} scope */
 function factory3(scope) { if (contract3.namespace !== "rooms") throw new TypeError('client namespace differs from declaration'); return durableEntityClient(contract3, scope); }
 export {factory3 as room};
+import {recoverableRoomContract as contract4} from "./contracts.mjs";
+/** @param {Omit<import('@gregale/sdk-node').DurableEntityHandleScope, 'namespace'>} scope */
+function factory4(scope) { if (contract4.namespace !== "recoverable-rooms") throw new TypeError('client namespace differs from declaration'); return durableEntityClient(contract4, scope); }
+export {factory4 as recoverableRoom};

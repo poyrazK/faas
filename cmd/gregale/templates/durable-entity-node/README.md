@@ -1,10 +1,20 @@
 # Durable entity developer workflow (Node)
 
-This starter registers four namespaces: `counters` for customer coordination,
+This starter registers five namespaces: `counters` for customer coordination,
 `reservations` for state plus an outgoing webhook intent, `sessions` for
-scheduled automation, and `rooms` for reconnectable ordered sessions. State is
+scheduled automation, `rooms` for reconnectable ordered sessions, and
+`recoverable-rooms` for status, expiry and generation-fenced reclamation. State is
 schema-versioned. Handlers compute transitions
 synchronously; external delivery belongs to the platform outbox.
+
+`recoverable-rooms` uses schema version 2, generation-qualified frames, idle expiry
+after 10 logical ticks and retention for 5 ticks after closure. The authenticated
+service explicitly advances the persisted clock; expiry is not automatic. Fresh
+status query IDs recover committed progress. Reclaim only a fully closed retained
+cohort, then deliberately use its new generation. See the
+[recovery and lifecycle guide](https://github.com/poyrazK/faas/blob/main/docs/durable-entity-session-lifecycle.md)
+for the command format and application migrations. The original `rooms` contract
+remains available for existing clients.
 
 ## Create and prepare
 

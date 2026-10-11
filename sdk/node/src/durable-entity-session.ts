@@ -1,6 +1,7 @@
 /** Durable application-session ordering, independent of the socket carrying frames. */
 import {defineDurableEntity} from './durable-entity-runtime.js';
 import {durableEntityJSON} from './durable-entity-handler.js';
+export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';
 export const DURABLE_ENTITY_MAX_SESSIONS = 32;
 interface Session {id: string; sequence: number; closed: boolean}
 export type DurableSessionCommand<Payload = unknown> = {kind: 'open'; session_id: string} | {kind: 'message'; session_id: string; sequence: number; payload: Payload} | {kind: 'close'; session_id: string; sequence: number};
