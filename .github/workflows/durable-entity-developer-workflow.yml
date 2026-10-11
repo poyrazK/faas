@@ -50,6 +50,11 @@ jobs:
         working-directory: sdk/node
 
   go-source-workflow:
+    env:
+      GOMEMLIMIT: 2GiB
+      GOGC: '25'
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
