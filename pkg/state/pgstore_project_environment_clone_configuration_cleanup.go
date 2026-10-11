@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"reflect"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -117,7 +116,7 @@ func verifyCloneConfigurationCleanupTx(ctx context.Context, tx pgx.Tx, op Projec
 		return checkpointPgCompensationDependencyError(err)
 	}
 	manifest, err := cloneConfigurationOwnershipManifest(row.Manifest)
-	if err != nil || pgUUIDString(row.OperationID) != op.ID || row.OwnershipSha256 != ownership || cloneCheckpointSHA(manifest) != row.ManifestSha256 || !reflect.DeepEqual(manifest, current) || !row.CleanedAt.Valid || !checkpointObjectRetirementTime(row.CleanedAt.Time.UTC()) || row.CleanedAt.Time.After(time.Now()) {
+	if err != nil || pgUUIDString(row.OperationID) != op.ID || row.OwnershipSha256 != ownership || cloneCheckpointSHA(manifest) != row.ManifestSha256 || !row.CleanedAt.Valid || !checkpointObjectRetirementTime(row.CleanedAt.Time.UTC()) || row.CleanedAt.Time.After(time.Now()) {
 		return ErrConflict
 	}
 	empty := cloneCheckpointSHA([]any{})
@@ -141,5 +140,5 @@ func verifyCloneConfigurationCleanupTx(ctx context.Context, tx pgx.Tx, op Projec
 	if err != nil || native.State != "retired" || native.Plan.EnvironmentID != environmentID || row.NativePlanSha256 != cloneCheckpointSHA(native.Plan) || row.NativeObservationSha256 != native.ObservationSHA256 || row.CleanedAt.Time.Before(native.Observation.RetiredAt) {
 		return ErrConflict
 	}
-	return nil
+	return verifyCloneWorkloadCleanupTx(ctx, tx, op, row, manifest, current, native)
 }

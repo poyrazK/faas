@@ -6674,6 +6674,17 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_workload_cleanups",
+    "columns": [
+      "cleaned_at",
+      "configuration_cleanup_sha256",
+      "manifest",
+      "manifest_sha256",
+      "operation_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_workloads",
     "columns": [
       "app_id",

@@ -5629,6 +5629,17 @@ func (q *Queries) CloneObjectWriteFenceInsert(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const cloneRetiredWorkloadHasPins = `-- name: CloneRetiredWorkloadHasPins :one
+SELECT EXISTS(SELECT 1 FROM project_environment_workload_deployment_specs p JOIN project_environment_clone_workloads w ON w.target_deployment_id=p.deployment_id WHERE w.operation_id=$1)::boolean
+`
+
+func (q *Queries) CloneRetiredWorkloadHasPins(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneRetiredWorkloadHasPins, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const closeLegacyWorkflowOutboundUnknownAttempts = `-- name: CloseLegacyWorkflowOutboundUnknownAttempts :exec
 UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
 error=CASE WHEN s.status='dead' THEN s.error
@@ -9493,6 +9504,39 @@ type DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams struct {
 
 func (q *Queries) DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error {
 	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentRoutePolicies, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneOwnedWorkloadHeads = `-- name: DeleteCloneOwnedWorkloadHeads :exec
+DELETE FROM project_environment_workload_heads WHERE environment_id=$1
+`
+
+func (q *Queries) DeleteCloneOwnedWorkloadHeads(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCloneOwnedWorkloadHeads, environmentID)
+	return err
+}
+
+const deleteCloneOwnedWorkloadPins = `-- name: DeleteCloneOwnedWorkloadPins :exec
+DELETE FROM project_environment_workload_deployment_specs p USING project_environment_workload_specs s,project_environment_clone_workloads w
+WHERE p.spec_id=s.id AND s.environment_id=$1::uuid AND w.operation_id=$2::uuid AND w.target_deployment_id=p.deployment_id AND w.app_id=s.app_id
+`
+
+type DeleteCloneOwnedWorkloadPinsParams struct {
+	EnvironmentID pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+func (q *Queries) DeleteCloneOwnedWorkloadPins(ctx context.Context, db DBTX, arg DeleteCloneOwnedWorkloadPinsParams) error {
+	_, err := db.Exec(ctx, deleteCloneOwnedWorkloadPins, arg.EnvironmentID, arg.OperationID)
+	return err
+}
+
+const deleteCloneOwnedWorkloadSpecs = `-- name: DeleteCloneOwnedWorkloadSpecs :exec
+DELETE FROM project_environment_workload_specs WHERE environment_id=$1
+`
+
+func (q *Queries) DeleteCloneOwnedWorkloadSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCloneOwnedWorkloadSpecs, environmentID)
 	return err
 }
 
@@ -19133,6 +19177,27 @@ func (q *Queries) InsertClonePostgresWriteFence(ctx context.Context, db DBTX, ar
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertCloneWorkloadCleanup = `-- name: InsertCloneWorkloadCleanup :exec
+INSERT INTO project_environment_clone_workload_cleanups(operation_id,configuration_cleanup_sha256,manifest,manifest_sha256) VALUES($1,$2,$3,$4)
+`
+
+type InsertCloneWorkloadCleanupParams struct {
+	OperationID                pgtype.UUID
+	ConfigurationCleanupSha256 string
+	Manifest                   []byte
+	ManifestSha256             string
+}
+
+func (q *Queries) InsertCloneWorkloadCleanup(ctx context.Context, db DBTX, arg InsertCloneWorkloadCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneWorkloadCleanup,
+		arg.OperationID,
+		arg.ConfigurationCleanupSha256,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
 }
 
 const insertComputeNodeHeartbeat = `-- name: InsertComputeNodeHeartbeat :exec
@@ -32294,6 +32359,30 @@ func (q *Queries) LockCloneCheckpointUnusedReservationClock(ctx context.Context,
 	var generation int64
 	err := row.Scan(&generation)
 	return generation, err
+}
+
+const lockCloneWorkloadCleanupSpecs = `-- name: LockCloneWorkloadCleanupSpecs :many
+SELECT id FROM project_environment_workload_specs WHERE environment_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCloneWorkloadCleanupSpecs, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
@@ -49659,6 +49748,23 @@ func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg 
 		&i.ReleasedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const readCloneWorkloadCleanup = `-- name: ReadCloneWorkloadCleanup :one
+SELECT operation_id, configuration_cleanup_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_workload_cleanups WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneWorkloadCleanup, error) {
+	row := db.QueryRow(ctx, readCloneWorkloadCleanup, operationID)
+	var i ProjectEnvironmentCloneWorkloadCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.ConfigurationCleanupSha256,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CleanedAt,
 	)
 	return i, err
 }

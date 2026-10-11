@@ -43103,3 +43103,11 @@ CREATE TABLE project_environment_clone_configuration_cleanups (
  manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
  cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+
+CREATE TABLE project_environment_clone_workload_cleanups (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_cleanups(operation_id) ON DELETE RESTRICT,
+ configuration_cleanup_sha256 text NOT NULL CHECK(configuration_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);

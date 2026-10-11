@@ -9407,3 +9407,30 @@ and does not clear whole-stage compensation blockers. Their owning protocols
 must close and retire those references before workload specs/heads/pins can be
 removed. A PostgreSQL foreign-key inventory test requires explicit review when
 another table begins borrowing workload specs. Live qualification remains deferred.
+
+### Atomic unborrowed workload catalogue cleanup
+
+The private leased workload cleanup transaction authenticates completed native
+retirement, original materialization ownership and the earlier copied-settings
+cleanup receipt. It locks original specs before checking foreign deployment pins,
+promotion references, queue projections and invocation admissions; new foreign-key
+borrowers cannot race the check and disappear through a cascade. External field
+owners, managed fields and GitOps sources also block deletion. Only after these
+checks does it delete the original deployment pins, heads and specs and persist a
+bounded, non-secret post-state receipt atomically. Receipt-write failure rolls all
+three removals back. Environment metadata, deployments, source records and original
+materialization/native/configuration receipts remain retained.
+
+Recovery validates the new receipt's link to the exact earlier cleanup receipt,
+its time and manifest digest, absence of original deployment pins and all workload
+specs/heads, and unchanged environment identity. Native terminal replay reconstructs
+the original plan from retained original materialization and frozen records, while
+still rechecking deployment artifacts, layers, signals and original clone ownership.
+Replacement specs or altered artifacts/receipts block replay; no native request is
+redispatched. Ordinary materialization and publication still require live settings
+and pins. Migration rollback refuses every retained workload cleanup receipt.
+
+This removes unborrowed workload catalogue rows only. It does not retire operational
+borrowers, delete environment metadata, authorize published-release withdrawal,
+normalize independently removed managed secrets, or enable whole-stage terminal
+compensation/public full-stage admission. Native qualification remains deferred.

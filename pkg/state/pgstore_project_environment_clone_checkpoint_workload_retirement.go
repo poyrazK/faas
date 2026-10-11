@@ -69,7 +69,7 @@ func checkpointWorkloadRetirementMaterializationTx(ctx context.Context, tx pgx.T
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	env, err := replayCloneMaterializationTx(ctx, tx, op)
+	env, err := replayCheckpointWorkloadMaterializationTx(ctx, tx, op, row)
 	if err != nil {
 		return nil, checkpointPgCompensationDependencyError(err)
 	}
@@ -99,7 +99,11 @@ func checkpointWorkloadRetirementDeploymentsTx(ctx context.Context, tx pgx.Tx, o
 	if orphan {
 		return ErrConflict
 	}
-	proofs, err := cloneWorkloadProofsForRecordsTx(ctx, tx, op, records)
+	_, cleanupErr := sqlc.New().ReadCloneWorkloadCleanup(ctx, tx, mustPgUUID(op.ID))
+	if cleanupErr != nil && !errors.Is(mapErr(cleanupErr), ErrNotFound) {
+		return mapErr(cleanupErr)
+	}
+	proofs, err := cloneWorkloadProofsWithRetiredSettingsTx(ctx, tx, op, records, cleanupErr == nil)
 	if err != nil {
 		return checkpointPgCompensationDependencyError(err)
 	}
@@ -231,4 +235,25 @@ func (s *PgStore) FinishProjectEnvironmentCloneCheckpointWorkloadRetirement(ctx 
 		_, err = readCheckpointWorkloadRetirementTx(ctx, tx, op)
 		return err
 	})
+}
+
+// Only native retirement replay can use the original materialization after
+// deletion. Configuration ownership verification authenticates the complete
+// cleanup chain and exact absence before saved spec identities are used.
+func replayCheckpointWorkloadMaterializationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, row sqlc.ProjectEnvironmentCloneMaterialization) (ProjectEnvironment, error) {
+	_, err := sqlc.New().ReadCloneWorkloadCleanup(ctx, tx, mustPgUUID(op.ID))
+	if errors.Is(mapErr(err), ErrNotFound) {
+		return replayCloneMaterializationTx(ctx, tx, op)
+	}
+	if err != nil {
+		return ProjectEnvironment{}, mapErr(err)
+	}
+	env, err := sqlc.New().LockProjectEnvironmentCloneMaterializedEnvironment(ctx, tx, sqlc.LockProjectEnvironmentCloneMaterializedEnvironmentParams{ID: row.EnvironmentID, AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID), Slug: op.TargetEnvironment})
+	if err != nil {
+		return ProjectEnvironment{}, checkpointPgCompensationDependencyError(mapErr(err))
+	}
+	if env.Protected {
+		return ProjectEnvironment{}, ErrConflict
+	}
+	return ProjectEnvironment{ID: pgUUIDString(env.ID)}, nil
 }

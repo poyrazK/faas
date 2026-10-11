@@ -5809,6 +5809,14 @@ type ProjectEnvironmentCloneWorkload struct {
 	TargetSettingsHash string
 }
 
+type ProjectEnvironmentCloneWorkloadCleanup struct {
+	OperationID                pgtype.UUID
+	ConfigurationCleanupSha256 string
+	Manifest                   []byte
+	ManifestSha256             string
+	CleanedAt                  pgtype.Timestamptz
+}
+
 type ProjectEnvironmentConfigVersion struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID

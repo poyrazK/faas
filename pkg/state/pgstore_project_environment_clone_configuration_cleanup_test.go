@@ -174,6 +174,7 @@ func TestPgCloneConfigurationCleanupMigrationRefusesEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
+	dropEmptyCloneWorkloadCleanupForParentMigration(t, tx)
 	for _, sql := range []string{parts[1], parts[0], parts[1], parts[0]} {
 		if _, err = tx.Exec(t.Context(), sql); err != nil {
 			t.Fatal(err)
@@ -218,6 +219,7 @@ func TestPgCloneConfigurationCleanupRetainsManagedSecretOwnership(t *testing.T) 
 // empty rollback/replay; the cleanup FK intentionally preserves its evidence.
 func dropEmptyConfigurationCleanupForParentMigration(t *testing.T, tx pgx.Tx) {
 	t.Helper()
+	dropEmptyCloneWorkloadCleanupForParentMigration(t, tx)
 	raw, err := migrations.FS.ReadFile("20261011071832540_clone_configuration_cleanup_receipts.sql")
 	if err != nil {
 		t.Fatal(err)
