@@ -56,6 +56,7 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	environmentGitOpsAcceptanceEnforcement   atomic.Bool
 	profileBackend                           profiling.Backend
 	profileQuerySlots                        chan struct{}
 	guestTracingEnabled                      bool // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)

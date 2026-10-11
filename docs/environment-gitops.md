@@ -173,6 +173,29 @@ check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
 
+## Isolated enforcement acceptance
+
+The real apid enforcement worker can run only in an isolated development
+acceptance process with all three settings set to `1`: `FAAS_DEV`,
+`GREGALE_GITOPS_ACCEPTANCE`, and
+`FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT`. The production control-plane
+role rejects the dev-only enforcement setting at boot. Customer enforcement
+remains closed by default.
+
+Against a disposable PostgreSQL cluster, run the subprocess journey with:
+
+```sh
+GREGALE_GITOPS_ACCEPTANCE=1 DATABASE_URL="$DISPOSABLE_DATABASE_URL" \
+  FAAS_PGTEST_TEMPLATE_DATABASE=1 go test ./cmd/e2e \
+  -run '^TestEnvironmentGitOpsAcceptanceE2E$' -count=1
+```
+
+This journey covers HTTP console writes and ownership rejection, approved
+intent in PostgreSQL, the real apid worker, repair, and durable partial status.
+It intentionally has no serving candidate. Dedicated native x86_64 KVM
+capture, restore, guest, gateway and rollback acceptance is still required
+before production qualification polling or enforcement can be enabled.
+
 ## Next implementation steps
 
 1. Pass dedicated Linux capture/restore acceptance. The scheduler requests

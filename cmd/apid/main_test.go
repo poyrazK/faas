@@ -189,6 +189,11 @@ func TestRejectProductionDevEnvironment(t *testing.T) {
 	if contains(got, "do-not-log-this-value") {
 		t.Fatalf("error leaked credential value: %q", got)
 	}
+	if err := rejectProductionDevEnvironment(role.RoleControlPlane, lookup(map[string]string{
+		environmentGitOpsAcceptanceEnforcementFlag: "1",
+	})); err == nil || !contains(err.Error(), environmentGitOpsAcceptanceEnforcementFlag) {
+		t.Fatalf("control-plane accepted GitOps acceptance enforcement: %v", err)
+	}
 }
 
 func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
