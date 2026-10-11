@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func retirementRequest(t *testing.T, f fixture) RetirementRequest {
@@ -238,5 +239,45 @@ func TestRetirementCannotGrowRecoverySnapshotBeyondExistingCap(t *testing.T) {
 	preview, err := f.manager.PreviewRetirement(t.Context(), f.id)
 	if err != nil || preview.Retirement != nil || preview.RecoveryRevision != p.Revision {
 		t.Fatal("rejected retirement changed authority", preview, err)
+	}
+}
+
+func TestRetirementCannotPublishOversizedLegacyRecoverySnapshot(t *testing.T) {
+	f := newFixture(t)
+	if err := f.manager.Release(t.Context(), f.claim); err != nil {
+		t.Fatal(err)
+	}
+	base, etag, err := f.manager.readManifest(t.Context(), f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := snapshot{Schema: 1, ID: f.id, Version: 1, Data: json.RawMessage(`0`), Receipts: map[string]receipt{"legacy": {Fingerprint: digest(nil), Result: json.RawMessage(`""`), Version: 1}}}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := state.Receipts["legacy"]
+	saved.Result = json.RawMessage(`"` + strings.Repeat("x", api.MaxDurableEntitySnapshotBytes-len(body)) + `"`)
+	state.Receipts["legacy"] = saved
+	body, err = json.Marshal(state)
+	if err != nil || len(body) != api.MaxDurableEntitySnapshotBytes {
+		t.Fatal(len(body), err)
+	}
+	base.Version, base.SnapshotKey, base.SnapshotHash = 1, f.id.prefix()+"snapshots/0/"+uuid.NewString()+".json", digest(body)
+	base.StorageLimitBytes = 2 << 20
+	base.StorageUsage = &StorageUsage{SnapshotBytes: int64(len(body)), ReceiptCount: 1}
+	if _, err = f.store.Put(t.Context(), base.SnapshotKey, body, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.manager.putManifest(t.Context(), base, etag); err != nil {
+		t.Fatal(err)
+	}
+	p := retirementRequest(t, f)
+	if _, err = f.manager.StartRetirement(t.Context(), f.id, p, "operator"); !errors.Is(err, ErrLimit) {
+		t.Fatal("oversized recovery snapshot published", err)
+	}
+	latest, err := f.manager.PreviewRetirement(t.Context(), f.id)
+	if err != nil || latest.Retirement != nil || latest.RecoveryRevision != p.Revision {
+		t.Fatal(latest, err)
 	}
 }

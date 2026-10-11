@@ -160,6 +160,9 @@ func (m *Manager) StartRetirement(ctx context.Context, id ID, request Retirement
 		if err != nil {
 			return nil, err
 		}
+		if len(body) > api.MaxDurableEntitySnapshotBytes {
+			return nil, exceeded("snapshot_bytes", api.MaxDurableEntitySnapshotBytes, len(body))
+		}
 		projected := base.StorageUsage.TotalBytes() - base.StorageUsage.SnapshotBytes + int64(len(body))
 		if projected > 64<<20 || base.StorageLimitBytes > 0 && projected > base.StorageLimitBytes {
 			return nil, ErrLimit
