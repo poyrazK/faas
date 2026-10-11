@@ -291,3 +291,6 @@ __all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
 
 from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
 __all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")
+
+from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recovery
+__all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")

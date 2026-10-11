@@ -895,3 +895,77 @@ plan = await aplan_commit_recovery(
     client, source, saved_report, recipient_pages=5, timeout=120,
 )
 ```
+
+### Applying a reviewed recovery plan
+
+```sh
+gregale commit recovery-apply SOURCE --plan recovery-plan.json --yes \
+  --limit 50 --recipient-pages 5 --timeout 2m > recovery-result.json
+```
+
+Apply copies and validates the reviewed plan, checks current source ownership,
+and considers only items marked `eligible`. Each considered item rereads its
+original acceptance and subscriber from the first receipt page, then compares
+the freshly offered action with the reviewed kind, method, URL and JSON body.
+Saved actions are never dispatched directly. Changed, completed, active,
+unavailable, unsupported and unreviewed items are skipped. The original
+publication selection and subscriber filter remain fixed.
+
+Writes are sequential. `limit` bounds eligible items examined (1..50), including
+items later skipped; `recipient-pages` bounds receipt reads for each item
+(1..20), and the overall timeout bounds the entire operation. CLI plan files
+share the 64 MiB saved-report limit. Node/Python first perform an additional
+bounded one-page refresh of the whole saved selection before any write; Go
+validates source ownership and saved identities without that extra refresh.
+Partial recipient coverage never proves an unseen subscriber is eligible.
+
+Only freshly validated handler, keyed-handler and dead-letter replay endpoints
+are submitted. Routing replay is skipped with `acceptance_guard_unavailable`:
+its existing write endpoint cannot atomically guard the original acceptance.
+Adding that server-side guard is required before routing apply can be enabled.
+The fresh check and write are separate requests, not an atomic snapshot;
+server endpoint authorization/eligibility checks still apply, and state may
+change between the requests. Do not treat client checks as a race-free lock.
+
+Results retain the event/subscriber identities and per-item statuses:
+
+- `queued`: the endpoint acknowledged the request; this is not delivery completion.
+- `skipped`: no write was submitted, with a reason such as `action_changed`,
+  `completed`, `delivery_active`, `acceptance_guard_unavailable`, or a receipt evidence status.
+- `read_error`: eligibility could not be reread; other items can continue.
+- `rejected`: an explicit HTTP 4xx response other than 408 rejected the write.
+- `unknown`: a transport failure, cancellation during a write, HTTP 408/5xx,
+  unexpected response, or unreadable success response makes the result ambiguous.
+- `not_attempted`: the apply budget or a stopped batch left the item untouched.
+
+An unknown result stops further writes and requires inspection before retrying.
+There are no automatic retries. The helpers send the same idempotency key for
+a given replay kind and execution URL, derived as `commit-recovery-` plus the
+SHA-256 of `kind + "\n" + url`. Server idempotency retention is finite; keys do
+not authorize unattended retries or guarantee deduplication after expiry.
+Inspect original and recovery evidence before deciding what to do next.
+
+`complete` means the loop finished without interruption or an ambiguous write;
+it does not mean all reviewed items were submitted or consumers completed.
+Counts cover returned item statuses. CLI exits nonzero on unknown, read-error,
+rejected, or not-attempted items. Go returns the partial result alongside errors;
+Node/Python expose `CommitRecoveryApplyError.result`. Python wraps cancellation
+so a potentially submitted request retains its unknown result. SDK option
+validation errors occur before writes. No recovery requests are issued by plan
+creation, report reads or refresh.
+
+```go
+result, err := client.ApplyCommitRecovery(ctx, reviewedPlan, 50, 5)
+```
+
+```ts
+const result = await applyCommitRecovery(source, reviewedPlan, {
+  limit: 50, recipientPages: 5, timeoutMs: 120000,
+});
+```
+
+```python
+result = await aapply_commit_recovery(
+    client, source, reviewed_plan, limit=50, recipient_pages=5, timeout=120,
+)
+```

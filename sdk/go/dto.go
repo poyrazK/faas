@@ -393,3 +393,6 @@ type CommitDeliveryReportRecovery = api.CommitDeliveryReportRecovery
 type CommitRecoveryPlan = api.CommitRecoveryPlan
 type CommitRecoveryPlanItem = api.CommitRecoveryPlanItem
 type CommitRecoveryPlanAction = api.CommitRecoveryPlanAction
+
+type CommitRecoveryApplyResult = api.CommitRecoveryApplyResult
+type CommitRecoveryApplyItem = api.CommitRecoveryApplyItem

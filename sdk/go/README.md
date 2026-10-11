@@ -774,3 +774,5 @@ Delivery report rows now separate original `status` from latest retained replay
 help identify remaining failures; missing evidence does not prove no replay occurred.
 
 Use `PlanCommitRecovery(ctx, savedReport, pages)` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.
+
+Use `ApplyCommitRecovery(ctx, reviewedPlan, limit, pages)` for sequential, freshly revalidated execution recovery. Unknown writes stop the batch and require inspection. Routing apply remains skipped until a server-side acceptance guard exists. See the Commit documentation for limits and partial results.

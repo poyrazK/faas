@@ -795,3 +795,5 @@ Delivery report rows now separate original `status` from latest retained replay
 help identify remaining failures; missing evidence does not prove no replay occurred.
 
 Use `aplan_commit_recovery(client, source, saved_report, recipient_pages=5)` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.
+
+Use `aapply_commit_recovery(client, source, reviewed_plan, limit=50, recipient_pages=5)` for sequential, freshly revalidated execution recovery. Unknown writes stop the batch and require inspection. Routing apply remains skipped until a server-side acceptance guard exists. See the Commit documentation for limits and partial results.

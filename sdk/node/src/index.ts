@@ -301,3 +301,5 @@ export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-
 export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem, type CommitDeliveryReportChange, type CommitDeliveryReportSubscriber, type CommitDeliveryReportRecovery } from './commit-delivery-report.js';
 
 export { planCommitRecovery, CommitRecoveryPlanError, type CommitRecoveryPlan, type CommitRecoveryPlanItem } from './commit-recovery-plan.js';
+
+export { applyCommitRecovery, CommitRecoveryApplyError, type CommitRecoveryApplyResult, type CommitRecoveryApplyItem } from './commit-recovery-apply.js';

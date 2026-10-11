@@ -9636,3 +9636,6 @@ const CommitPublicationHistoryCursorMaxBytes = 192
 // Commit delivery reports bound each invocation of recipient traversal.
 const CommitDeliveryReportPagesMax = 20
 const CommitDeliveryReportFileMaxBytes = 64 << 20
+
+// CommitRecoveryApplyMax bounds sequential reviewed recovery attempts per call.
+const CommitRecoveryApplyMax = 50

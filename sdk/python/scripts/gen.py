@@ -160,6 +160,7 @@ WRAPPER_MODULES = (
     "commit_subscriber_wait.py",
     "commit_delivery_report.py",
     "commit_recovery_plan.py",
+    "commit_recovery_apply.py",
     "_event_consumer_contract.py",
     "event_consumer_schema.sql",
     "_operation_contract.py",
@@ -957,6 +958,9 @@ from .commit_delivery_report import CommitDeliveryReportError, aget_commit_deliv
 __all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
 from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
 __all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")
+from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recovery
+__all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
+
 
 
 '''
