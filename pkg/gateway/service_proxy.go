@@ -286,6 +286,12 @@ type ServiceProxyConfig struct {
 	// version-affinity calls. It prevents a warm sibling from suppressing the
 	// selected cohort's restore.
 	WakeDeployment ServiceProxyDeploymentWaker
+	// EvictEndpoint drops one instance from the gateway routing cache once the
+	// bridge has proved it gone, the same eviction the public edge performs.
+	// Without it a stopped instance stays listed until the next control-plane
+	// replay, so a retry or the next call is routed to it again instead of
+	// waking the app. nil keeps only the proxy-local quarantine.
+	EvictEndpoint func(appID, instanceID string)
 	// ValidateDeployment is required only for exact deployment overrides. Nil
 	// fails closed when the override header is present.
 	ValidateDeployment ServiceProxyDeploymentValidator
@@ -343,6 +349,7 @@ type ServiceProxy struct {
 	rawForward                func(Target) http.Handler
 	wake                      ServiceProxyWaker
 	wakeDeployment            ServiceProxyDeploymentWaker
+	evictEndpoint             func(appID, instanceID string)
 	validateDeployment        ServiceProxyDeploymentValidator
 	resolveChaos              ServiceProxyChaosResolver
 	observeChaosMatch         ServiceProxyChaosObserver
@@ -447,6 +454,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		rawForward:                cfg.RawForward,
 		wake:                      cfg.Wake,
 		wakeDeployment:            cfg.WakeDeployment,
+		evictEndpoint:             cfg.EvictEndpoint,
 		validateDeployment:        cfg.ValidateDeployment,
 		resolveChaos:              cfg.ResolveChaos,
 		observeChaosMatch:         cfg.ObserveChaosMatch,
@@ -873,7 +881,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !served {
 		return
 	}
-	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, versionDeploymentID, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
 }
 
 // applyScenarioChaos runs only after the normal identity, namespace, tenant,
@@ -1031,7 +1039,7 @@ func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, deploymentID string, endpoints []ServiceEndpoint, woken bool) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
 			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
@@ -1050,7 +1058,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 	}
 	p.countForward(woken)
 	p.observeWakeAheadCall(caller, target, woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
+	p.forwardOnce(w, r, targetPath, target, caller, deploymentID, endpoints, woken)
 }
 
 // observeWakeAheadCall feeds the ADR-977 learner. Preview callers are left
@@ -1492,7 +1500,7 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	// the Connection/Upgrade pair.
 	request.Header.Set("x-faas-upgrade", "true")
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
-	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
+	signal := &staleTargetSignal{onStale: func() { p.retireStaleEndpoint(target.AppID, endpoint.InstanceID) }}
 	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
 	request, observe := p.withServiceRequestObservation(request, target, caller, endpoint, woken)
 	probeWriter := &serviceProxyUpgradeProbeWriter{
@@ -1555,7 +1563,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, deploymentID string, endpoints []ServiceEndpoint, woken bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1590,8 +1598,22 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	if maxAttempts > 1 {
 		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
+	rerouted := false
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
+		if !ok && !rerouted {
+			// Every endpoint in the lease is benched. When an instance
+			// stopped (park, restart, rollout drain) inside the lease, the
+			// registry no longer lists it; re-route once instead of
+			// answering "no healthy replicas" for an app that is parked.
+			rerouted = true
+			fresh, freshWoken, served := p.rerouteAfterStale(w, request.Context(), appID, deploymentID)
+			if !served {
+				return
+			}
+			endpoints, woken = fresh, woken || freshWoken
+			endpoint, ok = p.pick(appID, endpoints)
+		}
 		if !ok {
 			if attempt > 0 {
 				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
@@ -1609,7 +1631,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			}
 		}
 		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
-		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
+		signal := &staleTargetSignal{onStale: func() { p.retireStaleEndpoint(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
@@ -1847,6 +1869,43 @@ func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start
 // because every call site reads as "bench this endpoint"; the mechanism
 // underneath is now the shared breaker, so repeated failures back off
 // geometrically instead of re-admitting the endpoint every endpointTTL.
+// retireStaleEndpoint is the full response to a transport-proved dead
+// endpoint: bench it in the proxy breaker and evict it from the gateway
+// routing cache, the same eviction the public edge applies to this signal.
+// The lease is left alone so the breaker keeps observing a target that may
+// only have failed transiently; rerouteAfterStale consults the registry once
+// nothing in the lease is pickable.
+func (p *ServiceProxy) retireStaleEndpoint(appID, instanceID string) {
+	p.quarantine(appID, instanceID)
+	if p.evictEndpoint != nil {
+		p.evictEndpoint(appID, instanceID)
+	}
+}
+
+// rerouteAfterStale re-reads the registry, bypassing the lease, once no
+// endpoint the call holds is pickable. A target the registry still lists is
+// live and stays behind its breaker; an evicted one leaves the registry empty
+// and the app is woken exactly like a first call. It writes the failure
+// response itself and reports served=false when the call must end.
+func (p *ServiceProxy) rerouteAfterStale(w http.ResponseWriter, ctx context.Context, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
+	p.invalidateEndpoints(appID)
+	endpoints, err := p.endpoints(ctx, appID)
+	if err != nil {
+		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+		return nil, false, false
+	}
+	if endpoints = serviceEndpointsForDeployment(endpoints, deploymentID); len(endpoints) > 0 {
+		return endpoints, false, true
+	}
+	endpoints, err = p.wakeAndRefresh(ctx, appID, deploymentID)
+	if err != nil {
+		p.writeWakeFailure(w, appID, err)
+		return nil, false, false
+	}
+	return endpoints, true, true
+}
+
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
 	p.publishOpenTargets(appID)
