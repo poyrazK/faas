@@ -894,6 +894,18 @@ jobs:
       - name: PostgreSQL native verdict contracts
         if: matrix.id == 'b'
         run: python3 scripts/ci/managed-postgres-native-verdict_test.py
+      - uses: actions/setup-node@v7
+        if: matrix.id == 'b'
+        with:
+          node-version: '22'
+      - name: generated PostgreSQL starter TLS recovery
+        if: matrix.id == 'b'
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+          GREGALE_POSTGRES_STARTER_TEST: '1'
+        run: |
+          docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
+          NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10

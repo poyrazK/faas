@@ -436,6 +436,21 @@ jobs:
         run: |
           bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
           bash scripts/ci/enable_postgres_tls.sh "$SPLIT_POSTGRES_SERVICE_CONTAINER"
+      - uses: actions/setup-node@v7
+        if: matrix.shard == 1
+        with:
+          node-version: '22'
+      - name: generated PostgreSQL starter TLS recovery
+        if: matrix.shard == 1
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+          GREGALE_POSTGRES_STARTER_TEST: '1'
+        run: |
+          if ! grep -qE '^(cmd/gregale/templates/(rest-api-postgres/|postgres_recovery_test.go|starter_handlers_test.go)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
+          NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.
