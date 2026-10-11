@@ -309,6 +309,16 @@ export class GregaleOperationClient {
     }
     return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions/' + encodeURIComponent(id) + '/notifications?' + q, 'GET', undefined, undefined, signal);
   }
+
+  updateWorkflowReadinessNotification(id: string, sequence: number, body: OperationWorkflowReadinessCoordinationRequest, options: OperationWorkflowReadinessSubscriptionOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessNotification> {
+    if (!UUID.test(id) || !Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Valid notification identity required');
+    if (!Number.isSafeInteger(body.revision) || body.revision < 0 || body.revision >= Number.MAX_SAFE_INTEGER) throw new Error('Invalid coordination revision');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions/' + encodeURIComponent(id) + '/notifications/' + sequence + '?' + readinessSubscriptionQuery(options), 'PATCH', body, undefined, signal);
+  }
+  checkWorkflowReadinessNotification(id: string, sequence: number, options: OperationWorkflowReadinessSubscriptionOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessNotificationCheck> {
+    if (!UUID.test(id) || !Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Valid notification identity required');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/subscriptions/' + encodeURIComponent(id) + '/notifications/' + sequence + '?' + readinessSubscriptionQuery(options), 'GET', undefined, undefined, signal);
+  }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -677,9 +687,13 @@ export interface OperationWorkflowReadinessSubscription extends Omit<OperationWo
  id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
 }
 export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
-export interface OperationWorkflowReadinessNotification { id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotification { coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
 export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
 function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
  if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
  return new URLSearchParams({app_id: options.appID, scope: options.scope});
 }
+
+export interface OperationWorkflowReadinessCoordinationRequest { revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
+export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
+export interface OperationWorkflowReadinessNotificationCheck { notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }

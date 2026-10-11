@@ -9680,3 +9680,7 @@ const (
 	OperationWorkflowReadinessSubscriptionLease             = 5 * time.Minute
 	OperationWorkflowReadinessSubscriptionEvaluationTimeout = time.Minute
 )
+
+// Shared readiness inbox coordination budgets.
+const OperationWorkflowReadinessFollowUpOwnerMaxBytes = 256
+const OperationWorkflowReadinessFollowUpNoteMaxBytes = 1024

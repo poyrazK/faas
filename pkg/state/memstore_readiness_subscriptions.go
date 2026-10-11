@@ -147,3 +147,26 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 	data.readinessInbox[r.Subscription.ID] = cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: inbox}).Items
 	return nil
 }
+
+func (m *MemStore) updateReadinessNotification(_ context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out api.OperationWorkflowReadinessNotification
+	data := m.operationMemoryLocked()
+	r, ok := data.readinessSubscriptions[id]
+	if !ok || !readinessRecordMatches(r, account, tenant, app, scope, operator) {
+		return out, ErrNotFound
+	}
+	for i, n := range data.readinessInbox[id] {
+		if n.Sequence == sequence {
+			out, err := applyReadinessCoordination(n, actor, req)
+			if err != nil {
+				return out, err
+			}
+			out = cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{out}}).Items[0]
+			data.readinessInbox[id][i] = out
+			return cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{out}}).Items[0], nil
+		}
+	}
+	return out, ErrNotFound
+}

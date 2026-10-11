@@ -85,6 +85,9 @@
 <button type="button" id="readiness-inbox-more" hidden>Load more notifications</button>
 <button type="button" id="readiness-subscription-delete">Delete subscription and inbox</button>
 <p id="readiness-subscription-message" role="status" aria-live="polite"></p>
+<label>Follow-up owner <input id="readiness-followup-owner-filter" maxlength="256"></label>
+<label><input type="checkbox" id="readiness-followup-pending-filter"> Only pending follow-ups</label>
+<p>Filters apply to loaded retained notifications. Read and acknowledgment are shared by this inbox.</p>
 <ol id="readiness-inbox" aria-live="polite"></ol>
 <noscript><p>The API and SDKs can create subscriptions and read their inboxes.</p></noscript>
 </section>
@@ -219,6 +222,13 @@
   return response.status === 204 ? undefined : response.json();
  };
  const reset = () => { generation++; after = 0; ids.clear(); inbox.replaceChildren(); more.hidden = true; };
+ const applyFollowupFilters = () => {
+  const owner = document.getElementById('readiness-followup-owner-filter').value;
+  const pending = document.getElementById('readiness-followup-pending-filter').checked;
+  for (const li of inbox.children) li.hidden = (owner && li.dataset.owner !== owner) || (pending && li.dataset.pending !== 'true');
+ };
+ document.getElementById('readiness-followup-owner-filter').addEventListener('input',applyFollowupFilters);
+ document.getElementById('readiness-followup-pending-filter').addEventListener('change',applyFollowupFilters);
  const showNotification = (notification) => {
   if (ids.has(notification.id)) return;
   ids.add(notification.id);
@@ -239,7 +249,31 @@
    const q = query();q.set('subject_type',change.baseline.subject.type);q.set('subject_id',change.baseline.subject.id);q.set('workflow',change.baseline.workflow);q.set('workflow_instance_id',change.baseline.instance_id);if (change.baseline.platform_tenant_id) q.set('tenant_id',change.baseline.platform_tenant_id);
    const detail = document.createElement('a');detail.href = panel.dataset.listUrl + '?' + q + '#workflows';detail.textContent = 'Detailed readiness and evidence';li.append(detail);
   }
-  inbox.append(li);
+  const c = notification.coordination || {revision:0,status:'unread',owner:'',note:''};
+  li.dataset.owner = c.owner; li.dataset.pending = String(!!c.follow_up_at);
+  const coordinationStatus=document.createElement('p');li.append(coordinationStatus);
+  const updateCoordinationStatus=()=>{coordinationStatus.textContent='Inbox status: '+c.status+(c.acknowledged_by ? ' · acknowledged by '+c.acknowledged_by+' at '+new Date(c.acknowledged_at).toLocaleString() : '')+(c.follow_up_at ? ' · follow up '+new Date(c.follow_up_at).toLocaleString() : '');};updateCoordinationStatus();
+  const form = document.createElement('form');
+  const labelInput = (label, input) => { const l=document.createElement('label');l.textContent=label;l.append(input);form.append(l);return input; };
+  const status=labelInput('Status ',document.createElement('select'));
+  for (const value of ['unread','read','acknowledged']) {const o=document.createElement('option');o.value=value;o.textContent=value;status.append(o);} status.value=c.status;
+  const owner=labelInput('Follow-up owner ',document.createElement('input'));owner.maxLength=256;owner.value=c.owner;
+  const due=labelInput('Follow-up time (your browser timezone) ',document.createElement('input'));due.type='datetime-local';
+  if (c.follow_up_at) { const d=new Date(c.follow_up_at); const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);due.value=local.toISOString().slice(0,16); }
+  const note=labelInput('Note ',document.createElement('textarea'));note.maxLength=1024;note.value=c.note;
+  const save=document.createElement('button');save.type='submit';save.textContent='Save coordination';form.append(save);
+  const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
+  const subscriptionID=select.value;
+  const detailURL=panel.dataset.url+'/'+encodeURIComponent(subscriptionID)+'/notifications/'+notification.sequence+'?'+query();
+  form.addEventListener('submit',async event => {event.preventDefault();save.disabled=true;try {
+   const updated=await request(detailURL,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:status.value,owner:owner.value,note:note.value,follow_up_at:due.value ? new Date(due.value).toISOString() : undefined})});
+   if(select.value!==subscriptionID || !li.isConnected)return;
+   Object.assign(c,updated.coordination);if(!updated.coordination.acknowledged_by){delete c.acknowledged_by;delete c.acknowledged_at;}if(!updated.coordination.follow_up_at)delete c.follow_up_at;updateCoordinationStatus();li.dataset.owner=updated.coordination.owner;li.dataset.pending=String(!!updated.coordination.follow_up_at);applyFollowupFilters();result.textContent='Saved '+updated.coordination.status+' by '+updated.coordination.updated_by+'.';
+  }catch(error){result.textContent=error.message+' Refresh the inbox before retrying a conflicting edit.';}finally{save.disabled=false;}});
+  li.append(form);
+  const check=document.createElement('button');check.type='button';check.textContent='Check latest evidence';li.append(check);
+  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detailURL);if(select.value===subscriptionID && li.isConnected){result.textContent='Current evidence: '+current.status+' at '+current.checked_at+'. '+(current.change?.explanation || 'No workflow comparison is available.');}}catch(error){result.textContent=error.message;}finally{check.disabled=false;}});
+  inbox.append(li);applyFollowupFilters();
   while (inbox.children.length > 100) { ids.delete(inbox.firstElementChild.dataset.id); inbox.firstElementChild.remove(); }
  };
  const read = async () => {
@@ -287,7 +321,7 @@
  });
  select.addEventListener('change',() => { reset(); void read(); });
  document.getElementById('readiness-subscription-refresh').addEventListener('click',() => { void load(); });
- document.getElementById('readiness-inbox-refresh').addEventListener('click',() => { void read(); });
+ document.getElementById('readiness-inbox-refresh').addEventListener('click',() => { if(reading)return; reset(); void read(); });
  more.addEventListener('click',() => { void read(); });
  window.setInterval(() => { if (!document.hidden) void read(); },30000);
 })();

@@ -185,3 +185,46 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 	}
 	return tx.Commit(ctx)
 }
+
+func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+	var out api.OperationWorkflowReadinessNotification
+	a, _ := operationUUID(account)
+	p, _ := operationUUID(app)
+	i, _ := operationUUID(id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	_, err = q.LockReadinessSubscription(ctx, tx, sqlc.LockReadinessSubscriptionParams{ID: i, AccountID: a, AppID: p, Tenant: canonicalReadinessTenant(tenant), Scope: scope, Operator: operator})
+	if err != nil {
+		return out, mapErr(err)
+	}
+	rows, err := q.ListReadinessNotifications(ctx, tx, sqlc.ListReadinessNotificationsParams{SubscriptionID: i, Sequence: sequence - 1, Limit: 1})
+	if err != nil {
+		return out, mapErr(err)
+	}
+	if len(rows) != 1 {
+		return out, ErrNotFound
+	}
+	if err = json.Unmarshal(rows[0], &out); err != nil {
+		return out, err
+	}
+	if out.Sequence != sequence {
+		return out, ErrNotFound
+	}
+	out, err = applyReadinessCoordination(out, actor, req)
+	if err != nil {
+		return out, err
+	}
+	payload, err := json.Marshal(out)
+	if err != nil {
+		return out, err
+	}
+	_, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: i, Sequence: sequence, Payload: payload})
+	if err != nil {
+		return out, mapErr(err)
+	}
+	return out, tx.Commit(ctx)
+}

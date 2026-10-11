@@ -2217,6 +2217,12 @@ from .operation_workflow_readiness_change_status import OperationWorkflowReadine
 from .operation_workflow_readiness_comparison_request import OperationWorkflowReadinessComparisonRequest
 from .operation_workflow_readiness_comparison_request_change import OperationWorkflowReadinessComparisonRequestChange
 from .operation_workflow_readiness_comparison_response import OperationWorkflowReadinessComparisonResponse
+from .operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+from .operation_workflow_readiness_coordination_request import OperationWorkflowReadinessCoordinationRequest
+from .operation_workflow_readiness_coordination_request_status import (
+    OperationWorkflowReadinessCoordinationRequestStatus,
+)
+from .operation_workflow_readiness_coordination_status import OperationWorkflowReadinessCoordinationStatus
 from .operation_workflow_readiness_evidence import OperationWorkflowReadinessEvidence
 from .operation_workflow_readiness_evidence_category import OperationWorkflowReadinessEvidenceCategory
 from .operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
@@ -2224,6 +2230,7 @@ from .operation_workflow_readiness_evidence_change_kind import OperationWorkflow
 from .operation_workflow_readiness_evidence_status import OperationWorkflowReadinessEvidenceStatus
 from .operation_workflow_readiness_inbox_response import OperationWorkflowReadinessInboxResponse
 from .operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
+from .operation_workflow_readiness_notification_check import OperationWorkflowReadinessNotificationCheck
 from .operation_workflow_readiness_notification_kind import OperationWorkflowReadinessNotificationKind
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
 from .operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
@@ -5765,6 +5772,10 @@ __all__ = (
     "OperationWorkflowReadinessComparisonRequest",
     "OperationWorkflowReadinessComparisonRequestChange",
     "OperationWorkflowReadinessComparisonResponse",
+    "OperationWorkflowReadinessCoordination",
+    "OperationWorkflowReadinessCoordinationRequest",
+    "OperationWorkflowReadinessCoordinationRequestStatus",
+    "OperationWorkflowReadinessCoordinationStatus",
     "OperationWorkflowReadinessEvidence",
     "OperationWorkflowReadinessEvidenceCategory",
     "OperationWorkflowReadinessEvidenceChange",
@@ -5772,6 +5783,7 @@ __all__ = (
     "OperationWorkflowReadinessEvidenceStatus",
     "OperationWorkflowReadinessInboxResponse",
     "OperationWorkflowReadinessNotification",
+    "OperationWorkflowReadinessNotificationCheck",
     "OperationWorkflowReadinessNotificationKind",
     "OperationWorkflowReadinessOverview",
     "OperationWorkflowReadinessQueueEntry",

@@ -50,7 +50,10 @@ import type { OperationWorkflowPerformanceInstancesResponse } from '../models/Op
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
 import type { OperationWorkflowReadinessComparisonRequest } from '../models/OperationWorkflowReadinessComparisonRequest.js';
 import type { OperationWorkflowReadinessComparisonResponse } from '../models/OperationWorkflowReadinessComparisonResponse.js';
+import type { OperationWorkflowReadinessCoordinationRequest } from '../models/OperationWorkflowReadinessCoordinationRequest.js';
 import type { OperationWorkflowReadinessInboxResponse } from '../models/OperationWorkflowReadinessInboxResponse.js';
+import type { OperationWorkflowReadinessNotification } from '../models/OperationWorkflowReadinessNotification.js';
+import type { OperationWorkflowReadinessNotificationCheck } from '../models/OperationWorkflowReadinessNotificationCheck.js';
 import type { OperationWorkflowReadinessQueueResponse } from '../models/OperationWorkflowReadinessQueueResponse.js';
 import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
 import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
@@ -5121,6 +5124,256 @@ export class OperationsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check Account readiness notification
+   * CheckAccountWorkflowReadinessNotification. Recheck retained application evidence; does not execute actions.
+   * @returns OperationWorkflowReadinessNotificationCheck CheckAccountWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static checkAccountWorkflowReadinessNotification({
+    slug,
+    id,
+    scope,
+    sequence,
+    tenantId,
+  }: {
+    /**
+     * CheckAccountWorkflowReadinessNotification. Application slug.
+     */
+    slug: string,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowReadinessNotificationCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update Account readiness notification
+   * UpdateAccountWorkflowReadinessNotification. Replace shared inbox coordination with a matching revision. Requires account deploy-write and MFA or customer operations manage. Actor derives from authentication. Revision zero addresses an untouched notification.
+   * @returns OperationWorkflowReadinessNotification UpdateAccountWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static updateAccountWorkflowReadinessNotification({
+    slug,
+    id,
+    scope,
+    sequence,
+    requestBody,
+    tenantId,
+  }: {
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Application slug.
+     */
+    slug: string,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+    requestBody: OperationWorkflowReadinessCoordinationRequest,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowReadinessNotification> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check PlatformTenantSelf readiness notification
+   * CheckPlatformTenantSelfWorkflowReadinessNotification. Recheck retained application evidence; does not execute actions.
+   * @returns OperationWorkflowReadinessNotificationCheck CheckPlatformTenantSelfWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static checkPlatformTenantSelfWorkflowReadinessNotification({
+    id,
+    scope,
+    appId,
+    sequence,
+  }: {
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Application UUID.
+     */
+    appId: string,
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+  }): CancelablePromise<OperationWorkflowReadinessNotificationCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update PlatformTenantSelf readiness notification
+   * UpdatePlatformTenantSelfWorkflowReadinessNotification. Replace shared inbox coordination with a matching revision. Requires account deploy-write and MFA or customer operations manage. Actor derives from authentication. Revision zero addresses an untouched notification.
+   * @returns OperationWorkflowReadinessNotification UpdatePlatformTenantSelfWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantSelfWorkflowReadinessNotification({
+    id,
+    scope,
+    appId,
+    sequence,
+    requestBody,
+  }: {
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Application UUID.
+     */
+    appId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+    requestBody: OperationWorkflowReadinessCoordinationRequest,
+  }): CancelablePromise<OperationWorkflowReadinessNotification> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

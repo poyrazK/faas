@@ -1,0 +1,30 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
+ */
+export type OperationWorkflowReadinessCoordinationRequest = {
+  /**
+   * OperationWorkflowReadinessCoordinationRequest.revision. Shared coordination value; does not alter application evidence.
+   */
+  revision: number;
+  /**
+   * OperationWorkflowReadinessCoordinationRequest.status. Shared coordination value; does not alter application evidence.
+   */
+  status: 'unread' | 'read' | 'acknowledged';
+  /**
+   * OperationWorkflowReadinessCoordinationRequest.owner. Shared coordination value; does not alter application evidence.
+   */
+  owner: string;
+  /**
+   * OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application evidence.
+   */
+  note: string;
+  /**
+   * OperationWorkflowReadinessCoordinationRequest.follow_up_at. Shared coordination value; does not alter application evidence.
+   */
+  follow_up_at?: string;
+};
+

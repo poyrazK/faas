@@ -20,3 +20,10 @@ func (s *PgStore) WorkflowReadinessInbox(ctx context.Context, account, tenant, a
 func (s *PgStore) EvaluateDueWorkflowReadinessSubscriptions(ctx context.Context) (int, error) {
 	return evaluateDueReadinessSubscriptions(ctx, s)
 }
+
+func (s *PgStore) UpdateWorkflowReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+	return updateReadinessNotification(ctx, s, account, tenant, app, scope, id, sequence, actor, req, operator)
+}
+func (s *PgStore) CheckWorkflowReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, operator bool) (api.OperationWorkflowReadinessNotificationCheck, error) {
+	return checkReadinessNotification(ctx, s, account, tenant, app, scope, id, sequence, operator)
+}

@@ -38558,6 +38558,46 @@ func (q *Queries) LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX,
 	return id, err
 }
 
+const lockReadinessSubscription = `-- name: LockReadinessSubscription :one
+SELECT id, account_id, app_id, tenant_id, operator, scope, payload, created_at, next_evaluation_at, lease_token, lease_until FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND account_id = $2 AND app_id = $3 AND operator = $4 AND scope = $5
+AND ($6::text = '' OR tenant_id::text = $6::text) FOR UPDATE
+`
+
+type LockReadinessSubscriptionParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Operator  bool
+	Scope     string
+	Tenant    string
+}
+
+func (q *Queries) LockReadinessSubscription(ctx context.Context, db DBTX, arg LockReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error) {
+	row := db.QueryRow(ctx, lockReadinessSubscription,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Operator,
+		arg.Scope,
+		arg.Tenant,
+	)
+	var i CustomerWorkflowReadinessSubscription
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.TenantID,
+		&i.Operator,
+		&i.Scope,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.NextEvaluationAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
 const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
@@ -69599,6 +69639,24 @@ func (q *Queries) UpdatePromotionFeatureFlagReceipt(ctx context.Context, db DBTX
 	var promotion_id pgtype.UUID
 	err := row.Scan(&promotion_id)
 	return promotion_id, err
+}
+
+const updateReadinessNotification = `-- name: UpdateReadinessNotification :execrows
+UPDATE customer_workflow_readiness_notifications SET payload=$3 WHERE subscription_id=$1 AND sequence=$2
+`
+
+type UpdateReadinessNotificationParams struct {
+	SubscriptionID pgtype.UUID
+	Sequence       int64
+	Payload        []byte
+}
+
+func (q *Queries) UpdateReadinessNotification(ctx context.Context, db DBTX, arg UpdateReadinessNotificationParams) (int64, error) {
+	result, err := db.Exec(ctx, updateReadinessNotification, arg.SubscriptionID, arg.Sequence, arg.Payload)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateRoutePolicyRuleAction = `-- name: UpdateRoutePolicyRuleAction :execrows

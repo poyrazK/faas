@@ -37,12 +37,13 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
-	ID          string                            `json:"id"`
-	Sequence    int64                             `json:"sequence"`
-	Kind        string                            `json:"kind"`
-	CreatedAt   time.Time                         `json:"created_at"`
-	Explanation string                            `json:"explanation"`
-	Change      *OperationWorkflowReadinessChange `json:"change,omitempty"`
+	Coordination *OperationWorkflowReadinessCoordination `json:"coordination,omitempty"`
+	ID           string                                  `json:"id"`
+	Sequence     int64                                   `json:"sequence"`
+	Kind         string                                  `json:"kind"`
+	CreatedAt    time.Time                               `json:"created_at"`
+	Explanation  string                                  `json:"explanation"`
+	Change       *OperationWorkflowReadinessChange       `json:"change,omitempty"`
 }
 type OperationWorkflowReadinessInboxResponse struct {
 	Subscription   OperationWorkflowReadinessSubscription   `json:"subscription"`
@@ -51,4 +52,30 @@ type OperationWorkflowReadinessInboxResponse struct {
 	NextSequence   int64                                    `json:"next_sequence"`
 	ResyncRequired bool                                     `json:"resync_required"`
 	HasMore        bool                                     `json:"has_more"`
+}
+
+// Coordination is shared inbox bookkeeping, never business workflow evidence.
+type OperationWorkflowReadinessCoordination struct {
+	Revision       int64      `json:"revision"`
+	Status         string     `json:"status"`
+	Owner          string     `json:"owner"`
+	Note           string     `json:"note"`
+	FollowUpAt     *time.Time `json:"follow_up_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	UpdatedBy      string     `json:"updated_by"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
+}
+type OperationWorkflowReadinessCoordinationRequest struct {
+	Revision   int64      `json:"revision"`
+	Status     string     `json:"status"`
+	Owner      string     `json:"owner"`
+	Note       string     `json:"note"`
+	FollowUpAt *time.Time `json:"follow_up_at,omitempty"`
+}
+type OperationWorkflowReadinessNotificationCheck struct {
+	Notification OperationWorkflowReadinessNotification `json:"notification"`
+	CheckedAt    time.Time                              `json:"checked_at"`
+	Status       string                                 `json:"status"`
+	Change       *OperationWorkflowReadinessChange      `json:"change,omitempty"`
 }

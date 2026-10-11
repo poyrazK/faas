@@ -20,3 +20,10 @@ func (s *MemStore) WorkflowReadinessInbox(ctx context.Context, account, tenant, 
 func (s *MemStore) EvaluateDueWorkflowReadinessSubscriptions(ctx context.Context) (int, error) {
 	return evaluateDueReadinessSubscriptions(ctx, s)
 }
+
+func (s *MemStore) UpdateWorkflowReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+	return updateReadinessNotification(ctx, s, account, tenant, app, scope, id, sequence, actor, req, operator)
+}
+func (s *MemStore) CheckWorkflowReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, operator bool) (api.OperationWorkflowReadinessNotificationCheck, error) {
+	return checkReadinessNotification(ctx, s, account, tenant, app, scope, id, sequence, operator)
+}

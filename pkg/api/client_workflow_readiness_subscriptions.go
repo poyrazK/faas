@@ -63,3 +63,27 @@ func (c *Client) GetPlatformTenantSelfWorkflowReadinessInbox(ctx context.Context
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications?"+q.Encode(), nil, &out)
 	return out, err
 }
+
+func (c *Client) UpdateAccountWorkflowReadinessNotification(ctx context.Context, slug, scope, tenant, id string, sequence int64, req OperationWorkflowReadinessCoordinationRequest) (OperationWorkflowReadinessNotification, error) {
+	var out OperationWorkflowReadinessNotification
+	err := c.do(ctx, http.MethodPatch, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery("", scope, tenant).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) CheckAccountWorkflowReadinessNotification(ctx context.Context, slug, scope, tenant, id string, sequence int64) (OperationWorkflowReadinessNotificationCheck, error) {
+	var out OperationWorkflowReadinessNotificationCheck
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery("", scope, tenant).Encode(), nil, &out)
+	return out, err
+}
+
+func (c *Client) UpdatePlatformTenantSelfWorkflowReadinessNotification(ctx context.Context, app, scope, id string, sequence int64, req OperationWorkflowReadinessCoordinationRequest) (OperationWorkflowReadinessNotification, error) {
+	var out OperationWorkflowReadinessNotification
+	err := c.do(ctx, http.MethodPatch, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery(app, scope, "").Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx context.Context, app, scope, id string, sequence int64) (OperationWorkflowReadinessNotificationCheck, error) {
+	var out OperationWorkflowReadinessNotificationCheck
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery(app, scope, "").Encode(), nil, &out)
+	return out, err
+}

@@ -2015,6 +2015,7 @@ type Querier interface {
 	LockProjectEnvironmentQueuePreparationEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationEnvironmentParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationSpec(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationSpecParams) (LockProjectEnvironmentQueuePreparationSpecRow, error)
 	LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX, arg LockPromotionFeatureFlagCustomerParams) (pgtype.UUID, error)
+	LockReadinessSubscription(ctx context.Context, db DBTX, arg LockReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error)
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	// Parent locks serialize configuration edits while remaining compatible with
 	// the FK key-share locks taken by captures, rules and webhook event inserts.
@@ -3389,6 +3390,7 @@ type Querier interface {
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error
 	UpdatePromotionFeatureFlagReceipt(ctx context.Context, db DBTX, arg UpdatePromotionFeatureFlagReceiptParams) (pgtype.UUID, error)
+	UpdateReadinessNotification(ctx context.Context, db DBTX, arg UpdateReadinessNotificationParams) (int64, error)
 	UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg UpdateRoutePolicyRuleActionParams) (int64, error)
 	// ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
 	// OTLP/HTTP handler coalesces incoming batches for the same trace_id

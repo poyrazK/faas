@@ -1678,7 +1678,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
 
-	"POST /v1/apps/{slug}/github/activity/retry": "RetryGitHubActivity",
+	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
+	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
+	"GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":            "CheckAccountWorkflowReadinessNotification",
+	"PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}": "UpdatePlatformTenantSelfWorkflowReadinessNotification",
+	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}":   "CheckPlatformTenantSelfWorkflowReadinessNotification",
 }
 
 func main() {

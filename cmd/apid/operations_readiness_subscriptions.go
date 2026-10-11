@@ -30,6 +30,10 @@ func (s *server) workflowReadinessSubscriptions(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("workflow readiness subscriptions unavailable"))
 		return
 	}
+	if r.PathValue("sequence") != "" {
+		s.workflowReadinessNotification(w, r, acct, tenant, app, operator, store)
+		return
+	}
 	if r.Method == http.MethodPost {
 		s.createWorkflowReadinessSubscription(w, r, acct, tenant, app, operator, store)
 		return
@@ -96,7 +100,7 @@ func readinessSubscriptionQuery(r *http.Request, operator bool, app string) (sco
 	if e != nil {
 		return
 	}
-	inbox := r.Method == http.MethodGet && r.PathValue("id") != ""
+	inbox := r.Method == http.MethodGet && r.PathValue("id") != "" && r.PathValue("sequence") == ""
 	for k, v := range q {
 		if len(v) != 1 || v[0] == "" {
 			return
@@ -123,4 +127,49 @@ func readinessSubscriptionQuery(r *http.Request, operator bool, app string) (sco
 	}
 	err = nil
 	return
+}
+
+func (s *server) workflowReadinessNotification(w http.ResponseWriter, r *http.Request, acct state.Account, tenant, app string, operator bool, store state.OperationWorkflowReadinessSubscriptionStore) {
+	scope, selectedTenant, selectedApp, _, _, err := readinessSubscriptionQuery(r, operator, app)
+	if err != nil {
+		writeOperationError(w, err)
+		return
+	}
+	if operator {
+		tenant = selectedTenant
+	}
+	app = selectedApp
+	sequence, err := strconv.ParseInt(r.PathValue("sequence"), 10, 64)
+	if err != nil {
+		writeOperationError(w, state.ErrInvalidArgument)
+		return
+	}
+	if r.Method == http.MethodGet {
+		out, err := store.CheckWorkflowReadinessNotification(r.Context(), acct.ID, tenant, app, scope, r.PathValue("id"), sequence, operator)
+		if err != nil {
+			writeOperationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	p, ok := principalFrom(r)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("authenticated principal missing"))
+		return
+	}
+	actor := "account:" + p.Acct.ID
+	if p.Key != nil {
+		actor = "api_key:" + p.Key.ID
+	}
+	var req api.OperationWorkflowReadinessCoordinationRequest
+	if !decodeOperationBody(w, r, &req, api.OperationWorkflowReadinessSubscriptionBodyMaxBytes) {
+		return
+	}
+	out, err := store.UpdateWorkflowReadinessNotification(r.Context(), acct.ID, tenant, app, scope, r.PathValue("id"), sequence, actor, req, operator)
+	if err != nil {
+		writeOperationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }

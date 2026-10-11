@@ -37329,6 +37329,273 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}:
+    get:
+      operationId: CheckAccountWorkflowReadinessNotification
+      summary: Check Account readiness notification
+      description: CheckAccountWorkflowReadinessNotification. Recheck retained application evidence; does not execute
+        actions.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: CheckAccountWorkflowReadinessNotification. Application slug.
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: CheckAccountWorkflowReadinessNotification. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: CheckAccountWorkflowReadinessNotification. Application environment scope.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: CheckAccountWorkflowReadinessNotification. Optional account customer selector.
+        schema:
+          type: string
+          format: uuid
+      - name: sequence
+        in: path
+        required: true
+        description: CheckAccountWorkflowReadinessNotification. Retained subscription-local notification sequence.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+      responses:
+        '200':
+          description: CheckAccountWorkflowReadinessNotification. Result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessNotificationCheck'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: UpdateAccountWorkflowReadinessNotification
+      summary: Update Account readiness notification
+      description: UpdateAccountWorkflowReadinessNotification. Replace shared inbox coordination with a matching revision.
+        Requires account deploy-write and MFA or customer operations manage. Actor derives from authentication. Revision
+        zero addresses an untouched notification.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: UpdateAccountWorkflowReadinessNotification. Application slug.
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        description: UpdateAccountWorkflowReadinessNotification. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: UpdateAccountWorkflowReadinessNotification. Application environment scope.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: false
+        description: UpdateAccountWorkflowReadinessNotification. Optional account customer selector.
+        schema:
+          type: string
+          format: uuid
+      - name: sequence
+        in: path
+        required: true
+        description: UpdateAccountWorkflowReadinessNotification. Retained subscription-local notification sequence.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+      responses:
+        '200':
+          description: UpdateAccountWorkflowReadinessNotification. Result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessNotification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowReadinessCoordinationRequest'
+  /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}:
+    get:
+      operationId: CheckPlatformTenantSelfWorkflowReadinessNotification
+      summary: Check PlatformTenantSelf readiness notification
+      description: CheckPlatformTenantSelfWorkflowReadinessNotification. Recheck retained application evidence; does
+        not execute actions.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: CheckPlatformTenantSelfWorkflowReadinessNotification. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: CheckPlatformTenantSelfWorkflowReadinessNotification. Application environment scope.
+        schema:
+          type: string
+      - name: app_id
+        in: query
+        required: true
+        description: CheckPlatformTenantSelfWorkflowReadinessNotification. Application UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: sequence
+        in: path
+        required: true
+        description: CheckPlatformTenantSelfWorkflowReadinessNotification. Retained subscription-local notification
+          sequence.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+      responses:
+        '200':
+          description: CheckPlatformTenantSelfWorkflowReadinessNotification. Result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessNotificationCheck'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: UpdatePlatformTenantSelfWorkflowReadinessNotification
+      summary: Update PlatformTenantSelf readiness notification
+      description: UpdatePlatformTenantSelfWorkflowReadinessNotification. Replace shared inbox coordination with a
+        matching revision. Requires account deploy-write and MFA or customer operations manage. Actor derives from
+        authentication. Revision zero addresses an untouched notification.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowReadinessNotification. Subscription UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowReadinessNotification. Application environment scope.
+        schema:
+          type: string
+      - name: app_id
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowReadinessNotification. Application UUID.
+        schema:
+          type: string
+          format: uuid
+      - name: sequence
+        in: path
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowReadinessNotification. Retained subscription-local notification
+          sequence.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+      responses:
+        '200':
+          description: UpdatePlatformTenantSelfWorkflowReadinessNotification. Result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowReadinessNotification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowReadinessCoordinationRequest'
+
 components:
 
   securitySchemes:
@@ -74474,6 +74741,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        coordination:
+          $ref: '#/components/schemas/OperationWorkflowReadinessCoordination'
         id:
           type: string
           description: OperationWorkflowReadinessNotification.id. Stable notification UUID.
@@ -74546,6 +74815,130 @@ components:
       - next_sequence
       - resync_required
       - has_more
+
+    OperationWorkflowReadinessCoordinationRequest:
+      type: object
+      description: OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision
+        checks; omission of a follow-up time clears it.
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740991
+          description: OperationWorkflowReadinessCoordinationRequest.revision. Shared coordination value; does not alter
+            application evidence.
+        status:
+          type: string
+          enum:
+          - unread
+          - read
+          - acknowledged
+          description: OperationWorkflowReadinessCoordinationRequest.status. Shared coordination value; does not alter
+            application evidence.
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReadinessCoordinationRequest.owner. Shared coordination value; does not alter
+            application evidence.
+        note:
+          type: string
+          maxLength: 1024
+          description: OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter
+            application evidence.
+        follow_up_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessCoordinationRequest.follow_up_at. Shared coordination value; does not
+            alter application evidence.
+      required:
+      - revision
+      - status
+      - owner
+      - note
+    OperationWorkflowReadinessCoordination:
+      type: object
+      description: OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks;
+        omission of a follow-up time clears it.
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: OperationWorkflowReadinessCoordination.revision. Shared coordination value; does not alter application
+            evidence.
+        status:
+          type: string
+          enum:
+          - unread
+          - read
+          - acknowledged
+          description: OperationWorkflowReadinessCoordination.status. Shared coordination value; does not alter application
+            evidence.
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReadinessCoordination.owner. Shared coordination value; does not alter application
+            evidence.
+        note:
+          type: string
+          maxLength: 1024
+          description: OperationWorkflowReadinessCoordination.note. Shared coordination value; does not alter application
+            evidence.
+        follow_up_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessCoordination.follow_up_at. Shared coordination value; does not alter
+            application evidence.
+        updated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessCoordination.updated_at. Shared coordination value; does not alter
+            application evidence.
+        acknowledged_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessCoordination.acknowledged_at. Shared coordination value; does not alter
+            application evidence.
+        updated_by:
+          type: string
+          description: OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter
+            application evidence.
+        acknowledged_by:
+          type: string
+          description: OperationWorkflowReadinessCoordination.acknowledged_by. Shared coordination value; does not alter
+            application evidence.
+      required:
+      - revision
+      - status
+      - owner
+      - note
+      - updated_at
+      - updated_by
+    OperationWorkflowReadinessNotificationCheck:
+      type: object
+      description: Current advisory evidence check preserving the original notification. Global failures remain unavailable.
+      additionalProperties: false
+      properties:
+        notification:
+          $ref: '#/components/schemas/OperationWorkflowReadinessNotification'
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessNotificationCheck.checked_at. Current check time.
+        status:
+          type: string
+          description: OperationWorkflowReadinessNotificationCheck.status. Ready or blocked only for a comparable retained
+            edge; otherwise the explicit comparison boundary status.
+        change:
+          $ref: '#/components/schemas/OperationWorkflowReadinessChange'
+      required:
+      - notification
+      - checked_at
+      - status
 
   responses:
     OperationConflict:

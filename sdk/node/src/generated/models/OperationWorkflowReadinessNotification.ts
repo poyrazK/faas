@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
+import type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 /**
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  coordination?: OperationWorkflowReadinessCoordination;
   /**
    * OperationWorkflowReadinessNotification.id. Stable notification UUID.
    */

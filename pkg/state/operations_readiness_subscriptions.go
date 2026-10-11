@@ -11,6 +11,8 @@ import (
 )
 
 type OperationWorkflowReadinessSubscriptionStore interface {
+	UpdateWorkflowReadinessNotification(context.Context, string, string, string, string, string, int64, string, api.OperationWorkflowReadinessCoordinationRequest, bool) (api.OperationWorkflowReadinessNotification, error)
+	CheckWorkflowReadinessNotification(context.Context, string, string, string, string, string, int64, bool) (api.OperationWorkflowReadinessNotificationCheck, error)
 	CreateWorkflowReadinessSubscription(context.Context, string, string, string, api.OperationWorkflowReadinessSubscriptionRequest, bool) (api.OperationWorkflowReadinessSubscription, error)
 	ListWorkflowReadinessSubscriptions(context.Context, string, string, string, string, bool) (api.OperationWorkflowReadinessSubscriptionsResponse, error)
 	DeleteWorkflowReadinessSubscription(context.Context, string, string, string, string, string, bool) error
@@ -31,6 +33,7 @@ type readinessSubscriptionRecord struct {
 	NextEvaluation time.Time                                  `json:"-"`
 }
 type readinessSubscriptionBackend interface {
+	updateReadinessNotification(context.Context, string, string, string, string, string, int64, string, api.OperationWorkflowReadinessCoordinationRequest, bool) (api.OperationWorkflowReadinessNotification, error)
 	readinessQueueStore
 	AppByID(context.Context, string) (App, error)
 	GetPlatformTenant(context.Context, string, string) (PlatformTenant, error)

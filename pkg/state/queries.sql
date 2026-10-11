@@ -18077,3 +18077,10 @@ DELETE FROM customer_workflow_readiness_notifications WHERE subscription_id = $1
 
 -- name: ListReadinessNotifications :many
 SELECT payload FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence > $2 ORDER BY sequence LIMIT $3;
+
+-- name: LockReadinessSubscription :one
+SELECT * FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND account_id = $2 AND app_id = $3 AND operator = $4 AND scope = $5
+AND (sqlc.arg(tenant)::text = '' OR tenant_id::text = sqlc.arg(tenant)::text) FOR UPDATE;
+
+-- name: UpdateReadinessNotification :execrows
+UPDATE customer_workflow_readiness_notifications SET payload=$3 WHERE subscription_id=$1 AND sequence=$2;
