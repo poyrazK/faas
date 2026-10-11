@@ -92,6 +92,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	if *watch {
 		last := ""
 		lastRows := map[string]string{}
+		lastDiagnostics := map[string]string{}
 		progress := func(status api.CommitRecoveryStatusResult) {
 			progressCalled = true
 			if checkpoint != nil {
@@ -100,6 +101,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 					return
 				}
 			}
+			printCommitRecoveryDiagnosticChanges(status, lastDiagnostics)
 			rows := make([]any, 0, len(status.Items))
 			for _, row := range status.Items {
 				fields := []any{row.Status, row.Reason, row.Generation, row.GenerationRelation, row.Attribution, row.ExecutionID, row.ExecutionState}
@@ -123,7 +125,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, terminal)
 				if status.DiagnosticsProgress != nil {
 					d := status.DiagnosticsProgress
-					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d; freshness=%v\n", d.Remaining, d.Counts, d.Retained, d.Deferred, d.Freshness)
+					_, _ = fmt.Fprintf(os.Stderr, "Recovery diagnostics: %d remaining; counts=%v; retained=%d; deferred=%d; freshness=%v; compared=%d; changed=%d\n", d.Remaining, d.Counts, d.Retained, d.Deferred, d.Freshness, d.Compared, d.Changed)
 				}
 				if freshness != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "Recovery freshness: %v\n", freshness)
@@ -197,5 +199,21 @@ func commitRecoveryDiagnosticSummary(progress *api.CommitRecoveryDiagnosticProgr
 	if progress == nil {
 		return nil
 	}
-	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained, progress.Freshness, progress.FreshComplete}
+	return []any{progress.Counts, progress.Remaining, progress.Deferred, progress.Retained, progress.Freshness, progress.FreshComplete, progress.Compared, progress.Changed}
+}
+
+func printCommitRecoveryDiagnosticChanges(status api.CommitRecoveryStatusResult, seen map[string]string) {
+	for _, row := range status.Items {
+		diagnostic := row.Diagnostics
+		if diagnostic == nil || diagnostic.Retained || diagnostic.PreviousObservation == nil || len(diagnostic.Changes) == 0 {
+			continue
+		}
+		identity, _ := json.Marshal(diagnostic.PreviousObservation.Query)
+		pair, _ := json.Marshal([]any{diagnostic.PreviousObservation.ObservedAt, diagnostic.ObservedAt, diagnostic.Changes})
+		if seen[string(identity)] == string(pair) {
+			continue
+		}
+		seen[string(identity)] = string(pair)
+		_, _ = fmt.Fprintf(os.Stderr, "Recovery routing changes %s: [previous observation, current observation, changes]=%s\n", identity, pair)
+	}
 }

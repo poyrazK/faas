@@ -10,18 +10,23 @@ import (
 // CommitRecoveryDiagnostics is a separate, bounded snapshot of live routing blockers.
 // Missing evidence never proves that delivery is ready or terminal.
 type CommitRecoveryDiagnostics struct {
-	Retained     bool                   `json:"retained,omitempty"`
-	Status       string                 `json:"status"`
-	Reason       string                 `json:"reason,omitempty"`
-	RoutingState string                 `json:"routing_state,omitempty"`
-	ObservedAt   *time.Time             `json:"observed_at,omitempty"`
-	Coverage     string                 `json:"coverage,omitempty"`
-	Truncated    bool                   `json:"truncated,omitempty"`
-	Recipient    *EventBacklogRecipient `json:"recipient,omitempty"`
+	Comparison          string                               `json:"comparison,omitempty"`
+	PreviousObservation *CommitRecoveryDiagnosticObservation `json:"previous_observation,omitempty"`
+	Changes             []CommitRecoveryDiagnosticChange     `json:"changes,omitempty"`
+	Retained            bool                                 `json:"retained,omitempty"`
+	Status              string                               `json:"status"`
+	Reason              string                               `json:"reason,omitempty"`
+	RoutingState        string                               `json:"routing_state,omitempty"`
+	ObservedAt          *time.Time                           `json:"observed_at,omitempty"`
+	Coverage            string                               `json:"coverage,omitempty"`
+	Truncated           bool                                 `json:"truncated,omitempty"`
+	Recipient           *EventBacklogRecipient               `json:"recipient,omitempty"`
 }
 
 // CommitRecoveryDiagnosticProgress describes diagnostic sampling independently of delivery.
 type CommitRecoveryDiagnosticProgress struct {
+	Compared           int            `json:"compared"`
+	Changed            int            `json:"changed"`
 	MaxDiagnosticAgeMS int64          `json:"max_diagnostic_age_ms"`
 	FreshnessCheckedAt time.Time      `json:"freshness_checked_at"`
 	Freshness          map[string]int `json:"freshness"`
@@ -99,9 +104,11 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 		progress.RetryNextIndex = diagnosticCursor(prior.DiagnosticsProgress.RetryNextIndex, len(out.Items))
 		progress.RefreshNextIndex = diagnosticCursor(prior.DiagnosticsProgress.RefreshNextIndex, len(out.Items))
 	}
+	baselines := make([]*CommitRecoveryDiagnosticObservation, len(out.Items))
 	for i := range out.Items {
 		row := &out.Items[i]
 		old := prior.Items[i].Diagnostics
+		baselines[i] = diagnosticObservation(old, *row)
 		row.Diagnostics = &CommitRecoveryDiagnostics{Status: "budget_exhausted"}
 		if !diagnosticTarget(*row) {
 			row.Diagnostics.Status = "unsupported_recipient"
@@ -112,6 +119,7 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 			copy.Retained = true
 			copy.Truncated = false
 			row.Diagnostics = &copy
+			setDiagnosticComparison(row.Diagnostics, old.PreviousObservation, *row)
 		} else if old != nil && old.Status == "read_error" {
 			row.Diagnostics.Status, row.Diagnostics.Reason = "read_error", old.Reason
 		}
@@ -187,6 +195,18 @@ func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 			row.Diagnostics = observeCommitRecoveryDiagnostic(*item.Result, queries[n], nil)
 			if !validCommitRecoveryDiagnostic(row.Diagnostics, *row) {
 				row.Diagnostics = &CommitRecoveryDiagnostics{Status: "read_error", Reason: "invalid_evidence"}
+			}
+		}
+	}
+	for i, row := range out.Items {
+		if row.Diagnostics.Retained {
+			continue
+		}
+		setDiagnosticComparison(row.Diagnostics, baselines[i], row)
+		if row.Diagnostics.Comparison == "compared" {
+			progress.Compared++
+			if len(row.Diagnostics.Changes) > 0 {
+				progress.Changed++
 			}
 		}
 	}

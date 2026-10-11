@@ -1555,3 +1555,28 @@ sample coverage; diagnostic freshness never gates delivery settlement or
 command success. A resumed checkpoint uses the current invocation's age policy
 and recomputes counts from the original sample timestamps. An age limit shorter
 than the monitoring interval may leave samples stale on every pass.
+
+### Track routing blocker changes
+
+With `--diagnostics`, repeated or resumed samples include `comparison`, a compact
+`previous_observation`, and field-level `changes` with `field`, `previous` and
+`current` values. The current sample's `observed_at` and the previous observation's
+`observed_at` identify the comparison interval. For example, a waiting reason can
+change from `subscription_paused` to `ready`, or routing state from `pending` to
+`enqueued`. Routing readiness and enqueueing do not prove handler completion.
+
+`diagnostics_progress.compared` and `changed` count newly sampled comparable and
+changed recipients in that pass. Watch summaries print each new changed pair.
+Retained comparisons survive checkpoints with their original timestamps and do
+not count as new changes. Saved change arrays are recomputed from validated
+observations on resume. Only the latest pair is retained, not an unbounded history.
+
+Comparison requires the same exact recipient and acceptance guard, confirmed
+routing evidence, and strictly increasing timestamps. `baseline_unavailable`,
+`evidence_unavailable` and `non_monotonic_timestamp` emit no changes. An evidence
+gap resets the baseline. Waiting, capacity, target and ordering fields are compared
+only between two available observations; ages, counters, leases and links are
+excluded. Blocker changes remain separate from receipt execution changes,
+replay attribution, coverage, freshness and delivery settlement.
+
+An explicit diagnostic refresh begins a new baseline, consistent with existing refresh behavior; ordinary resume preserves the latest validated comparison.

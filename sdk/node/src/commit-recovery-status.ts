@@ -1,3 +1,4 @@
+import type { EventRecipientBlockerQuery } from './generated/models/EventRecipientBlockerQuery.js';
 import { EventsService } from './generated/services/EventsService.js';
 import type { EventBacklogRecipient } from './generated/models/EventBacklogRecipient.js';
 import { getCommitDeliveryReport, CommitDeliveryReportError } from './commit-delivery-report.js';
@@ -19,10 +20,12 @@ export interface CommitRecoveryStatusChange {
   field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
 }
 export interface CommitRecoveryDiagnosticProgress {
+  compared: number; changed: number;
   max_diagnostic_age_ms: number; freshness_checked_at: string; freshness: Record<string, number>; fresh_complete: boolean;
   next_index: number; retry_next_index: number; refresh_next_index: number; target_count: number; remaining: number; deferred: number; retained: number; reads: number; counts: Record<string, number>; complete: boolean;
 }
 export interface CommitRecoveryDiagnostics {
+  comparison?: string; previous_observation?: CommitRecoveryDiagnosticObservation; changes?: CommitRecoveryDiagnosticChange[];
   retained?: boolean;
   status: string; reason?: string; routing_state?: string; observed_at?: string; coverage?: string; truncated?: boolean; recipient?: EventBacklogRecipient;
 }
@@ -381,12 +384,14 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
   const out = structuredClone(status), prior = structuredClone(previous ?? status);
   if (out.source_id.toLowerCase() !== prior.source_id.toLowerCase() || (out.subscription_id ?? '').toLowerCase() !== (prior.subscription_id ?? '').toLowerCase() || out.items.length !== prior.items.length || out.items.some((row, i) => !row.selection || !prior.items[i]?.selection || !sameSelection(row.selection, prior.items[i]!.selection!) || canonical(row.attempt) !== canonical(prior.items[i]!.attempt))) throw new TypeError('saved diagnostic selection mismatch');
   const cursor = (value: number | undefined) => Number.isSafeInteger(value) && value! >= 0 && value! < out.items.length ? value! : 0;
-  const progress: CommitRecoveryDiagnosticProgress = { max_diagnostic_age_ms: maxDiagnosticAgeMs, freshness_checked_at: new Date().toISOString(), freshness: {fresh: 0, stale: 0, unread: 0}, fresh_complete: false, next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
+  const progress: CommitRecoveryDiagnosticProgress = { compared: 0, changed: 0, max_diagnostic_age_ms: maxDiagnosticAgeMs, freshness_checked_at: new Date().toISOString(), freshness: {fresh: 0, stale: 0, unread: 0}, fresh_complete: false, next_index: cursor(prior.diagnostics_progress?.next_index), retry_next_index: cursor(prior.diagnostics_progress?.retry_next_index), refresh_next_index: cursor(prior.diagnostics_progress?.refresh_next_index), target_count: 0, remaining: 0, deferred: 0, retained: 0, reads: 0, counts: Object.fromEntries(['available', 'not_waiting', 'unavailable', 'acceptance_replaced', 'read_error', 'budget_exhausted', 'deferred', 'unsupported_recipient'].map(key => [key, 0])), complete: false };
+  const baselines: (CommitRecoveryDiagnosticObservation | undefined)[] = [];
   for (let i = 0; i < out.items.length; i++) {
     const row = out.items[i]!, old = prior.items[i]!.diagnostics;
+    baselines[i] = diagnosticObservation(old, row);
     row.diagnostics = { status: 'budget_exhausted' };
     if (!diagnosticTarget(row)) { row.diagnostics.status = 'unsupported_recipient'; continue; }
-    if (old && validDiagnostic(old, row)) row.diagnostics = { ...old, retained: true, truncated: undefined };
+    if (old && validDiagnostic(old, row)) { row.diagnostics = { ...old, retained: true, truncated: undefined }; setDiagnosticComparison(row.diagnostics, old.previous_observation, row); }
     else if (old?.status === 'read_error') row.diagnostics = { status: 'read_error', reason: old.reason };
     if (!diagnosticQueryable(row) && row.diagnostics.status === 'budget_exhausted') row.diagnostics = { status: 'deferred', reason: 'receipt_evidence_unavailable' };
   }
@@ -437,6 +442,11 @@ export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusR
       row.diagnostics = validDiagnostic(diagnostic, row) ? diagnostic : { status: 'read_error', reason: 'invalid_evidence' };
     }
   }
+  for (const [i, row] of out.items.entries()) {
+    if (row.diagnostics!.retained) continue;
+    setDiagnosticComparison(row.diagnostics!, baselines[i], row);
+    if (row.diagnostics!.comparison === "compared") { progress.compared++; if (row.diagnostics!.changes?.length) progress.changed++; }
+  }
   progress.freshness_checked_at = new Date().toISOString();
   const checked = Date.parse(progress.freshness_checked_at);
   for (const row of out.items) {
@@ -470,4 +480,81 @@ function diagnosticFreshness(row: CommitRecoveryStatusItem, now: number, age: nu
   if (!validDiagnostic(row.diagnostics, row)) return 'unread';
   const observed = Date.parse(row.diagnostics!.observed_at!);
   return age > 0 && (!Number.isFinite(observed) || observed > now || now - observed > age) ? 'stale' : 'fresh';
+}
+
+export interface CommitRecoveryDiagnosticObservation {
+  query: EventRecipientBlockerQuery; observed_at: string; status: string; routing_state: string; routing?: CommitRecoveryDiagnosticRouting;
+}
+export interface CommitRecoveryDiagnosticRouting {
+  waiting_reason: string; capacity_scope?: string; target_available: boolean; ordering_blocker?: CommitRecoveryDiagnosticOrdering;
+}
+export interface CommitRecoveryDiagnosticOrdering {
+  event_source: string; event_id: string; subscription_id: string; accepted_at: string; state: string;
+}
+export interface CommitRecoveryDiagnosticChange { field: string; previous: string; current: string; }
+const diagnosticWaitingReasons = new Set(['circuit_open', 'circuit_probe_wait', 'circuit_recovery_rate_limited', 'subscription_paused', 'subscription_rate_limited', 'ordering_blocked', 'capacity_consumer', 'capacity_app', 'capacity_account', 'routing_in_progress', 'receipt_processing', 'retry_backoff', 'workflow_routing', 'ready']);
+function diagnosticObservation(diagnostic: CommitRecoveryDiagnostics | undefined, row: CommitRecoveryStatusItem): CommitRecoveryDiagnosticObservation | undefined {
+  if (!validDiagnostic(diagnostic, row) || !diagnostic || !['available', 'not_waiting'].includes(diagnostic.status)) return undefined;
+  const publication = row.selection!.publication;
+  const result: CommitRecoveryDiagnosticObservation = {query: {source: publication.source, id: publication.id, subscription_id: row.attempt.subscription_id.toLowerCase(), expected_accepted_at: publication.accepted_at}, observed_at: diagnostic.observed_at!, status: diagnostic.status, routing_state: diagnostic.routing_state ?? ''};
+  if (diagnostic.recipient) {
+    const recipient = diagnostic.recipient;
+    result.routing = {waiting_reason: recipient.waiting_reason, capacity_scope: recipient.capacity_scope, target_available: recipient.target_available};
+    const blocker = recipient.ordering_blocker;
+    if (blocker) result.routing.ordering_blocker = {event_source: blocker.event_source, event_id: blocker.event_id, subscription_id: blocker.subscription_id, accepted_at: blocker.accepted_at, state: blocker.state};
+  }
+  return validDiagnosticObservation(result, result.query) ? result : undefined;
+}
+function validDiagnosticObservation(observation: CommitRecoveryDiagnosticObservation | undefined, query: EventRecipientBlockerQuery): boolean {
+  if (!observation || !observation.query || observation.query.source !== query.source || observation.query.id !== query.id || observation.query.subscription_id !== query.subscription_id || typeof observation.query.expected_accepted_at !== 'string' || !sameAcceptance(observation.query.expected_accepted_at, query.expected_accepted_at) || typeof observation.observed_at !== 'string' || !sameAcceptance(observation.observed_at, observation.observed_at)) return false;
+  if (observation.status === 'not_waiting') return !observation.routing && ['enqueued', 'filtered', 'failed'].includes(observation.routing_state);
+  const routing = observation.routing;
+  if (observation.status !== 'available' || !routing || !['pending', 'processing'].includes(observation.routing_state) || typeof routing.target_available !== 'boolean' || !diagnosticWaitingReasons.has(routing.waiting_reason) || !['', 'consumer', 'app', 'account'].includes(routing.capacity_scope ?? '')) return false;
+  const blocker = routing.ordering_blocker;
+  if (!blocker) return true;
+  return [blocker.event_source, blocker.event_id, blocker.subscription_id].every(value => typeof value === 'string' && value.length > 0 && new TextEncoder().encode(value).length <= 256) && blocker.subscription_id.toLowerCase() === query.subscription_id.toLowerCase() && typeof blocker.accepted_at === 'string' && sameAcceptance(blocker.accepted_at, blocker.accepted_at) && ['pending', 'processing'].includes(blocker.state);
+}
+function setDiagnosticComparison(diagnostic: CommitRecoveryDiagnostics, previous: CommitRecoveryDiagnosticObservation | undefined, row: CommitRecoveryStatusItem): void {
+  delete diagnostic.previous_observation; delete diagnostic.changes;
+  diagnostic.comparison = 'evidence_unavailable';
+  const current = diagnosticObservation(diagnostic, row);
+  if (!current) return;
+  diagnostic.comparison = 'baseline_unavailable';
+  if (!validDiagnosticObservation(previous, current.query) || !previous) return;
+  diagnostic.comparison = 'non_monotonic_timestamp';
+  if (!diagnosticTimeAfter(current.observed_at, previous.observed_at)) return;
+  diagnostic.comparison = 'compared'; diagnostic.previous_observation = cleanDiagnosticObservation(previous);
+  const before = diagnosticRoutingFields(previous), after = diagnosticRoutingFields(current);
+  const fields = ['status', 'routing_state'];
+  if (previous.status === 'available' && current.status === 'available') fields.push('waiting_reason', 'capacity_scope', 'target_available', 'ordering_source', 'ordering_id', 'ordering_subscription_id', 'ordering_accepted_at', 'ordering_state');
+  const changes = fields.filter(field => (before[field] ?? '') !== (after[field] ?? '') && !(field === 'ordering_accepted_at' && before[field] && after[field] && sameAcceptance(before[field]!, after[field]!))).map(field => ({field, previous: before[field] ?? '', current: after[field] ?? ''}));
+  if (changes.length) diagnostic.changes = changes;
+}
+function diagnosticTimeAfter(current: string, previous: string): boolean {
+  const pattern = /^(.+?)(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})$/;
+  const a = pattern.exec(current)!, b = pattern.exec(previous)!;
+  const left = Date.parse(a[1]! + a[3]!), right = Date.parse(b[1]! + b[3]!);
+  return left > right || (left === right && (a[2] ?? '').padEnd(9, '0') > (b[2] ?? '').padEnd(9, '0'));
+}
+function diagnosticRoutingFields(observation: CommitRecoveryDiagnosticObservation): Record<string, string> {
+  const result: Record<string, string> = {status: observation.status, routing_state: observation.routing_state};
+  const routing = observation.routing;
+  if (routing) {
+    Object.assign(result, {waiting_reason: routing.waiting_reason, capacity_scope: routing.capacity_scope ?? '', target_available: String(routing.target_available)});
+    const blocker = routing.ordering_blocker;
+    if (blocker) Object.assign(result, {ordering_source: blocker.event_source, ordering_id: blocker.event_id, ordering_subscription_id: blocker.subscription_id.toLowerCase(), ordering_accepted_at: blocker.accepted_at, ordering_state: blocker.state});
+  }
+  return result;
+}
+
+function cleanDiagnosticObservation(observation: CommitRecoveryDiagnosticObservation): CommitRecoveryDiagnosticObservation {
+ const query = observation.query;
+ const clean: CommitRecoveryDiagnosticObservation = {query: {source: query.source, id: query.id, subscription_id: query.subscription_id, expected_accepted_at: query.expected_accepted_at}, observed_at: observation.observed_at, status: observation.status, routing_state: observation.routing_state};
+ const routing = observation.routing;
+ if (routing) {
+  clean.routing = {waiting_reason: routing.waiting_reason, capacity_scope: routing.capacity_scope, target_available: routing.target_available};
+  const blocker = routing.ordering_blocker;
+  if (blocker) clean.routing.ordering_blocker = {event_source: blocker.event_source, event_id: blocker.event_id, subscription_id: blocker.subscription_id, accepted_at: blocker.accepted_at, state: blocker.state};
+ }
+ return clean;
 }

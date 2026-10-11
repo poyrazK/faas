@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import math
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -795,10 +796,13 @@ def _prepare_diagnostics(
         if _valid_diagnostic(diagnostic, row):
             row["diagnostics"] = {**diagnostic, "retained": True}
             row["diagnostics"].pop("truncated", None)
+            _set_diagnostic_comparison(row["diagnostics"], diagnostic.get("previous_observation"), row)
         elif isinstance(diagnostic, dict) and diagnostic.get("status") == "read_error":
             row["diagnostics"] = {"status": "read_error"}
             if isinstance(diagnostic.get("reason"), str):
                 row["diagnostics"]["reason"] = diagnostic["reason"]
+        if not row["diagnostics"].get("retained"):
+            _set_diagnostic_comparison(row["diagnostics"], None, row)
         if not _diagnostic_queryable(row) and row["diagnostics"]["status"] == "budget_exhausted":
             row["diagnostics"] = {"status": "deferred", "reason": "receipt_evidence_unavailable"}
     _recount_diagnostics(out)
@@ -810,6 +814,8 @@ def _recount_diagnostics(out: dict[str, Any]) -> None:
     progress.update(
         freshness_checked_at=datetime.now(UTC).isoformat(),
         freshness={"fresh": 0, "stale": 0, "unread": 0},
+        compared=0,
+        changed=0,
         target_count=0,
         remaining=0,
         deferred=0,
@@ -835,6 +841,9 @@ def _recount_diagnostics(out: dict[str, Any]) -> None:
         progress["counts"][diagnostic["status"]] += 1
         if not _diagnostic_target(row):
             continue
+        if not diagnostic.get("retained") and diagnostic.get("comparison") == "compared":
+            progress["compared"] += 1
+            progress["changed"] += bool(diagnostic.get("changes"))
         progress["target_count"] += 1
         progress["freshness"][_diagnostic_freshness(row, checked, age)] += 1
         if not _diagnostic_queryable(row):
@@ -857,6 +866,7 @@ async def adiagnose_commit_recovery_status(
     """Rotate bounded exact lookups; previous must bind to the validated selection."""
     out = _prepare_diagnostics(status, previous, max_diagnostic_age)
     progress = out["diagnostics_progress"]
+    baselines = [_diagnostic_observation(row["diagnostics"], row) for row in out["items"]]
 
     def candidates(start: int, group: int) -> list[int]:
         indices = []
@@ -976,6 +986,9 @@ async def adiagnose_commit_recovery_status(
         row["diagnostics"] = (
             sample if _valid_diagnostic(sample, row) else {"status": "read_error", "reason": "invalid_evidence"}
         )
+    for row, baseline in zip(out["items"], baselines, strict=True):
+        if not row["diagnostics"].get("retained"):
+            _set_diagnostic_comparison(row["diagnostics"], baseline, row)
     if interrupted is not None:
         _recount_diagnostics(out)
         raise CommitRecoveryStatusError(out) from interrupted
@@ -991,3 +1004,193 @@ def _diagnostic_freshness(row: dict[str, Any], now: float, age: float) -> str:
     except (ValueError, OverflowError, TypeError):
         return "stale" if age > 0 else "fresh"
     return "stale" if age > 0 and (observed > now or now - observed > age) else "fresh"
+
+
+_DIAGNOSTIC_WAITING_REASONS = {
+    "circuit_open",
+    "circuit_probe_wait",
+    "circuit_recovery_rate_limited",
+    "subscription_paused",
+    "subscription_rate_limited",
+    "ordering_blocked",
+    "capacity_consumer",
+    "capacity_app",
+    "capacity_account",
+    "routing_in_progress",
+    "receipt_processing",
+    "retry_backoff",
+    "workflow_routing",
+    "ready",
+}
+
+
+def _diagnostic_observation(diagnostic: Any, row: dict[str, Any]) -> dict[str, Any] | None:
+    if not _valid_diagnostic(diagnostic, row) or diagnostic.get("status") not in {"available", "not_waiting"}:
+        return None
+    publication = row["selection"]["publication"]
+    observation = {
+        "query": {
+            "source": publication["source"],
+            "id": publication["id"],
+            "subscription_id": row["attempt"]["subscription_id"].lower(),
+            "expected_accepted_at": publication["accepted_at"],
+        },
+        "observed_at": diagnostic["observed_at"],
+        "status": diagnostic["status"],
+        "routing_state": diagnostic.get("routing_state", ""),
+    }
+    recipient = diagnostic.get("recipient")
+    if recipient:
+        routing = {
+            "waiting_reason": recipient.get("waiting_reason"),
+            "target_available": recipient.get("target_available"),
+        }
+        if recipient.get("capacity_scope"):
+            routing["capacity_scope"] = recipient["capacity_scope"]
+        if recipient.get("ordering_blocker"):
+            routing["ordering_blocker"] = {
+                key: recipient["ordering_blocker"].get(key)
+                for key in ("event_source", "event_id", "subscription_id", "accepted_at", "state")
+            }
+        observation["routing"] = routing
+    return observation if _valid_diagnostic_observation(observation, observation["query"]) else None
+
+
+def _valid_diagnostic_observation(observation: Any, query: dict[str, Any]) -> bool:
+    if not isinstance(observation, dict) or not isinstance(observation.get("query"), dict):
+        return False
+    saved = observation["query"]
+    if (
+        any(saved.get(key) != query[key] for key in ("source", "id", "subscription_id"))
+        or not isinstance(saved.get("expected_accepted_at"), str)
+        or not _same_acceptance(saved["expected_accepted_at"], query["expected_accepted_at"])
+    ):
+        return False
+    observed = observation.get("observed_at")
+    if not isinstance(observed, str) or not _same_acceptance(observed, observed):
+        return False
+    if observation.get("status") == "not_waiting":
+        return observation.get("routing") is None and observation.get("routing_state") in (
+            "enqueued",
+            "filtered",
+            "failed",
+        )
+    routing = observation.get("routing")
+    if (
+        observation.get("status") != "available"
+        or not isinstance(routing, dict)
+        or observation.get("routing_state") not in ("pending", "processing")
+    ):
+        return False
+    if (
+        type(routing.get("target_available")) is not bool
+        or not isinstance(routing.get("waiting_reason"), str)
+        or routing["waiting_reason"] not in _DIAGNOSTIC_WAITING_REASONS
+        or routing.get("capacity_scope", "") not in ("", "consumer", "app", "account")
+    ):
+        return False
+    blocker = routing.get("ordering_blocker")
+    if blocker is None:
+        return True
+    if not isinstance(blocker, dict):
+        return False
+    for key in ("event_source", "event_id", "subscription_id"):
+        value = blocker.get(key)
+        if not isinstance(value, str) or not value:
+            return False
+        try:
+            if len(value.encode("utf-8")) > 256:
+                return False
+        except UnicodeEncodeError:
+            return False
+    accepted = blocker.get("accepted_at")
+    return (
+        blocker["subscription_id"].lower() == query["subscription_id"].lower()
+        and isinstance(accepted, str)
+        and _same_acceptance(accepted, accepted)
+        and blocker.get("state") in ("pending", "processing")
+    )
+
+
+def _clean_diagnostic_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    clean = {key: observation[key] for key in ("observed_at", "status", "routing_state")}
+    clean["query"] = {
+        key: observation["query"][key] for key in ("source", "id", "subscription_id", "expected_accepted_at")
+    }
+    routing = observation.get("routing")
+    if routing is not None:
+        clean["routing"] = {
+            key: routing[key] for key in ("waiting_reason", "capacity_scope", "target_available") if key in routing
+        }
+        if routing.get("ordering_blocker") is not None:
+            clean["routing"]["ordering_blocker"] = {
+                key: routing["ordering_blocker"][key]
+                for key in ("event_source", "event_id", "subscription_id", "accepted_at", "state")
+            }
+    return clean
+
+
+def _set_diagnostic_comparison(diagnostic: dict[str, Any], previous: Any, row: dict[str, Any]) -> None:
+    diagnostic.pop("previous_observation", None)
+    diagnostic.pop("changes", None)
+    diagnostic["comparison"] = "evidence_unavailable"
+    current = _diagnostic_observation(diagnostic, row)
+    if current is None:
+        return
+    diagnostic["comparison"] = "baseline_unavailable"
+    if not _valid_diagnostic_observation(previous, current["query"]):
+        return
+    diagnostic["comparison"] = "non_monotonic_timestamp"
+    if _diagnostic_time_key(current["observed_at"]) <= _diagnostic_time_key(previous["observed_at"]):
+        return
+    diagnostic["comparison"] = "compared"
+    diagnostic["previous_observation"] = _clean_diagnostic_observation(previous)
+    before, after = _diagnostic_routing_fields(previous), _diagnostic_routing_fields(current)
+    fields = ["status", "routing_state"]
+    if previous["status"] == "available" and current["status"] == "available":
+        fields += [
+            "waiting_reason",
+            "capacity_scope",
+            "target_available",
+            "ordering_source",
+            "ordering_id",
+            "ordering_subscription_id",
+            "ordering_accepted_at",
+            "ordering_state",
+        ]
+    changes = []
+    for field in fields:
+        left, right = before.get(field, ""), after.get(field, "")
+        if left == right or (field == "ordering_accepted_at" and left and right and _same_acceptance(left, right)):
+            continue
+        changes.append({"field": field, "previous": left, "current": right})
+    if changes:
+        diagnostic["changes"] = changes
+
+
+def _diagnostic_time_key(value: str) -> tuple[datetime, str]:
+    match = re.fullmatch(r"(.+?)(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})", value)
+    if match is None:
+        raise ValueError("invalid diagnostic observation timestamp")
+    return datetime.fromisoformat(match[1] + match[3]), (match[2] or "").ljust(9, "0")
+
+
+def _diagnostic_routing_fields(observation: dict[str, Any]) -> dict[str, str]:
+    fields = {key: observation[key] for key in ("status", "routing_state")}
+    routing = observation.get("routing")
+    if routing:
+        fields.update(
+            waiting_reason=routing["waiting_reason"],
+            capacity_scope=routing.get("capacity_scope", ""),
+            target_available=str(routing["target_available"]).lower(),
+        )
+        blocker = routing.get("ordering_blocker")
+        if blocker:
+            fields.update(
+                ordering_source=blocker["event_source"],
+                ordering_id=blocker["event_id"],
+                ordering_subscription_id=blocker["subscription_id"].lower(),
+                ordering_accepted_at=blocker["accepted_at"],
+                ordering_state=blocker["state"],
+            )
+    return fields

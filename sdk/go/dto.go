@@ -438,3 +438,8 @@ type EventRecipientBlockerBatchItem = api.EventRecipientBlockerBatchItem
 type EventRecipientBlockerBatchResponse = api.EventRecipientBlockerBatchResponse
 
 type CommitRecoveryDiagnosticsOptions = api.CommitRecoveryDiagnosticsOptions
+
+type CommitRecoveryDiagnosticObservation = api.CommitRecoveryDiagnosticObservation
+type CommitRecoveryDiagnosticRouting = api.CommitRecoveryDiagnosticRouting
+type CommitRecoveryDiagnosticOrdering = api.CommitRecoveryDiagnosticOrdering
+type CommitRecoveryDiagnosticChange = api.CommitRecoveryDiagnosticChange
