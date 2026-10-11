@@ -10131,3 +10131,24 @@ before ordinary native preparation. This observation API does not introduce that
 protocol, change launch behavior or authorize closure or release. Native KVM and
 live provider qualification remain unperformed; public full-stage admission stays
 gated.
+
+### Explicit retained wake dispatch transport contract
+
+A private versioned metadata envelope now carries the retained ordinary clone
+wake dispatch record: original instance, app, deployment, node, wake, clone
+request reason, requested method and UTC dispatch timestamp. Encoding accepts
+complete canonical identities only and refuses to overwrite an existing envelope.
+Decoding checks the configured local node and rejects missing, duplicate, empty,
+unknown and unsupported fields without returning partial provenance. Ordinary
+correlation headers cannot supply any missing ownership fields. Authentication
+metadata and unrelated tracing metadata are preserved.
+
+This codec requires the existing authenticated scheduler-to-vmmd channel; it does
+not itself authenticate a peer. Its input must be the retained scheduler record,
+not current instance state or reconstructed trace fields. It is not yet wired
+into ordinary wake RPCs. Sender-side retained record retrieval, receiver-side
+payload matching, durable incoming ownership and physical generation binding
+must precede granting native launch authority. Delayed-producer revocation,
+closure and proof-backed evidence release also remain pending. Portable tests
+cover round trips and ambiguous, incomplete and foreign-node envelopes. No native
+VM or live provider was exercised; public full-stage admission remains gated.
