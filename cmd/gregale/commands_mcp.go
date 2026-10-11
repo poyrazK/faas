@@ -561,7 +561,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 
 type mcpDeployOptions struct {
 	path, slug, profile, tokenEnv, secretsFile string
-	releasePolicy                              string
+	releasePolicy, idempotencyKey              string
 	timeout                                    int
 }
 
@@ -575,6 +575,10 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
 	fs.StringVar(&o.releasePolicy, "release-policy", "", "role-specific catalog baselines to verify before promotion")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
+	// A failed submission's recovery hint tells the user to retry with this
+	// flag; without it the documented retry was an unknown-flag error
+	// (hunt #9 H9-63).
+	fs.StringVar(&o.idempotencyKey, "idempotency-key", "", "retry identity printed by a failed submission")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -619,13 +623,7 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
 	}
-	deployArgs := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
-	if o.profile != "" {
-		deployArgs = append(deployArgs, "--profile", o.profile)
-	}
-	if o.secretsFile != "" {
-		deployArgs = append(deployArgs, "--secrets-file", o.secretsFile)
-	}
+	deployArgs := mcpDeployArgs(o, dir)
 	// Preserve the existing ingress gate until the new app passes readiness.
 	var candidate api.DeploymentResponse
 	code := quietMCPDeploy(deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
@@ -633,6 +631,22 @@ func runMCPDeploy(o mcpDeployOptions) int {
 		return code
 	}
 	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles)
+}
+
+// mcpDeployArgs builds the underlying deploy invocation. The new app takes
+// no traffic until finishMCPDeploy has verified discovery.
+func mcpDeployArgs(o mcpDeployOptions, dir string) []string {
+	args := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
+	if o.profile != "" {
+		args = append(args, "--profile", o.profile)
+	}
+	if o.secretsFile != "" {
+		args = append(args, "--secrets-file", o.secretsFile)
+	}
+	if o.idempotencyKey != "" {
+		args = append(args, "--idempotency-key", o.idempotencyKey)
+	}
+	return args
 }
 
 func quietMCPDeploy(args []string, execution deployExecution) int {
