@@ -17427,3 +17427,8 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 -- name: PruneRouteProbeRounds :exec
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
 
+
+-- name: FinishWorkflowRunCancellation :one
+UPDATE workflow_runs SET status='failed',last_error=sqlc.arg(reason)::text,
+ finished_at=now(),updated_at=now(),cancelled_at=now()
+WHERE id=sqlc.arg(run_id)::uuid RETURNING *;

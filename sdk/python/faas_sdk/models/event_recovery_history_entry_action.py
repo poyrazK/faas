@@ -1,6 +1,8 @@
 from typing import Literal
 
-EventRecoveryHistoryEntryAction = Literal["cancelled", "created", "expired", "paused", "rate_changed", "resumed"]
+EventRecoveryHistoryEntryAction = Literal[
+    "cancelled", "created", "expired", "paused", "rate_changed", "resumed", "workflow_cancelled"
+]
 
 EVENT_RECOVERY_HISTORY_ENTRY_ACTION_VALUES: set[EventRecoveryHistoryEntryAction] = {
     "cancelled",
@@ -9,6 +11,7 @@ EVENT_RECOVERY_HISTORY_ENTRY_ACTION_VALUES: set[EventRecoveryHistoryEntryAction]
     "paused",
     "rate_changed",
     "resumed",
+    "workflow_cancelled",
 }
 
 

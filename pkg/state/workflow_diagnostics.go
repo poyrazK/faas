@@ -11,7 +11,7 @@ import (
 )
 
 type WorkflowDiagnosticsOptions struct {
-	RunID, AccountID, PlatformTenantID string
+	RunID, AccountID, PlatformTenantID, AppID string
 }
 
 type WorkflowRunDiagnosticsStore interface {

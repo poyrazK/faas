@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -41,6 +42,9 @@ class EventRecoveryHistoryEntry:
     state: EventRecoveryHistoryEntryState
     previous_rate: int
     rate: int
+    target_position: int | Unset = UNSET
+    target_run_id: UUID | Unset = UNSET
+    target_resume_count: int | Unset = UNSET
     reason: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +66,14 @@ class EventRecoveryHistoryEntry:
 
         rate = self.rate
 
+        target_position = self.target_position
+
+        target_run_id: str | Unset = UNSET
+        if not isinstance(self.target_run_id, Unset):
+            target_run_id = str(self.target_run_id)
+
+        target_resume_count = self.target_resume_count
+
         reason = self.reason
 
         field_dict: dict[str, Any] = {}
@@ -79,6 +91,12 @@ class EventRecoveryHistoryEntry:
                 "rate": rate,
             }
         )
+        if target_position is not UNSET:
+            field_dict["target_position"] = target_position
+        if target_run_id is not UNSET:
+            field_dict["target_run_id"] = target_run_id
+        if target_resume_count is not UNSET:
+            field_dict["target_resume_count"] = target_resume_count
         if reason is not UNSET:
             field_dict["reason"] = reason
 
@@ -105,6 +123,17 @@ class EventRecoveryHistoryEntry:
 
         rate = d.pop("rate")
 
+        target_position = d.pop("target_position", UNSET)
+
+        _target_run_id = d.pop("target_run_id", UNSET)
+        target_run_id: UUID | Unset
+        if isinstance(_target_run_id, Unset):
+            target_run_id = UNSET
+        else:
+            target_run_id = UUID(_target_run_id)
+
+        target_resume_count = d.pop("target_resume_count", UNSET)
+
         reason = d.pop("reason", UNSET)
 
         event_recovery_history_entry = cls(
@@ -117,6 +146,9 @@ class EventRecoveryHistoryEntry:
             state=state,
             previous_rate=previous_rate,
             rate=rate,
+            target_position=target_position,
+            target_run_id=target_run_id,
+            target_resume_count=target_resume_count,
             reason=reason,
         )
 

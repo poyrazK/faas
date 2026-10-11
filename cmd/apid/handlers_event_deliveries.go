@@ -368,23 +368,7 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 		return
 	}
 	err := s.applyEventAgeReplay(r, store, acct.ID, app.ID, req)
-	switch {
-	case errors.Is(err, state.ErrEventDeliveryExpired):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
-		return
-	case errors.Is(err, state.ErrNotFound):
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
-		return
-	case errors.Is(err, state.ErrConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
-		return
-	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
-		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
-		return
-	case err != nil:
-		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
+	if writeEventRoutingReplayError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.ReplayEventFanoutFailureResponse{
@@ -432,4 +416,33 @@ func (s *server) replayRetryableEventFanoutFailures(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusAccepted, api.ReplayRetryableEventFanoutFailuresResponse{
 		AppSlug: app.Slug, ReplayedCount: result.Replayed, HasMore: result.HasMore,
 	})
+}
+
+func writeEventRoutingReplayError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.ErrValidation("invalid recovery expectation or incompatible age override"))
+		return true
+	case errors.Is(err, state.ErrEventRecoveryChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEventRecoveryChanged, "Recovery plan changed", "routing state or automation revision no longer matches the reviewed plan"))
+		return true
+	case errors.Is(err, state.ErrEventDeliveryExpired):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
+		return true
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
+		return true
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
+		return true
+	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
+		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
+		return true
+	case err != nil:
+		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
+		return true
+	}
+	return false
 }

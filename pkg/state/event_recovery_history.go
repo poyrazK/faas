@@ -89,6 +89,18 @@ func (s *PgStore) ListEventRecoveryHistory(ctx context.Context, account, job str
 	entries := make([]api.EventRecoveryHistoryEntry, 0, len(rows))
 	for _, r := range rows {
 		entries = append(entries, api.EventRecoveryHistoryEntry{ID: r.ID, OccurredAt: timeFromPgtype(r.OccurredAt), Action: r.Action, ActorKind: r.ActorKind, ActorID: r.ActorID, Reason: r.Reason, PreviousState: r.PreviousState, State: r.State, PreviousRate: int(r.PreviousRate), Rate: int(r.Rate)})
+		entry := &entries[len(entries)-1]
+		if r.TargetPosition.Valid {
+			n := r.TargetPosition.Int64
+			entry.TargetPosition = &n
+		}
+		if r.TargetRunID.Valid {
+			entry.TargetRunID = uuidString(r.TargetRunID)
+		}
+		if r.TargetResumeCount.Valid {
+			n := int(r.TargetResumeCount.Int32)
+			entry.TargetResumeCount = &n
+		}
 	}
 	return historyPage(canonicalMemUUID(job), entries, limit), tx.Commit(ctx)
 }
@@ -114,6 +126,14 @@ func (m *MemStore) ListEventRecoveryHistory(ctx context.Context, account, id str
 	entries := []api.EventRecoveryHistoryEntry{}
 	for _, entry := range job.History {
 		if entry.ID > after {
+			if entry.TargetPosition != nil {
+				n := *entry.TargetPosition
+				entry.TargetPosition = &n
+			}
+			if entry.TargetResumeCount != nil {
+				n := *entry.TargetResumeCount
+				entry.TargetResumeCount = &n
+			}
 			entries = append(entries, entry)
 			if len(entries) > limit {
 				break

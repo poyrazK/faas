@@ -26,8 +26,18 @@ func (s *PgStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowDi
 		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("begin workflow diagnostics: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	q := sqlc.New()
-	row, err := q.GetOwnedWorkflowDiagnosticsRun(ctx, tx, sqlc.GetOwnedWorkflowDiagnosticsRunParams{
+	result, err := workflowRunDiagnosticsRead(ctx, sqlc.New(), tx, opts)
+	if err != nil {
+		return result, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("finish workflow diagnostics: %w", err)
+	}
+	return result, nil
+}
+
+func workflowRunDiagnosticsRead(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, opts WorkflowDiagnosticsOptions) (api.WorkflowRunDiagnosticsResponse, error) {
+	row, err := q.GetOwnedWorkflowDiagnosticsRun(ctx, db, sqlc.GetOwnedWorkflowDiagnosticsRunParams{
 		RunID: mustPgUUID(opts.RunID), AccountID: mustPgUUID(opts.AccountID), TenantID: mustPgUUID(opts.PlatformTenantID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -37,7 +47,10 @@ func (s *PgStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowDi
 		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("read diagnostic run: %w", err)
 	}
 	run := workflowRunFromSQLC(row)
-	steps, err := q.GetWorkflowDiagnosticsSteps(ctx, tx, row.ID)
+	if opts.AppID != "" && !sameMemUUID(run.AppID, opts.AppID) {
+		return api.WorkflowRunDiagnosticsResponse{}, ErrWorkflowRunNotFound
+	}
+	steps, err := q.GetWorkflowDiagnosticsSteps(ctx, db, row.ID)
 	if err != nil {
 		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("read diagnostic steps: %w", err)
 	}
@@ -48,18 +61,18 @@ func (s *PgStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowDi
 			SkipReason: workflowResumeTextPtr(step.SkipReason), NextRetryAt: workflowResumeTimePtr(step.NextRetryAt), NextCheckAt: workflowResumeTimePtr(step.NextCheckAt),
 		}
 	}
-	target, err := q.GetWorkflowRecoveryTarget(ctx, tx, sqlc.GetWorkflowRecoveryTargetParams{RunID: row.ID, StaleMs: int64(WorkflowRunStaleAfter / time.Millisecond)})
+	target, err := q.GetWorkflowRecoveryTarget(ctx, db, sqlc.GetWorkflowRecoveryTargetParams{RunID: row.ID, StaleMs: int64(WorkflowRunStaleAfter / time.Millisecond)})
 	if err != nil {
 		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("read workflow recovery target: %w", err)
 	}
-	running, err := q.WorkflowResumeHasRunningAttempts(ctx, tx, row.ID)
+	running, err := q.WorkflowResumeHasRunningAttempts(ctx, db, row.ID)
 	if err != nil {
 		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("read recovery attempts: %w", err)
 	}
 	var spec api.WorkflowSpec
 	var outboundErr error
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) == nil {
-		outboundErr = validateWorkflowOutboundTx(ctx, tx, run.AppID, opts.AccountID, spec)
+		outboundErr = validateWorkflowOutboundTx(ctx, db, run.AppID, opts.AccountID, spec)
 		if outboundErr != nil && !errors.Is(outboundErr, ErrAutomationInvalid) {
 			return api.WorkflowRunDiagnosticsResponse{}, outboundErr
 		}
@@ -74,8 +87,5 @@ func (s *PgStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowDi
 		deadline = row.LeaseUntil.Time
 	}
 	result := buildWorkflowRunDiagnostics(*run, stepMap, deadline, target.ObservedAt.Time, counts, workflowRecoveryTargetFromSQLC(target), running, outboundErr)
-	if err := tx.Commit(ctx); err != nil {
-		return api.WorkflowRunDiagnosticsResponse{}, fmt.Errorf("finish workflow diagnostics: %w", err)
-	}
 	return result, nil
 }

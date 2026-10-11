@@ -37,6 +37,8 @@ type EventRecoveryJobHealth struct {
 // Execution counts describe the oldest retained unresolved jobs. Partial counts
 // are lower bounds and must not be used to conclude that recovery is healthy.
 type EventRecoveryExecutionHealth struct {
+	StalledJobs             int64                             `json:"stalled_jobs,omitempty"`
+	DeadlineExceededJobs    int64                             `json:"deadline_exceeded_jobs,omitempty"`
 	Coverage                string                            `json:"coverage"`
 	ObservedJobs            int64                             `json:"observed_jobs"`
 	WaitingJobs             int64                             `json:"waiting_jobs"`
@@ -50,22 +52,23 @@ type EventRecoveryExecutionHealth struct {
 	Jobs                    []EventRecoveryExecutionJobHealth `json:"jobs"`
 }
 type EventRecoveryExecutionJobHealth struct {
-	JobID                     string                        `json:"job_id"`
-	ParentJobID               string                        `json:"parent_job_id,omitempty"`
-	State                     string                        `json:"state"`
-	Status                    string                        `json:"status"`
-	CompletedAt               time.Time                     `json:"completed_at"`
-	WaitAgeSeconds            float64                       `json:"wait_age_seconds"`
-	RetainUntil               time.Time                     `json:"retain_until"`
-	ProlongedWait             bool                          `json:"prolonged_wait"`
-	RetentionRisk             bool                          `json:"retention_risk"`
-	NotificationPending       bool                          `json:"notification_pending"`
-	QueuedCount               int64                         `json:"queued_count"`
-	UntrackedCount            int64                         `json:"untracked_count"`
-	UnknownCount              int64                         `json:"unknown_count"`
-	UnresolvedCount           int64                         `json:"unresolved_count"`
-	AwaitingSavedResultsCount int64                         `json:"awaiting_saved_results_count"`
-	Execution                 EventRecoveryExecutionSummary `json:"execution"`
+	Attention                 *WorkflowRecoveryExecutionAttention `json:"attention,omitempty"`
+	JobID                     string                              `json:"job_id"`
+	ParentJobID               string                              `json:"parent_job_id,omitempty"`
+	State                     string                              `json:"state"`
+	Status                    string                              `json:"status"`
+	CompletedAt               time.Time                           `json:"completed_at"`
+	WaitAgeSeconds            float64                             `json:"wait_age_seconds"`
+	RetainUntil               time.Time                           `json:"retain_until"`
+	ProlongedWait             bool                                `json:"prolonged_wait"`
+	RetentionRisk             bool                                `json:"retention_risk"`
+	NotificationPending       bool                                `json:"notification_pending"`
+	QueuedCount               int64                               `json:"queued_count"`
+	UntrackedCount            int64                               `json:"untracked_count"`
+	UnknownCount              int64                               `json:"unknown_count"`
+	UnresolvedCount           int64                               `json:"unresolved_count"`
+	AwaitingSavedResultsCount int64                               `json:"awaiting_saved_results_count"`
+	Execution                 EventRecoveryExecutionSummary       `json:"execution"`
 }
 type EventRecoveryHealth struct {
 	Notifications              *EventRecoveryNotificationsHealth `json:"notifications,omitempty"`

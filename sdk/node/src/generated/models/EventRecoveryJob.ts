@@ -23,7 +23,7 @@ export type EventRecoveryJob = {
   id: string;
   execution?: EventRecoveryExecutionSummary;
   app_id: string;
-  coverage: 'captured_application_recipients' | 'retained_application_executions';
+  coverage: 'captured_application_recipients' | 'retained_application_executions' | 'reviewed_workflow_runs';
   selection: EventRecoveryRequest;
   state: 'running' | 'paused' | 'completed' | 'cancelled';
   selected_count: number;

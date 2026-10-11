@@ -1,0 +1,13 @@
+# 954: Durable recovery policy, worker and incident events
+
+ADR-1020 exposes retained source evidence and latest observations. It cannot reconstruct earlier configurations, overwritten worker reasons or replaced health episodes.
+
+Add an app-owned event ledger independent of review/job foreign keys. Configuration replacements freeze the accepted policy, actor and reason. Automatic failure pauses append a policy pause event. Worker evaluations append only when their reason changes, preserving workflow/run/review/action/child links and the actual suppression cause. Result-recorded transitions preserve the observed terminal child outcome and reason. Health monitoring appends episode opening, status/reason changes, closing and notification capture events with the policy version and reason observed at capture. Repeated polls do not append. All new events are prospective; migration does not fabricate past transitions.
+
+PostgreSQL captures events in the mutation transaction under existing policy authority locks. Failure to append rolls back configuration, child admission, budgets, incident updates and outbox writes. Memory captures under its existing mutex. No event grants execution authority. Configuration snapshots contain policy settings, not workflow execution inputs, outputs or request plans.
+
+Each app retains at most 10,000 events. Age retention is 30 days from recording, distinct from the event occurrence timestamp. Writes remove expired and excess events before appending. Reads omit expired events without mutation. A scheduler sweep deletes up to 1,000 expired events each minute, including inactive apps; outage or backlog can delay physical deletion. App deletion cascades. Migration downgrade refuses to discard retained events.
+
+Entries expose `durable: true`; legacy source evidence and latest observations retain their original kinds. Cursors preserve the initial time window and a durable sequence ceiling from a consistent read. Mutation transactions serialize on policy authority, so events committing later cannot enter a prior traversal even with old timestamps. Retention can remove events between pages. Latest observations remain mutable and do not gain cross-request snapshot isolation. Stable timestamp/identifier ordering and existing scoped filters apply to both sources.
+
+The existing authenticated read endpoint, CLI and SDKs expose this ledger without a new execution command. JSON export preserves frozen policy configurations, episode IDs and evaluation classifications. Only retained legacy source evidence remains available for activity predating installation.

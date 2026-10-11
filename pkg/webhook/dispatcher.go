@@ -544,6 +544,38 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		d.markDead(ctx, row, "webhook: subscription disabled")
 		return
 	}
+	if row.Event == state.AppWebhookEventRecoveryReviewReady {
+		guard, ok := d.store.(state.WorkflowRecoveryReviewNotificationStore)
+		if !ok {
+			d.log.WarnContext(ctx, "webhook: recovery review guard unavailable", "delivery_id", row.ID)
+			return
+		}
+		allowed, reason, err := guard.WorkflowRecoveryReviewNotificationAllowed(ctx, row, d.Now())
+		if err != nil {
+			d.log.WarnContext(ctx, "webhook: recovery review check failed", "delivery_id", row.ID)
+			return
+		}
+		if !allowed {
+			d.markDead(ctx, row, "webhook: recovery review notification suppressed: "+reason)
+			return
+		}
+	}
+	if row.Event == state.AppWebhookEventRecoveryReviewFinished {
+		guard, ok := d.store.(state.WorkflowRecoveryReviewCompletionNotificationStore)
+		if !ok {
+			d.log.WarnContext(ctx, "webhook: review completion guard unavailable", "delivery_id", row.ID)
+			return
+		}
+		allowed, reason, err := guard.WorkflowRecoveryReviewCompletionNotificationAllowed(ctx, row)
+		if err != nil {
+			d.log.WarnContext(ctx, "webhook: review completion check failed", "delivery_id", row.ID)
+			return
+		}
+		if !allowed {
+			d.markDead(ctx, row, "webhook: review completion suppressed: "+reason)
+			return
+		}
+	}
 	if row.Event == state.OperationEffectEvent {
 		guard, ok := d.store.(state.OperationEffectDeliveryStore)
 		if !ok {

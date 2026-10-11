@@ -641,20 +641,11 @@ func (s *PgStore) cancelWorkflowRunTx(ctx context.Context, tx pgx.Tx, id, reason
 	`, id, reason); err != nil {
 		return nil, fmt.Errorf("pgstore: close workflow step attempts for cancellation: %w", err)
 	}
-	updateQuery := fmt.Sprintf(`
-		UPDATE workflow_runs
-		SET status = 'failed', last_error = $2, finished_at = now(), updated_at = now()
-		WHERE id = $1
-		RETURNING %s
-	`, workflowRunSelectCols)
-	run, err := scanWorkflowRunCols(tx.QueryRow(ctx, updateQuery, id, reason).Scan)
+	row, err := sqlc.New().FinishWorkflowRunCancellation(ctx, tx, sqlc.FinishWorkflowRunCancellationParams{RunID: mustPgUUID(id), Reason: reason})
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: mark workflow cancelled: %w", err)
 	}
-	if err := sqlc.New().RecordWorkflowCancellation(ctx, tx, mustPgUUID(id)); err != nil {
-		return nil, fmt.Errorf("pgstore: record workflow cancellation: %w", err)
-	}
-	run.CancelledAt = run.FinishedAt
+	run := workflowRunFromSQLC(row)
 	return run, nil
 }
 
