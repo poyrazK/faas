@@ -1061,6 +1061,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "event_circuit_breaker.go"),
 		filepath.Join(root, "pkg", "api", "event_consumer_execution_health.go"),
+		filepath.Join(root, "pkg", "api", "event_consumer_delivery_health.go"),
+		filepath.Join(root, "pkg", "api", "event_recipient_blocker.go"),
 		filepath.Join(root, "pkg", "api", "event_consumer_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_health.go"),
