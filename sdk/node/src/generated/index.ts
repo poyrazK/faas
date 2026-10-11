@@ -1090,6 +1090,8 @@ export type { OperationWorkflowBottlenecks } from './models/OperationWorkflowBot
 export type { OperationWorkflowChangeReason } from './models/OperationWorkflowChangeReason.js';
 export type { OperationWorkflowControlResponse } from './models/OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './models/OperationWorkflowDecision.js';
+export type { OperationWorkflowDecisionOutcomeGroup } from './models/OperationWorkflowDecisionOutcomeGroup.js';
+export type { OperationWorkflowDecisionOutcomeSummary } from './models/OperationWorkflowDecisionOutcomeSummary.js';
 export type { OperationWorkflowDependency } from './models/OperationWorkflowDependency.js';
 export type { OperationWorkflowDependencyFinding } from './models/OperationWorkflowDependencyFinding.js';
 export type { OperationWorkflowDependencyImpact } from './models/OperationWorkflowDependencyImpact.js';

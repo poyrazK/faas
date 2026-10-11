@@ -1084,6 +1084,8 @@ export type { OperationWorkflowBottlenecks } from './OperationWorkflowBottleneck
 export type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 export type { OperationWorkflowControlResponse } from './OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
+export type { OperationWorkflowDecisionOutcomeGroup } from './OperationWorkflowDecisionOutcomeGroup.js';
+export type { OperationWorkflowDecisionOutcomeSummary } from './OperationWorkflowDecisionOutcomeSummary.js';
 export type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 export type { OperationWorkflowDependencyFinding } from './OperationWorkflowDependencyFinding.js';
 export type { OperationWorkflowDependencyImpact } from './OperationWorkflowDependencyImpact.js';

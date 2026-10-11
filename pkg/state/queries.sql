@@ -17724,7 +17724,8 @@ CROSS JOIN LATERAL (
 SELECT jsonb_build_object('history',jsonb_build_object(
  'id',r.id,'operation_id',r.operation_id,'workflow',r.workflow,'instance_id',r.instance_id,
  'state',r.state,'from_state',r.from_state,'revision',r.revision,'contract_version',r.contract_version,
- 'blockers',r.blockers,'occurred_at',r.occurred_at,'published_at',r.created_at),
+ 'blockers',r.blockers,'selected_paths',r.selected_paths,'change_reason',r.change_reason,
+ 'outcome_code',r.outcome_code,'outcome_description',r.outcome_description,'occurred_at',r.occurred_at,'published_at',r.created_at),
  'sla_budget_seconds',COALESCE((SELECT MAX((step->'state_sla_budget_seconds'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
  'sla_warning_percent',COALESCE((SELECT MAX((step->'state_sla_warning_percent'->>r.state)::bigint) FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step) WHERE step->>'workflow'=r.workflow AND COALESCE(NULLIF((step->>'version')::integer,0),1)=r.contract_version),0),
  'terminal',COALESCE((SELECT bool_or(COALESCE(step->'terminal_states','[]'::jsonb) ? r.state)

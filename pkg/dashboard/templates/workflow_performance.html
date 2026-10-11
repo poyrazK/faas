@@ -64,6 +64,13 @@
     </section>{{end}}
     {{if .Data.Summary}}
     <p>Evaluated at <time>{{.Data.EvaluatedAt}}</time>. The latest {{.Data.Summary.CohortLimit}} retained instances in each cohort are considered. All durations below are seconds.</p>
+    {{with .Data.Summary.DecisionOutcomes}}<section class="card"><h2>Business decisions and outcomes</h2>
+      <p>{{.MatchingWorkflowCount}} matching completed workflows · {{.SampledWorkflowCount}} sampled · {{.LinkedWorkflowCount}} classified · {{.ExcludedIncompleteWorkflowCount}} excluded for incomplete history · {{.MissingOutcomeWorkflowCount}} without a reported outcome · {{.UnclassifiedWorkflowCount}} without a decision or path.</p>
+      {{if .CohortTruncated}}<p>More completed workflows match than this retained sample includes.</p>{{end}}
+      <div class="table-scroll"><table><caption>Full completed workflow duration by reported decision or path and latest reported outcome</caption><thead><tr><th>Kind / contract</th><th>Decision / rule version</th><th>Group / path</th><th>Outcome</th><th>Workflows</th><th>Completion p50 / p95 (s)</th><th>Blocked p50 / p95 (s)</th></tr></thead><tbody>{{range .Groups}}<tr><td>{{.Kind}} / {{.ContractVersion}}</td><td><code>{{.DecisionCode}}</code> / <code>{{.RuleID}}</code> / <code>{{.RuleVersion}}</code></td><td><code>{{.GroupID}}</code> / <code>{{.PathID}}</code></td><td><code>{{.OutcomeCode}}</code></td><td>{{.CompletionTime.WorkflowCount}}</td><td>{{.CompletionTime.P50Seconds}} / {{.CompletionTime.P95Seconds}}</td><td>{{.BlockedTime.P50Seconds}} / {{.BlockedTime.P95Seconds}}</td></tr>{{else}}<tr><td colspan="7">No eligible decision or path associations.</td></tr>{{end}}</tbody></table></div>
+      {{if .GroupsTruncated}}<p>Showing the first 64 groups in canonical identity order; other groups are omitted.</p>{{end}}
+      <p class="muted">Each workflow counts once per group. Groups overlap, so counts are not additive. Decisions reported after the first terminal report do not classify its completed path. These are observed associations and do not establish that a rule caused an outcome.</p>
+    </section>{{end}}
     {{range .Data.Cohorts}}
     <section class="card"><h2>{{.Name}} workflows</h2>
       <p>{{.MatchingWorkflowCount}} matching · {{.SampledWorkflowCount}} sampled · {{.CompleteHistoryWorkflowCount}} with complete history · {{.ExcludedIncompleteWorkflowCount}} excluded for incomplete history.</p>

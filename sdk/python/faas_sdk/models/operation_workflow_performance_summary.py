@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
     from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 
 
@@ -34,6 +37,12 @@ class OperationWorkflowPerformanceSummary:
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
    """
+    decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset = UNSET
+    """Observed decision and path associations with latest reported outcomes in the completed performance cohort.
+    Only complete histories with a reported outcome qualify. Repeated decision or path identities count once per
+    workflow and group. Groups overlap; their counts must not be summed. Classification uses reasons and selections
+    reported at or before the first terminal report. Sequence does not establish causation. Groups retain the first
+    64 canonical identities in ascending order."""
 
     def to_dict(self) -> dict[str, Any]:
         cohort_token = self.cohort_token
@@ -48,6 +57,10 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = self.ongoing.to_dict()
 
+        decision_outcomes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision_outcomes, Unset):
+            decision_outcomes = self.decision_outcomes.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -60,11 +73,14 @@ class OperationWorkflowPerformanceSummary:
                 "ongoing": ongoing,
             }
         )
+        if decision_outcomes is not UNSET:
+            field_dict["decision_outcomes"] = decision_outcomes
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
         from ..models.operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 
         d = dict(src_dict)
@@ -80,6 +96,13 @@ class OperationWorkflowPerformanceSummary:
 
         ongoing = OperationWorkflowPerformanceCohort.from_dict(d.pop("ongoing"))
 
+        _decision_outcomes = d.pop("decision_outcomes", UNSET)
+        decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset
+        if isinstance(_decision_outcomes, Unset):
+            decision_outcomes = UNSET
+        else:
+            decision_outcomes = OperationWorkflowDecisionOutcomeSummary.from_dict(_decision_outcomes)
+
         operation_workflow_performance_summary = cls(
             cohort_token=cohort_token,
             evaluated_at=evaluated_at,
@@ -87,6 +110,7 @@ class OperationWorkflowPerformanceSummary:
             cohort_limit=cohort_limit,
             completed=completed,
             ongoing=ongoing,
+            decision_outcomes=decision_outcomes,
         )
 
         return operation_workflow_performance_summary

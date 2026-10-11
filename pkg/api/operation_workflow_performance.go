@@ -9,12 +9,13 @@ type OperationWorkflowPerformanceOptions struct {
 
 // OperationWorkflowPerformanceSummary compares complete retained histories by cohort.
 type OperationWorkflowPerformanceSummary struct {
-	CohortToken string                             `json:"cohort_token"`
-	EvaluatedAt time.Time                          `json:"evaluated_at"`
-	Workflow    string                             `json:"workflow"`
-	CohortLimit int                                `json:"cohort_limit"`
-	Completed   OperationWorkflowPerformanceCohort `json:"completed"`
-	Ongoing     OperationWorkflowPerformanceCohort `json:"ongoing"`
+	DecisionOutcomes *OperationWorkflowDecisionOutcomeSummary `json:"decision_outcomes,omitempty"`
+	CohortToken      string                                   `json:"cohort_token"`
+	EvaluatedAt      time.Time                                `json:"evaluated_at"`
+	Workflow         string                                   `json:"workflow"`
+	CohortLimit      int                                      `json:"cohort_limit"`
+	Completed        OperationWorkflowPerformanceCohort       `json:"completed"`
+	Ongoing          OperationWorkflowPerformanceCohort       `json:"ongoing"`
 }
 
 type OperationWorkflowDurationDistribution struct {
@@ -71,4 +72,31 @@ type OperationWorkflowVerificationPerformance struct {
 	Owner                  string                                `json:"owner"`
 	PendingResolutionCount int64                                 `json:"pending_resolution_count"`
 	Duration               OperationWorkflowDurationDistribution `json:"duration"`
+}
+
+// OperationWorkflowDecisionOutcomeSummary groups completed workflows by reported business decisions and paths.
+type OperationWorkflowDecisionOutcomeSummary struct {
+	MatchingWorkflowCount           int64                                   `json:"matching_workflow_count"`
+	SampledWorkflowCount            int64                                   `json:"sampled_workflow_count"`
+	LinkedWorkflowCount             int64                                   `json:"linked_workflow_count"`
+	ExcludedIncompleteWorkflowCount int64                                   `json:"excluded_incomplete_workflow_count"`
+	MissingOutcomeWorkflowCount     int64                                   `json:"missing_outcome_workflow_count"`
+	UnclassifiedWorkflowCount       int64                                   `json:"unclassified_workflow_count"`
+	CohortTruncated                 bool                                    `json:"cohort_truncated"`
+	GroupsTruncated                 bool                                    `json:"groups_truncated"`
+	Groups                          []OperationWorkflowDecisionOutcomeGroup `json:"groups"`
+}
+
+// OperationWorkflowDecisionOutcomeGroup counts each workflow once per exact group.
+type OperationWorkflowDecisionOutcomeGroup struct {
+	Kind            string                                `json:"kind"`
+	ContractVersion int                                   `json:"contract_version"`
+	DecisionCode    string                                `json:"decision_code,omitempty"`
+	RuleID          string                                `json:"rule_id,omitempty"`
+	RuleVersion     string                                `json:"rule_version,omitempty"`
+	GroupID         string                                `json:"group_id,omitempty"`
+	PathID          string                                `json:"path_id,omitempty"`
+	OutcomeCode     string                                `json:"outcome_code"`
+	CompletionTime  OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime     OperationWorkflowDurationDistribution `json:"blocked_time"`
 }

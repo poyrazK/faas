@@ -496,3 +496,38 @@ completion time. Blocked seconds count intervals whose preceding snapshot had
 at least one blocker, counting overlapping blockers once. These durations are
 meaningful only for `linked` status. API, dashboard and CLI expose the same
 projection; no new persisted data or migration is required.
+
+### Business decision outcome summaries
+
+The existing workflow performance summary now includes `decision_outcomes`,
+also shown on the workflow performance dashboard. Go, Node and Python clients
+receive the same additive projection without a new endpoint or migration.
+It uses the existing latest retained completed cohort (up to 100 workflows),
+account/app/environment/customer boundaries, per-instance 1024-report history
+window, and complete-history eligibility rules. Ongoing workflows remain in
+the separate performance cohort and do not contribute to outcome groups.
+
+A group identifies the pinned contract, decision code, rule ID/version and
+latest application-reported outcome. Path groups additionally identify the
+selected prerequisite group and path; choices without a linked decision still
+form path groups. Both application change reasons and selected-path decision
+snapshots classify workflows. Each workflow contributes once per exact group,
+even when it repeats that decision or reports it through both sources. Only
+reports at or before the first terminal report classify the completed path.
+Groups overlap; summing their counts does not produce a cohort total.
+
+Completion and blocked-time distributions reuse the full completed workflow's
+observed state and blocked durations, with nearest-rank p50/p95 values. They
+are not decision execution times or decision-to-outcome latency. Overlapping
+blockers count once per workflow. The latest reported outcome is an application
+claim, and an association does not prove that a business rule caused it.
+
+Coverage separates sampled workflows into incomplete histories, missing
+reported outcomes, unclassified complete workflows, and classified workflows.
+Cohort truncation distinguishes all matching completed instances from the
+bounded sample. At most 64 groups are returned, in canonical identity order
+(contract, kind, decision code, rule ID, rule version, group, path, outcome).
+`groups_truncated` makes omissions explicit; classified workflow counts still
+include those whose groups were omitted. Group accumulation retains only the
+64 smallest identities, with one duration sample per workflow/group, bounding
+memory without losing counts for any returned group.

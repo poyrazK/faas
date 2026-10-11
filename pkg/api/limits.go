@@ -444,6 +444,7 @@ const (
 	OperationWorkflowStateSLAMaxSeconds               int64 = 315360000
 	OperationWorkflowStateSLAWarningMinPercent        int64 = 1
 	OperationWorkflowStateSLAWarningMaxPercent        int64 = 99
+	OperationWorkflowDecisionOutcomeGroupsMax               = 64
 	OperationWorkflowPerformanceCohortMax                   = 100
 	OperationWorkflowBottleneckHistoryMax                   = 1024
 	OperationWorkflowBottleneckGroupsMax                    = 32

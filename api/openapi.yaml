@@ -39031,12 +39031,44 @@ components:
       additionalProperties: false
       required: [cohort_token, evaluated_at, workflow, cohort_limit, completed, ongoing]
       properties:
+        decision_outcomes: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeSummary'}
         cohort_token: {type: string, maxLength: 512, description: Opaque selector-bound token for opening consistent contributor views.}
         evaluated_at: {type: string, format: date-time}
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
         cohort_limit: {type: integer, minimum: 1, maximum: 100}
         completed: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
         ongoing: {$ref: '#/components/schemas/OperationWorkflowPerformanceCohort'}
+    OperationWorkflowDecisionOutcomeSummary:
+      type: object
+      additionalProperties: false
+      description: "Observed decision and path associations with latest reported outcomes in the completed performance cohort. Only complete histories with a reported outcome qualify. Repeated decision or path identities count once per workflow and group. Groups overlap; their counts must not be summed. Classification uses reasons and selections reported at or before the first terminal report. Sequence does not establish causation. Groups retain the first 64 canonical identities in ascending order."
+      required: [matching_workflow_count, sampled_workflow_count, linked_workflow_count, excluded_incomplete_workflow_count, missing_outcome_workflow_count, unclassified_workflow_count, cohort_truncated, groups_truncated, groups]
+      properties:
+        matching_workflow_count: {type: integer, format: int64, minimum: 0, description: All matching completed workflows before bounded sampling.}
+        sampled_workflow_count: {type: integer, format: int64, minimum: 0}
+        linked_workflow_count: {type: integer, format: int64, minimum: 0, description: "Sampled complete workflows with a reported outcome and at least one decision or path identity. Includes workflows whose groups are omitted by the group limit."}
+        excluded_incomplete_workflow_count: {type: integer, format: int64, minimum: 0}
+        missing_outcome_workflow_count: {type: integer, format: int64, minimum: 0, description: Complete completed workflows without a latest reported outcome code.}
+        unclassified_workflow_count: {type: integer, format: int64, minimum: 0, description: Complete completed workflows with an outcome but no qualifying decision or path.}
+        cohort_truncated: {type: boolean}
+        groups_truncated: {type: boolean}
+        groups: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeGroup'}}
+    OperationWorkflowDecisionOutcomeGroup:
+      type: object
+      additionalProperties: false
+      description: "One exact contract, decision or path, rule version and reported outcome identity. Each contributing workflow counts once. Durations cover the full completed workflow and use the existing performance history rules; they do not measure rule causation or decision execution time. Overlapping blockers count once in each workflow's blocked duration."
+      required: [kind, contract_version, outcome_code, completion_time, blocked_time]
+      properties:
+        kind: {type: string, enum: [decision, path]}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000}
+        decision_code: {type: string, maxLength: 64}
+        rule_id: {type: string, maxLength: 64}
+        rule_version: {type: string, maxLength: 128}
+        group_id: {type: string, maxLength: 64}
+        path_id: {type: string, maxLength: 64}
+        outcome_code: {type: string, maxLength: 64}
+        completion_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        blocked_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
     OperationWorkflowDurationDistribution:
       type: object
       additionalProperties: false

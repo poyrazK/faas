@@ -2050,6 +2050,9 @@ from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWor
 from .operation_workflow_change_reason import OperationWorkflowChangeReason
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
+from .operation_workflow_decision_outcome_group import OperationWorkflowDecisionOutcomeGroup
+from .operation_workflow_decision_outcome_group_kind import OperationWorkflowDecisionOutcomeGroupKind
+from .operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
 from .operation_workflow_decision_reason import OperationWorkflowDecisionReason
 from .operation_workflow_dependency import OperationWorkflowDependency
 from .operation_workflow_dependency_finding import OperationWorkflowDependencyFinding
@@ -5489,6 +5492,9 @@ __all__ = (
     "OperationWorkflowChangeReason",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
+    "OperationWorkflowDecisionOutcomeGroup",
+    "OperationWorkflowDecisionOutcomeGroupKind",
+    "OperationWorkflowDecisionOutcomeSummary",
     "OperationWorkflowDecisionReason",
     "OperationWorkflowDependency",
     "OperationWorkflowDependencyFinding",

@@ -294,3 +294,5 @@ export { businessCompensationPayload, type OperationBusinessEffectReference, typ
 export type { OperationWorkflowChangeReason } from "./customer-operation-decisions.js";
 
 export type { OperationWorkflowOutcomeLink } from './customer-operations.js';
+
+export type { OperationWorkflowDecisionOutcomeSummary, OperationWorkflowDecisionOutcomeGroup } from './customer-operations.js';

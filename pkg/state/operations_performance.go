@@ -195,13 +195,14 @@ func workflowPerformanceCohort(instances []workflowPerformanceInstance, at time.
 func workflowPerformanceSummary(instances []workflowPerformanceInstance, opts api.OperationWorkflowPerformanceOptions, at time.Time) api.OperationWorkflowPerformanceSummary {
 	completed, ongoing := []workflowPerformanceInstance{}, []workflowPerformanceInstance{}
 	for _, instance := range instances {
+		instance.Bottlenecks = calculateWorkflowBottlenecks(instance.Observations, &instance.Current, instance.Verifications, at, false)
 		if instance.Current.Terminal {
 			completed = append(completed, instance)
 		} else {
 			ongoing = append(ongoing, instance)
 		}
 	}
-	return api.OperationWorkflowPerformanceSummary{EvaluatedAt: at, Workflow: opts.Workflow, CohortLimit: api.OperationWorkflowPerformanceCohortMax, Completed: workflowPerformanceCohort(completed, at), Ongoing: workflowPerformanceCohort(ongoing, at)}
+	return api.OperationWorkflowPerformanceSummary{DecisionOutcomes: workflowDecisionOutcomes(completed), EvaluatedAt: at, Workflow: opts.Workflow, CohortLimit: api.OperationWorkflowPerformanceCohortMax, Completed: workflowPerformanceCohort(completed, at), Ongoing: workflowPerformanceCohort(ongoing, at)}
 }
 
 func (m *MemStore) SummarizeAccountWorkflowPerformance(ctx context.Context, account string, opts api.OperationWorkflowPerformanceOptions) (api.OperationWorkflowPerformanceSummary, error) {
