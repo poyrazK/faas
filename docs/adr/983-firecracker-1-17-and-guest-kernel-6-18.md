@@ -83,15 +83,34 @@ once on 1.7.0 / 6.1.134 and once on 1.17.0 / 6.18.54:
   (median 1.16 s), and both kernels reach the network at the same time, so the
   cold-boot cost comes from the 6.18 guest after kernel init.
 
-Open before rollout:
+Follow-up fixes (2026-10-12):
 
-1. Find the ~300 ms the 6.18 guest adds to cold boot in the guest-init /
-   vmmd readiness path (vsock characterization and readiness are the next
-   suspects; a direct boot with virtio-rng shows no gap to HTTP readiness).
-2. The 6.18 guest prints `PCI: Fatal: No config space access function found`
-   under `quiet`, which reaches the app's console log on every cold boot.
-   Firecracker also logs failed guest port I/O at 0xcf8/0xcfc. Decide between
-   disabling `CONFIG_PCI` locally and adjusting the boot arguments.
+1. **Guest boot CPU.** Both kernels reach the network at the same moment, but
+   the 6.18 guest burned ~270 ms more CPU per boot (1,150 vs 880 ms). The
+   v1.17 config builds in crypto self-tests over ~65 algorithms, SELinux and
+   audit, none of which the v1.7 kernel had or Gregale uses. Cold and
+   execution boots now pass `cryptomgr.notests selinux=0 audit=0`, which
+   brings boot CPU to 915 ms. FIPS mode is never enabled. Interleaved
+   HelloBoot medians on the n2 node (20 each): 1.7 / 6.1 1.27 s, 1.17 / 6.18
+   with the old arguments 1.52 s, with the new arguments 1.33 s.
+   Initcall timing is equal on both kernels, and memory is not a factor:
+   peak usage is 80–89 MiB in a 128 MiB guest with no `memory.events`.
+2. **PCI notice.** The guest must keep `CONFIG_PCI`: Firecracker 1.17
+   describes its virtio-mmio devices in ACPI tables that reference PCI, and a
+   no-PCI build fails to load them and cannot find its root disk. With the
+   PCI transport off, `pci_arch_init` prints `PCI: Fatal: No config space
+   access function found` at `KERN_ERR` on every boot, and Firecracker logs
+   the guest's PCI port probes from its `fc_vcpu` threads. vmmd drops exactly
+   that kernel line and all `fc_vcpu` lines from the customer log stream; the
+   console file keeps them.
+3. **No regressions.** The full metal package with these changes:
+   1,057 pass, 35 fail (the same 35 as 1.7), batch 7/7, no new leaks.
+
+Remaining: a ~60 ms median cold-boot cost from the 6.18 guest that grows
+when the host is CPU-contended (+320 ms at load average 5 on the 2-vCPU test
+node). The rest of the difference is guest kernel behaviour under CPU
+contention. Turning guest CPU-vulnerability mitigations off would cut it
+further but is a security decision, not part of this upgrade.
 
 ## Consequences
 
