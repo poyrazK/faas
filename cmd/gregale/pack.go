@@ -1124,6 +1124,19 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 		}
 		return shapeUnknown, "", "", baseErr
 	case shapeFunction:
+		// ADR-976: an explicit runtime plus a handler file that exists in the
+		// source is a complete function shape; a shared source tree may hold
+		// several handlers and no conventional handler.* at its root.
+		if len(displayOverride) > 1 {
+			if file, isFile, _ := api.FunctionHandlerFile(displayOverride[0], displayOverride[1]); isFile {
+				if info, statErr := os.Stat(filepath.Join(srcDir, filepath.FromSlash(file))); statErr == nil && !info.IsDir() {
+					if !jsonOutput {
+						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayOverride[0], file)
+					}
+					return shapeFunction, displayOverride[0], displayOverride[1], nil
+				}
+			}
+		}
 		rt, hnd, ok := inferFunctionRuntime(srcDir)
 		if !ok {
 			// Issue #740 / DEPLOY-PROV-5 / ADR-087: when the user

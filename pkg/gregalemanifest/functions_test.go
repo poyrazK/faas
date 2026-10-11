@@ -60,7 +60,13 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"bad name", "functions:\n  - name: Thumbs\n    root: f\n", api.PlanPro, "name \"Thumbs\""},
 		{"duplicate name", "functions:\n  - name: a\n    root: f1\n  - name: a\n    root: f2\n", api.PlanPro, "duplicate function name"},
 		{"missing root", "functions:\n  - name: a\n", api.PlanPro, "root: is required"},
-		{"project root", "functions:\n  - name: a\n    root: .\n", api.PlanPro, "not the project root"},
+		{"project root without handler", "functions:\n  - name: a\n    root: .\n", api.PlanPro, "set handler"},
+		{"no root and no handler", "functions:\n  - name: a\n    runtime: node24\n", api.PlanPro, "root: is required"},
+		{"handler with unknown extension", "functions:\n  - name: a\n    handler: api/a.rb\n", api.PlanPro, "set runtime"},
+		{"handler wrong for runtime", "functions:\n  - name: a\n    runtime: python313\n    handler: api/a.js\n", api.PlanPro, "not a handler file for runtime python313"},
+		{"go handler", "functions:\n  - name: a\n    runtime: go124\n    handler: cmd/a/main.go\n", api.PlanPro, "Go function is built from its own root"},
+		{"escaping handler", "functions:\n  - name: a\n    handler: ../x.js\n", api.PlanPro, "inside the source root"},
+		{"same handler twice", "functions:\n  - name: a\n    handler: api/x.js\n  - name: b\n    root: .\n    handler: ./api/x.js\n", api.PlanPro, "already the handler of function \"a\""},
 		{"escaping root", "functions:\n  - name: a\n    root: ../x\n", api.PlanPro, "inside the project"},
 		{"absolute root", "functions:\n  - name: a\n    root: /srv/x\n", api.PlanPro, "relative directory"},
 		{"shared root", "functions:\n  - name: a\n    root: f\n  - name: b\n    root: ./f\n", api.PlanPro, "already the root"},
@@ -88,6 +94,34 @@ func TestFunctionsManifestRejections(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// Several functions may share one source tree when each names its handler.
+func TestFunctionsManifestSharedTree(t *testing.T) {
+	manifest := `functions:
+  - name: resize
+    handler: api/resize.js
+  - name: digest
+    handler: api/digest.py
+  - name: thumbs
+    root: services/thumbs
+`
+	m, err := ParseBytes([]byte(manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if got := m.Functions[0].FunctionRoot(); got != "." {
+		t.Fatalf("handler-only function root = %q, want the project", got)
+	}
+	if got := m.Functions[2].FunctionRoot(); got != "services/thumbs" {
+		t.Fatalf("root = %q", got)
+	}
+	if HandlerRuntimeFamily("api/digest.py") != "python" || HandlerRuntimeFamily("api/x.mjs") != "node" || HandlerRuntimeFamily("main.go") != "" {
+		t.Fatal("HandlerRuntimeFamily mapping drifted")
 	}
 }
 

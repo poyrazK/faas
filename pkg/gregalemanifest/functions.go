@@ -12,11 +12,14 @@ import (
 )
 
 // FunctionSpec is one entry of `functions:` (ADR-976). Each entry deploys as
-// its own function app from its own source root; the CLI fans
-// `gregale deploy` out over the list.
+// its own function app; the CLI fans `gregale deploy` out over the list.
+// Root is the uploaded source directory. Handler, when set, names the
+// function's file inside Root, so several Node or Python functions can share
+// one source tree; Root then defaults to the project directory.
 type FunctionSpec struct {
 	Name         string                `yaml:"name"`
-	Root         string                `yaml:"root"`
+	Root         string                `yaml:"root,omitempty"`
+	Handler      string                `yaml:"handler,omitempty"`
 	Runtime      string                `yaml:"runtime,omitempty"`
 	IdleTimeoutS int                   `yaml:"idle_timeout_s,omitempty"`
 	BucketEvents []FunctionBucketEvent `yaml:"bucket_events,omitempty"`
@@ -95,17 +98,27 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 			return fmt.Errorf("%s: duplicate function name %q", field, fn.Name)
 		}
 		names[fn.Name] = struct{}{}
-		root, err := cleanFunctionRoot(fn.Root)
-		if err != nil {
-			return fmt.Errorf("%s.root: %w", field, err)
-		}
-		if other, dup := roots[root]; dup {
-			return fmt.Errorf("%s.root %q is already the root of function %q", field, fn.Root, other)
-		}
-		roots[root] = fn.Name
 		if fn.Runtime != "" && !api.ValidFunctionRuntime(fn.Runtime) {
 			return fmt.Errorf("%s.runtime %q is not a function runtime (want one of %s)", field, fn.Runtime, strings.Join(api.FunctionRuntimes, ", "))
 		}
+		root, err := cleanFunctionRoot(fn.Root, fn.Handler != "")
+		if err != nil {
+			return fmt.Errorf("%s.root: %w", field, err)
+		}
+		handler := ""
+		if fn.Handler != "" {
+			if handler, err = validateFunctionHandler(fn); err != nil {
+				return fmt.Errorf("%s.handler: %w", field, err)
+			}
+		}
+		entry := root + "\x00" + handler
+		if other, dup := roots[entry]; dup {
+			if handler == "" {
+				return fmt.Errorf("%s.root %q is already the root of function %q; give one of them a handler", field, root, other)
+			}
+			return fmt.Errorf("%s.handler %q in %q is already the handler of function %q", field, handler, root, other)
+		}
+		roots[entry] = fn.Name
 		if fn.IdleTimeoutS != 0 && (fn.IdleTimeoutS < api.IdleTimeoutFloorSeconds || fn.IdleTimeoutS > ceiling) {
 			return fmt.Errorf("%s.idle_timeout_s %d must be between %d and %d on this plan", field, fn.IdleTimeoutS, api.IdleTimeoutFloorSeconds, ceiling)
 		}
@@ -191,17 +204,69 @@ func (m *Manifest) rejectSectionsBesideFunctions() error {
 	return nil
 }
 
-func cleanFunctionRoot(root string) (string, error) {
+// FunctionRoot is the function's source directory relative to the project:
+// Root, or the project itself when only a handler is given.
+func (fn FunctionSpec) FunctionRoot() string {
+	root, err := cleanFunctionRoot(fn.Root, fn.Handler != "")
+	if err != nil {
+		return path.Clean(strings.TrimSpace(fn.Root))
+	}
+	return root
+}
+
+// HandlerRuntimeFamily infers a function's runtime family from its handler
+// file when no runtime is set: "node" for .js/.mjs, "python" for .py.
+func HandlerRuntimeFamily(handler string) string {
+	switch path.Ext(handler) {
+	case ".js", ".mjs":
+		return "node"
+	case ".py":
+		return "python"
+	}
+	return ""
+}
+
+// validateFunctionHandler checks a shared-tree handler file and returns its
+// clean path relative to the function's root.
+func validateFunctionHandler(fn FunctionSpec) (string, error) {
+	runtime := fn.Runtime
+	if strings.HasPrefix(runtime, "go") {
+		return "", errors.New("a Go function is built from its own root; remove handler and give the function its own root")
+	}
+	if runtime == "" {
+		switch HandlerRuntimeFamily(fn.Handler) {
+		case "node":
+			runtime = "node24"
+		case "python":
+			runtime = "python313"
+		default:
+			return "", fmt.Errorf("%q is not a .js, .mjs or .py file; set runtime to choose the function's runtime", fn.Handler)
+		}
+	}
+	file, ok, err := api.FunctionHandlerFile(runtime, fn.Handler)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%q is not a handler file for runtime %s", fn.Handler, runtime)
+	}
+	return file, nil
+}
+
+func cleanFunctionRoot(root string, hasHandler bool) (string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
-		return "", errors.New("is required (the function's source directory)")
+		if hasHandler {
+			return ".", nil
+		}
+		return "", errors.New("is required (the function's source directory), or set handler to use a file in the project")
 	}
 	if strings.HasPrefix(root, "/") || strings.Contains(root, "\\") {
 		return "", fmt.Errorf("%q must be a relative directory", root)
 	}
 	clean := path.Clean(root)
-	if clean == "." {
-		return "", fmt.Errorf("%q must be a subdirectory, not the project root", root)
+	if clean == "." && !hasHandler {
+		return "", fmt.Errorf("%q is the project root; set handler to name the function's file in it", root)
 	}
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("%q must stay inside the project", root)

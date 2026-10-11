@@ -148,7 +148,7 @@ func TestStripDeployFlags(t *testing.T) {
 
 func TestFunctionDeployArgs(t *testing.T) {
 	got := functionDeployArgs([]string{"--path", "shop", "--yes"}, plannedFunction{root: "shop/functions/thumbs", slug: "shop-thumbs", runtime: "node24", handler: "handler.handler"})
-	want := []string{"--yes", "--path", "shop/functions/thumbs", "--name", "shop-thumbs", "--function", "--runtime", "node24", "--handler", "handler.handler"}
+	want := []string{"--yes", "--path", "shop/functions/thumbs", "--name", "shop-thumbs", "--function", "--runtime", "node24", "--handler", "handler.handler", "--no-triggers"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("functionDeployArgs = %v, want %v", got, want)
 	}
@@ -172,6 +172,66 @@ func TestFunctionSetPlan(t *testing.T) {
 	}
 	if want := filepath.Join(filepath.Base(dir), "functions", "thumbs"); planned[0].root != want {
 		t.Fatalf("root = %q, want %q", planned[0].root, want)
+	}
+}
+
+// ADR-976: functions sharing the project tree each upload the project root
+// with their own handler file and inferred runtime.
+func TestFunctionSetPlanSharedTree(t *testing.T) {
+	dir := writeFunctionProject(t, "functions:\n  - name: resize\n    handler: api/resize.js\n  - name: digest\n    handler: api/digest.py\n  - name: sharp\n    runtime: node24\n    handler: ./api/sharp.mjs\n")
+	for name, body := range map[string]string{"api/resize.js": "export async function handler() {}\n", "api/digest.py": "def handler(event, ctx):\n    return {}\n", "api/sharp.mjs": "export default async function handler() {}\n"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, _, err := functionSetManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, err := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m}.plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []plannedFunction{
+		{slug: "shop-resize", root: ".", runtime: runtimeNode22, handler: "api/resize.js"},
+		{slug: "shop-digest", root: ".", runtime: runtimePython312, handler: "api/digest.py"},
+		{slug: "shop-sharp", root: ".", runtime: "node24", handler: "api/sharp.mjs"},
+	}
+	for i, w := range want {
+		got := planned[i]
+		if got.slug != w.slug || got.root != w.root || got.runtime != w.runtime || got.handler != w.handler {
+			t.Errorf("planned[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+
+	missing := writeFunctionProject(t, "functions:\n  - name: resize\n    handler: api/missing.js\n")
+	m, _, _ = functionSetManifest(missing)
+	if _, err := (functionSetDeploy{cwd: missing, projectDir: missing, projectSlug: "shop", manifest: m}).plan(); err == nil || !strings.Contains(err.Error(), "is not a file") {
+		t.Fatalf("missing handler error = %v", err)
+	}
+}
+
+// A child deploy of a shared tree names its handler file; the tree has
+// several handlers and no handler.* at its root.
+func TestResolveDeployShapeExplicitHandlerFile(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"api/a.js", "api/b.js"} {
+		if err := os.MkdirAll(filepath.Join(dir, "api"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("export async function handler() {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sh, rt, hnd, err := resolveDeployShape(dir, true, false, true, "node22", "api/a.js")
+	if err != nil || sh != shapeFunction || rt != "node22" || hnd != "api/a.js" {
+		t.Fatalf("resolveDeployShape = (%d, %q, %q, %v)", sh, rt, hnd, err)
+	}
+	if _, _, _, err := resolveDeployShape(dir, true, false, true, "node22", "api/missing.js"); err == nil {
+		t.Fatal("a missing handler file must still fail")
 	}
 }
 

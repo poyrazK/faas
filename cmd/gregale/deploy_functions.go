@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -89,18 +90,14 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 		if !api.ValidAppSlug(slug) {
 			return nil, fmt.Errorf("function %q: app slug %q must be 3-40 lowercase letters, digits and hyphens; shorten the function name or pass a shorter --name", fn.Name, slug)
 		}
-		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(fn.Root))
+		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(fn.FunctionRoot()))
 		info, err := os.Stat(absRoot)
 		if err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("function %q: root %q is not a directory", fn.Name, fn.Root)
 		}
-		runtime, handler := fn.Runtime, defaultTemplateHandler
-		if runtime == "" {
-			rt, hnd, ok := inferFunctionRuntime(absRoot)
-			if !ok {
-				return nil, fmt.Errorf("function %q: could not infer a runtime from %s; set runtime: in gregale.yaml", fn.Name, fn.Root)
-			}
-			runtime, handler = rt, hnd
+		runtime, handler, err := functionRuntimeAndHandler(fn, absRoot)
+		if err != nil {
+			return nil, fmt.Errorf("function %q: %w", fn.Name, err)
 		}
 		root, err := filepath.Rel(d.cwd, absRoot)
 		if err != nil {
@@ -111,12 +108,43 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 	return planned, nil
 }
 
+// functionRuntimeAndHandler resolves the runtime and wire handler for one
+// function. A handler file in a shared tree must exist; without one, the
+// root's conventional handler.* file decides the runtime.
+func functionRuntimeAndHandler(fn gregalemanifest.FunctionSpec, absRoot string) (string, string, error) {
+	if fn.Handler != "" {
+		info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(fn.Handler)))
+		if err != nil || info.IsDir() {
+			return "", "", fmt.Errorf("handler %q is not a file in %s", fn.Handler, fn.FunctionRoot())
+		}
+		runtime := fn.Runtime
+		if runtime == "" {
+			switch gregalemanifest.HandlerRuntimeFamily(fn.Handler) {
+			case "node":
+				runtime = runtimeNode22
+			case "python":
+				runtime = runtimePython312
+			}
+		}
+		return runtime, path.Clean(fn.Handler), nil
+	}
+	if fn.Runtime != "" {
+		return fn.Runtime, defaultTemplateHandler, nil
+	}
+	runtime, handler, ok := inferFunctionRuntime(absRoot)
+	if !ok {
+		return "", "", fmt.Errorf("could not infer a runtime from %s; set runtime: in gregale.yaml", fn.FunctionRoot())
+	}
+	return runtime, handler, nil
+}
+
 // functionDeployArgs rewrites the parent deploy arguments for one function:
 // its root and slug replace --path and --name, and the function shape is
-// explicit so the child never re-reads the project manifest as an app.
+// explicit so the child never re-reads the project manifest as an app. The
+// fan-out applies triggers itself, so the child never stages them.
 func functionDeployArgs(args []string, fn plannedFunction) []string {
 	out := stripDeployFlags(args, "path", "name", "runtime", "handler")
-	return append(out, "--path", fn.root, "--name", fn.slug, "--function", "--runtime", fn.runtime, "--handler", fn.handler)
+	return append(out, "--path", fn.root, "--name", fn.slug, "--function", "--runtime", fn.runtime, "--handler", fn.handler, "--no-triggers")
 }
 
 // stripDeployFlags removes value flags (both -x v and -x=v forms).
@@ -412,8 +440,8 @@ func reconcileFunctionWebhooks(ctx context.Context, client functionSetClient, ou
 				return fmt.Errorf("endpoint %q uses provider %q, manifest says %q; a provider cannot change, so delete the endpoint first", hook.Name, current.Provider, hook.Provider)
 			}
 			if hook.DeliveryPath != "" && current.DeliveryPath != hook.DeliveryPath {
-				path := hook.DeliveryPath
-				if _, err := client.UpdateInboundWebhookEndpoint(ctx, slug, current.ID, api.UpdateInboundWebhookEndpointRequest{DeliveryPath: &path}); err != nil {
+				deliveryPath := hook.DeliveryPath
+				if _, err := client.UpdateInboundWebhookEndpoint(ctx, slug, current.ID, api.UpdateInboundWebhookEndpointRequest{DeliveryPath: &deliveryPath}); err != nil {
 					return fmt.Errorf("update endpoint %q: %w", hook.Name, err)
 				}
 			}

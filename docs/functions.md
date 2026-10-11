@@ -17,9 +17,11 @@ for an async result. Runtime-specific limits are in [plans](plans.md).
 
 ## Several functions in one project
 
-List the functions in `gregale.yaml`. Each one has its own directory with its
-own handler, and `gregale deploy` deploys each as its own function app, named
-`<project>-<name>`:
+List the functions in `gregale.yaml`. `gregale deploy` deploys each one as
+its own function app, named `<project>-<name>`. A function either has its own
+directory (`root:`) with a conventional `handler.js`, `handler.py` or Go
+`main`, or names its file (`handler:`) in a source tree it shares with other
+functions:
 
 ```yaml
 functions:
@@ -59,6 +61,28 @@ the rest are not attempted and the summary says which functions are live; run
 the deploy again once it is fixed. Inside a monorepo workspace, a function's
 build includes the workspace, so functions can share packages.
 
+### Functions sharing one source tree
+
+Node and Python functions can live side by side in one tree and share code
+with ordinary imports. Name each function's file with `handler:`; `root:`
+then defaults to the project directory:
+
+```yaml
+functions:
+  - name: resize
+    handler: api/resize.js        # imports ../lib/images.js
+  - name: invoices
+    handler: api/invoices.py      # imports helpers from api/
+    runtime: python313            # optional; .js → node22, .py → python312
+```
+
+Each function uploads and builds the shared tree, and its handler file is
+loaded where it lives, so relative imports keep working. A Node handler is a
+`.js` or `.mjs` file and a Python handler a `.py` file, using the same
+`handler(event, ctx)` or Fetch API exports as a single function. Go functions
+are each built from their own `main`, so give every Go function its own
+`root:`. Two functions may share a root only when their handlers differ.
+
 After each function deploys, Gregale applies its manifest settings:
 
 - **`idle_timeout_s`**: how long the function stays warm after a request.
@@ -82,6 +106,7 @@ it, and `gregale apps --yes <slug>` deletes it.
 
 A manifest with `functions:` holds only `functions`, cron `triggers` and
 `schema_version`. Other sections apply to a single app, so configure them per
-function after deploying. Repository deploys connected through GitHub refuse
-a `functions:` manifest; point each app at one function's root instead. The
-design is recorded in [ADR-976](adr/976-multi-function-projects.md).
+function after deploying. `functions:` is applied by `gregale deploy`:
+repository deploys connected through GitHub ignore it for a function app and
+refuse it for any other app. The design is recorded in
+[ADR-976](adr/976-multi-function-projects.md).

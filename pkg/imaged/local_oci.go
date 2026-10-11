@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -344,6 +345,21 @@ func functionAppEntryName(name string) (string, bool) {
 		return "", false
 	}
 	return clean, true
+}
+
+// functionHandlerSourcePath returns the handler file inside the built source
+// tree. A deployment handler that names a file for the runtime selects it
+// (ADR-976 shared-tree functions); any other value keeps fallback, the
+// runtime's default file.
+func functionHandlerSourcePath(runtime, handler, fallback string) (string, error) {
+	file, ok, err := api.FunctionHandlerFile(runtime, handler)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return fallback, nil
+	}
+	return "/app/" + file, nil
 }
 
 func functionHandlerPaths(runtime string) (source, target string, err error) {
