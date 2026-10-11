@@ -31,6 +31,9 @@ func TestPgEnvironmentGitOpsGraphActivationServingAndRosterRecovery(t *testing.T
 		t.Fatal(err)
 	}
 	plan := claimedIntentPlan(t, store, lease, desired)
+	if managed, err := store.EnvironmentGitOpsHasServingManagedWorkload(t.Context(), lease); err != nil || managed {
+		t.Fatalf("held, unactivated candidates were treated as serving: managed=%t err=%v", managed, err)
+	}
 	if _, activated, err := store.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan); err != nil || activated {
 		t.Fatalf("unqualified graph activated: %t %v", activated, err)
 	}
@@ -44,6 +47,9 @@ func TestPgEnvironmentGitOpsGraphActivationServingAndRosterRecovery(t *testing.T
 	release, activated, err := store.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan)
 	if err != nil || !activated || len(release.Members) != len(requests) {
 		t.Fatalf("whole-graph activation: %+v %t %v", release, activated, err)
+	}
+	if managed, err := store.EnvironmentGitOpsHasServingManagedWorkload(t.Context(), lease); err != nil || !managed {
+		t.Fatalf("active Git-managed release was omitted by empty-graph guard: managed=%t err=%v", managed, err)
 	}
 	activatedEvidence, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan)
 	if err != nil || !activatedEvidence.Activated || activatedEvidence.Serving {

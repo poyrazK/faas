@@ -8,13 +8,56 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type gitOpsRuntimeNotifier struct {
 	*gitOpsFleetNotifier
 	requests []state.EnvironmentGitOpsRuntimeRequest
+}
+
+func TestEnvironmentGitOpsBackendConvergesConfigurationOnlyEnvironment(t *testing.T) {
+	srv, store, account, project, _ := newProjectLifecycleFixture(t)
+	if _, err := store.UpdateProjectBinding(t.Context(), account.ID, project.ID, "example/shop", "main", 42); err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.CreateEnvironmentGitSource(t.Context(), account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{
+		RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main",
+		ManifestPath: "environments/production.yaml", Mode: "enforce", ApprovalPolicy: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
+		Project: "shop", Environment: "production", Workloads: map[string]api.EnvironmentWorkload{},
+		Configuration: map[string]json.RawMessage{"LOG_LEVEL": json.RawMessage(`"info"`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), state.ApproveEnvironmentRevision{AccountID: account.ID,
+		SourceID: source.ID, CommitSHA: strings.Repeat("a", 40), Desired: desired, ApprovedBy: "test-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := gitOpsBackendWorker(srv, store)
+	if worked, err := worker.RunOnce(t.Context()); err != nil || !worked {
+		t.Fatalf("configuration-only reconciliation: worked=%t err=%v", worked, err)
+	}
+	current, err := store.EnvironmentGitSource(t.Context(), account.ID, project.ID, "production")
+	if err != nil || current.AppliedRevisionID != source.ApprovedRevisionID {
+		t.Fatalf("configuration-only revision did not converge: %+v %v", current, err)
+	}
+	config, err := store.ProjectEnvironmentConfigLatest(t.Context(), account.ID, project.ID, "production")
+	var values map[string]string
+	if err != nil || json.Unmarshal(config.Values, &values) != nil || values["LOG_LEVEL"] != "info" {
+		t.Fatalf("configuration-only revision did not publish its reviewed value: %+v %v", config, err)
+	}
+	runs, err := store.ListEnvironmentGitOpsRuns(t.Context(), account.ID, source.ID, 1)
+	if err != nil || len(runs) != 1 || runs[0].Status != "converged" {
+		t.Fatalf("configuration-only run: %+v %v", runs, err)
+	}
 }
 
 func (n *gitOpsRuntimeNotifier) Notify(ctx context.Context, channel, raw string) error {

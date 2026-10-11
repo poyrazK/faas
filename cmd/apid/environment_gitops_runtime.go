@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -58,7 +59,28 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		if err := store.EnsureEnvironmentGitOpsRuntime(ctx, lease, plan); err != nil {
 			return false, err
 		}
-		workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
+		var definition api.EnvironmentDefinition
+		if err := json.Unmarshal(lease.Revision.Definition, &definition); err != nil {
+			return false, state.ErrInvalidArgument
+		}
+		if definition.Workloads == nil {
+			return false, state.ErrInvalidArgument
+		}
+		if len(definition.Workloads) == 0 {
+			// Empty membership is a valid environment configuration, but a
+			// previously activated Git-managed member must not disappear from
+			// serving evidence just because the new definition omits it.
+			guard, ok := b.intent.(state.EnvironmentGitOpsEmptyGraphGuard)
+			if !ok {
+				workloadReady = false
+			} else {
+				var managed bool
+				managed, workloadErr = guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
+				workloadReady = !managed
+			}
+		} else {
+			workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
+		}
 		if err := b.recoverRuntime(ctx, lease); err != nil {
 			return false, err
 		}
