@@ -261,3 +261,86 @@ func TestQuotaRegistryAdmissionRechecksFenceAfterRootConflict(t *testing.T) {
 		t.Fatal(usage, err)
 	}
 }
+
+func TestQuotaRegistryMoreThan256PermanentReceiptsSurvivePolicyUpdate(t *testing.T) {
+	q, id, _ := enableRegistryFixture(t)
+	scope, _ := scopeFor(id)
+	retiredID := id
+	if err := q.mutate(t.Context(), scopeKey(scope), &scope, func(r *quotaRecord, _ time.Time) error {
+		for i := 0; i < 257; i++ {
+			entity := id
+			entity.Key = fmt.Sprintf("archive-%d", i)
+			if i == 0 {
+				retiredID = entity
+			}
+			r.Retirements = append(r.Retirements, QuotaRetirement{EntityKey: entityKey(entity), OperationID: uuid.NewString(), Actor: "operator", At: q.now(), Phase: "complete", RetainedBytes: 8, ReleasedBytes: 1016})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := q.Inspect(t.Context(), id)
+	if err != nil || usage.RetiredEntities != 257 || usage.RecoveryBytes != 257*8 {
+		t.Fatal(usage, err)
+	}
+	policy, err := q.PolicyStatus(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration, err := q.MigrationStatus(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Limits.EntityBytes *= 2
+	p := QuotaPolicyRequest{OperationID: uuid.NewString(), ExpectedRevision: policy.Revision, ExpectedMigrationID: migration.ID, ExpectedMigrationRevision: migration.Revision, MigrationID: uuid.NewString(), Limits: q.Limits}
+	if _, err = q.ApplyPolicy(t.Context(), id, p, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	now := q.now().Add(10 * time.Minute)
+	q.Now = func() time.Time { return now }
+	migration, err = q.MigrationStatus(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan := &policyScanner{migrationScan: func(context.Context, string, durableentity.ID) (durableentity.QuotaInventoryPage, error) {
+		e := migrationEntity(id, 10)
+		e.StorageLimitBytes = q.Limits.EntityBytes
+		return durableentity.QuotaInventoryPage{Entities: []durableentity.QuotaInventoryEntity{e}}, nil
+	}}
+	for migration.Phase != "complete" {
+		migration, err = q.StepMigration(t.Context(), id, migration.ID, migration.Revision, scan)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, err := q.RegistryStatus(t.Context(), id)
+	if err != nil || !status.Enabled || status.Retired != 257 {
+		t.Fatal(status, err)
+	}
+	if err = q.AdmitInvocation(t.Context(), retiredID); !errors.Is(err, durableentity.ErrRetired) {
+		t.Fatal("policy dropped permanent fence", err)
+	}
+	usage, err = q.Inspect(t.Context(), id)
+	if err != nil || usage.RecoveryBytes != 257*8 || usage.ReservedBytes != 2048+257*8 {
+		t.Fatal(usage, err)
+	}
+}
+func TestQuotaRegistryUnknownCreditIsReplaySafe(t *testing.T) {
+	q, id, b := enableRegistryFixture(t)
+	reader := retirementReader{status: &durableentity.RetirementStatus{Request: durableentity.RetirementRequest{OperationID: uuid.NewString()}, Actor: "operator", At: q.now(), Revision: 1, Phase: "complete", RetainedBytes: 128}}
+	if _, err := q.TrackRetirement(t.Context(), id, reader.status.Request.OperationID, reader); err != nil {
+		t.Fatal(err)
+	}
+	q.Store = &registryLostRootStore{ObjectStore: b, lose: true}
+	if _, err := q.ReclaimRetirement(t.Context(), id, reader.status.Request.OperationID, reader); !errors.Is(err, durableentity.ErrUncertain) {
+		t.Fatal(err)
+	}
+	receipt, err := q.ReclaimRetirement(t.Context(), id, reader.status.Request.OperationID, reader)
+	if err != nil || receipt.ReleasedBytes != 896 {
+		t.Fatal(receipt, err)
+	}
+	usage, err := q.Inspect(t.Context(), id)
+	if err != nil || usage.ReservedBytes != 128 || usage.RecoveryBytes != 128 || usage.EntityReservations != 0 {
+		t.Fatal(usage, err)
+	}
+}

@@ -50,8 +50,8 @@ once as retired while its full reservation remains charged. Completed retirement
 charges only its retained recovery bytes.
 
 Pass `next_cursor` as the next request's `cursor`. Cursors bind the exact scope
-and quota-root revision. Any root write, including admission or a read-triggered
-operator replay that commits pruning, expires an old cursor with 409; restart
+and quota-root revision. Any root write, including admission or an operator
+replay that commits pruning, expires an old cursor with 409; restart
 listing. Pages therefore never silently mix snapshots. Busy scopes may require
 a quiet interval for a complete listing. Hashes are not original namespace/key
 names and do not replace entity-level inspection.
