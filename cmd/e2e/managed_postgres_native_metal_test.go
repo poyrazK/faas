@@ -307,6 +307,14 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if err := rows.Err(); err != nil {
 			t.Fatal(err)
 		}
+		if parked {
+			// Lose the notification before submitting the public intent. Killing
+			// schedd afterward could race with a completed retirement and never
+			// exercise durable replay at all.
+			if err := h.KillSchedd(); err != nil {
+				t.Fatal(err)
+			}
+		}
 		body, status := doReq(t, h, key, http.MethodPost, "/v1/postgres/bindings/"+old.ID+"/rotate", nil)
 		var response api.ManagedPostgresBinding
 		if status != http.StatusOK || json.Unmarshal(body, &response) != nil || response.CredentialGeneration != old.CredentialGeneration+1 || !response.RotationPending {

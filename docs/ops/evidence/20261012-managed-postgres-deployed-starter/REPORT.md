@@ -35,6 +35,12 @@ scheduler recovery, data preservation and independent cleanup.
 - Seven strict-verdict contract tests and runner shellcheck passed. Older
   probe-only evidence is rejected because it omits the starter phases.
 
+The parked scenarios now stop schedd before submitting public rotation intent,
+then restart it. This prevents a fast live subscriber from consuming the
+notification before fault injection and making the durable-replay check pass
+without exercising recovery. CI must compile this final timing adjustment; the
+earlier local compilation and SQL results do not claim guest execution.
+
 ## Remaining acceptance gate
 
 The expanded guest scenarios have not executed. The internal GCE node

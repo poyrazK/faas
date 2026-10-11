@@ -37,7 +37,8 @@ The strict verdict requires all thirteen phases and the parent test to pass:
 5. Park and restore a guest using the new credential. Require the gateway's
    `restore` receipt, the new credential proof, unchanged reader proof and marker,
    and increasing SQL counter.
-6. Rotate while parked and restart schedd. Require durable notification recovery,
+6. Stop schedd before rotating the parked workload through the public API, then
+   restart it. Require durable notification recovery,
    retirement, delivery of the next credential and preserved SQL data.
 7. Upload the unchanged embedded `rest-api-postgres` source, lockfile and manifest.
    Add only the disposable server's public CA and a nonsecret build token. Run
@@ -56,7 +57,8 @@ The strict verdict requires all thirteen phases and the parent test to pass:
 11. Rotate the running starter through the public API, await the scheduler and
     public completion state, reject old SQL authentication, preserve the original
     note and perform a new write using the replacement credential.
-12. Rotate the parked starter through the public API and restart schedd. Require
+12. Stop schedd before rotating the parked starter through the public API, then
+    restart it. Require
     recovered retirement/completion, preserved data and another successful write. An independent SQL read
     confirms the complete notes dataset was neither lost nor replayed.
 13. Stop owned daemons, disable fixture provisioning, delete every owned binding,
