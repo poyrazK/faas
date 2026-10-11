@@ -2257,6 +2257,11 @@ from .operation_workflow_readiness_inbox_response import OperationWorkflowReadin
 from .operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
 from .operation_workflow_readiness_notification_check import OperationWorkflowReadinessNotificationCheck
 from .operation_workflow_readiness_notification_kind import OperationWorkflowReadinessNotificationKind
+from .operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
+from .operation_workflow_readiness_outcome_escalation_policy import OperationWorkflowReadinessOutcomeEscalationPolicy
+from .operation_workflow_readiness_outcome_escalation_reference import (
+    OperationWorkflowReadinessOutcomeEscalationReference,
+)
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
 from .operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
 from .operation_workflow_readiness_queue_response import OperationWorkflowReadinessQueueResponse
@@ -5839,6 +5844,9 @@ __all__ = (
     "OperationWorkflowReadinessNotification",
     "OperationWorkflowReadinessNotificationCheck",
     "OperationWorkflowReadinessNotificationKind",
+    "OperationWorkflowReadinessOutcomeEscalation",
+    "OperationWorkflowReadinessOutcomeEscalationPolicy",
+    "OperationWorkflowReadinessOutcomeEscalationReference",
     "OperationWorkflowReadinessOverview",
     "OperationWorkflowReadinessQueueEntry",
     "OperationWorkflowReadinessQueueResponse",

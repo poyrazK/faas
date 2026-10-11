@@ -3,10 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
+import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './OperationWorkflowReadinessOutcomeEscalationPolicy.js';
+import type { OperationWorkflowReadinessOutcomeEscalationReference } from './OperationWorkflowReadinessOutcomeEscalationReference.js';
 /**
  * Retained opt-in watch for one source completion business criterion. Current observations remain advisory; deadlines are notified once and unchanged status is suppressed. Source inbox retention and subscription deletion end monitoring.
  */
 export type OperationWorkflowReadinessBusinessOutcomeWatch = {
+  escalation?: OperationWorkflowReadinessOutcomeEscalationReference;
+  escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy;
   /**
    * OperationWorkflowReadinessBusinessOutcomeWatch.id. Retained advisory business outcome watch metadata; does not modify application reports or coordination revisions.
    */

@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './OperationWorkflowReadinessOutcomeEscalationPolicy.js';
 /**
  * An asserted coordination outcome with a required note; resolved requires at least one retained evidence Operation. Closing does not prove business resolution.
  */
 export type OperationWorkflowReadinessCompletionRequest = {
+  escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy;
   /**
    * OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.
    */

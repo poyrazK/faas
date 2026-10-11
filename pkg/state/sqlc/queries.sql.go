@@ -33558,7 +33558,7 @@ SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
  'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
- 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder',
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation',
  'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}'),
  'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}'),
  'from_state',COALESCE(n.payload #>> '{change,baseline,from_state}',n.payload #>> '{verification,source,from_state}',n.payload #>> '{business_outcome,source,from_state}'),'to_state',COALESCE(n.payload #>> '{change,baseline,to_state}',n.payload #>> '{verification,source,to_state}',n.payload #>> '{business_outcome,source,to_state}')

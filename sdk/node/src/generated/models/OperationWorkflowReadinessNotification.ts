@@ -7,12 +7,14 @@ import type { OperationWorkflowReadinessBusinessOutcomeWatch } from './Operation
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
 import type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 import type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
+import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWorkflowReadinessOutcomeEscalation.js';
 import type { OperationWorkflowReadinessVerificationEvent } from './OperationWorkflowReadinessVerificationEvent.js';
 import type { OperationWorkflowReadinessVerificationWatch } from './OperationWorkflowReadinessVerificationWatch.js';
 /**
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation;
   business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch;
   business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent;
   verification_watch?: OperationWorkflowReadinessVerificationWatch;

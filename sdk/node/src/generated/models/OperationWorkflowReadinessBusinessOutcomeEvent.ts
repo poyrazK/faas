@@ -3,11 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
+import type { OperationWorkflowReadinessOutcomeEscalationReference } from './OperationWorkflowReadinessOutcomeEscalationReference.js';
 import type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflowReadinessSnapshotEntry.js';
 /**
  * Self-contained observed business result or deadline notice for a source completion. Reports never establish causation, business failure or execution authority. Source links may expire from inbox retention.
  */
 export type OperationWorkflowReadinessBusinessOutcomeEvent = {
+  escalation?: OperationWorkflowReadinessOutcomeEscalationReference;
   /**
    * OperationWorkflowReadinessBusinessOutcomeEvent.watch_id. Retained advisory business outcome watch metadata; does not modify application reports or coordination revisions.
    */

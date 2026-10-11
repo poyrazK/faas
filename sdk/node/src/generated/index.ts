@@ -1176,6 +1176,9 @@ export type { OperationWorkflowReadinessHandoff } from './models/OperationWorkfl
 export type { OperationWorkflowReadinessInboxResponse } from './models/OperationWorkflowReadinessInboxResponse.js';
 export type { OperationWorkflowReadinessNotification } from './models/OperationWorkflowReadinessNotification.js';
 export type { OperationWorkflowReadinessNotificationCheck } from './models/OperationWorkflowReadinessNotificationCheck.js';
+export type { OperationWorkflowReadinessOutcomeEscalation } from './models/OperationWorkflowReadinessOutcomeEscalation.js';
+export type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './models/OperationWorkflowReadinessOutcomeEscalationPolicy.js';
+export type { OperationWorkflowReadinessOutcomeEscalationReference } from './models/OperationWorkflowReadinessOutcomeEscalationReference.js';
 export type { OperationWorkflowReadinessOverview } from './models/OperationWorkflowReadinessOverview.js';
 export type { OperationWorkflowReadinessQueueEntry } from './models/OperationWorkflowReadinessQueueEntry.js';
 export type { OperationWorkflowReadinessQueueResponse } from './models/OperationWorkflowReadinessQueueResponse.js';

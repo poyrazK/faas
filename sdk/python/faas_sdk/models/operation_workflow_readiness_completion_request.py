@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -12,6 +12,12 @@ from ..models.operation_workflow_readiness_completion_request_outcome import (
     check_operation_workflow_readiness_completion_request_outcome,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_outcome_escalation_policy import (
+        OperationWorkflowReadinessOutcomeEscalationPolicy,
+    )
+
 
 T = TypeVar("T", bound="OperationWorkflowReadinessCompletionRequest")
 
@@ -32,6 +38,9 @@ class OperationWorkflowReadinessCompletionRequest:
     evidence_operation_ids: list[UUID]
     """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
     never changes application evidence."""
+    escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
+    """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
+    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
     watch_outcome: bool | Unset = UNSET
     """OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or
     unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source
@@ -58,6 +67,10 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = str(evidence_operation_ids_item_data)
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        escalation_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_policy, Unset):
+            escalation_policy = self.escalation_policy.to_dict()
+
         watch_outcome = self.watch_outcome
 
         outcome_deadline_at: str | Unset = UNSET
@@ -77,6 +90,8 @@ class OperationWorkflowReadinessCompletionRequest:
                 "evidence_operation_ids": evidence_operation_ids,
             }
         )
+        if escalation_policy is not UNSET:
+            field_dict["escalation_policy"] = escalation_policy
         if watch_outcome is not UNSET:
             field_dict["watch_outcome"] = watch_outcome
         if outcome_deadline_at is not UNSET:
@@ -90,6 +105,10 @@ class OperationWorkflowReadinessCompletionRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_outcome_escalation_policy import (
+            OperationWorkflowReadinessOutcomeEscalationPolicy,
+        )
+
         d = dict(src_dict)
         outcome = check_operation_workflow_readiness_completion_request_outcome(d.pop("outcome"))
 
@@ -101,6 +120,13 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = UUID(evidence_operation_ids_item_data)
 
             evidence_operation_ids.append(evidence_operation_ids_item)
+
+        _escalation_policy = d.pop("escalation_policy", UNSET)
+        escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset
+        if isinstance(_escalation_policy, Unset):
+            escalation_policy = UNSET
+        else:
+            escalation_policy = OperationWorkflowReadinessOutcomeEscalationPolicy.from_dict(_escalation_policy)
 
         watch_outcome = d.pop("watch_outcome", UNSET)
 
@@ -119,6 +145,7 @@ class OperationWorkflowReadinessCompletionRequest:
             outcome=outcome,
             note=note,
             evidence_operation_ids=evidence_operation_ids,
+            escalation_policy=escalation_policy,
             watch_outcome=watch_outcome,
             outcome_deadline_at=outcome_deadline_at,
             expected_outcome_code=expected_outcome_code,

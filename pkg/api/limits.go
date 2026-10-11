@@ -9702,3 +9702,6 @@ const OperationWorkflowReadinessVerificationWatchItemsMax = OperationWorkflowRes
 
 // Outcome watch evaluations rotate independently through retained source inbox entries.
 const OperationWorkflowReadinessOutcomeWatchesPerPassMax = 10
+
+// Outcome escalation follow-up delay is positive and bounded to one week.
+const OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds = 7 * 24 * 60 * 60

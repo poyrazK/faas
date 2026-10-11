@@ -74924,6 +74924,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        outcome_escalation:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalation'
         business_outcome_watch:
           $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcomeWatch'
         business_outcome:
@@ -75128,6 +75130,8 @@ components:
         Closing does not prove business resolution.
       additionalProperties: false
       properties:
+        escalation_policy:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationPolicy'
         watch_outcome:
           type: boolean
           description: OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.
@@ -75177,6 +75181,8 @@ components:
         check. Retained with the original notification.
       additionalProperties: false
       properties:
+        escalation_policy:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationPolicy'
         watch_outcome:
           type: boolean
           description: OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.
@@ -75365,12 +75371,105 @@ components:
       - status
       - explanation
 
+    OperationWorkflowReadinessOutcomeEscalationPolicy:
+      type: object
+      description: Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome deadline.
+        Schedules one assigned follow-up on the deadline notification; never executes business actions.
+      additionalProperties: false
+      properties:
+        owner:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalationPolicy.owner. Retained coordination escalation policy or evidence;
+            business interpretation and execution remain application-owned.
+          minLength: 1
+          maxLength: 256
+        note:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalationPolicy.note. Retained coordination escalation policy or evidence;
+            business interpretation and execution remain application-owned.
+          maxLength: 1024
+        follow_up_after_seconds:
+          type: integer
+          description: OperationWorkflowReadinessOutcomeEscalationPolicy.follow_up_after_seconds. Retained coordination escalation
+            policy or evidence; business interpretation and execution remain application-owned.
+          format: int64
+          minimum: 1
+          maximum: 604800
+      required:
+      - owner
+      - follow_up_after_seconds
+    OperationWorkflowReadinessOutcomeEscalationReference:
+      type: object
+      description: Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+        escalations; links may expire.
+      additionalProperties: false
+      properties:
+        notification_id:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalationReference.notification_id. Retained coordination escalation
+            policy or evidence; business interpretation and execution remain application-owned.
+          format: uuid
+        sequence:
+          type: integer
+          description: OperationWorkflowReadinessOutcomeEscalationReference.sequence. Retained coordination escalation policy
+            or evidence; business interpretation and execution remain application-owned.
+          format: int64
+          minimum: 1
+        created_at:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalationReference.created_at. Retained coordination escalation policy
+            or evidence; business interpretation and execution remain application-owned.
+          format: date-time
+      required:
+      - notification_id
+      - sequence
+      - created_at
+    OperationWorkflowReadinessOutcomeEscalation:
+      type: object
+      description: Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and human
+        coordination. First observed application success is retained as a flag; it never automatically acknowledges or completes
+        work. Monitoring ends with source retention.
+      additionalProperties: false
+      properties:
+        watch_id:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalation.watch_id. Retained coordination escalation policy or evidence;
+            business interpretation and execution remain application-owned.
+          format: uuid
+        source_notification_id:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalation.source_notification_id. Retained coordination escalation policy
+            or evidence; business interpretation and execution remain application-owned.
+          format: uuid
+        source_sequence:
+          type: integer
+          description: OperationWorkflowReadinessOutcomeEscalation.source_sequence. Retained coordination escalation policy or
+            evidence; business interpretation and execution remain application-owned.
+          format: int64
+          minimum: 1
+        current:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
+        success_observed_at:
+          type: string
+          description: OperationWorkflowReadinessOutcomeEscalation.success_observed_at. Retained coordination escalation policy
+            or evidence; business interpretation and execution remain application-owned.
+          format: date-time
+      required:
+      - watch_id
+      - source_notification_id
+      - source_sequence
+      - current
+
     OperationWorkflowReadinessBusinessOutcomeWatch:
       type: object
       description: Retained opt-in watch for one source completion business criterion. Current observations remain advisory; deadlines
         are notified once and unchanged status is suppressed. Source inbox retention and subscription deletion end monitoring.
       additionalProperties: false
       properties:
+        escalation:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationReference'
+        escalation_policy:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationPolicy'
         id:
           type: string
           description: OperationWorkflowReadinessBusinessOutcomeWatch.id. Retained advisory business outcome watch metadata; does
@@ -75424,6 +75523,8 @@ components:
         causation, business failure or execution authority. Source links may expire from inbox retention.
       additionalProperties: false
       properties:
+        escalation:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationReference'
         watch_id:
           type: string
           description: OperationWorkflowReadinessBusinessOutcomeEvent.watch_id. Retained advisory business outcome watch metadata;
@@ -75753,6 +75854,8 @@ components:
       description: Compact pending follow-up with original inbox references; no application readiness is inferred.
       additionalProperties: false
       properties:
+        outcome_escalation:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalation'
         subscription_id:
           type: string
           description: OperationWorkflowReadinessFollowUp.subscription_id. Retained notification or subscription identity;

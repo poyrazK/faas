@@ -15,6 +15,12 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+    from ..models.operation_workflow_readiness_outcome_escalation_policy import (
+        OperationWorkflowReadinessOutcomeEscalationPolicy,
+    )
+    from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+        OperationWorkflowReadinessOutcomeEscalationReference,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessBusinessOutcomeWatch")
@@ -48,6 +54,12 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
     immutable; current checks are live reads."""
+    escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
+    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire."""
+    escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
+    """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
+    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
     deadline_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReadinessBusinessOutcomeWatch.deadline_at. Retained advisory business outcome watch
     metadata; does not modify application reports or coordination revisions."""
@@ -67,6 +79,14 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
         deadline_notified = self.deadline_notified
 
         current = self.current.to_dict()
+
+        escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation, Unset):
+            escalation = self.escalation.to_dict()
+
+        escalation_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_policy, Unset):
+            escalation_policy = self.escalation_policy.to_dict()
 
         deadline_at: str | Unset = UNSET
         if not isinstance(self.deadline_at, Unset):
@@ -88,6 +108,10 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
                 "current": current,
             }
         )
+        if escalation is not UNSET:
+            field_dict["escalation"] = escalation
+        if escalation_policy is not UNSET:
+            field_dict["escalation_policy"] = escalation_policy
         if deadline_at is not UNSET:
             field_dict["deadline_at"] = deadline_at
         if last_notified_status is not UNSET:
@@ -98,6 +122,12 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+        from ..models.operation_workflow_readiness_outcome_escalation_policy import (
+            OperationWorkflowReadinessOutcomeEscalationPolicy,
+        )
+        from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+            OperationWorkflowReadinessOutcomeEscalationReference,
+        )
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -111,6 +141,20 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
         deadline_notified = d.pop("deadline_notified")
 
         current = OperationWorkflowReadinessBusinessOutcome.from_dict(d.pop("current"))
+
+        _escalation = d.pop("escalation", UNSET)
+        escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset
+        if isinstance(_escalation, Unset):
+            escalation = UNSET
+        else:
+            escalation = OperationWorkflowReadinessOutcomeEscalationReference.from_dict(_escalation)
+
+        _escalation_policy = d.pop("escalation_policy", UNSET)
+        escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset
+        if isinstance(_escalation_policy, Unset):
+            escalation_policy = UNSET
+        else:
+            escalation_policy = OperationWorkflowReadinessOutcomeEscalationPolicy.from_dict(_escalation_policy)
 
         _deadline_at = d.pop("deadline_at", UNSET)
         deadline_at: datetime.datetime | Unset
@@ -135,6 +179,8 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
             started_at=started_at,
             deadline_notified=deadline_notified,
             current=current,
+            escalation=escalation,
+            escalation_policy=escalation_policy,
             deadline_at=deadline_at,
             last_notified_status=last_notified_status,
         )

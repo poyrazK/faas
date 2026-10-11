@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+    from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessFollowUp")
@@ -47,6 +48,10 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
+    """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
+    human coordination. First observed application success is retained as a flag; it never automatically
+    acknowledges or completes work. Monitoring ends with source retention."""
     subscription_tenant_id: UUID | Unset = UNSET
     """OperationWorkflowReadinessFollowUp.subscription_tenant_id. Retained notification or subscription identity;
     tenant fields are account-only."""
@@ -94,6 +99,10 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        outcome_escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.outcome_escalation, Unset):
+            outcome_escalation = self.outcome_escalation.to_dict()
+
         subscription_tenant_id: str | Unset = UNSET
         if not isinstance(self.subscription_tenant_id, Unset):
             subscription_tenant_id = str(self.subscription_tenant_id)
@@ -135,6 +144,8 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if outcome_escalation is not UNSET:
+            field_dict["outcome_escalation"] = outcome_escalation
         if subscription_tenant_id is not UNSET:
             field_dict["subscription_tenant_id"] = subscription_tenant_id
         if platform_tenant_id is not UNSET:
@@ -161,6 +172,7 @@ class OperationWorkflowReadinessFollowUp:
         from ..models.operation_subject import OperationSubject
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+        from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
 
         d = dict(src_dict)
         subscription_id = UUID(d.pop("subscription_id"))
@@ -180,6 +192,13 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _outcome_escalation = d.pop("outcome_escalation", UNSET)
+        outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset
+        if isinstance(_outcome_escalation, Unset):
+            outcome_escalation = UNSET
+        else:
+            outcome_escalation = OperationWorkflowReadinessOutcomeEscalation.from_dict(_outcome_escalation)
 
         _subscription_tenant_id = d.pop("subscription_tenant_id", UNSET)
         subscription_tenant_id: UUID | Unset
@@ -229,6 +248,7 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            outcome_escalation=outcome_escalation,
             subscription_tenant_id=subscription_tenant_id,
             platform_tenant_id=platform_tenant_id,
             workflow=workflow,

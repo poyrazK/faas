@@ -263,9 +263,17 @@
   if(outcome.reporting_operation_id){const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(outcome.reporting_operation_id)+'?scope='+encodeURIComponent(scope);a.textContent='Business outcome reporting Operation';parent.append(a,document.createElement('br'));}
   if(outcome.report_id)text(parent,'Outcome report: '+outcome.report_id);
  };
+ window.renderReadinessEscalation = (parent, escalation, scope) => {
+  if(!escalation)return;
+  text(parent,'Assigned business outcome escalation · source notification '+escalation.source_sequence);
+  window.renderReadinessBusinessOutcome(parent,escalation.current,scope,'Latest escalation watch evidence');
+  if(escalation.success_observed_at)text(parent,'Application success first observed '+new Date(escalation.success_observed_at).toLocaleString()+'; acknowledgment and completion remain manual.');
+  text(parent,'Evidence updates stop when the source watch expires. The assigned follow-up uses the existing acknowledgment and completion controls.');
+ };
  window.renderReadinessOutcomeWatch = (parent, notification, scope) => {
+  window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   const watch=notification.business_outcome_watch;
-  if(watch){text(parent,'Business outcome watch started '+new Date(watch.started_at).toLocaleString());window.renderReadinessBusinessOutcome(parent,watch.current,scope,'Latest watched business result');if(watch.deadline_at)text(parent,'Outcome deadline: '+new Date(watch.deadline_at).toLocaleString()+(watch.deadline_notified ? ' · deadline notice delivered' : ''));text(parent,'Monitoring ends when the source notification expires or its subscription is deleted. Refresh the inbox for the latest observation.');}
+  if(watch){if(watch.escalation_policy)text(parent,'Deadline escalation owner: '+watch.escalation_policy.owner+' · follow-up '+watch.escalation_policy.follow_up_after_seconds+' seconds after delivery');if(watch.escalation)text(parent,'Escalation follow-up notification: '+watch.escalation.sequence);text(parent,'Business outcome watch started '+new Date(watch.started_at).toLocaleString());window.renderReadinessBusinessOutcome(parent,watch.current,scope,'Latest watched business result');if(watch.deadline_at)text(parent,'Outcome deadline: '+new Date(watch.deadline_at).toLocaleString()+(watch.deadline_notified ? ' · deadline notice delivered' : ''));text(parent,'Monitoring ends when the source notification expires or its subscription is deleted. Refresh the inbox for the latest observation.');}
   const event=notification.business_outcome;
   if(event){text(parent,'Business outcome notification · source '+event.source_sequence+' · '+event.source.workflow+' / '+event.source.instance_id+' · '+event.source.subject.type+': '+event.source.subject.id);text(parent,'Previous observed business result: '+event.previous_status);window.renderReadinessBusinessOutcome(parent,event.current,scope,'Observed application business result');if(notification.kind==='outcome_deadline_reached')text(parent,'Deadline passed without the expected result observed at this check; this does not establish business failure.');if(event.deadline_at)text(parent,'Outcome deadline: '+new Date(event.deadline_at).toLocaleString());text(parent,'Application-reported outcomes do not establish causation or authorize workflow execution.');}
  };
@@ -299,7 +307,13 @@
    const expected=field('Expected business outcome code (optional, application-defined terminal outcome slug) ',document.createElement('input'));expected.maxLength=64;expected.pattern='[a-z][a-z0-9-]{0,63}';
    const outcomeWatch=field('Watch for the expected business outcome after completion ',document.createElement('input'));outcomeWatch.type='checkbox';
    const deadline=field('Optional business outcome deadline (your local timezone) ',document.createElement('input'));deadline.type='datetime-local';deadline.disabled=true;
-   outcomeWatch.addEventListener('change',()=>{expected.required=outcomeWatch.checked;deadline.disabled=!outcomeWatch.checked;});
+   const escalate=field('Assign a follow-up if the outcome deadline is missed ',document.createElement('input'));escalate.type='checkbox';escalate.disabled=true;
+   const escalationOwner=field('Escalation owner or team ',document.createElement('input'));escalationOwner.maxLength=256;escalationOwner.disabled=true;
+   const escalationDelay=field('Escalation follow-up delay in minutes (1–10080) ',document.createElement('input'));escalationDelay.type='number';escalationDelay.min=1;escalationDelay.max=10080;escalationDelay.step=1;escalationDelay.value='60';escalationDelay.disabled=true;
+   const escalationNote=field('Optional escalation note ',document.createElement('textarea'));escalationNote.maxLength=1024;escalationNote.disabled=true;
+   const escalationFields=()=>{const active=outcomeWatch.checked && escalate.checked;deadline.required=active;escalationOwner.disabled=escalationDelay.disabled=escalationNote.disabled=!active;escalationOwner.required=escalationDelay.required=active;};
+   escalate.addEventListener('change',escalationFields);
+   outcomeWatch.addEventListener('change',()=>{expected.required=outcomeWatch.checked;deadline.disabled=!outcomeWatch.checked;escalate.disabled=!outcomeWatch.checked;escalationFields();});
    const watch=field('Watch pending verification after completion (up to 16 saved resolutions) ',document.createElement('input'));watch.type='checkbox';
    const ids=field('Evidence Operation UUIDs (up to 8, separated by spaces or commas; required for resolved) ',document.createElement('textarea'));ids.required=true;
    outcome.addEventListener('change',()=>{ids.required=outcome.value==='resolved';});
@@ -309,7 +323,7 @@
    const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
    preview.addEventListener('click',async()=>{preview.disabled=true;try{const check=await request(detail);if(container.isConnected)window.renderReadinessHandoff(handoff,check,scope);}catch(error){result.textContent=error.message;}finally{preview.disabled=false;}});
    form.addEventListener('submit',async event=>{event.preventDefault();const evidenceIDs=ids.value.trim() ? ids.value.trim().split(/[\s,]+/) : [];if(evidenceIDs.length>8){result.textContent='Use at most 8 evidence Operation UUIDs.';return;}save.disabled=true;preview.disabled=true;try{
-    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{watch_outcome:outcomeWatch.checked,outcome_deadline_at:outcomeWatch.checked && deadline.value ? new Date(deadline.value).toISOString() : undefined,expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{escalation_policy:outcomeWatch.checked && escalate.checked ? {owner:escalationOwner.value,note:escalationNote.value,follow_up_after_seconds:Number(escalationDelay.value)*60} : undefined,watch_outcome:outcomeWatch.checked,outcome_deadline_at:outcomeWatch.checked && deadline.value ? new Date(deadline.value).toISOString() : undefined,expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
     Object.assign(c,updated.coordination);delete c.follow_up_at;watched=updated;render();await onSaved(updated);
    }catch(error){result.textContent=error.message+' Refresh before retrying a conflicting completion.';}finally{save.disabled=false;preview.disabled=false;}});
   };
@@ -364,6 +378,8 @@
   const li = document.createElement('li'); li.dataset.id = notification.id;
   text(li,notification.kind + ' · ' + notification.created_at); text(li,notification.explanation);
   window.renderReadinessVerification(li,notification,panel.dataset.scope);
+  const escalationRef=notification.business_outcome_watch?.escalation || notification.business_outcome?.escalation;
+  if(escalationRef){const link=document.createElement('a');link.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+escalationRef.sequence;link.textContent='Open assigned outcome escalation';li.append(link);}
   const sourceEvent=notification.verification || notification.business_outcome;
   if(sourceEvent){const source=document.createElement('a');source.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+sourceEvent.source_sequence;source.textContent='Open source follow-up completion';li.append(source);}
   const change = notification.change;
@@ -484,6 +500,7 @@
  const draw=(row)=>{
   const key=row.subscription_id+'/'+row.sequence;if(ids.has(key))return;ids.add(key);
   const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
+  if(window.renderReadinessEscalation)window.renderReadinessEscalation(li,row.outcome_escalation,row.scope);
   if(row.reminder)text(li,'Due reminder published '+new Date(row.reminder.created_at).toLocaleString());
   text(li,(row.overdue ? 'Overdue' : 'Upcoming')+' · '+new Date(c.follow_up_at).toLocaleString()+' · '+(c.owner || 'Unassigned'));
   text(li,row.subscription_name+' · '+row.kind+' · '+c.status+' · '+row.scope+(row.platform_tenant_id ? ' · customer '+row.platform_tenant_id : ''));

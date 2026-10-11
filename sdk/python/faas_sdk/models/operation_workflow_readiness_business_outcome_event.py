@@ -15,6 +15,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+    from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+        OperationWorkflowReadinessOutcomeEscalationReference,
+    )
     from ..models.operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
 
 
@@ -47,6 +50,9 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
     immutable; current checks are live reads."""
+    escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
+    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire."""
     deadline_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReadinessBusinessOutcomeEvent.deadline_at. Retained advisory business outcome watch
     metadata; does not modify application reports or coordination revisions."""
@@ -64,6 +70,10 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
 
         current = self.current.to_dict()
 
+        escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation, Unset):
+            escalation = self.escalation.to_dict()
+
         deadline_at: str | Unset = UNSET
         if not isinstance(self.deadline_at, Unset):
             deadline_at = self.deadline_at.isoformat()
@@ -80,6 +90,8 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
                 "current": current,
             }
         )
+        if escalation is not UNSET:
+            field_dict["escalation"] = escalation
         if deadline_at is not UNSET:
             field_dict["deadline_at"] = deadline_at
 
@@ -88,6 +100,9 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+        from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+            OperationWorkflowReadinessOutcomeEscalationReference,
+        )
         from ..models.operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
 
         d = dict(src_dict)
@@ -105,6 +120,13 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
 
         current = OperationWorkflowReadinessBusinessOutcome.from_dict(d.pop("current"))
 
+        _escalation = d.pop("escalation", UNSET)
+        escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset
+        if isinstance(_escalation, Unset):
+            escalation = UNSET
+        else:
+            escalation = OperationWorkflowReadinessOutcomeEscalationReference.from_dict(_escalation)
+
         _deadline_at = d.pop("deadline_at", UNSET)
         deadline_at: datetime.datetime | Unset
         if isinstance(_deadline_at, Unset):
@@ -119,6 +141,7 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
             source=source,
             previous_status=previous_status,
             current=current,
+            escalation=escalation,
             deadline_at=deadline_at,
         )
 

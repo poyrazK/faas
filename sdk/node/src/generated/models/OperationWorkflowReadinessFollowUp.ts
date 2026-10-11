@@ -5,10 +5,12 @@
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 import type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
+import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWorkflowReadinessOutcomeEscalation.js';
 /**
  * Compact pending follow-up with original inbox references; no application readiness is inferred.
  */
 export type OperationWorkflowReadinessFollowUp = {
+  outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation;
   /**
    * OperationWorkflowReadinessFollowUp.subscription_id. Retained notification or subscription identity; tenant fields are account-only.
    */

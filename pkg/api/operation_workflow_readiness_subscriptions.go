@@ -37,6 +37,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation    `json:"outcome_escalation,omitempty"`
 	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch `json:"business_outcome_watch,omitempty"`
 	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent `json:"business_outcome,omitempty"`
 	VerificationWatch    *OperationWorkflowReadinessVerificationWatch    `json:"verification_watch,omitempty"`
@@ -110,24 +111,25 @@ type OperationWorkflowReadinessFollowUpOptions struct {
 	Limit        int    `json:"limit,omitempty"`
 }
 type OperationWorkflowReadinessFollowUp struct {
-	Reminder             *OperationWorkflowReadinessDueReminder `json:"reminder,omitempty"`
-	SubscriptionID       string                                 `json:"subscription_id"`
-	SubscriptionName     string                                 `json:"subscription_name"`
-	SubscriptionTenantID string                                 `json:"subscription_tenant_id,omitempty"`
-	PlatformTenantID     string                                 `json:"platform_tenant_id,omitempty"`
-	Scope                string                                 `json:"scope"`
-	NotificationID       string                                 `json:"notification_id"`
-	Sequence             int64                                  `json:"sequence"`
-	Kind                 string                                 `json:"kind"`
-	CreatedAt            time.Time                              `json:"created_at"`
-	Coordination         OperationWorkflowReadinessCoordination `json:"coordination"`
-	Workflow             string                                 `json:"workflow,omitempty"`
-	InstanceID           string                                 `json:"instance_id,omitempty"`
-	Subject              *OperationSubject                      `json:"subject,omitempty"`
-	Operation            string                                 `json:"operation,omitempty"`
-	FromState            string                                 `json:"from_state,omitempty"`
-	ToState              string                                 `json:"to_state,omitempty"`
-	Overdue              bool                                   `json:"overdue"`
+	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation `json:"outcome_escalation,omitempty"`
+	Reminder             *OperationWorkflowReadinessDueReminder       `json:"reminder,omitempty"`
+	SubscriptionID       string                                       `json:"subscription_id"`
+	SubscriptionName     string                                       `json:"subscription_name"`
+	SubscriptionTenantID string                                       `json:"subscription_tenant_id,omitempty"`
+	PlatformTenantID     string                                       `json:"platform_tenant_id,omitempty"`
+	Scope                string                                       `json:"scope"`
+	NotificationID       string                                       `json:"notification_id"`
+	Sequence             int64                                        `json:"sequence"`
+	Kind                 string                                       `json:"kind"`
+	CreatedAt            time.Time                                    `json:"created_at"`
+	Coordination         OperationWorkflowReadinessCoordination       `json:"coordination"`
+	Workflow             string                                       `json:"workflow,omitempty"`
+	InstanceID           string                                       `json:"instance_id,omitempty"`
+	Subject              *OperationSubject                            `json:"subject,omitempty"`
+	Operation            string                                       `json:"operation,omitempty"`
+	FromState            string                                       `json:"from_state,omitempty"`
+	ToState              string                                       `json:"to_state,omitempty"`
+	Overdue              bool                                         `json:"overdue"`
 }
 type OperationWorkflowReadinessFollowUpsResponse struct {
 	DueReminderCount int                                  `json:"due_reminder_count"`
@@ -149,26 +151,28 @@ type OperationWorkflowReadinessDueReminder struct {
 
 // Completion closes coordination only; outcome is an operator/customer assertion.
 type OperationWorkflowReadinessCompletionRequest struct {
-	WatchOutcome         bool       `json:"watch_outcome,omitempty"`
-	OutcomeDeadlineAt    *time.Time `json:"outcome_deadline_at,omitempty"`
-	ExpectedOutcomeCode  string     `json:"expected_outcome_code,omitempty"`
-	WatchVerification    bool       `json:"watch_verification,omitempty"`
-	Outcome              string     `json:"outcome"`
-	Note                 string     `json:"note"`
-	EvidenceOperationIDs []string   `json:"evidence_operation_ids"`
+	EscalationPolicy     *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
+	WatchOutcome         bool                                               `json:"watch_outcome,omitempty"`
+	OutcomeDeadlineAt    *time.Time                                         `json:"outcome_deadline_at,omitempty"`
+	ExpectedOutcomeCode  string                                             `json:"expected_outcome_code,omitempty"`
+	WatchVerification    bool                                               `json:"watch_verification,omitempty"`
+	Outcome              string                                             `json:"outcome"`
+	Note                 string                                             `json:"note"`
+	EvidenceOperationIDs []string                                           `json:"evidence_operation_ids"`
 }
 type OperationWorkflowReadinessCompletion struct {
-	WatchOutcome         bool                                         `json:"watch_outcome,omitempty"`
-	OutcomeDeadlineAt    *time.Time                                   `json:"outcome_deadline_at,omitempty"`
-	ExpectedOutcomeCode  string                                       `json:"expected_outcome_code,omitempty"`
-	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcome   `json:"business_outcome,omitempty"`
-	WatchVerification    bool                                         `json:"watch_verification,omitempty"`
-	Outcome              string                                       `json:"outcome"`
-	Note                 string                                       `json:"note"`
-	EvidenceOperationIDs []string                                     `json:"evidence_operation_ids"`
-	CompletedAt          time.Time                                    `json:"completed_at"`
-	CompletedBy          string                                       `json:"completed_by"`
-	Evidence             OperationWorkflowReadinessCompletionEvidence `json:"evidence"`
+	EscalationPolicy     *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
+	WatchOutcome         bool                                               `json:"watch_outcome,omitempty"`
+	OutcomeDeadlineAt    *time.Time                                         `json:"outcome_deadline_at,omitempty"`
+	ExpectedOutcomeCode  string                                             `json:"expected_outcome_code,omitempty"`
+	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcome         `json:"business_outcome,omitempty"`
+	WatchVerification    bool                                               `json:"watch_verification,omitempty"`
+	Outcome              string                                             `json:"outcome"`
+	Note                 string                                             `json:"note"`
+	EvidenceOperationIDs []string                                           `json:"evidence_operation_ids"`
+	CompletedAt          time.Time                                          `json:"completed_at"`
+	CompletedBy          string                                             `json:"completed_by"`
+	Evidence             OperationWorkflowReadinessCompletionEvidence       `json:"evidence"`
 }
 
 // Evidence records the advisory pre-write observation, not execution authority.
@@ -236,21 +240,45 @@ type OperationWorkflowReadinessBusinessOutcome struct {
 
 // Outcome watches are bounded by the source inbox retention and never execute business operations.
 type OperationWorkflowReadinessBusinessOutcomeWatch struct {
-	StateRevision      int64                                     `json:"state_revision"`
-	ID                 string                                    `json:"id"`
-	Revision           int64                                     `json:"revision"`
-	StartedAt          time.Time                                 `json:"started_at"`
-	DeadlineAt         *time.Time                                `json:"deadline_at,omitempty"`
-	DeadlineNotified   bool                                      `json:"deadline_notified"`
-	LastNotifiedStatus string                                    `json:"last_notified_status,omitempty"`
-	Current            OperationWorkflowReadinessBusinessOutcome `json:"current"`
+	Escalation         *OperationWorkflowReadinessOutcomeEscalationReference `json:"escalation,omitempty"`
+	EscalationPolicy   *OperationWorkflowReadinessOutcomeEscalationPolicy    `json:"escalation_policy,omitempty"`
+	StateRevision      int64                                                 `json:"state_revision"`
+	ID                 string                                                `json:"id"`
+	Revision           int64                                                 `json:"revision"`
+	StartedAt          time.Time                                             `json:"started_at"`
+	DeadlineAt         *time.Time                                            `json:"deadline_at,omitempty"`
+	DeadlineNotified   bool                                                  `json:"deadline_notified"`
+	LastNotifiedStatus string                                                `json:"last_notified_status,omitempty"`
+	Current            OperationWorkflowReadinessBusinessOutcome             `json:"current"`
 }
 type OperationWorkflowReadinessBusinessOutcomeEvent struct {
+	Escalation           *OperationWorkflowReadinessOutcomeEscalationReference `json:"escalation,omitempty"`
+	WatchID              string                                                `json:"watch_id"`
+	SourceNotificationID string                                                `json:"source_notification_id"`
+	SourceSequence       int64                                                 `json:"source_sequence"`
+	Source               OperationWorkflowReadinessSnapshotEntry               `json:"source"`
+	PreviousStatus       string                                                `json:"previous_status"`
+	DeadlineAt           *time.Time                                            `json:"deadline_at,omitempty"`
+	Current              OperationWorkflowReadinessBusinessOutcome             `json:"current"`
+}
+
+// Escalation policy schedules coordination only; owner is an existing team/person label.
+type OperationWorkflowReadinessOutcomeEscalationPolicy struct {
+	Owner                string `json:"owner"`
+	Note                 string `json:"note,omitempty"`
+	FollowUpAfterSeconds int64  `json:"follow_up_after_seconds"`
+}
+type OperationWorkflowReadinessOutcomeEscalationReference struct {
+	NotificationID string    `json:"notification_id"`
+	Sequence       int64     `json:"sequence"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Current is watch evidence, separate from immutable delivery evidence and human coordination.
+type OperationWorkflowReadinessOutcomeEscalation struct {
 	WatchID              string                                    `json:"watch_id"`
 	SourceNotificationID string                                    `json:"source_notification_id"`
 	SourceSequence       int64                                     `json:"source_sequence"`
-	Source               OperationWorkflowReadinessSnapshotEntry   `json:"source"`
-	PreviousStatus       string                                    `json:"previous_status"`
-	DeadlineAt           *time.Time                                `json:"deadline_at,omitempty"`
 	Current              OperationWorkflowReadinessBusinessOutcome `json:"current"`
+	SuccessObservedAt    *time.Time                                `json:"success_observed_at,omitempty"`
 }

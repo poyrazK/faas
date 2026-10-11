@@ -190,6 +190,11 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		if _, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: id, Sequence: u.Sequence, Payload: payload}); err != nil {
 			return mapErr(err)
 		}
+		if n.BusinessOutcomeWatch != nil && n.BusinessOutcomeWatch.Escalation != nil {
+			if err = syncReadinessOutcomeEscalationTx(ctx, tx, q, id, updated); err != nil {
+				return err
+			}
+		}
 		notifications = append(notifications, published...)
 	}
 	raw, err := json.Marshal(r)
@@ -309,4 +314,29 @@ func (s *PgStore) PublishDueWorkflowReadinessReminders(ctx context.Context) (int
 		return 0, err
 	}
 	return published, nil
+}
+
+func syncReadinessOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, subscriptionID pgtype.UUID, source api.OperationWorkflowReadinessNotification) error {
+	ref := source.BusinessOutcomeWatch.Escalation
+	payload, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: subscriptionID, Sequence: ref.Sequence})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	var n api.OperationWorkflowReadinessNotification
+	if err = json.Unmarshal(payload, &n); err != nil {
+		return err
+	}
+	updated, ok := syncReadinessOutcomeEscalation(n, source)
+	if !ok {
+		return nil
+	}
+	payload, err = json.Marshal(updated)
+	if err != nil {
+		return err
+	}
+	_, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: subscriptionID, Sequence: ref.Sequence, Payload: payload})
+	return mapErr(err)
 }

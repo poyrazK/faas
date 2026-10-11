@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+    from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
     from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
     from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
 
@@ -45,6 +46,10 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
+    """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
+    human coordination. First observed application success is retained as a flag; it never automatically
+    acknowledges or completes work. Monitoring ends with source retention."""
     business_outcome_watch: OperationWorkflowReadinessBusinessOutcomeWatch | Unset = UNSET
     """Retained opt-in watch for one source completion business criterion. Current observations remain advisory;
     deadlines are notified once and unchanged status is suppressed. Source inbox retention and subscription deletion
@@ -78,6 +83,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        outcome_escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.outcome_escalation, Unset):
+            outcome_escalation = self.outcome_escalation.to_dict()
 
         business_outcome_watch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.business_outcome_watch, Unset):
@@ -118,6 +127,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if outcome_escalation is not UNSET:
+            field_dict["outcome_escalation"] = outcome_escalation
         if business_outcome_watch is not UNSET:
             field_dict["business_outcome_watch"] = business_outcome_watch
         if business_outcome is not UNSET:
@@ -146,6 +157,7 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+        from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
         from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
         from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
 
@@ -159,6 +171,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _outcome_escalation = d.pop("outcome_escalation", UNSET)
+        outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset
+        if isinstance(_outcome_escalation, Unset):
+            outcome_escalation = UNSET
+        else:
+            outcome_escalation = OperationWorkflowReadinessOutcomeEscalation.from_dict(_outcome_escalation)
 
         _business_outcome_watch = d.pop("business_outcome_watch", UNSET)
         business_outcome_watch: OperationWorkflowReadinessBusinessOutcomeWatch | Unset
@@ -215,6 +234,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            outcome_escalation=outcome_escalation,
             business_outcome_watch=business_outcome_watch,
             business_outcome=business_outcome,
             verification_watch=verification_watch,

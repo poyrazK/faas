@@ -146,6 +146,14 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 			updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
 			if ok {
 				data.readinessInbox[r.Subscription.ID][i] = updated
+				if n.BusinessOutcomeWatch != nil && n.BusinessOutcomeWatch.Escalation != nil {
+					for j, target := range data.readinessInbox[r.Subscription.ID] {
+						if synced, ok := syncReadinessOutcomeEscalation(target, updated); ok {
+							data.readinessInbox[r.Subscription.ID][j] = synced
+							break
+						}
+					}
+				}
 				notifications = append(notifications, published...)
 			}
 			break

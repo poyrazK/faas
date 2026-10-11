@@ -16,6 +16,9 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
     from ..models.operation_workflow_readiness_completion_evidence import OperationWorkflowReadinessCompletionEvidence
+    from ..models.operation_workflow_readiness_outcome_escalation_policy import (
+        OperationWorkflowReadinessOutcomeEscalationPolicy,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessCompletion")
@@ -46,6 +49,9 @@ class OperationWorkflowReadinessCompletion:
     evidence: OperationWorkflowReadinessCompletionEvidence
     """Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
     after this observation. Explicit boundaries never imply readiness."""
+    escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
+    """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
+    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
     watch_outcome: bool | Unset = UNSET
     """OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown
     business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox
@@ -83,6 +89,10 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = self.evidence.to_dict()
 
+        escalation_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_policy, Unset):
+            escalation_policy = self.escalation_policy.to_dict()
+
         watch_outcome = self.watch_outcome
 
         outcome_deadline_at: str | Unset = UNSET
@@ -109,6 +119,8 @@ class OperationWorkflowReadinessCompletion:
                 "evidence": evidence,
             }
         )
+        if escalation_policy is not UNSET:
+            field_dict["escalation_policy"] = escalation_policy
         if watch_outcome is not UNSET:
             field_dict["watch_outcome"] = watch_outcome
         if outcome_deadline_at is not UNSET:
@@ -128,6 +140,9 @@ class OperationWorkflowReadinessCompletion:
         from ..models.operation_workflow_readiness_completion_evidence import (
             OperationWorkflowReadinessCompletionEvidence,
         )
+        from ..models.operation_workflow_readiness_outcome_escalation_policy import (
+            OperationWorkflowReadinessOutcomeEscalationPolicy,
+        )
 
         d = dict(src_dict)
         outcome = check_operation_workflow_readiness_completion_outcome(d.pop("outcome"))
@@ -146,6 +161,13 @@ class OperationWorkflowReadinessCompletion:
         completed_by = d.pop("completed_by")
 
         evidence = OperationWorkflowReadinessCompletionEvidence.from_dict(d.pop("evidence"))
+
+        _escalation_policy = d.pop("escalation_policy", UNSET)
+        escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset
+        if isinstance(_escalation_policy, Unset):
+            escalation_policy = UNSET
+        else:
+            escalation_policy = OperationWorkflowReadinessOutcomeEscalationPolicy.from_dict(_escalation_policy)
 
         watch_outcome = d.pop("watch_outcome", UNSET)
 
@@ -174,6 +196,7 @@ class OperationWorkflowReadinessCompletion:
             completed_at=completed_at,
             completed_by=completed_by,
             evidence=evidence,
+            escalation_policy=escalation_policy,
             watch_outcome=watch_outcome,
             outcome_deadline_at=outcome_deadline_at,
             expected_outcome_code=expected_outcome_code,

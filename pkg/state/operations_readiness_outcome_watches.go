@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -63,7 +64,7 @@ func readinessOutcomeWatchObservation(n api.OperationWorkflowReadinessNotificati
 		}
 	}
 	out := readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, WatchID: w.ID, Revision: w.Revision}
-	event := api.OperationWorkflowReadinessBusinessOutcomeEvent{WatchID: w.ID, SourceNotificationID: n.ID, SourceSequence: n.Sequence, Source: *saved, PreviousStatus: previous, DeadlineAt: w.DeadlineAt, Current: current}
+	event := api.OperationWorkflowReadinessBusinessOutcomeEvent{WatchID: w.ID, SourceNotificationID: n.ID, SourceSequence: n.Sequence, Source: *saved, PreviousStatus: previous, DeadlineAt: w.DeadlineAt, Current: current, Escalation: w.Escalation}
 	if current.Status != "pending" && (current.Status != previous || w.LastNotifiedStatus == "") {
 		kind := "outcome_" + current.Status
 		if current.Status == "unknown" {
@@ -98,8 +99,33 @@ func applyReadinessOutcomeWatchUpdate(r *readinessSubscriptionRecord, n api.Oper
 			explanation = "The outcome deadline has passed and the expected result is not observed at this check. This does not establish business failure."
 		}
 		notification := readinessSubscriptionNotify(r, u.Kinds[i], explanation, nil)
+		if u.Kinds[i] == "outcome_deadline_reached" && n.BusinessOutcomeWatch.EscalationPolicy != nil && n.BusinessOutcomeWatch.Escalation == nil {
+			policy := n.BusinessOutcomeWatch.EscalationPolicy
+			due := notification.CreatedAt.Add(time.Duration(policy.FollowUpAfterSeconds) * time.Second)
+			notification.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: policy.Owner, Note: policy.Note, FollowUpAt: &due, UpdatedAt: notification.CreatedAt, UpdatedBy: "system:outcome_escalation"}
+			notification.OutcomeEscalation = &api.OperationWorkflowReadinessOutcomeEscalation{WatchID: event.WatchID, SourceNotificationID: event.SourceNotificationID, SourceSequence: event.SourceSequence, Current: event.Current}
+			ref := &api.OperationWorkflowReadinessOutcomeEscalationReference{NotificationID: notification.ID, Sequence: notification.Sequence, CreatedAt: notification.CreatedAt}
+			n.BusinessOutcomeWatch.Escalation = ref
+			event.Escalation = ref
+		}
 		notification.BusinessOutcome = &event
 		notifications = append(notifications, notification)
 	}
 	return n, notifications, true
+}
+
+// Preserve acknowledgment, deadlines, reminders and immutable completion when refreshing watch evidence.
+func syncReadinessOutcomeEscalation(n, source api.OperationWorkflowReadinessNotification) (api.OperationWorkflowReadinessNotification, bool) {
+	w := source.BusinessOutcomeWatch
+	if w == nil || w.Escalation == nil || n.ID != w.Escalation.NotificationID || n.Sequence != w.Escalation.Sequence || n.OutcomeEscalation == nil || n.OutcomeEscalation.WatchID != w.ID || n.OutcomeEscalation.SourceNotificationID != source.ID || n.OutcomeEscalation.SourceSequence != source.Sequence {
+		return n, false
+	}
+	e := *n.OutcomeEscalation
+	e.Current = w.Current
+	if w.Current.Status == "achieved" && e.SuccessObservedAt == nil {
+		at := w.Current.CheckedAt
+		e.SuccessObservedAt = &at
+	}
+	n.OutcomeEscalation = &e
+	return n, true
 }
