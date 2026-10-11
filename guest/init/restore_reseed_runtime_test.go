@@ -155,6 +155,44 @@ func TestRestoreReseedNodePreload(t *testing.T) {
 	}
 }
 
+// Production-us Node apps start through `npm run start`. npm only launches
+// the app and waits, so the preload must not register it: the barrier then
+// waited for npm's idle heap to fault back in on every restore (hunt #9,
+// resume_hook p50 111 -> 156 ms on the metal bench). The app it launches
+// still registers.
+func TestRestoreReseedNodePreloadSkipsPackageManagerLauncher(t *testing.T) {
+	assets := restoreReseedAssetDir(t, true)
+	b, sock := startTestBarrier(t)
+	launcher := filepath.Join(t.TempDir(), "node_modules", "npm", "bin", "npm-cli.js")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `const { spawn } = require('child_process');
+const child = spawn(process.execPath, ['-e', ` + "`" + `${process.env.GREGALE_TEST_CHILD}` + "`" + `], { stdio: ['pipe', 'inherit', 'inherit'] });
+process.stdin.pipe(child.stdin);
+`
+	if err := os.WriteFile(launcher, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The child exits when the killed launcher's stdin pipe closes, so no
+	// grandchild outlives the test holding its output open.
+	env := append(baseRuntimeEnv(assets, sock), "GREGALE_TEST_CHILD="+nodeProbe+"\nprocess.stdin.on('end', () => process.exit(0));\n")
+	p := startRuntime(t, "node", env, launcher)
+	var ready struct{ Ready, Replaced bool }
+	p.read(t, &ready)
+	if !ready.Replaced {
+		t.Fatal("the launched app did not load the preload")
+	}
+	waitRegistered(t, b, 1)
+	time.Sleep(500 * time.Millisecond)
+	if got := b.registered(); got != 1 {
+		t.Fatalf("registered = %d, want 1: the npm launcher itself joined the barrier", got)
+	}
+	if err := b.Reseed(2 * time.Second); err != nil {
+		t.Fatalf("Reseed: %v", err)
+	}
+}
+
 // Without the OpenSSL reseed the process may replay the snapshot's crypto
 // state, so the preload must refuse and fail the barrier closed.
 func TestRestoreReseedNodePreloadFailsClosedWithoutAddon(t *testing.T) {

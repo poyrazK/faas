@@ -15,6 +15,13 @@
 (function gregaleRestoreReseed() {
   const socketPath = process.env.GREGALE_RESEED_SOCKET;
   if (!socketPath || String(process.env.GREGALE_RESTORE_RESEED).toLowerCase() === 'off') return;
+  // Package-manager launchers (npm, npx, yarn, pnpm, corepack) only start the
+  // app as a child process and wait for it. They serve no requests and every
+  // process they start later is a fresh exec the kernel seeds, so their
+  // replayed generators are never observable. Registering them made every
+  // `npm run start` restore wait for npm's large idle heap to fault back in:
+  // resume_hook p50 111 -> 156 ms, p90 248 ms on the metal bench (hunt #9).
+  if (isPackageManagerLauncher(process.argv[1])) return;
   const marker = Symbol.for('gregale.restoreReseed');
   if (globalThis[marker]) return;
   const exposed = { state: null };
@@ -127,3 +134,17 @@
     }
   });
 })();
+
+// isPackageManagerLauncher matches the entry script only when it resolves into
+// a package manager's own install, so an application file that happens to be
+// called npm.js still registers.
+function isPackageManagerLauncher(main) {
+  if (!main) return false;
+  let real;
+  try {
+    real = require('node:fs').realpathSync(main);
+  } catch (_) {
+    return false;
+  }
+  return /[\\/]node_modules[\\/](npm[\\/]bin[\\/](npm|npx)-cli\.js|corepack[\\/]dist[\\/](yarn|yarnpkg|pnpm|pnpx|npm|npx|corepack)\.js|yarn[\\/]bin[\\/]yarn\.c?js|pnpm[\\/]bin[\\/](pnpm|pnpx)\.c?js)$/.test(real);
+}
