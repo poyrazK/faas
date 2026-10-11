@@ -1,6 +1,6 @@
 //go:build !managed_postgres_native || !metal
 
-package main
+package apidserver
 
 import (
 	"io"

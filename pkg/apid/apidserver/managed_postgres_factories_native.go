@@ -1,6 +1,6 @@
 //go:build managed_postgres_native && metal
 
-package main
+package apidserver
 
 import (
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
