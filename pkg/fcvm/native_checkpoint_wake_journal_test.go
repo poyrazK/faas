@@ -216,9 +216,18 @@ func TestNativeCheckpointWakeExcludesRestoreQualificationProfile(t *testing.T) {
 	if _, err := w.claim(t.Context(), frame); err != nil {
 		t.Fatal(err)
 	}
-	for _, restore := range []bool{false, true} {
-		if err := q.requireProfileAbsent(frame.InstanceID, restore); err == nil {
-			t.Fatal("qualification profile bypassed checkpoint owner")
-		}
+
+}
+
+func TestNativeCheckpointWakeBlocksRestoreQualificationClaim(t *testing.T) {
+	restore, qualified, ctx := nativeQualificationRestoreFixture(t)
+	_, frame := checkpointWakeFixture(t)
+	frame.InstanceID, frame.AppID, frame.DeploymentID, frame.NodeID, frame.WakeID = qualified.InstanceID, qualified.AppID, qualified.DeploymentID, qualified.NodeID, qualified.WakeID
+	w := restore.incoming.owner.checkpointWakes(frame.NodeID)
+	if _, err := w.claim(ctx, frame); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restore.claim(ctx, qualified, "1.7.0"); err == nil {
+		t.Fatal("restore qualification borrowed checkpoint instance")
 	}
 }

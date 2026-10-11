@@ -265,6 +265,9 @@ func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame st
 		return r, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	if err := j.incoming.owner.requireCheckpointWakeAbsent(frame.InstanceID); err != nil {
+		return r, err
+	}
 	if err := j.incoming.requireProfileAbsent(frame.InstanceID, false); err != nil {
 		return r, err
 	}
@@ -340,9 +343,6 @@ func (j *nativeQualificationRestoreJournal) revoke(ctx context.Context, frame st
 // Both profiles share the canonical incoming lock. An ambiguous or damaged
 // opposite-profile file holds authority; it is never overwritten or adopted.
 func (j *nativeQualificationJournal) requireProfileAbsent(instance string, restore bool) error {
-	if err := j.owner.requireCheckpointWakeAbsent(instance); err != nil {
-		return err
-	}
 	path, err := j.path(instance)
 	if restore {
 		path, err = j.restores().path(instance)
@@ -400,6 +400,9 @@ func (j *nativeQualificationRestoreJournal) recoverLease(ctx context.Context, in
 		return lease, false, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	if err := j.incoming.owner.requireCheckpointWakeAbsent(instance); err != nil {
+		return lease, false, err
+	}
 	if err := j.incoming.requireProfileAbsent(instance, false); err != nil {
 		return lease, false, err
 	}
