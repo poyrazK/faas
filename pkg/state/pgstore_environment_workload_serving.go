@@ -502,6 +502,36 @@ func loadEnvironmentWorkloadServingReceipt(ctx context.Context, tx sqlc.DBTX, gr
 		return EnvironmentWorkloadServingReceipt{}, false, ErrConflict
 	}
 	graph := EnvironmentWorkloadGraph{Members: members}
+	// Rebuild the private expected consumer set from the release recorded on
+	// this receipt. Status reads may encounter a stale receipt after a newer
+	// release is activated, so the active release cannot be used here.
+	memberRows, err := tx.Query(ctx, `SELECT app_id::text,deployment_id::text FROM project_release_members WHERE release_id=$1::uuid`, receipt.ReleaseSetID)
+	if err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	releaseDeployments := make(map[string]string)
+	for memberRows.Next() {
+		var appID, deploymentID string
+		if err := memberRows.Scan(&appID, &deploymentID); err != nil {
+			memberRows.Close()
+			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+		}
+		releaseDeployments[appID] = deploymentID
+	}
+	if err := memberRows.Err(); err != nil {
+		memberRows.Close()
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	memberRows.Close()
+	targets := make(map[string]string, len(members))
+	for _, member := range members {
+		if deploymentID := releaseDeployments[member.AppID]; deploymentID != "" {
+			targets[member.Resource] = deploymentID
+		}
+	}
+	if consumers, ok := environmentGraphServingQueueConsumers(graph, targets); ok {
+		receipt.ExpectedQueueConsumers = consumers
+	}
 	receipt.ExpectedScheduledJobs = environmentGitOpsScheduledJobMembers(graph)
 	receipt.ScheduledJobAcks, err = environmentGitOpsScheduledJobAcksTx(ctx, tx, receipt.GraphID, receipt.ReleaseSetID)
 	if err != nil {

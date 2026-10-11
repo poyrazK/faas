@@ -116,6 +116,74 @@ func TestPgEnvironmentGitOpsGraphActivationServingAndRosterRecovery(t *testing.T
 	}
 }
 
+func TestPgEnvironmentGitOpsMixedGraphServingWaitsForQueueDelivery(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	lease, plan, requests := preparedQualificationFixture(t, store)
+	for _, request := range requests {
+		completeRequestQualificationReceipts(t, store, request)
+	}
+	if _, activated, err := store.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan); err != nil || !activated {
+		t.Fatalf("mixed graph activation: %t %v", activated, err)
+	}
+	registerServingGateway(t, store, "edge-a")
+	receipt, serving, err := store.PrepareEnvironmentGitOpsWorkloadServing(t.Context(), lease, plan, []string{"edge-a"})
+	if err != nil || serving || len(receipt.Routes) != 1 || len(receipt.ExpectedQueueConsumers) != 1 {
+		t.Fatalf("mixed graph serving preparation: %+v %t %v", receipt, serving, err)
+	}
+	if _, serving, err := store.AcknowledgeEnvironmentGitOpsWorkloadServing(t.Context(), lease, receipt.GraphID,
+		receipt.Routes[0].Generation, "edge-a"); err != nil || serving {
+		t.Fatalf("route acknowledgement bypassed queue evidence: %t %v", serving, err)
+	}
+	restarted := state.NewPgStore(pool)
+	pending, serving, err := restarted.PrepareEnvironmentGitOpsWorkloadServing(t.Context(), lease, plan, []string{"edge-a"})
+	if err != nil || serving || len(pending.ExpectedQueueConsumers) != 1 ||
+		!slices.Equal(pending.Acknowledgements[receipt.Routes[0].Generation], []string{"edge-a"}) {
+		t.Fatalf("restart lost pending route or queue expectation: %+v %t %v", pending, serving, err)
+	}
+	var worker state.EnvironmentWorkloadQualificationRequest
+	for _, request := range requests {
+		if request.Resource == "workload/worker" {
+			worker = request
+		}
+	}
+	if worker.ID == "" {
+		t.Fatal("prepared graph has no worker")
+	}
+	consumer := receipt.ExpectedQueueConsumers[0]
+	invocation, err := store.EnqueueInvocation(t.Context(), state.Invocation{AccountID: lease.Source.AccountID,
+		AppID: worker.AppID, Source: state.InvocationQueue, QueueName: "orders", QueueBindingID: consumer.BindingID,
+		DeploymentScope: lease.Source.EnvironmentSlug, DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedInvocation, err := store.ClaimQueueTriggerInvocation(t.Context(), invocation.ID, consumer.TriggerID, worker.AppID, "orders", 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	triggerRecord, err := store.InsertTriggerRecord(t.Context(), consumer.TriggerID, invocation.ID, []byte(`{}`), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimTriggerRecords(t.Context(), consumer.TriggerID, 1)
+	if err != nil || len(claimed) != 1 || claimed[0].ID.String() != triggerRecord {
+		t.Fatalf("trigger claim: %+v %v", claimed, err)
+	}
+	finalized, err := store.CompleteEnvironmentQueueDeliveryClaims(t.Context(), worker.AppID, consumer.TriggerID, "queue",
+		[]string{invocation.ID}, []int32{int32(claimedInvocation.Attempts)}, []int64{claimedInvocation.ReplayGeneration},
+		[]state.EnvironmentWorkloadQueueServingAcknowledgement{{
+			Mode: "push", AppID: worker.AppID, Scope: lease.Source.EnvironmentSlug, BindingID: consumer.BindingID,
+			TriggerID: consumer.TriggerID, DeploymentID: worker.DeploymentID, InvocationID: invocation.ID,
+		}})
+	if err != nil || !slices.Equal(finalized, []string{invocation.ID}) {
+		t.Fatalf("successful reviewed queue delivery did not finalize: %+v %v", finalized, err)
+	}
+	served, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan)
+	if err != nil || !served.Serving || !served.Activated || !served.Qualified {
+		t.Fatalf("complete mixed graph not serving: %+v %v", served, err)
+	}
+}
+
 func registerServingGateway(t *testing.T, store *state.PgStore, name string) {
 	t.Helper()
 	role, target := "compute-only", "tcp://127.0.0.1:8080"
