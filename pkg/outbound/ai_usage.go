@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +47,43 @@ type AIUsageRecord struct {
 	// CostMillicents is priced at settlement from the integration's price
 	// list (ADR-983); zero when no price matches.
 	CostMillicents int64
+	// Log, when set, adds one metadata row to the AI request log (ADR-984).
+	Log *AIRequestLog
+}
+
+// AIRequestLog is the non-usage metadata of one logged AI call. It never
+// holds request or response content.
+type AIRequestLog struct {
+	RouteID    string
+	Status     int
+	DurationMS int64
+	// TTFBMS is nil when no response byte arrived.
+	TTFBMS   *int64
+	Attempts int
+}
+
+func newAIRequestLog(settlement aiSettlement, timeToFirstByte time.Duration, now time.Time) *AIRequestLog {
+	log := &AIRequestLog{
+		RouteID: settlement.routeID, Status: settlement.status, Attempts: settlement.attempts,
+		DurationMS: max(now.Sub(settlement.started).Milliseconds(), 0),
+	}
+	if timeToFirstByte > 0 {
+		ttfb := timeToFirstByte.Milliseconds()
+		log.TTFBMS = &ttfb
+	}
+	return log
+}
+
+func validateAIRequestLog(log *AIRequestLog) error {
+	if log == nil {
+		return nil
+	}
+	if log.Status < 100 || log.Status > 599 || log.DurationMS < 0 || log.DurationMS > 1<<31-1 ||
+		(log.TTFBMS != nil && (*log.TTFBMS < 0 || *log.TTFBMS > 1<<31-1)) || log.Attempts < 0 || log.Attempts > 100 ||
+		(log.RouteID != "" && !validUUID(log.RouteID)) {
+		return fmt.Errorf("%w: AI request log entry is out of range", ErrInvalidIntegration)
+	}
+	return nil
 }
 
 // AIUsageCallerRuns aggregates every Run's calls; Runs have no app ID.
@@ -76,11 +115,12 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
 		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
 	}
-	return nil
+	return validateAIRequestLog(record.Log)
 }
 
-// aiUsageFields covers the OpenAI chat completions, OpenAI Responses and
-// Anthropic Messages usage objects. Absent fields stay nil.
+// aiUsageFields covers the OpenAI chat completions, OpenAI Responses,
+// Anthropic Messages, Gemini usageMetadata, Bedrock Converse usage and Bedrock
+// invocation metrics objects (ADR-984). Absent fields stay nil.
 type aiUsageFields struct {
 	PromptTokens        *int64 `json:"prompt_tokens"`
 	CompletionTokens    *int64 `json:"completion_tokens"`
@@ -94,6 +134,21 @@ type aiUsageFields struct {
 	} `json:"input_tokens_details"`
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	// Gemini usageMetadata.
+	PromptTokenCount        *int64 `json:"promptTokenCount"`
+	CandidatesTokenCount    *int64 `json:"candidatesTokenCount"`
+	CachedContentTokenCount *int64 `json:"cachedContentTokenCount"`
+	ThoughtsTokenCount      *int64 `json:"thoughtsTokenCount"`
+	// Bedrock Converse usage.
+	BedrockInputTokens      *int64 `json:"inputTokens"`
+	BedrockOutputTokens     *int64 `json:"outputTokens"`
+	BedrockCacheReadTokens  *int64 `json:"cacheReadInputTokens"`
+	BedrockCacheWriteTokens *int64 `json:"cacheWriteInputTokens"`
+	// Bedrock invocation metrics.
+	InputTokenCount           *int64 `json:"inputTokenCount"`
+	OutputTokenCount          *int64 `json:"outputTokenCount"`
+	CacheReadInputTokenCount  *int64 `json:"cacheReadInputTokenCount"`
+	CacheWriteInputTokenCount *int64 `json:"cacheWriteInputTokenCount"`
 }
 
 type aiEnvelopeInner struct {
@@ -102,13 +157,19 @@ type aiEnvelopeInner struct {
 }
 
 // aiEnvelope finds usage at the top level (chat completions, Anthropic
-// responses and message_delta), under "message" (Anthropic message_start) or
-// under "response" (OpenAI Responses stream events).
+// responses and message_delta, Bedrock Converse), under "message" (Anthropic
+// message_start), under "response" (OpenAI Responses stream events), in
+// Gemini "usageMetadata" and in Bedrock invocation metrics. Bytes carries a
+// base64 provider event inside a Bedrock invoke stream chunk.
 type aiEnvelope struct {
-	Model    string           `json:"model"`
-	Usage    *aiUsageFields   `json:"usage"`
-	Message  *aiEnvelopeInner `json:"message"`
-	Response *aiEnvelopeInner `json:"response"`
+	Model         string           `json:"model"`
+	ModelVersion  string           `json:"modelVersion"`
+	Usage         *aiUsageFields   `json:"usage"`
+	UsageMetadata *aiUsageFields   `json:"usageMetadata"`
+	Metrics       *aiUsageFields   `json:"amazon-bedrock-invocationMetrics"`
+	Message       *aiEnvelopeInner `json:"message"`
+	Response      *aiEnvelopeInner `json:"response"`
+	Bytes         []byte           `json:"bytes"`
 }
 
 // aiRawUsage keeps the largest value seen per provider field. Streaming
@@ -116,6 +177,11 @@ type aiEnvelope struct {
 type aiRawUsage struct {
 	prompt, completion, input, output, cached, cacheRead, cacheCreation int64
 	seenPrompt, seenCompletion, seen                                    bool
+	// Gemini, Bedrock Converse and Bedrock invocation metrics counts.
+	geminiPrompt, geminiCandidates, geminiCached, geminiThoughts     int64
+	bedrockInput, bedrockOutput, bedrockCacheRead, bedrockCacheWrite int64
+	metricInput, metricOutput, metricCacheRead, metricCacheWrite     int64
+	seenMetrics                                                      bool
 }
 
 func (r *aiRawUsage) merge(fields *aiUsageFields) {
@@ -155,16 +221,46 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.cacheRead, fields.CacheReadInputTokens)
 	take(&r.cacheCreation, fields.CacheCreationInputTokens)
+	take(&r.geminiPrompt, fields.PromptTokenCount)
+	take(&r.geminiCandidates, fields.CandidatesTokenCount)
+	take(&r.geminiCached, fields.CachedContentTokenCount)
+	take(&r.geminiThoughts, fields.ThoughtsTokenCount)
+	take(&r.bedrockInput, fields.BedrockInputTokens)
+	take(&r.bedrockOutput, fields.BedrockOutputTokens)
+	take(&r.bedrockCacheRead, fields.BedrockCacheReadTokens)
+	take(&r.bedrockCacheWrite, fields.BedrockCacheWriteTokens)
+	for _, metric := range []bool{
+		take(&r.metricInput, fields.InputTokenCount), take(&r.metricOutput, fields.OutputTokenCount),
+		take(&r.metricCacheRead, fields.CacheReadInputTokenCount), take(&r.metricCacheWrite, fields.CacheWriteInputTokenCount),
+	} {
+		r.seenMetrics = r.seenMetrics || metric
+	}
 }
 
-func (r aiRawUsage) normalize(provider string) AIUsage {
+func (r aiRawUsage) normalize(format aiWireFormat) AIUsage {
 	usage := AIUsage{Known: r.seen}
-	switch provider {
-	case api.OutboundAIProviderAnthropic:
+	switch {
+	case format == aiFormatBedrockInvoke && r.seenMetrics:
+		usage.InputTokens = r.metricInput + r.metricCacheRead + r.metricCacheWrite
+		usage.CachedInputTokens = r.metricCacheRead
+		usage.CacheWriteTokens = r.metricCacheWrite
+		usage.OutputTokens = r.metricOutput
+	case format == aiFormatAnthropic || format == aiFormatBedrockInvoke:
 		usage.InputTokens = r.input + r.cacheRead + r.cacheCreation
 		usage.CachedInputTokens = r.cacheRead
 		usage.CacheWriteTokens = r.cacheCreation
 		usage.OutputTokens = r.output
+	case format == aiFormatGemini:
+		// promptTokenCount includes cached content; thinking is billed as
+		// output.
+		usage.InputTokens = r.geminiPrompt
+		usage.CachedInputTokens = min(r.geminiCached, r.geminiPrompt)
+		usage.OutputTokens = r.geminiCandidates + r.geminiThoughts
+	case format == aiFormatBedrockConverse:
+		usage.InputTokens = r.bedrockInput + r.bedrockCacheRead + r.bedrockCacheWrite
+		usage.CachedInputTokens = r.bedrockCacheRead
+		usage.CacheWriteTokens = r.bedrockCacheWrite
+		usage.OutputTokens = r.bedrockOutput
 	default:
 		usage.InputTokens = r.input
 		if r.seenPrompt {
@@ -185,30 +281,50 @@ const (
 	aiBodyIgnored aiBodyMode = iota
 	aiBodyJSON
 	aiBodyEventStream
+	// aiBodyAWSEventStream is Bedrock's binary
+	// application/vnd.amazon.eventstream framing.
+	aiBodyAWSEventStream
 )
 
 // aiUsageObserver receives a copy of the response bytes the gateway sends to
 // the caller. It never fails a write, so it cannot slow or break the stream.
 type aiUsageObserver struct {
-	provider     string
-	mode         aiBodyMode
-	now          func() time.Time
-	firstByteAt  time.Time
-	body         []byte
-	bodyOverflow bool
-	line         []byte
-	lineOverflow bool
-	data         []byte
-	dataOverflow bool
-	raw          aiRawUsage
-	model        string
+	format aiWireFormat
+	mode   aiBodyMode
+	frames awsEventStreamReader
+	// fallbackModel names the call when the response does not (Bedrock
+	// Converse, Vertex paths).
+	fallbackModel string
+	now           func() time.Time
+	firstByteAt   time.Time
+	body          []byte
+	bodyOverflow  bool
+	line          []byte
+	lineOverflow  bool
+	data          []byte
+	dataOverflow  bool
+	raw           aiRawUsage
+	model         string
 }
 
+// newAIUsageObserver observes a call in the provider's default format.
 func newAIUsageObserver(provider, contentType string, now func() time.Time) *aiUsageObserver {
+	format := aiFormatOpenAI
+	switch provider {
+	case api.OutboundAIProviderAnthropic:
+		format = aiFormatAnthropic
+	case api.OutboundAIProviderGemini:
+		format = aiFormatGemini
+	}
+	return newAIUsageObserverFormat(format, contentType, now)
+}
+
+// newAIUsageObserverFormat observes one call of a known wire format.
+func newAIUsageObserverFormat(format aiWireFormat, contentType string, now func() time.Time) *aiUsageObserver {
 	if now == nil {
 		now = time.Now
 	}
-	o := &aiUsageObserver{provider: provider, now: now}
+	o := &aiUsageObserver{format: format, now: now}
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		mediaType = strings.ToLower(strings.TrimSpace(contentType))
@@ -216,10 +332,54 @@ func newAIUsageObserver(provider, contentType string, now func() time.Time) *aiU
 	switch {
 	case mediaType == "text/event-stream":
 		o.mode = aiBodyEventStream
+	case mediaType == awsEventStreamMediaType:
+		o.mode = aiBodyAWSEventStream
+		o.frames.onPayload = o.applyAWSEventPayload
 	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
 		o.mode = aiBodyJSON
 	}
 	return o
+}
+
+// applyHeaders reads Bedrock invoke token-count response headers.
+func (o *aiUsageObserver) applyHeaders(header http.Header) {
+	input, inputOK := headerTokenCount(header, "X-Amzn-Bedrock-Input-Token-Count")
+	output, outputOK := headerTokenCount(header, "X-Amzn-Bedrock-Output-Token-Count")
+	if !inputOK && !outputOK {
+		return
+	}
+	fields := &aiUsageFields{}
+	if inputOK {
+		fields.InputTokenCount = &input
+	}
+	if outputOK {
+		fields.OutputTokenCount = &output
+	}
+	o.raw.merge(fields)
+}
+
+func headerTokenCount(header http.Header, name string) (int64, bool) {
+	value := strings.TrimSpace(header.Get(name))
+	if value == "" {
+		return 0, false
+	}
+	count, err := strconv.ParseInt(value, 10, 64)
+	return count, err == nil && count >= 0
+}
+
+// applyAWSEventPayload handles one Bedrock event-stream frame payload. A
+// converse-stream metadata event carries usage directly; an invoke stream
+// chunk wraps a base64 provider event in "bytes".
+func (o *aiUsageObserver) applyAWSEventPayload(payload []byte) {
+	var envelope aiEnvelope
+	if json.Unmarshal(payload, &envelope) != nil {
+		return
+	}
+	if len(envelope.Bytes) > 0 {
+		o.applyJSON(envelope.Bytes)
+		return
+	}
+	o.applyEnvelope(envelope)
 }
 
 func (o *aiUsageObserver) Write(p []byte) (int, error) {
@@ -231,6 +391,8 @@ func (o *aiUsageObserver) Write(p []byte) (int, error) {
 		o.writeJSON(p)
 	case aiBodyEventStream:
 		o.writeEventStream(p)
+	case aiBodyAWSEventStream:
+		o.frames.write(p)
 	}
 	return len(p), nil
 }
@@ -307,12 +469,30 @@ func (o *aiUsageObserver) dispatchEvent() {
 }
 
 func (o *aiUsageObserver) applyJSON(data []byte) {
-	var envelope aiEnvelope
-	if json.Unmarshal(data, &envelope) != nil {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		// Gemini streamGenerateContent without alt=sse returns one array.
+		var envelopes []aiEnvelope
+		if json.Unmarshal(trimmed, &envelopes) == nil {
+			for _, envelope := range envelopes {
+				o.applyEnvelope(envelope)
+			}
+		}
 		return
 	}
+	var envelope aiEnvelope
+	if json.Unmarshal(trimmed, &envelope) != nil {
+		return
+	}
+	o.applyEnvelope(envelope)
+}
+
+func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 	o.raw.merge(envelope.Usage)
+	o.raw.merge(envelope.UsageMetadata)
+	o.raw.merge(envelope.Metrics)
 	o.noteModel(envelope.Model)
+	o.noteModel(envelope.ModelVersion)
 	for _, inner := range []*aiEnvelopeInner{envelope.Message, envelope.Response} {
 		if inner != nil {
 			o.raw.merge(inner.Usage)
@@ -342,8 +522,11 @@ func (o *aiUsageObserver) Finish() AIUsage {
 		}
 		o.dispatchEvent()
 	}
-	usage := o.raw.normalize(o.provider)
+	usage := o.raw.normalize(o.format)
 	usage.Model = o.model
+	if usage.Model == "" {
+		usage.Model = sanitizeAIModel(o.fallbackModel)
+	}
 	if usage.Model == "" {
 		usage.Model = "unknown"
 	}
@@ -383,5 +566,5 @@ func streamingMediaType(contentType string) bool {
 	if err != nil {
 		return false
 	}
-	return mediaType == "text/event-stream" || mediaType == "application/x-ndjson"
+	return mediaType == "text/event-stream" || mediaType == "application/x-ndjson" || mediaType == awsEventStreamMediaType
 }

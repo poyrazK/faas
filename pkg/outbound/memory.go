@@ -11,7 +11,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type memoryLease struct{ expiresAt time.Time }
+type memoryLease struct {
+	expiresAt time.Time
+	// bindingApp and the reservation count against AI hard caps while the
+	// lease lives (ADR-984).
+	bindingApp     string
+	reservedTokens int64
+	reservedCost   int64
+}
+
+// memoryMinute is one app's fixed UTC-minute window (ADR-984).
+type memoryMinute struct {
+	window           time.Time
+	requests, tokens int64
+}
 
 type memoryState struct {
 	tokens                   float64
@@ -36,6 +49,7 @@ type memoryState struct {
 	usageMonth               string
 	monthlyAICost            int64
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
+	bindingMinutes           map[string]memoryMinute
 	initialized              bool
 }
 
@@ -90,6 +104,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		if limit != nil && (*limit < 1 || *limit > api.MaxOutboundAICostMillicents) {
 			return Decision{}, fmt.Errorf("%w: AI cost limit is outside the supported range", ErrInvalidIntegration)
 		}
+	}
+	if err := validateAIAdmissionSpec(spec); err != nil {
+		return Decision{}, err
 	}
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
@@ -177,19 +194,32 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
+	inflight := state.inflightReservations(spec.BindingAppID)
+	reserve := aiReservationFromSpec(spec)
 	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
 		dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCounts[spec.BindingAppID],
 		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost,
-	}, aiBudgetLimitsFromSpec(spec)); limited {
+		inflightTokens: inflight.tokens, inflightBindingTokens: inflight.bindingTokens, inflightCost: inflight.cost,
+	}, aiBudgetLimitsFromSpec(spec), reserve); limited {
 		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+	}
+	minute := state.bindingMinute(spec.BindingAppID, utcNow)
+	if spec.BindingAppID != "" {
+		if reason, retry, limited := aiMinuteExhausted(utcNow, aiMinuteState{
+			requests: minute.requests, tokens: minute.tokens, inflightTokens: inflight.bindingTokens,
+		}, spec.BindingRequestsPerMinute, spec.BindingTokensPerMinute, reserve); limited {
+			return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+		}
 	}
 	state.tokens--
 	state.dailyRequestCount++
 	if spec.BindingAppID != "" {
 		state.bindingDailyCounts[spec.BindingAppID]++
+		minute.requests++
+		state.bindingMinutes[spec.BindingAppID] = minute
 	}
 	id := uuid.NewString()
-	state.leases[id] = memoryLease{expiresAt: now.Add(ttl)}
+	state.leases[id] = memoryLease{expiresAt: now.Add(ttl), bindingApp: spec.BindingAppID, reservedTokens: reserve.tokens, reservedCost: reserve.cost}
 	return Decision{
 		Granted: true, LeaseID: id, RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
@@ -387,6 +417,35 @@ func validUUID(value string) bool {
 	return err == nil
 }
 
+type memoryInflight struct{ tokens, bindingTokens, cost int64 }
+
+// inflightReservations sums live leases' reservations; expired leases were
+// already removed by the caller.
+func (s *memoryState) inflightReservations(bindingApp string) memoryInflight {
+	var out memoryInflight
+	for _, lease := range s.leases {
+		out.tokens += lease.reservedTokens
+		out.cost += lease.reservedCost
+		if bindingApp != "" && lease.bindingApp == bindingApp {
+			out.bindingTokens += lease.reservedTokens
+		}
+	}
+	return out
+}
+
+// bindingMinute returns the app's window for the current UTC minute.
+func (s *memoryState) bindingMinute(bindingApp string, utcNow time.Time) memoryMinute {
+	if s.bindingMinutes == nil {
+		s.bindingMinutes = make(map[string]memoryMinute)
+	}
+	window := utcNow.Truncate(time.Minute)
+	minute := s.bindingMinutes[bindingApp]
+	if !minute.window.Equal(window) {
+		minute = memoryMinute{window: window}
+	}
+	return minute
+}
+
 // rollDay resets every UTC-day counter when the day changes.
 func (s *memoryState) rollDay(today string) {
 	if month := today[:7]; s.usageMonth != month {
@@ -430,9 +489,15 @@ func (b *MemoryBackend) RecordAIUsage(ctx context.Context, record AIUsageRecord)
 		state = &memoryState{leases: make(map[string]memoryLease), bindingDailyCounts: make(map[string]int64)}
 		b.states[record.IntegrationID] = state
 	}
-	state.rollDay(b.now().UTC().Format("2006-01-02"))
+	utcNow := b.now().UTC()
+	state.rollDay(utcNow.Format("2006-01-02"))
 	state.dailyAITokenCount += record.Usage.BudgetTokens()
 	state.bindingAITokenCounts[record.Caller] += record.Usage.BudgetTokens()
+	if record.Caller != AIUsageCallerRuns && record.Usage.BudgetTokens() > 0 {
+		minute := state.bindingMinute(record.Caller, utcNow)
+		minute.tokens += record.Usage.BudgetTokens()
+		state.bindingMinutes[record.Caller] = minute
+	}
 	state.dailyAICost += record.CostMillicents
 	state.monthlyAICost += record.CostMillicents
 	key := memoryAIUsageKey{caller: record.Caller, model: record.Usage.Model}

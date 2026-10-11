@@ -5,13 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // AIUsageBackend settles AI token usage after a response (ADR-979). It adds
@@ -70,27 +67,22 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 	return controller
 }
 
-// applyManagedCredential sets the provider credential header. Anthropic
-// expects API keys in x-api-key, so an Anthropic AI integration sends the
-// stored value there (without a "Bearer " prefix) and drops any
-// caller-supplied Authorization or x-api-key (ADR-982). Every other managed
-// integration keeps replacing Authorization only.
-func applyManagedCredential(header http.Header, integration Integration, credential string) {
-	if integration.AIProvider == api.OutboundAIProviderAnthropic {
-		header.Del("Authorization")
-		header.Set("X-Api-Key", strings.TrimPrefix(credential, "Bearer "))
-		return
-	}
-	header.Set("Authorization", credential)
-}
-
 // observeAIResponse starts usage extraction for an AI integration's
-// generation call. It returns nil when the response is not an AI call.
-func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest) *aiUsageObserver {
+// generation call. It returns nil when the response is not an AI call. The
+// plan picks the call's wire format and the model to report when the
+// response names none (ADR-984).
+func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest, plan *aiCallPlan) *aiUsageObserver {
 	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil {
 		return nil
 	}
-	observer := newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
+	var observer *aiUsageObserver
+	if plan != nil && plan.endpoint.format != aiFormatNone {
+		observer = newAIUsageObserverFormat(plan.endpoint.format, resp.Header.Get("Content-Type"), time.Now)
+		observer.fallbackModel = plan.facts.model
+	} else {
+		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
+	}
+	observer.applyHeaders(resp.Header)
 	resp.Body = &observedBody{ReadCloser: resp.Body, observer: observer}
 	if ai != nil && ai.usageInjected && streamingMediaType(resp.Header.Get("Content-Type")) {
 		// ADR-983: the caller never asked for the usage chunk; hide it after
@@ -100,11 +92,21 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 	return observer
 }
 
+// aiSettlement is what the handler knows about a finished AI call besides
+// its usage: the provider status, attempts, start time and route.
+type aiSettlement struct {
+	status   int
+	attempts int
+	started  time.Time
+	routeID  string
+}
+
 // settleAIUsage records one finished AI call. It runs after the response copy,
 // including an aborted one, so partial streams still count what they used.
-func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, appID string, status int,
-	observer *aiUsageObserver, upstreamStarted time.Time, span oteltrace.Span, metricIntegrationID string) {
+func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
+	observer *aiUsageObserver, span oteltrace.Span, metricIntegrationID string) {
 	usage := observer.Finish()
+	status, upstreamStarted := settlement.status, settlement.started
 	outcome := aiUsageOutcome(status, usage)
 	if outcome == AIUsageOutcomeError {
 		usage = AIUsage{Model: usage.Model}
@@ -131,9 +133,13 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiUsageRecordTimeout)
 	defer cancel()
-	if err := recorder.RecordAIUsage(recordCtx, AIUsageRecord{
+	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
-	}); err != nil {
+	}
+	if integration.AIRequestLogEnabled {
+		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
+	}
+	if err := recorder.RecordAIUsage(recordCtx, record); err != nil {
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
 		return
 	}

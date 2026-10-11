@@ -59,6 +59,8 @@ type Handler struct {
 	Routes               RouteResolver
 	managedAuthorization map[string]string
 	responseCache        *outboundResponseCache
+	// vertexTokens caches exchanged Google access tokens (ADR-984).
+	vertexTokens vertexTokenCache
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -276,6 +278,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
 		bindingDailyAITokenLimit = integration.BindingDailyAITokenLimits[appID]
 	}
+	// ADR-984: guardrails run before admission; the plan carries the call's
+	// reservation into it.
+	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq)
+	if rejection != nil {
+		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
+		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
+		return
+	}
+	var reserve aiReservation
+	var guard AIGuardrails
+	if aiPlan != nil {
+		reserve, guard = aiPlan.reserve, aiPlan.guard
+	}
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
@@ -284,6 +299,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		BindingDailyAITokenLimit:       copyInt64Pointer(bindingDailyAITokenLimit),
 		DailyAICostLimit:               copyInt64Pointer(integration.DailyAICostLimit),
 		MonthlyAICostLimit:             copyInt64Pointer(integration.MonthlyAICostLimit),
+		AIReservedTokens:               reserve.tokens,
+		AIReservedCostMillicents:       reserve.cost,
+		BindingRequestsPerMinute:       copyInt64Pointer(guard.RequestsPerMinute),
+		BindingTokensPerMinute:         copyInt64Pointer(guard.TokensPerMinute),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -359,11 +378,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
-	if integration.ProviderAuthMode == ProviderAuthManaged {
-		// The guest may send an Authorization header, but it cannot replace
-		// or read the provider credential held by outboundd.
-		applyManagedCredential(upstreamReq.Header, integration, managedAuthorization)
-	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body
 	// sentinel so providers do not unexpectedly receive chunked uploads.
@@ -380,11 +394,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cacheEligible := workflowIdentity == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
 		aiCacheEligible(upstreamReq, aiReq, integration.ResponseCacheTTLSeconds))
 	cacheKey := ""
+	if cacheEligible {
+		// Keyed before the credential is applied: every key of a pool, and
+		// every signed or exchanged token, shares one entry (ADR-984).
+		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq, cacheBody)
+	}
+	if integration.ProviderAuthMode == ProviderAuthManaged {
+		// The guest may send an Authorization header, but it cannot replace
+		// or read the provider credential held by outboundd.
+		if err := h.applyProviderCredential(dependencyCtx, upstreamReq, integration, managedAuthorization, cacheBody); err != nil {
+			dependencySpan.SetStatus(codes.Error, "provider credential unusable")
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
+	}
 	var resp *http.Response
 	attempts := 0
 	cacheHit := false
 	if cacheEligible {
-		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq, cacheBody)
 		if cached, ok := h.responseCache.get(cacheKey, time.Now()); ok {
 			resp = cached
 			cacheHit = true
@@ -500,9 +527,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
-	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq); aiObserver != nil {
+	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
-		defer h.settleAIUsage(ctx, integration, appID, resp.StatusCode, aiObserver, upstreamStarted, dependencySpan, metricIntegrationID)
+		defer h.settleAIUsage(ctx, integration, appID, aiSettlement{
+			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
+		}, aiObserver, dependencySpan, metricIntegrationID)
 	}
 	if workflowIdentity != nil {
 		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)

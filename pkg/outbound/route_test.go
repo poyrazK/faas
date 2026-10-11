@@ -125,10 +125,11 @@ func TestRouteRequiresRelayIdentityOfTheOwningAccount(t *testing.T) {
 }
 
 func TestRouteFallsBackPastAGatewayBudgetRejection(t *testing.T) {
+	// ADR-984: the primary's 1-token cap cannot hold the call's reservation,
+	// so even the first call falls back.
 	f := newRouteFixture(t, http.StatusOK, func(i *Integration) { i.DailyAITokenLimit = int64Ref(1) })
 	first := f.post("account-1", "/r/route-1/v1/chat/completions", `{"model":"gpt-4o"}`)
-	second := f.post("account-1", "/r/route-1/v1/chat/completions", `{"model":"gpt-4o"}`)
-	if first.Header().Get(RouteTargetHeader) != "primary" || second.Code != http.StatusOK || second.Header().Get(RouteTargetHeader) != "backup" {
-		t.Fatalf("budget fallback: first=%q second=%d %q", first.Header().Get(RouteTargetHeader), second.Code, second.Header().Get(RouteTargetHeader))
+	if first.Code != http.StatusOK || first.Header().Get(RouteTargetHeader) != "backup" {
+		t.Fatalf("budget fallback: first=%d %q", first.Code, first.Header().Get(RouteTargetHeader))
 	}
 }

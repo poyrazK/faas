@@ -3,6 +3,7 @@ package outbound
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,7 +94,9 @@ func TestPerAppTokenLimitAndDailyCostLimit(t *testing.T) {
 	}
 	call := func(handler *Handler, app string) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/chat/completions", "token", app, http.MethodPost, nil))
+		// A small output ceiling keeps the ADR-984 reservation below the
+		// limits under test.
+		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/chat/completions", "token", app, http.MethodPost, strings.NewReader(`{"max_tokens":5}`)))
 		return recorder
 	}
 
@@ -136,11 +139,11 @@ func TestPerAppTokenLimitAndDailyCostLimit(t *testing.T) {
 
 func TestAIBudgetExhaustedResetsAtMonthEnd(t *testing.T) {
 	now := time.Date(2026, 10, 31, 23, 0, 0, 0, time.UTC)
-	reason, retry, limited := aiBudgetExhausted(now, aiBudgetState{monthlyCost: 100}, aiBudgetLimits{monthlyCost: int64Ref(100)})
+	reason, retry, limited := aiBudgetExhausted(now, aiBudgetState{monthlyCost: 100}, aiBudgetLimits{monthlyCost: int64Ref(100)}, aiReservation{})
 	if !limited || reason != ReasonMonthlyCostLimit || retry != time.Hour {
 		t.Fatalf("monthly limit = %v %s %s", limited, reason, retry)
 	}
-	if _, _, limited := aiBudgetExhausted(now, aiBudgetState{dailyTokens: 99}, aiBudgetLimits{dailyTokens: int64Ref(100)}); limited {
+	if _, _, limited := aiBudgetExhausted(now, aiBudgetState{dailyTokens: 99}, aiBudgetLimits{dailyTokens: int64Ref(100)}, aiReservation{}); limited {
 		t.Fatal("limit applied below its threshold")
 	}
 }

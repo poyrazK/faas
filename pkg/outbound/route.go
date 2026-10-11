@@ -40,6 +40,18 @@ type RouteResolver interface {
 	Route(ctx context.Context, routeID string) (AIRoute, error)
 }
 
+type routeIDContextKey struct{}
+
+// withRouteID marks a route attempt so its settlement can log the route.
+func withRouteID(ctx context.Context, routeID string) context.Context {
+	return context.WithValue(ctx, routeIDContextKey{}, routeID)
+}
+
+func routeIDFromContext(ctx context.Context) string {
+	routeID, _ := ctx.Value(routeIDContextKey{}).(string)
+	return routeID
+}
+
 // routeAttemptWriter holds a target's response back while it is retryable
 // and another target remains. The first non-retryable status commits it to
 // the caller, and everything after streams through unchanged.

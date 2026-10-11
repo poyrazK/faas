@@ -96,7 +96,13 @@ func (b *PostgresBackend) RecordAIUsage(ctx context.Context, record AIUsageRecor
 			                                  THEN daily_request_count ELSE 0 END,
 			       daily_ai_token_count = CASE WHEN daily_usage_date = (now() AT TIME ZONE 'UTC')::date
 			                                   THEN daily_ai_token_count + $3 ELSE $3 END,
-			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date
+			       daily_usage_date = (now() AT TIME ZONE 'UTC')::date,
+			       -- ADR-984: tokens count toward the minute they settle in.
+			       minute_request_count = CASE WHEN minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+			                                   THEN minute_request_count ELSE 0 END,
+			       minute_ai_token_count = CASE WHEN minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+			                                    THEN minute_ai_token_count + $3 ELSE $3 END,
+			       minute_window_start = date_trunc('minute', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
 			 WHERE integration_id = $1 AND app_id = $2`, integrationID, uuid.MustParse(record.Caller), budgetTokens); err != nil {
 			return err
 		}

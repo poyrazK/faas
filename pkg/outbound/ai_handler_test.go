@@ -106,9 +106,11 @@ func TestHandlerSettlesAITokensAndEnforcesDailyTokenLimit(t *testing.T) {
 	handler, backend := aiTestHandler(t, upstream, api.OutboundAIProviderAnthropic, &limit)
 	call := func() *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/messages", "token", "app-1", http.MethodPost, strings.NewReader(`{}`)))
+		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/messages", "token", "app-1", http.MethodPost, strings.NewReader(`{"max_tokens":10}`)))
 		return recorder
 	}
+	// Each call reserves 5 input + 10 output tokens (ADR-984), which still
+	// fits below the 100-token limit until settled usage reaches it.
 	for i, wantTokens := range []int64{80, 160} {
 		if recorder := call(); recorder.Code != http.StatusOK {
 			t.Fatalf("call %d status = %d body=%s", i+1, recorder.Code, recorder.Body.String())

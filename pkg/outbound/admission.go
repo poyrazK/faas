@@ -34,6 +34,9 @@ const (
 	ReasonDailyTokenLimit  = "daily_token_limit"
 	ReasonDailyCostLimit   = "daily_cost_limit"
 	ReasonMonthlyCostLimit = "monthly_cost_limit"
+	// Per-app per-minute AI limits (ADR-984).
+	ReasonRequestsPerMinute = "requests_per_minute_limit"
+	ReasonTokensPerMinute   = "tokens_per_minute_limit"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -92,6 +95,43 @@ type Integration struct {
 	DailyAICostLimit   *int64
 	MonthlyAICostLimit *int64
 	AIPrices           []AIPrice
+	// BindingAIGuardrails are per-app per-minute limits, model allow-lists
+	// and output ceilings (ADR-984), keyed by bound app ID.
+	BindingAIGuardrails map[string]AIGuardrails
+	// AIRequestLogEnabled records per-call metadata at settlement.
+	AIRequestLogEnabled bool
+}
+
+// AIGuardrails are one app binding's AI restrictions; nil fields are unset.
+type AIGuardrails struct {
+	RequestsPerMinute *int64
+	TokensPerMinute   *int64
+	AllowedModels     []string
+	MaxOutputTokens   *int64
+}
+
+// restrictsCalls reports a model allow-list or output ceiling, which need
+// a readable body.
+func (g AIGuardrails) restrictsCalls() bool {
+	return g.AllowedModels != nil || g.MaxOutputTokens != nil
+}
+
+func copyAIGuardrails(in map[string]AIGuardrails) map[string]AIGuardrails {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]AIGuardrails, len(in))
+	for appID, guard := range in {
+		guarded := AIGuardrails{
+			RequestsPerMinute: copyInt64Pointer(guard.RequestsPerMinute), TokensPerMinute: copyInt64Pointer(guard.TokensPerMinute),
+			MaxOutputTokens: copyInt64Pointer(guard.MaxOutputTokens),
+		}
+		if guard.AllowedModels != nil {
+			guarded.AllowedModels = append(make([]string, 0, len(guard.AllowedModels)), guard.AllowedModels...)
+		}
+		out[appID] = guarded
+	}
+	return out
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -154,6 +194,18 @@ func (i Integration) Validate() error {
 		if !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundAITokensPerDay)) {
 			return fmt.Errorf("%w: binding daily token limit is invalid", ErrInvalidIntegration)
 		}
+	}
+	for appID, guard := range i.BindingAIGuardrails {
+		request := api.PutOutboundBindingAIGuardrailsRequest{
+			RequestsPerMinute: guard.RequestsPerMinute, TokensPerMinute: guard.TokensPerMinute,
+			AllowedModels: guard.AllowedModels, MaxOutputTokens: guard.MaxOutputTokens,
+		}
+		if !i.AllowsApp(appID) || i.AIProvider == "" || !request.Valid() {
+			return fmt.Errorf("%w: binding AI guardrails are invalid", ErrInvalidIntegration)
+		}
+	}
+	if i.AIRequestLogEnabled && i.AIProvider == "" {
+		return fmt.Errorf("%w: the AI request log requires an AI provider", ErrInvalidIntegration)
 	}
 	for appID, limit := range i.BindingDailyRequestLimits {
 		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
@@ -238,6 +290,15 @@ type AdmissionSpec struct {
 	BindingDailyAITokenLimit *int64
 	DailyAICostLimit         *int64
 	MonthlyAICostLimit       *int64
+	// AIReservedTokens and AIReservedCostMillicents are this call's
+	// admission-time reservation (ADR-984). They count against the AI limits
+	// with every live lease's reservation and leave with the lease.
+	AIReservedTokens         int64
+	AIReservedCostMillicents int64
+	// BindingRequestsPerMinute and BindingTokensPerMinute are the app's
+	// per-minute limits; the Postgres backend reads the stored values.
+	BindingRequestsPerMinute *int64
+	BindingTokensPerMinute   *int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string
@@ -341,6 +402,7 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		copyItem.DailyAICostLimit = copyInt64Pointer(item.DailyAICostLimit)
 		copyItem.MonthlyAICostLimit = copyInt64Pointer(item.MonthlyAICostLimit)
 		copyItem.AIPrices = append([]AIPrice(nil), item.AIPrices...)
+		copyItem.BindingAIGuardrails = copyAIGuardrails(item.BindingAIGuardrails)
 		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
 		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
@@ -371,6 +433,7 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.DailyAICostLimit = copyInt64Pointer(i.DailyAICostLimit)
 	i.MonthlyAICostLimit = copyInt64Pointer(i.MonthlyAICostLimit)
 	i.AIPrices = append([]AIPrice(nil), i.AIPrices...)
+	i.BindingAIGuardrails = copyAIGuardrails(i.BindingAIGuardrails)
 	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
 	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)
