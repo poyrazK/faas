@@ -10,8 +10,10 @@ from ..models.operation_workflow_performance_instances_response_cohort import (
     OperationWorkflowPerformanceInstancesResponseCohort,
     check_operation_workflow_performance_instances_response_cohort,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
     from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
     from ..models.operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
     from ..models.operation_workflow_performance_group import OperationWorkflowPerformanceGroup
@@ -45,6 +47,12 @@ class OperationWorkflowPerformanceInstancesResponse:
     """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
     zero."""
     items: list[OperationWorkflowPerformanceInstance]
+    decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset = UNSET
+    """Observed decision and path associations with latest reported outcomes in the completed performance cohort.
+    Only complete histories with a reported outcome qualify. Repeated decision or path identities count once per
+    workflow and group. Groups overlap; their counts must not be summed. Classification uses reasons and selections
+    reported at or before the first terminal report. Sequence does not establish causation. Groups retain the first
+    64 canonical identities in ascending order."""
 
     def to_dict(self) -> dict[str, Any]:
         evaluated_at = self.evaluated_at.isoformat()
@@ -79,6 +87,10 @@ class OperationWorkflowPerformanceInstancesResponse:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        decision_outcomes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision_outcomes, Unset):
+            decision_outcomes = self.decision_outcomes.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -98,11 +110,14 @@ class OperationWorkflowPerformanceInstancesResponse:
                 "items": items,
             }
         )
+        if decision_outcomes is not UNSET:
+            field_dict["decision_outcomes"] = decision_outcomes
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
         from ..models.operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
         from ..models.operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
         from ..models.operation_workflow_performance_group import OperationWorkflowPerformanceGroup
@@ -145,6 +160,13 @@ class OperationWorkflowPerformanceInstancesResponse:
 
             items.append(items_item)
 
+        _decision_outcomes = d.pop("decision_outcomes", UNSET)
+        decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset
+        if isinstance(_decision_outcomes, Unset):
+            decision_outcomes = UNSET
+        else:
+            decision_outcomes = OperationWorkflowDecisionOutcomeSummary.from_dict(_decision_outcomes)
+
         operation_workflow_performance_instances_response = cls(
             evaluated_at=evaluated_at,
             cohort_token=cohort_token,
@@ -159,6 +181,7 @@ class OperationWorkflowPerformanceInstancesResponse:
             exclusions=exclusions,
             duration=duration,
             items=items,
+            decision_outcomes=decision_outcomes,
         )
 
         return operation_workflow_performance_instances_response

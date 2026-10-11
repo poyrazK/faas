@@ -8249,7 +8249,7 @@ paths:
       tags: [operations]
       operationId: listAccountWorkflowPerformanceInstances
       summary: List ranked contributors to a workflow performance group.
-      description: Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+      description: Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify.
       parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/OperationMilestoneScope'
@@ -8268,7 +8268,7 @@ paths:
         in: query
         description: Overall measure or exact breakdown dimension.
         required: true
-        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner, decision_completion, decision_blocked]}
       - name: contract_version
         in: query
         description: Required for state and blocker dimensions.
@@ -8297,6 +8297,34 @@ paths:
         in: query
         description: Opaque selector-bound cohort token from the summary or a previous contributor response.
         schema: {type: string, minLength: 1, maxLength: 512}
+      - name: kind
+        in: query
+        description: Decision outcome group kind.
+        schema: {type: string, enum: [decision, path]}
+      - name: decision_code
+        in: query
+        description: Exact reported decision code for decision outcome dimensions.
+        schema: {type: string, maxLength: 64}
+      - name: rule_id
+        in: query
+        description: Exact rule ID for decision outcome dimensions.
+        schema: {type: string, maxLength: 64}
+      - name: rule_version
+        in: query
+        description: Exact rule version for decision outcome dimensions.
+        schema: {type: string, maxLength: 128}
+      - name: group_id
+        in: query
+        description: Exact selected prerequisite group for path outcome dimensions.
+        schema: {type: string, maxLength: 64}
+      - name: path_id
+        in: query
+        description: Exact selected path for path outcome dimensions.
+        schema: {type: string, maxLength: 64}
+      - name: outcome_code
+        in: query
+        description: Exact latest reported outcome for decision outcome dimensions.
+        schema: {type: string, maxLength: 64}
       responses:
         '200':
           description: Ranked complete-history contributors and exact selected group distribution.
@@ -8318,7 +8346,7 @@ paths:
       tags: [operations]
       operationId: listPlatformTenantSelfWorkflowPerformanceInstances
       summary: List ranked performance contributors for the authenticated customer.
-      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify.
       parameters:
       - $ref: '#/components/parameters/OperationMilestoneAppID'
       - $ref: '#/components/parameters/OperationMilestoneScope'
@@ -8336,7 +8364,7 @@ paths:
         in: query
         description: "Customer cohort duration measure or exact breakdown dimension."
         required: true
-        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+        schema: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner, decision_completion, decision_blocked]}
       - name: contract_version
         in: query
         description: "Contract version required when selecting a customer state or blocker group."
@@ -8365,6 +8393,34 @@ paths:
         in: query
         description: "Customer selector-bound cohort token from a prior summary or contributor response."
         schema: {type: string, minLength: 1, maxLength: 512}
+      - name: kind
+        in: query
+        description: Decision outcome group kind. Scoped to the authenticated customer.
+        schema: {type: string, enum: [decision, path]}
+      - name: decision_code
+        in: query
+        description: Exact reported decision code for decision outcome dimensions. Scoped to the authenticated customer.
+        schema: {type: string, maxLength: 64}
+      - name: rule_id
+        in: query
+        description: Exact rule ID for decision outcome dimensions. Scoped to the authenticated customer.
+        schema: {type: string, maxLength: 64}
+      - name: rule_version
+        in: query
+        description: Exact rule version for decision outcome dimensions. Scoped to the authenticated customer.
+        schema: {type: string, maxLength: 128}
+      - name: group_id
+        in: query
+        description: Exact selected prerequisite group for path outcome dimensions. Scoped to the authenticated customer.
+        schema: {type: string, maxLength: 64}
+      - name: path_id
+        in: query
+        description: Exact selected path for path outcome dimensions. Scoped to the authenticated customer.
+        schema: {type: string, maxLength: 64}
+      - name: outcome_code
+        in: query
+        description: Exact latest reported outcome for decision outcome dimensions. Scoped to the authenticated customer.
+        schema: {type: string, maxLength: 64}
       responses:
         '200':
           description: Ranked complete-history contributors within the authenticated customer's selected group.
@@ -38979,13 +39035,34 @@ components:
         items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowAttentionEntry'}}
         evaluated_at: {type: string, format: date-time, description: Staleness evaluation time retained across cursor pages.}
         next_cursor: {type: string, description: Opaque continuation bound to account/customer role and every queue filter.}
+    OperationWorkflowDecisionOutcomeEvidence:
+      type: object
+      additionalProperties: false
+      description: "Earliest retained report classifying this contributor for the selected decision outcome group. The optional business decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report itself. These are application-reported facts and do not establish causation."
+      required: [report_id, operation_id, revision, state, occurred_at]
+      properties:
+        report_id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        from_state: {type: string, maxLength: 64}
+        state: {type: string, maxLength: 64}
+        occurred_at: {type: string, format: date-time}
+        milestone_id: {type: string, format: uuid}
+        decision: {$ref: '#/components/schemas/OperationBusinessDecision'}
     OperationWorkflowPerformanceGroup:
       description: Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads.
       type: object
       additionalProperties: false
       required: [dimension]
       properties:
-        dimension: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner]}
+        kind: {type: string, enum: [decision, path]}
+        decision_code: {type: string, maxLength: 64}
+        rule_id: {type: string, maxLength: 64}
+        rule_version: {type: string, maxLength: 128}
+        group_id: {type: string, maxLength: 64}
+        path_id: {type: string, maxLength: 64}
+        outcome_code: {type: string, maxLength: 64}
+        dimension: {type: string, enum: [state_time, blocked_time, verification_wait, state, blocker, verification_owner, decision_completion, decision_blocked]}
         contract_version: {type: integer, minimum: 1, maximum: 1000000}
         state: {type: string, maxLength: 64}
         operation: {type: string, maxLength: 64}
@@ -38998,6 +39075,7 @@ components:
       description: Current state and verification findings for one complete-history contributor. Customer responses omit tenant identifiers. Observed seconds measure the selected historical group rather than current ownership alone.
       required: [subject, operation_id, state, observed_seconds, resolution_verifications, awaiting_verification_count, resolution_verification_count]
       properties:
+        decision_evidence: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeEvidence'}
         platform_tenant_id: {type: string, format: uuid}
         subject: {$ref: '#/components/schemas/OperationSubject'}
         operation_id: {type: string, format: uuid}
@@ -39012,6 +39090,7 @@ components:
       description: Coverage counts cover the selected cohort before dimension selection. Duration statistics and ranked items include only complete-history instances contributing to the exact dimension. Overall dimensions include eligible zero values. The token binds both sampled cohorts and evidence at evaluated_at; it does not store a database snapshot.
       required: [evaluated_at, cohort_token, workflow, cohort, group, matching_workflow_count, sampled_workflow_count, complete_history_workflow_count, excluded_incomplete_workflow_count, cohort_truncated, exclusions, duration, items]
       properties:
+        decision_outcomes: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeSummary'}
         evaluated_at: {type: string, format: date-time}
         cohort_token: {type: string, maxLength: 512}
         workflow: {type: string, maxLength: 63}

@@ -1514,6 +1514,7 @@ from .list_account_workflow_attention_reason import ListAccountWorkflowAttention
 from .list_account_workflow_attention_sort import ListAccountWorkflowAttentionSort
 from .list_account_workflow_performance_instances_cohort import ListAccountWorkflowPerformanceInstancesCohort
 from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
+from .list_account_workflow_performance_instances_kind import ListAccountWorkflowPerformanceInstancesKind
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1559,6 +1560,9 @@ from .list_platform_tenant_self_workflow_performance_instances_cohort import (
 )
 from .list_platform_tenant_self_workflow_performance_instances_dimension import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+)
+from .list_platform_tenant_self_workflow_performance_instances_kind import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
 )
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
@@ -2050,6 +2054,7 @@ from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWor
 from .operation_workflow_change_reason import OperationWorkflowChangeReason
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
+from .operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
 from .operation_workflow_decision_outcome_group import OperationWorkflowDecisionOutcomeGroup
 from .operation_workflow_decision_outcome_group_kind import OperationWorkflowDecisionOutcomeGroupKind
 from .operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
@@ -2089,6 +2094,7 @@ from .operation_workflow_performance_coverage_reason import OperationWorkflowPer
 from .operation_workflow_performance_coverage_reason_reason import OperationWorkflowPerformanceCoverageReasonReason
 from .operation_workflow_performance_group import OperationWorkflowPerformanceGroup
 from .operation_workflow_performance_group_dimension import OperationWorkflowPerformanceGroupDimension
+from .operation_workflow_performance_group_kind import OperationWorkflowPerformanceGroupKind
 from .operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
 from .operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
 from .operation_workflow_performance_instances_response_cohort import (
@@ -4982,6 +4988,7 @@ __all__ = (
     "ListAccountWorkflowAttentionSort",
     "ListAccountWorkflowPerformanceInstancesCohort",
     "ListAccountWorkflowPerformanceInstancesDimension",
+    "ListAccountWorkflowPerformanceInstancesKind",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -5022,6 +5029,7 @@ __all__ = (
     "ListPlatformTenantSelfWorkflowAttentionSort",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesCohort",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesKind",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
@@ -5492,6 +5500,7 @@ __all__ = (
     "OperationWorkflowChangeReason",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
+    "OperationWorkflowDecisionOutcomeEvidence",
     "OperationWorkflowDecisionOutcomeGroup",
     "OperationWorkflowDecisionOutcomeGroupKind",
     "OperationWorkflowDecisionOutcomeSummary",
@@ -5531,6 +5540,7 @@ __all__ = (
     "OperationWorkflowPerformanceCoverageReasonReason",
     "OperationWorkflowPerformanceGroup",
     "OperationWorkflowPerformanceGroupDimension",
+    "OperationWorkflowPerformanceGroupKind",
     "OperationWorkflowPerformanceInstance",
     "OperationWorkflowPerformanceInstancesResponse",
     "OperationWorkflowPerformanceInstancesResponseCohort",

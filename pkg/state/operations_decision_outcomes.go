@@ -34,8 +34,6 @@ func workflowDecisionOutcomes(instances []workflowPerformanceInstance) *api.Oper
 			continue
 		}
 		seen := map[workflowDecisionOutcomeKey]bool{}
-		observations := append([]workflowBottleneckObservation(nil), instance.Observations...)
-		sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[i], observations[j]) })
 		add := func(key workflowDecisionOutcomeKey) {
 			if seen[key] {
 				return
@@ -65,39 +63,11 @@ func workflowDecisionOutcomes(instances []workflowPerformanceInstance) *api.Oper
 			bucket.Completion = append(bucket.Completion, instance.Bottlenecks.StateSeconds)
 			bucket.Blocked = append(bucket.Blocked, instance.Bottlenecks.BlockedSeconds)
 		}
-		for _, observation := range observations {
-			h := observation.History
-			key := workflowDecisionOutcomeKey{Version: effectiveWorkflowContractVersion(h.ContractVersion), Outcome: instance.Current.OutcomeCode}
-			if reason := h.ChangeReason; reason != nil {
-				decision := key
-				decision.Kind = "decision"
-				decision.Code = reason.Decision.Code
-				decision.Rule = reason.Decision.RuleID
-				decision.RuleVersion = reason.Decision.RuleVersion
-				add(decision)
-			}
-			for _, p := range h.SelectedPaths {
-				path := key
-				path.Kind = "path"
-				path.Group = p.GroupID
-				path.Path = p.PathID
-				path.Code = p.DecisionCode
-				path.Rule = p.DecisionRuleID
-				path.RuleVersion = p.DecisionRuleVersion
-				add(path)
-				if p.DecisionMilestoneID != "" {
-					decision := path
-					decision.Kind = "decision"
-					decision.Group = ""
-					decision.Path = ""
-					add(decision)
-				}
-			}
-			// A reason reported after completion does not classify the completed business path.
-			if observation.Terminal {
-				break
-			}
-		}
+		visitWorkflowDecisionOutcomes(instance, func(key workflowDecisionOutcomeKey, _ api.OperationWorkflowDecisionOutcomeEvidence) bool {
+			add(key)
+			return true
+		})
+
 		if len(seen) == 0 {
 			out.UnclassifiedWorkflowCount++
 		} else {
@@ -130,4 +100,87 @@ func decisionOutcomeKeyLess(a, b workflowDecisionOutcomeKey) bool {
 		}
 	}
 	return false
+}
+
+// Returning false stops after the earliest qualifying report for a contributor.
+func visitWorkflowDecisionOutcomes(instance workflowPerformanceInstance, visit func(workflowDecisionOutcomeKey, api.OperationWorkflowDecisionOutcomeEvidence) bool) {
+	if instance.Bottlenecks == nil || !instance.Bottlenecks.HistoryComplete || !instance.Current.Terminal || instance.Current.OutcomeCode == "" {
+		return
+	}
+	observations := append([]workflowBottleneckObservation(nil), instance.Observations...)
+	sort.Slice(observations, func(i, j int) bool { return workflowBottleneckHistoryLess(observations[i], observations[j]) })
+	for _, observation := range observations {
+		h := observation.History
+		key := workflowDecisionOutcomeKey{Version: effectiveWorkflowContractVersion(h.ContractVersion), Outcome: instance.Current.OutcomeCode}
+		evidence := api.OperationWorkflowDecisionOutcomeEvidence{ReportID: h.ID, OperationID: h.OperationID, Revision: h.Revision, FromState: h.FromState, State: h.State, OccurredAt: h.OccurredAt}
+		if reason := h.ChangeReason; reason != nil {
+			decision := key
+			decision.Kind = "decision"
+			decision.Code = reason.Decision.Code
+			decision.Rule = reason.Decision.RuleID
+			decision.RuleVersion = reason.Decision.RuleVersion
+			fact := evidence
+			fact.MilestoneID = reason.MilestoneID
+			value := reason.Decision
+			fact.Decision = &value
+			if !visit(decision, fact) {
+				return
+			}
+		}
+		for _, p := range h.SelectedPaths {
+			path := key
+			path.Kind = "path"
+			path.Group = p.GroupID
+			path.Path = p.PathID
+			path.Code = p.DecisionCode
+			path.Rule = p.DecisionRuleID
+			path.RuleVersion = p.DecisionRuleVersion
+			fact := evidence
+			if p.DecisionMilestoneID != "" {
+				fact.MilestoneID = p.DecisionMilestoneID
+				fact.Decision = &api.OperationBusinessDecision{Workflow: h.Workflow, InstanceID: h.InstanceID, Code: p.DecisionCode, Description: p.DecisionDescription, RuleID: p.DecisionRuleID, RuleVersion: p.DecisionRuleVersion}
+			}
+			if !visit(path, fact) {
+				return
+			}
+			if p.DecisionMilestoneID != "" {
+				decision := path
+				decision.Kind = "decision"
+				decision.Group = ""
+				decision.Path = ""
+				if !visit(decision, fact) {
+					return
+				}
+			}
+		}
+		if observation.Terminal {
+			return
+		}
+	}
+}
+
+func workflowDecisionOutcomeSelector(g api.OperationWorkflowPerformanceGroup) workflowDecisionOutcomeKey {
+	return workflowDecisionOutcomeKey{Version: g.ContractVersion, Kind: g.Kind, Code: g.DecisionCode, Rule: g.RuleID, RuleVersion: g.RuleVersion, Group: g.GroupID, Path: g.PathID, Outcome: g.OutcomeCode}
+}
+func decisionOutcomeDimension(d string) bool {
+	return d == "decision_completion" || d == "decision_blocked"
+}
+func workflowDecisionOutcomeContribution(instance workflowPerformanceInstance, g api.OperationWorkflowPerformanceGroup) (int64, *api.OperationWorkflowDecisionOutcomeEvidence) {
+	var evidence *api.OperationWorkflowDecisionOutcomeEvidence
+	key := workflowDecisionOutcomeSelector(g)
+	visitWorkflowDecisionOutcomes(instance, func(candidate workflowDecisionOutcomeKey, fact api.OperationWorkflowDecisionOutcomeEvidence) bool {
+		if candidate == key {
+			value := fact
+			evidence = &value
+			return false
+		}
+		return true
+	})
+	if evidence == nil {
+		return 0, nil
+	}
+	if g.Dimension == "decision_blocked" {
+		return instance.Bottlenecks.BlockedSeconds, evidence
+	}
+	return instance.Bottlenecks.StateSeconds, evidence
 }

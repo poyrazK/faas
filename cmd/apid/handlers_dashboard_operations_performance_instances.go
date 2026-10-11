@@ -22,7 +22,7 @@ func workflowPerformanceContributorURL(path string, opts api.OperationWorkflowPe
 	if group.ContractVersion > 0 {
 		q.Set("contract_version", strconv.Itoa(group.ContractVersion))
 	}
-	for key, value := range map[string]string{"state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner} {
+	for key, value := range map[string]string{"state": group.State, "operation": group.Operation, "code": group.Code, "owner": group.Owner, "kind": group.Kind, "decision_code": group.DecisionCode, "rule_id": group.RuleID, "rule_version": group.RuleVersion, "group_id": group.GroupID, "path_id": group.PathID, "outcome_code": group.OutcomeCode} {
 		if value != "" {
 			q.Set(key, value)
 		}
@@ -38,6 +38,8 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		owner = "unassigned"
 	}
 	switch group.Dimension {
+	case "decision_completion", "decision_blocked":
+		return workflowDecisionOutcomeGroupLabel(group)
 	case "state":
 		return fmt.Sprintf("State %s · contract %d", group.State, group.ContractVersion)
 	case "blocker":
@@ -80,7 +82,11 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 		data.EvaluatedAt = dashboardJobsTime(result.EvaluatedAt)
 		for _, entry := range result.Items {
 			history := url.Values{"scope": {opts.Scope}, "tenant_id": {entry.PlatformTenantID}, "subject_type": {entry.Subject.Type}, "subject_id": {entry.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {entry.State.InstanceID}}
-			data.Contributors = append(data.Contributors, dashboard.WorkflowPerformanceContributor{Entry: entry, HistoryURL: data.ListURL + "?" + history.Encode() + "#workflows", OperationURL: data.ListURL + "/" + url.PathEscape(entry.OperationID)})
+			contributor := dashboard.WorkflowPerformanceContributor{Entry: entry, HistoryURL: data.ListURL + "?" + history.Encode() + "#workflows", OperationURL: data.ListURL + "/" + url.PathEscape(entry.OperationID)}
+			if entry.DecisionEvidence != nil {
+				contributor.DecisionOperationURL = data.ListURL + "/" + url.PathEscape(entry.DecisionEvidence.OperationID)
+			}
+			data.Contributors = append(data.Contributors, contributor)
 		}
 	}
 	count, err := s.store.CountDeployedApps(r.Context(), acct.ID)
@@ -91,4 +97,19 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 	if err = dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+func workflowDecisionOutcomeGroupLabel(group api.OperationWorkflowPerformanceGroup) string {
+	measure := "Completion time"
+	if group.Dimension == "decision_blocked" {
+		measure = "Blocked time"
+	}
+	identity := "decision " + group.DecisionCode
+	if group.Kind == "path" {
+		identity = "path " + group.GroupID + " / " + group.PathID
+	}
+	if group.RuleID != "" {
+		identity += " · rule " + group.RuleID + " / " + group.RuleVersion
+	}
+	return fmt.Sprintf("%s · %s → %s · contract %d", measure, identity, group.OutcomeCode, group.ContractVersion)
 }

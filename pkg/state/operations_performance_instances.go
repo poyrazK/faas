@@ -94,6 +94,12 @@ func parseWorkflowPerformanceToken(raw string, query string, now time.Time) (wor
 	return token, nil
 }
 func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) error {
+	if decisionOutcomeDimension(g.Dimension) {
+		return validateDecisionOutcomeGroup(g)
+	}
+	if g.Kind != "" || g.DecisionCode != "" || g.RuleID != "" || g.RuleVersion != "" || g.GroupID != "" || g.PathID != "" || g.OutcomeCode != "" {
+		return ErrInvalidArgument
+	}
 	ownerSelected := g.Owner != "" || g.Unassigned
 	if g.Owner != "" && g.Unassigned || len(g.Owner) > api.OperationWorkflowBlockerActorMaxBytes || !utf8.ValidString(g.Owner) || strings.ContainsFunc(g.Owner, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return ErrInvalidArgument
@@ -157,6 +163,9 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	if err != nil || opts.Cohort != "completed" && opts.Cohort != "ongoing" || validateWorkflowPerformanceGroup(opts.OperationWorkflowPerformanceGroup) != nil {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
+	if decisionOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {
+		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+	}
 	opts.OperationWorkflowPerformanceOptions = base
 	var expected workflowPerformanceTokenValue
 	if opts.CohortToken != "" {
@@ -184,6 +193,21 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	}
 	coverage := workflowPerformanceCohort(cohort, at)
 	out := api.OperationWorkflowPerformanceInstancesResponse{EvaluatedAt: at, CohortToken: token, Workflow: base.Workflow, Cohort: opts.Cohort, Group: opts.OperationWorkflowPerformanceGroup, MatchingWorkflowCount: coverage.MatchingWorkflowCount, SampledWorkflowCount: coverage.SampledWorkflowCount, CompleteHistoryWorkflowCount: coverage.CompleteHistoryWorkflowCount, ExcludedIncompleteWorkflowCount: coverage.ExcludedIncompleteWorkflowCount, CohortTruncated: coverage.CohortTruncated, Exclusions: coverage.Exclusions, Items: []api.OperationWorkflowPerformanceInstance{}}
+
+	if decisionOutcomeDimension(opts.Dimension) {
+		out.DecisionOutcomes = workflowDecisionOutcomes(cohort)
+		found := false
+		selector := workflowDecisionOutcomeSelector(opts.OperationWorkflowPerformanceGroup)
+		for _, group := range out.DecisionOutcomes.Groups {
+			if (workflowDecisionOutcomeKey{Version: group.ContractVersion, Kind: group.Kind, Code: group.DecisionCode, Rule: group.RuleID, RuleVersion: group.RuleVersion, Group: group.GroupID, Path: group.PathID, Outcome: group.OutcomeCode}) == selector {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+		}
+	}
 	type identity struct {
 		InstanceID, OperationID string
 		Subject                 api.OperationSubject
@@ -195,6 +219,11 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			continue
 		}
 		seconds, matched := workflowPerformanceContribution(i.Bottlenecks, opts.OperationWorkflowPerformanceGroup)
+		var decisionEvidence *api.OperationWorkflowDecisionOutcomeEvidence
+		if decisionOutcomeDimension(opts.Dimension) {
+			seconds, decisionEvidence = workflowDecisionOutcomeContribution(i, opts.OperationWorkflowPerformanceGroup)
+			matched = decisionEvidence != nil
+		}
 		if !matched {
 			continue
 		}
@@ -202,7 +231,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		if preview == nil {
 			preview = []api.OperationWorkflowResolutionVerification{}
 		}
-		entry := api.OperationWorkflowPerformanceInstance{PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
+		entry := api.OperationWorkflowPerformanceInstance{DecisionEvidence: decisionEvidence, PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
 		if !operator {
 			entry.PlatformTenantID = ""
 			entry.State.PlatformTenantID = ""
@@ -235,4 +264,28 @@ func (s *PgStore) ListAccountWorkflowPerformanceInstances(ctx context.Context, a
 }
 func (s *PgStore) ListPlatformTenantWorkflowPerformanceInstances(ctx context.Context, account, tenant string, opts api.OperationWorkflowPerformanceInstanceOptions) (api.OperationWorkflowPerformanceInstancesResponse, error) {
 	return listWorkflowPerformanceInstances(ctx, s, account, tenant, opts, false)
+}
+
+func validateDecisionOutcomeGroup(g api.OperationWorkflowPerformanceGroup) error {
+	if g.ContractVersion < 1 || g.ContractVersion > api.OperationWorkflowContractVersionMax || g.State != "" || g.Operation != "" || g.Code != "" || g.Owner != "" || g.Unassigned || !operationHistoryName.MatchString(g.OutcomeCode) || len(g.OutcomeCode) > api.OperationNameMaxBytes {
+		return ErrInvalidArgument
+	}
+	switch g.Kind {
+	case "decision":
+		if g.GroupID != "" || g.PathID != "" || g.DecisionCode == "" {
+			return ErrInvalidArgument
+		}
+	case "path":
+		if api.ValidateOperationWorkflowStateName(g.GroupID) != nil || api.ValidateOperationWorkflowStateName(g.PathID) != nil {
+			return ErrInvalidArgument
+		}
+	default:
+		return ErrInvalidArgument
+	}
+	if g.DecisionCode != "" || g.RuleID != "" || g.RuleVersion != "" {
+		if api.ValidateOperationBusinessDecision(api.OperationBusinessDecision{Workflow: "workflow", InstanceID: "instance", Code: g.DecisionCode, Description: "decision", RuleID: g.RuleID, RuleVersion: g.RuleVersion}) != nil {
+			return ErrInvalidArgument
+		}
+	}
+	return nil
 }

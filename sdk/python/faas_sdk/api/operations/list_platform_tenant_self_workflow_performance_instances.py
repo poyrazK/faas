@@ -12,6 +12,9 @@ from ...models.list_platform_tenant_self_workflow_performance_instances_cohort i
 from ...models.list_platform_tenant_self_workflow_performance_instances_dimension import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
 )
+from ...models.list_platform_tenant_self_workflow_performance_instances_kind import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
+)
 from ...models.operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
@@ -31,6 +34,13 @@ def _get_kwargs(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -61,6 +71,24 @@ def _get_kwargs(
     params["unassigned"] = unassigned
 
     params["cohort_token"] = cohort_token
+
+    json_kind: str | Unset = UNSET
+    if not isinstance(kind, Unset):
+        json_kind = kind
+
+    params["kind"] = json_kind
+
+    params["decision_code"] = decision_code
+
+    params["rule_id"] = rule_id
+
+    params["rule_version"] = rule_version
+
+    params["group_id"] = group_id
+
+    params["path_id"] = path_id
+
+    params["outcome_code"] = outcome_code
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -143,6 +171,13 @@ def sync_detailed(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
     """List ranked performance contributors for the authenticated customer.
 
@@ -157,7 +192,12 @@ def sync_detailed(
     fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration
     descending with stable identity ties. No cursor is supported. Current blockers can differ from
     historical contributing groups; pending verification previews are bounded independently of exact
-    counts.
+    counts. Decision dimensions require completed cohort and cohort_token, an exact
+    kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path
+    groups additionally require group_id/path_id; the decision triple is either fully supplied or fully
+    omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
+    dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
+    business decision fact per contributor; reports after the first terminal revision do not qualify.
 
     Args:
         app_id (UUID):
@@ -172,6 +212,13 @@ def sync_detailed(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,6 +241,13 @@ def sync_detailed(
         owner=owner,
         unassigned=unassigned,
         cohort_token=cohort_token,
+        kind=kind,
+        decision_code=decision_code,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        group_id=group_id,
+        path_id=path_id,
+        outcome_code=outcome_code,
     )
 
     response = client.get_httpx_client().request(
@@ -218,6 +272,13 @@ def sync(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
     """List ranked performance contributors for the authenticated customer.
 
@@ -232,7 +293,12 @@ def sync(
     fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration
     descending with stable identity ties. No cursor is supported. Current blockers can differ from
     historical contributing groups; pending verification previews are bounded independently of exact
-    counts.
+    counts. Decision dimensions require completed cohort and cohort_token, an exact
+    kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path
+    groups additionally require group_id/path_id; the decision triple is either fully supplied or fully
+    omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
+    dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
+    business decision fact per contributor; reports after the first terminal revision do not qualify.
 
     Args:
         app_id (UUID):
@@ -247,6 +313,13 @@ def sync(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -270,6 +343,13 @@ def sync(
         owner=owner,
         unassigned=unassigned,
         cohort_token=cohort_token,
+        kind=kind,
+        decision_code=decision_code,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        group_id=group_id,
+        path_id=path_id,
+        outcome_code=outcome_code,
     ).parsed
 
 
@@ -288,6 +368,13 @@ async def asyncio_detailed(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
     """List ranked performance contributors for the authenticated customer.
 
@@ -302,7 +389,12 @@ async def asyncio_detailed(
     fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration
     descending with stable identity ties. No cursor is supported. Current blockers can differ from
     historical contributing groups; pending verification previews are bounded independently of exact
-    counts.
+    counts. Decision dimensions require completed cohort and cohort_token, an exact
+    kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path
+    groups additionally require group_id/path_id; the decision triple is either fully supplied or fully
+    omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
+    dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
+    business decision fact per contributor; reports after the first terminal revision do not qualify.
 
     Args:
         app_id (UUID):
@@ -317,6 +409,13 @@ async def asyncio_detailed(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -339,6 +438,13 @@ async def asyncio_detailed(
         owner=owner,
         unassigned=unassigned,
         cohort_token=cohort_token,
+        kind=kind,
+        decision_code=decision_code,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        group_id=group_id,
+        path_id=path_id,
+        outcome_code=outcome_code,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -361,6 +467,13 @@ async def asyncio(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
     """List ranked performance contributors for the authenticated customer.
 
@@ -375,7 +488,12 @@ async def asyncio(
     fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration
     descending with stable identity ties. No cursor is supported. Current blockers can differ from
     historical contributing groups; pending verification previews are bounded independently of exact
-    counts.
+    counts. Decision dimensions require completed cohort and cohort_token, an exact
+    kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path
+    groups additionally require group_id/path_id; the decision triple is either fully supplied or fully
+    omitted. The exact group must be present in the bounded decision_outcomes summary. Decision
+    dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional
+    business decision fact per contributor; reports after the first terminal revision do not qualify.
 
     Args:
         app_id (UUID):
@@ -390,6 +508,13 @@ async def asyncio(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListPlatformTenantSelfWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -414,5 +539,12 @@ async def asyncio(
             owner=owner,
             unassigned=unassigned,
             cohort_token=cohort_token,
+            kind=kind,
+            decision_code=decision_code,
+            rule_id=rule_id,
+            rule_version=rule_version,
+            group_id=group_id,
+            path_id=path_id,
+            outcome_code=outcome_code,
         )
     ).parsed

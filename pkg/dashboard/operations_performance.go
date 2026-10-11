@@ -3,6 +3,7 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type WorkflowPerformanceData struct {
+	DecisionGroups                                                       []WorkflowDecisionOutcomeLink
 	AppSlug, Scope, TenantID, Workflow, EvaluatedAt, ListURL, SummaryURL string
 	Drilldown                                                            *api.OperationWorkflowPerformanceInstancesResponse
 	Contributors                                                         []WorkflowPerformanceContributor

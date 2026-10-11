@@ -531,3 +531,42 @@ bounded sample. At most 64 groups are returned, in canonical identity order
 include those whose groups were omitted. Group accumulation retains only the
 64 smallest identities, with one duration sample per workflow/group, bounding
 memory without losing counts for any returned group.
+
+### Contributors to business decision outcome groups
+
+The existing workflow performance contributor endpoint now accepts
+`dimension=decision_completion` or `dimension=decision_blocked`. Both require
+`cohort=completed`, the summary's `cohort_token`, and an exact group returned
+by its bounded `decision_outcomes` projection: `kind`, `contract_version`,
+`outcome_code`, and the decision code/rule ID/rule version triple. Decision
+kind requires that triple and rejects path selectors. Path kind additionally
+requires `group_id` and `path_id`; its decision triple is entirely present or
+entirely absent, matching the summary. Legacy state/blocker/owner selectors
+are rejected for these dimensions, and decision selectors are rejected for
+legacy dimensions. Invalid or omitted summary groups return invalid_argument.
+
+Summary and contributor reads share classification: complete retained
+histories, latest reported outcome, and facts at or before the first terminal
+report. Repeated identities contribute once per workflow/group. The existing
+cohort fingerprint verifies evaluation time, both sampled cohorts, and their
+retained evidence. A changed or expired cohort returns the existing 409 and
+requires a fresh summary. Tokens cannot be borrowed across owners or workflow
+selectors. No new query or migration is required.
+
+Results include all eligible contributors (up to 100), ranked by the selected
+full-workflow duration descending with stable identity ties. The existing
+`duration` distribution matches the summary group's completion or blocked
+statistics. `decision_outcomes` preserves the summary's coverage and group
+truncation alongside the existing cohort coverage. Each item optionally
+includes `decision_evidence`: the earliest qualifying report/Operation/revision,
+its state transition and occurrence time, and the validated decision fact ID
+and public snapshot where present. A path without a decision is evidenced by
+its report. Current state retains the latest reported outcome and report IDs.
+These are application claims and sequence associations, not causal proof.
+
+Dashboard summary duration cells open the corresponding contributors using
+the cohort token. Contributors link to the qualifying Operation, latest
+reporting Operation, and retained workflow history (transitions, blockers and
+outcome). The existing refresh prompt handles cohort changes. Go and Node
+helpers serialize the exact selectors; generated Node and Python clients
+expose the additive parameters and evidence DTOs.

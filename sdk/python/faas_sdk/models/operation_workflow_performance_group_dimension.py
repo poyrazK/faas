@@ -1,12 +1,21 @@
 from typing import Literal
 
 OperationWorkflowPerformanceGroupDimension = Literal[
-    "blocked_time", "blocker", "state", "state_time", "verification_owner", "verification_wait"
+    "blocked_time",
+    "blocker",
+    "decision_blocked",
+    "decision_completion",
+    "state",
+    "state_time",
+    "verification_owner",
+    "verification_wait",
 ]
 
 OPERATION_WORKFLOW_PERFORMANCE_GROUP_DIMENSION_VALUES: set[OperationWorkflowPerformanceGroupDimension] = {
     "blocked_time",
     "blocker",
+    "decision_blocked",
+    "decision_completion",
     "state",
     "state_time",
     "verification_owner",

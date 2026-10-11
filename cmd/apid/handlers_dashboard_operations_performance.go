@@ -52,6 +52,9 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		if summary.DecisionOutcomes != nil {
+			data.DecisionGroups = workflowDecisionOutcomeLinks(data.SummaryURL, opts, summary)
+		}
 		data.EvaluatedAt = dashboardJobsTime(summary.EvaluatedAt)
 		data.Cohorts = []dashboard.WorkflowPerformanceCohort{{Name: "Completed", OperationWorkflowPerformanceCohort: summary.Completed}, {Name: "Ongoing", OperationWorkflowPerformanceCohort: summary.Ongoing}}
 		for index := range data.Cohorts {
@@ -82,4 +85,16 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 	if err = dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+func workflowDecisionOutcomeLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowDecisionOutcomeLink {
+	links := make([]dashboard.WorkflowDecisionOutcomeLink, 0, len(summary.DecisionOutcomes.Groups))
+	for _, value := range summary.DecisionOutcomes.Groups {
+		group := api.OperationWorkflowPerformanceGroup{Dimension: "decision_completion", ContractVersion: value.ContractVersion, Kind: value.Kind, DecisionCode: value.DecisionCode, RuleID: value.RuleID, RuleVersion: value.RuleVersion, GroupID: value.GroupID, PathID: value.PathID, OutcomeCode: value.OutcomeCode}
+		link := dashboard.WorkflowDecisionOutcomeLink{OperationWorkflowDecisionOutcomeGroup: value, CompletionURL: workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)}
+		group.Dimension = "decision_blocked"
+		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)
+		links = append(links, link)
+	}
+	return links
 }

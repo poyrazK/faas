@@ -191,3 +191,5 @@ type OperationWorkflowOutcomeLink = api.OperationWorkflowOutcomeLink
 
 type OperationWorkflowDecisionOutcomeSummary = api.OperationWorkflowDecisionOutcomeSummary
 type OperationWorkflowDecisionOutcomeGroup = api.OperationWorkflowDecisionOutcomeGroup
+
+type OperationWorkflowDecisionOutcomeEvidence = api.OperationWorkflowDecisionOutcomeEvidence

@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
     from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
     from ..models.operation_workflow_state import OperationWorkflowState
 
@@ -34,6 +35,10 @@ class OperationWorkflowPerformanceInstance:
     resolution_verifications: list[OperationWorkflowResolutionVerification]
     awaiting_verification_count: int
     resolution_verification_count: int
+    decision_evidence: OperationWorkflowDecisionOutcomeEvidence | Unset = UNSET
+    """Earliest retained report classifying this contributor for the selected decision outcome group. The optional
+    business decision snapshot references its fact within operation_id. A path without a decision is evidenced by
+    the report itself. These are application-reported facts and do not establish causation."""
     platform_tenant_id: UUID | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +59,10 @@ class OperationWorkflowPerformanceInstance:
 
         resolution_verification_count = self.resolution_verification_count
 
+        decision_evidence: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision_evidence, Unset):
+            decision_evidence = self.decision_evidence.to_dict()
+
         platform_tenant_id: str | Unset = UNSET
         if not isinstance(self.platform_tenant_id, Unset):
             platform_tenant_id = str(self.platform_tenant_id)
@@ -71,6 +80,8 @@ class OperationWorkflowPerformanceInstance:
                 "resolution_verification_count": resolution_verification_count,
             }
         )
+        if decision_evidence is not UNSET:
+            field_dict["decision_evidence"] = decision_evidence
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
 
@@ -79,6 +90,7 @@ class OperationWorkflowPerformanceInstance:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
         from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
         from ..models.operation_workflow_state import OperationWorkflowState
 
@@ -104,6 +116,13 @@ class OperationWorkflowPerformanceInstance:
 
         resolution_verification_count = d.pop("resolution_verification_count")
 
+        _decision_evidence = d.pop("decision_evidence", UNSET)
+        decision_evidence: OperationWorkflowDecisionOutcomeEvidence | Unset
+        if isinstance(_decision_evidence, Unset):
+            decision_evidence = UNSET
+        else:
+            decision_evidence = OperationWorkflowDecisionOutcomeEvidence.from_dict(_decision_evidence)
+
         _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
         platform_tenant_id: UUID | Unset
         if isinstance(_platform_tenant_id, Unset):
@@ -119,6 +138,7 @@ class OperationWorkflowPerformanceInstance:
             resolution_verifications=resolution_verifications,
             awaiting_verification_count=awaiting_verification_count,
             resolution_verification_count=resolution_verification_count,
+            decision_evidence=decision_evidence,
             platform_tenant_id=platform_tenant_id,
         )
 

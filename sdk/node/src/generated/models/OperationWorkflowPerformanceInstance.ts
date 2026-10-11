@@ -3,12 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowDecisionOutcomeEvidence } from './OperationWorkflowDecisionOutcomeEvidence.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
 /**
  * Current state and verification findings for one complete-history contributor. Customer responses omit tenant identifiers. Observed seconds measure the selected historical group rather than current ownership alone.
  */
 export type OperationWorkflowPerformanceInstance = {
+  decision_evidence?: OperationWorkflowDecisionOutcomeEvidence;
   platform_tenant_id?: string;
   subject: OperationSubject;
   operation_id: string;

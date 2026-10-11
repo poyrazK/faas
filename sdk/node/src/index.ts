@@ -296,3 +296,5 @@ export type { OperationWorkflowChangeReason } from "./customer-operation-decisio
 export type { OperationWorkflowOutcomeLink } from './customer-operations.js';
 
 export type { OperationWorkflowDecisionOutcomeSummary, OperationWorkflowDecisionOutcomeGroup } from './customer-operations.js';
+
+export type { OperationWorkflowDecisionOutcomeEvidence } from './customer-operations.js';
