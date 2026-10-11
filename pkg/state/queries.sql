@@ -15812,3 +15812,10 @@ SELECT EXISTS(SELECT 1 FROM project_environment_workload_deployment_specs p JOIN
 
 -- name: LockCloneWorkloadCleanupSpecs :many
 SELECT id FROM project_environment_workload_specs WHERE environment_id=$1 ORDER BY id FOR UPDATE;
+
+-- name: ReadCloneObjectSecretWithdrawal :one
+SELECT * FROM project_environment_clone_object_secret_withdrawals WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneObjectSecretWithdrawal :exec
+INSERT INTO project_environment_clone_object_secret_withdrawals(operation_id,ownership_sha256,postgres_withdrawal_sha256,prior_manifest_sha256,publication_plan_sha256,publication_withdrawn_at,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8);

@@ -19042,6 +19042,36 @@ func (q *Queries) InsertCloneConfigurationOwnership(ctx context.Context, db DBTX
 	return err
 }
 
+const insertCloneObjectSecretWithdrawal = `-- name: InsertCloneObjectSecretWithdrawal :exec
+INSERT INTO project_environment_clone_object_secret_withdrawals(operation_id,ownership_sha256,postgres_withdrawal_sha256,prior_manifest_sha256,publication_plan_sha256,publication_withdrawn_at,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type InsertCloneObjectSecretWithdrawalParams struct {
+	OperationID              pgtype.UUID
+	OwnershipSha256          string
+	PostgresWithdrawalSha256 string
+	PriorManifestSha256      string
+	PublicationPlanSha256    string
+	PublicationWithdrawnAt   pgtype.Timestamptz
+	Manifest                 []byte
+	ManifestSha256           string
+}
+
+func (q *Queries) InsertCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, arg InsertCloneObjectSecretWithdrawalParams) error {
+	_, err := db.Exec(ctx, insertCloneObjectSecretWithdrawal,
+		arg.OperationID,
+		arg.OwnershipSha256,
+		arg.PostgresWithdrawalSha256,
+		arg.PriorManifestSha256,
+		arg.PublicationPlanSha256,
+		arg.PublicationWithdrawnAt,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
 const insertClonePostgresCheckpointSelection = `-- name: InsertClonePostgresCheckpointSelection :one
 INSERT INTO project_environment_clone_postgres_checkpoint_selections(operation_id,source_database_id,maintenance_id,scope,fingerprint,key_id,ciphertext_sha256,ciphertext)
 SELECT o.id,$1::uuid,$2::uuid,$3::jsonb,$4::text,
@@ -49736,6 +49766,27 @@ func (q *Queries) ReadCloneManagedSecretConfigurationBorrowers(ctx context.Conte
 		&i.ObjectStorageSecrets,
 		&i.CredentialReferences,
 		&i.RuntimeObservations,
+	)
+	return i, err
+}
+
+const readCloneObjectSecretWithdrawal = `-- name: ReadCloneObjectSecretWithdrawal :one
+SELECT operation_id, ownership_sha256, postgres_withdrawal_sha256, prior_manifest_sha256, publication_plan_sha256, publication_withdrawn_at, manifest, manifest_sha256, recorded_at FROM project_environment_clone_object_secret_withdrawals WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneObjectSecretWithdrawal, error) {
+	row := db.QueryRow(ctx, readCloneObjectSecretWithdrawal, operationID)
+	var i ProjectEnvironmentCloneObjectSecretWithdrawal
+	err := row.Scan(
+		&i.OperationID,
+		&i.OwnershipSha256,
+		&i.PostgresWithdrawalSha256,
+		&i.PriorManifestSha256,
+		&i.PublicationPlanSha256,
+		&i.PublicationWithdrawnAt,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.RecordedAt,
 	)
 	return i, err
 }

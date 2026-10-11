@@ -46,6 +46,10 @@ func (s *PgStore) WithdrawProjectEnvironmentCloneCheckpointObjects(ctx context.C
 			return err
 		}
 		if in.State == "published" {
+			owner, err := prepareCloneObjectSecretWithdrawalTx(ctx, tx, op)
+			if err != nil {
+				return err
+			}
 			if err = withdrawCheckpointObjectPublicationRowsTx(ctx, tx, in); err != nil {
 				return err
 			}
@@ -63,6 +67,17 @@ func (s *PgStore) WithdrawProjectEnvironmentCloneCheckpointObjects(ctx context.C
 			if err = checkpointObjectPublicationRowsTx(ctx, tx, in); err != nil {
 				return err
 			}
+			if err = saveCloneObjectSecretWithdrawalTx(ctx, tx, op, owner, in.Plan.SHA256); err != nil {
+				return err
+			}
+		}
+		owner, err := sqlc.New().ReadCloneConfigurationOwnership(ctx, tx, mustPgUUID(op.ID))
+		if err == nil {
+			if _, err = verifyCloneConfigurationOwnershipTx(ctx, tx, op, pgUUIDString(owner.EnvironmentID)); err != nil {
+				return err
+			}
+		} else if !errors.Is(mapErr(err), ErrNotFound) {
+			return mapErr(err)
 		}
 	}
 	if err = authorizeCloneObjectMutationTx(ctx, tx, op, &l); err != nil {

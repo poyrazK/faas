@@ -88,6 +88,10 @@ func verifyCloneConfigurationOwnershipTx(ctx context.Context, tx pgx.Tx, op Proj
 	if err != nil {
 		return "", err
 	}
+	normalized, err = cloneObjectSecretWithdrawalManifestTx(ctx, tx, op, ownership, row.CreatedAt.Time, normalized)
+	if err != nil {
+		return "", err
+	}
 	// A saved cleanup must authenticate its exact post-state even if an observer
 	// restores the original rows; absence or equality alone is not authority.
 	_, cleanupErr := q.ReadCloneConfigurationCleanup(ctx, tx, mustPgUUID(op.ID))

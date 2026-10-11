@@ -6204,6 +6204,21 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_object_secret_withdrawals",
+    "columns": [
+      "manifest",
+      "manifest_sha256",
+      "operation_id",
+      "ownership_sha256",
+      "postgres_withdrawal_sha256",
+      "prior_manifest_sha256",
+      "publication_plan_sha256",
+      "publication_withdrawn_at",
+      "recorded_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_operations",
     "columns": [
       "account_id",

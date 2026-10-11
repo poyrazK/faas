@@ -946,6 +946,7 @@ type Querier interface {
 	InsertCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
 	InsertCloneConfigurationCleanup(ctx context.Context, db DBTX, arg InsertCloneConfigurationCleanupParams) error
 	InsertCloneConfigurationOwnership(ctx context.Context, db DBTX, arg InsertCloneConfigurationOwnershipParams) error
+	InsertCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, arg InsertCloneObjectSecretWithdrawalParams) error
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	InsertClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, arg InsertClonePostgresSecretWithdrawalParams) error
@@ -2310,6 +2311,7 @@ type Querier interface {
 	ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error)
 	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
 	ReadCloneManagedSecretConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneManagedSecretConfigurationBorrowersParams) (ReadCloneManagedSecretConfigurationBorrowersRow, error)
+	ReadCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneObjectSecretWithdrawal, error)
 	// ADR-531: private original selection precedes a coordinated capture point.
 	ReadClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg ReadClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	// ADR-531: resource ownership is separate from an operation's writer barrier.

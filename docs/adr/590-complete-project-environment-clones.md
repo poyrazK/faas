@@ -9492,3 +9492,34 @@ removed object envelopes cannot be normalized by the PostgreSQL witness. Environ
 metadata retirement, operational borrower retirement, published release withdrawal
 and whole-stage terminal compensation remain separate gaps. Public full-stage
 admission and live qualification remain gated/deferred.
+
+### Atomic object-storage secret withdrawal ownership receipt
+
+Object publication withdrawal now authenticates the original materialization and
+configuration ownership before removing managed envelopes. Its locked secret rows
+and runtime-observation inventory prevent reload observations from disappearing
+through cascading deletion. External field owners, managed fields and GitOps
+sources block withdrawal for owned materializations. Legacy stages retain their
+withdrawal behavior and never receive backfilled ownership.
+
+Withdrawal saves a bounded non-secret configuration manifest in the same transaction
+as envelope removal, credential revocation, grant deletion and publication withdrawal.
+The receipt pins original ownership, the prior configuration manifest, the exact
+object publication digest and withdrawal time, and the PostgreSQL withdrawal receipt
+when present. Owned mixed stages must withdraw PostgreSQL bindings first. Recovery
+normalizes these two authenticated transitions in that order without changing the
+original ownership digest or native materialization hashes. A changed predecessor,
+missing receipt, changed remaining configuration or altered publication proof fails
+closed. Keyless worker handoff preserves the same receipt. Publications with no
+managed envelopes retain an unchanged configuration manifest and still require
+their saved transition receipt. Migration rollback refuses any retained evidence.
+
+This completes the local managed-envelope ownership transitions. It records local
+gateway withdrawal only; provider grant revocation still requires its existing
+native retirement proof. The PostgreSQL withdrawal witness still requires a
+non-empty secret list; zero-binding PostgreSQL publications need an explicit
+unchanged-manifest transition before owned object-only stages can complete that
+ordered protocol. Operational borrowers, environment/deployment metadata
+retirement, published release withdrawal and whole-stage terminal compensation
+remain separate work. Public full-stage admission remains gated and live provider
+qualification remains deferred at the user's request.

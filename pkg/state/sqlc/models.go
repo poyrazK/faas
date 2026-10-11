@@ -5392,6 +5392,18 @@ type ProjectEnvironmentCloneObjectManifest struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneObjectSecretWithdrawal struct {
+	OperationID              pgtype.UUID
+	OwnershipSha256          string
+	PostgresWithdrawalSha256 string
+	PriorManifestSha256      string
+	PublicationPlanSha256    string
+	PublicationWithdrawnAt   pgtype.Timestamptz
+	Manifest                 []byte
+	ManifestSha256           string
+	RecordedAt               pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneOperation struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
