@@ -308,12 +308,14 @@ func (h *Handler) noteColdWake(ctx context.Context, appID string) {
 	if depth >= api.ServiceWakeAheadMaxDepth {
 		return
 	}
-	go h.runWakeAhead(appID, depth+1)
+	// The wake-ahead outlives the request that started it, so it keeps the
+	// request's values (trace) but not its cancellation.
+	go h.runWakeAhead(context.WithoutCancel(ctx), appID, depth+1)
 }
 
-func (h *Handler) runWakeAhead(appID string, depth int) {
+func (h *Handler) runWakeAhead(parent context.Context, appID string, depth int) {
 	r := h.wakeAhead
-	ctx, cancel := context.WithTimeout(context.Background(), api.ServiceWakeAheadWakeTimeout)
+	ctx, cancel := context.WithTimeout(parent, api.ServiceWakeAheadWakeTimeout)
 	defer cancel()
 	if !r.cached(ctx, appID) {
 		return
