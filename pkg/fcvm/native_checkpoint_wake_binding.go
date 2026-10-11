@@ -24,6 +24,10 @@ func validateCheckpointWakeLease(frame state.ProjectEnvironmentCloneWakeDispatch
 // shared incoming lock prevents revoke, generic launch and qualification claims
 // from interleaving. Lost outcomes never authorize a second physical generation.
 func (j *nativeCheckpointWakeJournal) preparePhysical(ctx context.Context, frame state.ProjectEnvironmentCloneWakeDispatch, lease Lease) (out nativeCheckpointWakeRecord, err error) {
+	return j.preparePhysicalDigest(ctx, frame, lease, "")
+}
+
+func (j *nativeCheckpointWakeJournal) preparePhysicalDigest(ctx context.Context, frame state.ProjectEnvironmentCloneWakeDispatch, lease Lease, digest string) (out nativeCheckpointWakeRecord, err error) {
 	defer func() {
 		if err != nil {
 			out = nativeCheckpointWakeRecord{}
@@ -63,7 +67,8 @@ func (j *nativeCheckpointWakeJournal) preparePhysical(ctx context.Context, frame
 		return out, err
 	}
 	lease.processGeneration = 0
-	out.Version, out.NativeGeneration, out.NativeLease = 2, uuid.NewString(), lease
+	out.Version, out.NativeGeneration, out.NativeLease = 3, uuid.NewString(), lease
+	out.RequestDigest = digest
 	if err = j.write(out); err != nil {
 		return out, err
 	}

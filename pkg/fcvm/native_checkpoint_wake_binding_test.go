@@ -149,6 +149,7 @@ func TestNativeCheckpointWakeLegacyBindingUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy["version"] = json.RawMessage("1")
+	delete(legacy, "request_digest")
 	delete(legacy, "native_generation")
 	delete(legacy, "native_lease")
 	path, _ := w.path(frame.InstanceID)
@@ -156,7 +157,7 @@ func TestNativeCheckpointWakeLegacyBindingUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	bound, err := w.preparePhysical(t.Context(), frame, qualificationLease(frame.InstanceID))
-	if err != nil || bound.Version != 2 || bound.Generation != original.Generation || bound.Dispatch != original.Dispatch || bound.AcceptedAt != original.AcceptedAt {
+	if err != nil || bound.Version != 3 || bound.Generation != original.Generation || bound.Dispatch != original.Dispatch || bound.AcceptedAt != original.AcceptedAt {
 		t.Fatal("legacy upgrade changed incoming identity", err)
 	}
 	if recovered, err := w.read(frame.InstanceID); err != nil || recovered != bound {

@@ -10249,3 +10249,32 @@ native producer capability validation and durable physical revocation. Native
 KVM acceptance, producer closure and proof-backed evidence release remain pending.
 No live provider qualification was performed; public full-stage admission remains
 gated.
+
+### Ordinary checkpoint wake request commitment
+
+The private request-aware preparation surface now retains a domain-separated
+SHA-256 commitment to the complete exported `fcvm.WakeRequest` before publishing
+its planned physical generation. It checks the original instance, app,
+deployment, dispatch method, workload plan and physical RAM/CPU/boost settings.
+Builder, disposable execution, app-task, paused-pool and already-prepared secret
+handoffs are rejected. Snapshot ownership and selectors participate in matching;
+a request commitment does not attest that stored artifact bytes are immutable.
+
+The incoming journal uses strict version 3 records. Versions 1 and 2 remain
+readable, but missing commitments cannot authorize request matching. Existing
+lease-only preparation retains no request commitment. Neither preparation path
+supplies a launch permit. Only the digest is persisted, not environment values
+or sealed ciphertext. Invalid UTF-8 and malformed probe JSON are rejected before
+encoding so replacement during JSON encoding cannot hide altered input.
+
+Read-only matching checks the exact retained dispatch, planned lease and request
+commitment, and rejects revoked ownership. Publication uncertainty preserves the
+original commitment and blocks replacement, including after restart. Portable
+tests cover changed artifacts, snapshot selectors, resources, environment,
+network and readiness policy, legacy records, lost replies and manager binding.
+
+This is a private pre-effects primitive, not a serving capability. Trusted caller
+provenance, artifact immutability, lock-held producer validation, physical
+revocation and native producer closure still need implementation and native
+x86_64 KVM qualification before enabling tagged wakes or full-stage admission.
+Live provider qualification remains canceled.
