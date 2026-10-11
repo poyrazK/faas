@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -43,13 +44,13 @@ func (s *server) previewWorkflowEventReplay(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	for i := range result.Matches {
-		result.Matches[i].ReceiptURL = eventReceiptURL(result.Matches[i].EventSource, result.Matches[i].EventID)
+		result.Matches[i].ReceiptURL = appevents.EventReceiptURL(result.Matches[i].EventSource, result.Matches[i].EventID)
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 func parseWorkflowEventReplayPreview(values url.Values) (api.WorkflowEventReplayPreviewOptions, *api.Problem) {
-	parsed, problem := parseEventReplayPreview(values)
+	parsed, problem := appevents.ParseEventReplayPreview(values)
 	if problem != nil {
 		return api.WorkflowEventReplayPreviewOptions{}, problem
 	}

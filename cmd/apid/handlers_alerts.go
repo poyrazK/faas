@@ -46,6 +46,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -173,7 +174,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if !s.checkEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
+	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
 	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
@@ -777,7 +778,7 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
-	if p := validateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
+	if p := appevents.ValidateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
 		return p
 	}
 	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
@@ -840,7 +841,7 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // create path. Cooldown is optional on update so a nil merge is
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
-	if p := validateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
+	if p := appevents.ValidateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
 		return p
 	}
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {

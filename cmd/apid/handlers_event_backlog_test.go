@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -127,26 +129,26 @@ func TestEventBacklogCursorAccountFilterAndWindowBinding(t *testing.T) {
 	q := state.EventBacklogQuery{WindowAt: time.Now().UTC().Add(-time.Minute), AppID: uuid.NewString(), Filters: api.EventBacklogFilters{App: "orders"}}
 	position := state.EventBacklogPosition{AcceptedAt: q.WindowAt.Add(-time.Minute), OutboxID: 12, SubscriptionID: "sub"}
 	consumer := state.EventBacklogConsumerPosition{AppID: q.AppID, SubscriptionID: "sub"}
-	after := encodeEventBacklogCursor("recipient", "owner", q, position, state.EventBacklogConsumerPosition{})
-	consumersAfter := encodeEventBacklogCursor("consumer", "owner", q, state.EventBacklogPosition{}, consumer)
+	after := appevents.EncodeEventBacklogCursor("recipient", "owner", q, position, state.EventBacklogConsumerPosition{})
+	consumersAfter := appevents.EncodeEventBacklogCursor("consumer", "owner", q, state.EventBacklogPosition{}, consumer)
 	values := url.Values{"after": {after}, "consumers_after": {consumersAfter}}
 	parsed := state.EventBacklogQuery{AppID: q.AppID, Filters: q.Filters}
-	if err := applyEventBacklogCursors(&parsed, values, "owner"); err != nil || parsed.After != position || parsed.ConsumersAfter != consumer || !parsed.WindowAt.Equal(q.WindowAt) {
+	if err := appevents.ApplyEventBacklogCursors(&parsed, values, "owner"); err != nil || parsed.After != position || parsed.ConsumersAfter != consumer || !parsed.WindowAt.Equal(q.WindowAt) {
 		t.Fatalf("bound cursors=%+v %v", parsed, err)
 	}
-	if _, err := decodeEventBacklogCursor(after, "recipient", "foreign", q); err == nil {
+	if _, err := appevents.DecodeEventBacklogCursor(after, "recipient", "foreign", q); err == nil {
 		t.Fatal("foreign cursor accepted")
 	}
 	changed := q
 	changed.Filters.CapacityScope = "consumer"
-	if _, err := decodeEventBacklogCursor(after, "recipient", "owner", changed); err == nil {
+	if _, err := appevents.DecodeEventBacklogCursor(after, "recipient", "owner", changed); err == nil {
 		t.Fatal("changed filters accepted")
 	}
 	changed = q
 	changed.WindowAt = q.WindowAt.Add(time.Second)
-	values.Set("consumers_after", encodeEventBacklogCursor("consumer", "owner", changed, state.EventBacklogPosition{}, consumer))
+	values.Set("consumers_after", appevents.EncodeEventBacklogCursor("consumer", "owner", changed, state.EventBacklogPosition{}, consumer))
 	parsed = state.EventBacklogQuery{AppID: q.AppID, Filters: q.Filters}
-	if err := applyEventBacklogCursors(&parsed, values, "owner"); err == nil {
+	if err := appevents.ApplyEventBacklogCursors(&parsed, values, "owner"); err == nil {
 		t.Fatal("different windows accepted")
 	}
 }

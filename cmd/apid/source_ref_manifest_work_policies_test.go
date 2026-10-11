@@ -42,7 +42,7 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeEventBinding(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/apps/reports/event-subscriptions", nil)
 	request.SetPathValue("slug", app.Slug)
 	recorder := httptest.NewRecorder()
-	srv.listEventSubscriptions(recorder, request, acct)
+	srv.appEvents.ListEventSubscriptions(recorder, request, acct)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("list subscriptions = %d %s", recorder.Code, recorder.Body.String())
 	}
