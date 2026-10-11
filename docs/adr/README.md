@@ -887,3 +887,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
+
+- [ADR-1111: Typed Go SDK methods for the managed realtime release](1111-go-sdk-managed-realtime-release.md)

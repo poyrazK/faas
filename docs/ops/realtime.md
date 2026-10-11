@@ -2743,32 +2743,7 @@ database binding, credentials and network qualification.
    retained-history preview gates still control management reads.
 4. Write your business change and enqueue its event with the same transaction:
 
-```typescript
-import { insertRealtimeCommitEvent, listRealtimeCommitDeliveries,
-  retryRealtimeCommitEvent } from '@gregale/sdk-node';
-
-const client = await pool.connect();
-try {
-  await client.query('BEGIN');
-  await client.query('UPDATE orders SET status=$1 WHERE id=$2', ['shipped', orderId]);
-  const eventId = await insertRealtimeCommitEvent(client, {
-    endpointId, channel: 'orders', data: { orderId, status: 'shipped' },
-    // For schema-enabled channels, include event_type and schema_version:
-    // metadata: { event_type: 'order.shipped', schema_version: '1' },
-  });
-  await client.query('COMMIT');
-  // Save eventId if you need to correlate subsequent delivery inspection.
-} catch (error) {
-  await client.query('ROLLBACK');
-  throw error;
-} finally {
-  client.release();
-}
-
-const deliveries = await listRealtimeCommitDeliveries(pool);
-// After repairing a blocked destination or payload:
-await retryRealtimeCommitEvent(pool, blockedEventId);
-```
+See the [customer transaction example](../realtime-customer-examples.md#transactional-publication) for business writes and outbox insertion on one connection.
 
 The managed dispatcher scans at the existing five-second source cadence and
 claims up to 32 realtime events per source tick. It publishes UTF-8 text frames
@@ -3779,10 +3754,7 @@ For ordered workers, enforce the highest fence per downstream entity and group
 UUID atomically with each write. For example, with a downstream row already bound
 to the authorized consumer group:
 
-```sql
-UPDATE jobs SET progress=$4, fence=$3::bigint
-WHERE id=$1 AND consumer_group_id=$2::uuid AND fence<=$3::bigint;
-```
+See the [customer-storage fencing example](../realtime-customer-examples.md#lease-fencing-in-customer-storage). These writes belong to the application database, not platform operator runbooks.
 
 Initialize that row's fence to zero; check affected rows and reject stale writes.
 The group UUID must already be authorized for that resource, rather than accepting
