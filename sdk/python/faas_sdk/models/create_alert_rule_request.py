@@ -47,6 +47,10 @@ class CreateAlertRuleRequest:
     event_subscription_id: UUID | Unset = UNSET
     """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
     event consumer metrics; webhook action and windows up to 24h are required."""
+    edge_rule_id: UUID | Unset = UNSET
+    """ADR-974. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches);
+    omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h,
+    24h or 7d (hourly hit buckets, kept 14 days)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
     action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""
@@ -78,6 +82,10 @@ class CreateAlertRuleRequest:
         if not isinstance(self.event_subscription_id, Unset):
             event_subscription_id = str(self.event_subscription_id)
 
+        edge_rule_id: str | Unset = UNSET
+        if not isinstance(self.edge_rule_id, Unset):
+            edge_rule_id = str(self.edge_rule_id)
+
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         enabled = self.enabled
@@ -107,6 +115,8 @@ class CreateAlertRuleRequest:
         )
         if event_subscription_id is not UNSET:
             field_dict["event_subscription_id"] = event_subscription_id
+        if edge_rule_id is not UNSET:
+            field_dict["edge_rule_id"] = edge_rule_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if enabled is not UNSET:
@@ -144,6 +154,13 @@ class CreateAlertRuleRequest:
         else:
             event_subscription_id = UUID(_event_subscription_id)
 
+        _edge_rule_id = d.pop("edge_rule_id", UNSET)
+        edge_rule_id: UUID | Unset
+        if isinstance(_edge_rule_id, Unset):
+            edge_rule_id = UNSET
+        else:
+            edge_rule_id = UUID(_edge_rule_id)
+
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         enabled = d.pop("enabled", UNSET)
@@ -173,6 +190,7 @@ class CreateAlertRuleRequest:
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
             event_subscription_id=event_subscription_id,
+            edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,

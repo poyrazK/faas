@@ -176,6 +176,9 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	if !s.checkEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
+	if !s.checkEdgeRuleAlertTarget(w, r, app.ID, &req) {
+		return
+	}
 	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -204,6 +207,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		Threshold:                       req.Threshold,
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
 		EventSubscriptionID:             req.EventSubscriptionID,
+		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
@@ -253,6 +257,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"threshold":                           row.Threshold,
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
+		"edge_rule_id":                        row.EdgeRuleID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
@@ -693,6 +698,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      string(r.WindowSpec),
 		EventSubscriptionID:             r.EventSubscriptionID,
+		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
@@ -780,6 +786,9 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if p := validateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
 		return p
 	}
+	if p := validateEdgeRuleAlert(req.Metric, req.EdgeRuleID, req.WindowSpec); p != nil {
+		return p
+	}
 	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
 		return p
 	}
@@ -841,6 +850,9 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if p := validateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
+		return p
+	}
+	if p := validateEdgeRuleAlert(string(merged.Metric), merged.EdgeRuleID, string(merged.WindowSpec)); p != nil {
 		return p
 	}
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
@@ -956,6 +968,9 @@ func validateFailureSourceFamily(req api.CreateAlertRuleRequest) *api.Problem {
 func alertRuleFamily(m state.AlertMetric) string {
 	if api.IsEventConsumerAlertMetric(string(m)) {
 		return "event_consumer"
+	}
+	if api.IsEdgeRuleAlertMetric(string(m)) {
+		return "edge_rule"
 	}
 	if m == state.AlertMetricFailedInvocs {
 		return alertRuleMetricFailedInvocations
