@@ -1051,6 +1051,10 @@ from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingRe
 from .event_receipt_routing_response_filter_reason import EventReceiptRoutingResponseFilterReason
 from .event_receipt_routing_response_retry_stop_reason import EventReceiptRoutingResponseRetryStopReason
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_recipient_blocker_query import EventRecipientBlockerQuery
+from .event_recipient_blocker_response import EventRecipientBlockerResponse
+from .event_recipient_blocker_response_reason import EventRecipientBlockerResponseReason
+from .event_recipient_blocker_response_status import EventRecipientBlockerResponseStatus
 from .event_recovery_capacity_wait import EventRecoveryCapacityWait
 from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
 from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
@@ -4457,6 +4461,10 @@ __all__ = (
     "EventReceiptRoutingResponseFilterReason",
     "EventReceiptRoutingResponseRetryStopReason",
     "EventReceiptRoutingResponseState",
+    "EventRecipientBlockerQuery",
+    "EventRecipientBlockerResponse",
+    "EventRecipientBlockerResponseReason",
+    "EventRecipientBlockerResponseStatus",
     "EventRecoveryCapacityWait",
     "EventRecoveryCapacityWaitGate",
     "EventRecoveryCapacityWaitScope",

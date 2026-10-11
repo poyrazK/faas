@@ -1,0 +1,54 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func (s *server) getEventRecipientBlocker(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	query, err := parseEventRecipientBlocker(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	store, ok := s.store.(state.EventRecipientBlockerStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event recipient blocker store"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventRecipientBlockerReadTimeout)
+	defer cancel()
+	out, err := store.EventRecipientBlocker(ctx, acct.ID, query)
+	if err != nil {
+		s.log.ErrorContext(ctx, "read event recipient blocker", "err", err)
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "event_recipient_blocker_read_timeout", "Recipient blocker read timed out", "Retry the exact-recipient lookup."))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("failed to read recipient blocker"))
+		}
+		return
+	}
+	if out.Recipient != nil {
+		page := eventBacklogResponse(state.EventBacklog{Recipients: []state.EventBacklogEntry{{EventBacklogRecipient: *out.Recipient}}}, state.EventBacklogQuery{}, acct.ID)
+		out.Recipient = &page.Recipients[0]
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
+}
+
+func parseEventRecipientBlocker(r *http.Request) (api.EventRecipientBlockerQuery, error) {
+	values := r.URL.Query()
+	guard, err := api.ParseAppEventAcceptanceGuard(values.Get("expected_accepted_at"))
+	if err != nil {
+		return api.EventRecipientBlockerQuery{}, err
+	}
+	query := api.EventRecipientBlockerQuery{Source: values.Get("source"), ID: values.Get("id"), SubscriptionID: values.Get("subscription_id")}
+	if guard.ExpectedAcceptedAt != nil {
+		query.ExpectedAcceptedAt = *guard.ExpectedAcceptedAt
+	}
+	return query, query.Validate()
+}

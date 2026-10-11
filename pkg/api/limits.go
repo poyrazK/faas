@@ -218,6 +218,12 @@ const (
 // Commit recovery diagnostics sample a bounded number of subscriptions per pass (ADR-947).
 const CommitRecoveryDiagnosticsReadMax = 50
 
+// Exact recipient blocker identity and timeout bounds (ADR-948).
+const (
+	EventRecipientBlockerIdentityMaxBytes = 256
+	EventRecipientBlockerReadTimeout      = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100

@@ -1469,13 +1469,19 @@ controls, recorded capacity scope, and `next_attempt_at` when present. Diagnosti
 carry their own `observed_at`; they describe a current routing sample rather than
 proving which replay execution caused progress.
 
-Each pass samples one backlog page per subscription, up to 50 queries with 200
-recipients each. Exact event source, ID, acceptance timestamp and subscription
-must match. `truncated` marks a page with more recipients. `not_found` means the
-bounded page did not include the delivery; it does not prove that delivery is
-ready, expired or completed. `unavailable`, `read_error` and `budget_exhausted`
-make missing diagnostic evidence explicit. Diagnostic errors do not change
-receipt status, replay attribution, settlement or the receipt retry budget.
+Each pass performs at most 50 exact-recipient lookups, matching event source,
+ID, acceptance timestamp and subscription. There is no subscription-page scan.
+`coverage: exact_recipient` identifies the new lookup. `available` includes current
+routing blocker evidence; `not_waiting` requires retained enqueued, filtered or
+failed routing state and does **not** imply handler completion or successful
+recovery. `acceptance_replaced` means the event identity now belongs to another
+acceptance, whose blocker is not attached. `unavailable` includes a reason such
+as `receipt_unavailable`, `snapshot_unavailable`, `recipient_unavailable`, or
+`routing_evidence_unavailable`. Missing/foreign/expired receipts never prove
+completion. `read_error` and `budget_exhausted` make incomplete diagnostics explicit.
+Diagnostic errors do not change receipt status, replay attribution, settlement
+or the receipt retry budget. Older servers without the endpoint produce
+`read_error`; diagnostics do not silently fall back to pagination.
 A recorded `next_attempt_at` is a scheduled retry time, not a guarantee of
 eligibility while ordering, subscription or capacity controls still block work.
 The overall timeout still applies. Saved diagnostics are discarded on resume

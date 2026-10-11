@@ -528,6 +528,8 @@ export type { EventReceiptRecoveryResponse } from './EventReceiptRecoveryRespons
 export type { EventReceiptReplayHistoryResponse } from './EventReceiptReplayHistoryResponse.js';
 export type { EventReceiptResponse } from './EventReceiptResponse.js';
 export type { EventReceiptRoutingResponse } from './EventReceiptRoutingResponse.js';
+export type { EventRecipientBlockerQuery } from './EventRecipientBlockerQuery.js';
+export type { EventRecipientBlockerResponse } from './EventRecipientBlockerResponse.js';
 export type { EventRecoveryCapacityWait } from './EventRecoveryCapacityWait.js';
 export type { EventRecoveryControlRequest } from './EventRecoveryControlRequest.js';
 export type { EventRecoveryExecution } from './EventRecoveryExecution.js';

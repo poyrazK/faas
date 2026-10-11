@@ -1,5 +1,5 @@
 import { EventsService } from './generated/services/EventsService.js';
-import type { EventBacklogResponse } from './generated/models/EventBacklogResponse.js';
+import type { EventRecipientBlockerResponse } from './generated/models/EventRecipientBlockerResponse.js';
 import type { EventBacklogRecipient } from './generated/models/EventBacklogRecipient.js';
 import { getCommitDeliveryReport, CommitDeliveryReportError } from './commit-delivery-report.js';
 import type { CommitDeliveryReportItem } from './commit-delivery-report.js';
@@ -20,7 +20,7 @@ export interface CommitRecoveryStatusChange {
   field: string; previous: unknown; current: unknown; previous_observed_at?: string; observed_at?: string;
 }
 export interface CommitRecoveryDiagnostics {
-  status: string; observed_at?: string; coverage?: string; truncated?: boolean; recipient?: EventBacklogRecipient;
+  status: string; reason?: string; routing_state?: string; observed_at?: string; coverage?: string; truncated?: boolean; recipient?: EventBacklogRecipient;
 }
 export interface CommitRecoveryStatusItem {
   diagnostics?: CommitRecoveryDiagnostics;
@@ -358,33 +358,37 @@ function observationsFresh(out: CommitRecoveryStatusResult, age: number): boolea
   return age === 0 || freshnessCounts(out, age).fresh === out.items.length;
 }
 
-/** One bounded backlog page per subscription; only enrich freshly validated status. */
+/** Bounded exact-recipient lookups; only enrich freshly validated status. */
 export async function diagnoseCommitRecoveryStatus(status: CommitRecoveryStatusResult, signal?: AbortSignal): Promise<CommitRecoveryStatusResult> {
   const out = structuredClone(status);
-  const cache = new Map<string, EventBacklogResponse | undefined>();
+  const cache = new Map<string, EventRecipientBlockerResponse | undefined>();
   for (const row of out.items) {
     const diagnostic: CommitRecoveryDiagnostics = { status: 'unavailable' };
     row.diagnostics = diagnostic;
-    if (!row.selection || ['not_observed', 'read_error'].includes(row.status)) continue;
+    if (!row.selection || ['not_observed', 'read_error', 'unsupported_recipient'].includes(row.status)) continue;
+    const publication = row.selection.publication;
     const subscription = row.attempt.subscription_id.toLowerCase();
-    if (!cache.has(subscription)) {
+    const key = JSON.stringify([publication.source, publication.id, publication.accepted_at, subscription]);
+    if (!cache.has(key)) {
       if (cache.size >= 50) { diagnostic.status = 'budget_exhausted'; continue; }
       if (signal?.aborted) { diagnostic.status = 'read_error'; continue; }
-      const request = EventsService.getEventBacklog({ subscriptionId: subscription, limit: 200, consumerLimit: 1 });
+      const request = EventsService.getEventRecipientBlocker({ source: publication.source, id: publication.id, subscriptionId: subscription, expectedAcceptedAt: publication.accepted_at });
       const abort = () => request.cancel();
       signal?.addEventListener('abort', abort, { once: true });
-      try { cache.set(subscription, await request); }
-      catch { cache.set(subscription, undefined); }
+      try { cache.set(key, await request); }
+      catch { cache.set(key, undefined); }
       finally { signal?.removeEventListener('abort', abort); }
     }
-    const page = cache.get(subscription);
-    if (!page) { diagnostic.status = 'read_error'; continue; }
-    diagnostic.observed_at = page.observed_at; diagnostic.coverage = page.coverage; diagnostic.truncated = Boolean(page.next_after);
-    if (page.coverage !== 'captured_and_backfill_recipients' || !Number.isFinite(Date.parse(page.observed_at))) continue;
-    diagnostic.status = 'not_found';
-    const publication = row.selection.publication;
-    const recipient = page.recipients.find(item => item.event_source === publication.source && item.event_id === publication.id && sameAcceptance(item.accepted_at, publication.accepted_at) && item.subscription_id.toLowerCase() === subscription && item.consumer_kind === 'application');
-    if (recipient) { diagnostic.status = 'available'; diagnostic.recipient = recipient; }
+    const result = cache.get(key);
+    if (!result) { diagnostic.status = 'read_error'; continue; }
+    if (result.query?.source !== publication.source || result.query.id !== publication.id || result.query.subscription_id !== subscription || !sameAcceptance(result.query.expected_accepted_at, publication.accepted_at) || !Number.isFinite(Date.parse(result.observed_at))) continue;
+    diagnostic.observed_at = result.observed_at; diagnostic.coverage = 'exact_recipient';
+    if (['unavailable', 'acceptance_replaced'].includes(result.status)) { diagnostic.status = result.status; diagnostic.reason = result.reason; }
+    else if (result.status === 'not_waiting' && !result.recipient && ['enqueued', 'filtered', 'failed'].includes(result.routing_state ?? '')) { diagnostic.status = result.status; diagnostic.routing_state = result.routing_state; }
+    else if (result.status === 'available') {
+      const recipient = result.recipient;
+      if (recipient && recipient.event_source === publication.source && recipient.event_id === publication.id && sameAcceptance(recipient.accepted_at, publication.accepted_at) && recipient.subscription_id.toLowerCase() === subscription && recipient.consumer_kind === 'application' && recipient.state === result.routing_state && ['pending', 'processing'].includes(recipient.state)) { diagnostic.status = 'available'; diagnostic.routing_state = result.routing_state; diagnostic.recipient = recipient; }
+    }
   }
   return out;
 }

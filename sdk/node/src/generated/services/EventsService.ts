@@ -16,6 +16,7 @@ import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAtt
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
 import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
+import type { EventRecipientBlockerResponse } from '../models/EventRecipientBlockerResponse.js';
 import type { EventRecoveryControlRequest } from '../models/EventRecoveryControlRequest.js';
 import type { EventRecoveryHealth } from '../models/EventRecoveryHealth.js';
 import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
@@ -585,6 +586,58 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect routing blockers for one exact retained recipient.
+   * Requires apps:read or admin. Reads only the authenticated account, in
+   * one repeatable read snapshot. Matches source, ID, precise acceptance and
+   * recipient before inspecting current routing controls. No backlog pagination
+   * or consumer aggregation. Returns available for current routing evidence,
+   * not_waiting only when the retained recipient has left pending/processing,
+   * unavailable for missing or inconsistent retained evidence, or
+   * acceptance_replaced when the retained identity has a different timestamp.
+   * Not_waiting never implies handler completion or replay attribution.
+   * Foreign and missing receipts both return unavailable with receipt_unavailable.
+   * Read-only; never follows links, claims work or submits recovery.
+   *
+   * @returns EventRecipientBlockerResponse Exact recipient routing observation, including unavailable evidence.
+   * @throws ApiError
+   */
+  public static getEventRecipientBlocker({
+    source,
+    id,
+    subscriptionId,
+    expectedAcceptedAt,
+  }: {
+    source: string,
+    id: string,
+    subscriptionId: string,
+    /**
+     * Exact original acceptance instant, preserving fractional precision.
+     */
+    expectedAcceptedAt: string,
+  }): CancelablePromise<EventRecipientBlockerResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/recipient-blocker',
+      query: {
+        'source': source,
+        'id': id,
+        'subscription_id': subscriptionId,
+        'expected_accepted_at': expectedAcceptedAt,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Read timeout or storage unavailable.`,
       },
     });
   }

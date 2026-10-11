@@ -14,11 +14,11 @@ from uuid import UUID
 
 import httpx
 
-from .api.events import get_event_backlog
+from .api.events import get_event_recipient_blocker
 from .client import AuthenticatedClient
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
 from .commit_recovery_plan import _same_acceptance
-from .models.event_backlog_response import EventBacklogResponse
+from .models.event_recipient_blocker_response import EventRecipientBlockerResponse
 
 
 class _CommitRecoveryReadErrors(Exception):
@@ -673,47 +673,79 @@ def _observations_fresh(out: dict[str, Any], age: float) -> bool:
 
 
 async def adiagnose_commit_recovery_status(client: AuthenticatedClient, status: dict[str, Any]) -> dict[str, Any]:
-    """Enrich freshly validated status with bounded backlog evidence; caller owns timeout."""
+    """Enrich validated status with exact routing evidence; caller owns timeout."""
     out = copy.deepcopy(status)
-    cache: dict[str, dict[str, Any] | None] = {}
+    cache: dict[tuple[str, str, str, str], dict[str, Any] | None] = {}
     for row in out["items"]:
         diagnostic: dict[str, Any] = {"status": "unavailable"}
         row["diagnostics"] = diagnostic
-        if not row.get("selection") or row["status"] in {"not_observed", "read_error"}:
+        if not row.get("selection") or row["status"] in {"not_observed", "read_error", "unsupported_recipient"}:
             continue
+        publication = row["selection"]["publication"]
         subscription = row["attempt"]["subscription_id"].lower()
-        if subscription not in cache:
+        key = (publication["source"], publication["id"], publication["accepted_at"], subscription)
+        if key not in cache:
             if len(cache) >= 50:
                 diagnostic["status"] = "budget_exhausted"
                 continue
             try:
-                response = await get_event_backlog.asyncio_detailed(
-                    client=client, subscription_id=subscription, limit=200, consumer_limit=1
+                response = await get_event_recipient_blocker.asyncio_detailed(
+                    client=client,
+                    source=publication["source"],
+                    id=publication["id"],
+                    subscription_id=subscription,
+                    expected_accepted_at=publication["accepted_at"],
                 )
-                cache[subscription] = (
-                    response.parsed.to_dict() if isinstance(response.parsed, EventBacklogResponse) else None
+                # Keep fractional timestamps from the wire rather than datetime's microsecond conversion.
+                cache[key] = (
+                    json.loads(response.content) if isinstance(response.parsed, EventRecipientBlockerResponse) else None
                 )
             except Exception:
-                cache[subscription] = None
-        page = cache[subscription]
-        if page is None:
+                cache[key] = None
+        result = cache[key]
+        if result is None:
             diagnostic["status"] = "read_error"
             continue
-        diagnostic.update(
-            observed_at=page.get("observed_at"), coverage=page.get("coverage"), truncated=bool(page.get("next_after"))
-        )
-        if page.get("coverage") != "captured_and_backfill_recipients" or not page.get("observed_at"):
+        query = result.get("query")
+        if not isinstance(query, dict):
             continue
-        diagnostic["status"] = "not_found"
-        publication = row["selection"]["publication"]
-        for recipient in page["recipients"]:
+        expected, observed = query.get("expected_accepted_at"), result.get("observed_at")
+        if (
+            query.get("source") != publication["source"]
+            or query.get("id") != publication["id"]
+            or query.get("subscription_id") != subscription
+            or not isinstance(expected, str)
+            or not _same_acceptance(expected, publication["accepted_at"])
+            or not isinstance(observed, str)
+            or not _same_acceptance(observed, observed)
+        ):
+            continue
+        diagnostic.update(observed_at=observed, coverage="exact_recipient")
+        if result["status"] in {"unavailable", "acceptance_replaced"}:
+            diagnostic["status"] = result["status"]
+            if result.get("reason"):
+                diagnostic["reason"] = result["reason"]
+        elif (
+            result["status"] == "not_waiting"
+            and not result.get("recipient")
+            and result.get("routing_state") in {"enqueued", "filtered", "failed"}
+        ):
+            diagnostic.update(status="not_waiting", routing_state=result["routing_state"])
+        elif result["status"] == "available":
+            recipient = result.get("recipient")
+            if not isinstance(recipient, dict):
+                continue
+            accepted, recipient_id = recipient.get("accepted_at"), recipient.get("subscription_id")
             if (
-                recipient["event_source"] == publication["source"]
-                and recipient["event_id"] == publication["id"]
-                and _same_acceptance(recipient["accepted_at"], publication["accepted_at"])
-                and recipient["subscription_id"].lower() == subscription
-                and recipient["consumer_kind"] == "application"
+                recipient.get("event_source") == publication["source"]
+                and recipient.get("event_id") == publication["id"]
+                and isinstance(accepted, str)
+                and _same_acceptance(accepted, publication["accepted_at"])
+                and isinstance(recipient_id, str)
+                and recipient_id.lower() == subscription
+                and recipient.get("consumer_kind") == "application"
+                and recipient.get("state") == result.get("routing_state")
+                and recipient.get("state") in {"pending", "processing"}
             ):
-                diagnostic.update(status="available", recipient=recipient)
-                break
+                diagnostic.update(status="available", routing_state=result["routing_state"], recipient=recipient)
     return out

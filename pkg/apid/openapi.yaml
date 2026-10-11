@@ -3945,6 +3945,59 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events/recipient-blocker:
+    get:
+      tags: [events]
+      operationId: getEventRecipientBlocker
+      summary: Inspect routing blockers for one exact retained recipient.
+      description: |
+        Requires apps:read or admin. Reads only the authenticated account, in
+        one repeatable read snapshot. Matches source, ID, precise acceptance and
+        recipient before inspecting current routing controls. No backlog pagination
+        or consumer aggregation. Returns available for current routing evidence,
+        not_waiting only when the retained recipient has left pending/processing,
+        unavailable for missing or inconsistent retained evidence, or
+        acceptance_replaced when the retained identity has a different timestamp.
+        Not_waiting never implies handler completion or replay attribution.
+        Foreign and missing receipts both return unavailable with receipt_unavailable.
+        Read-only; never follows links, claims work or submits recovery.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: source
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: subscription_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: expected_accepted_at
+          in: query
+          required: true
+          description: Exact original acceptance instant, preserving fractional precision.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Exact recipient routing observation, including unavailable evidence.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecipientBlockerResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Read timeout or storage unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/events/backlog:
     get:
       tags: [events]
@@ -53424,6 +53477,30 @@ components:
         accepted_at: { type: string, format: date-time }
         receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
 
+    EventRecipientBlockerQuery:
+      type: object
+      additionalProperties: false
+      required: [source, id, subscription_id, expected_accepted_at]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 256 }
+        id: { type: string, minLength: 1, maxLength: 256 }
+        subscription_id: { type: string, minLength: 1, maxLength: 256 }
+        expected_accepted_at: { type: string, description: "Nonzero RFC3339 timestamp with its original fractional precision (up to nanoseconds)." }
+    EventRecipientBlockerResponse:
+      type: object
+      additionalProperties: false
+      required: [query, observed_at, status]
+      properties:
+        query: { $ref: '#/components/schemas/EventRecipientBlockerQuery' }
+        observed_at: { type: string, format: date-time }
+        status: { type: string, enum: [available, not_waiting, unavailable, acceptance_replaced] }
+        reason:
+          type: string
+          enum: [receipt_unavailable, snapshot_unavailable, recipient_unavailable, routing_evidence_unavailable, acceptance_replaced]
+        routing_state:
+          type: string
+          description: Retained routing state; never an invocation state.
+        recipient: { $ref: '#/components/schemas/EventBacklogRecipient' }
     EventBacklogResponse:
       example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_and_backfill_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
       type: object

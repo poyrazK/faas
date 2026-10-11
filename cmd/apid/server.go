@@ -2334,6 +2334,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/events/retention", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventRetentionHealth))))
 	mux.HandleFunc("GET /v1/events/storage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventStorageUsage))))
 	mux.HandleFunc("GET /v1/events/backlog", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventBacklog))))
+	mux.HandleFunc("GET /v1/events/recipient-blocker", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventRecipientBlocker))))
 	mux.HandleFunc("GET /v1/events/receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventReceipt))))
 	mux.HandleFunc("GET /v1/events/receipt/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventReceiptReplays))))
 	mux.HandleFunc("GET /v1/events/receipt/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventReceiptAttempts))))

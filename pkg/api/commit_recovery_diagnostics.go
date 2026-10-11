@@ -8,19 +8,21 @@ import (
 )
 
 // CommitRecoveryDiagnostics is a separate, bounded snapshot of live routing blockers.
-// Missing backlog evidence never proves that delivery is ready or terminal.
+// Missing evidence never proves that delivery is ready or terminal.
 type CommitRecoveryDiagnostics struct {
-	Status     string                 `json:"status"`
-	ObservedAt *time.Time             `json:"observed_at,omitempty"`
-	Coverage   string                 `json:"coverage,omitempty"`
-	Truncated  bool                   `json:"truncated,omitempty"`
-	Recipient  *EventBacklogRecipient `json:"recipient,omitempty"`
+	Status       string                 `json:"status"`
+	Reason       string                 `json:"reason,omitempty"`
+	RoutingState string                 `json:"routing_state,omitempty"`
+	ObservedAt   *time.Time             `json:"observed_at,omitempty"`
+	Coverage     string                 `json:"coverage,omitempty"`
+	Truncated    bool                   `json:"truncated,omitempty"`
+	Recipient    *EventBacklogRecipient `json:"recipient,omitempty"`
 }
 
-// DiagnoseCommitRecoveryStatus clones status and samples one backlog page per
-// subscription, up to CommitRecoveryDiagnosticsReadMax reads. It never changes
-// receipt evidence, attribution, settlement, or the saved recovery attempt.
-// Call only with a freshly validated status result, not an unvalidated saved file.
+// DiagnoseCommitRecoveryStatus clones status and performs exact-recipient lookups,
+// up to CommitRecoveryDiagnosticsReadMax reads. It never changes receipt evidence,
+// attribution, settlement, or the saved recovery attempt. Call only with a freshly
+// validated status result, not an unvalidated saved file.
 func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult) CommitRecoveryStatusResult {
 	raw, err := json.Marshal(status)
 	if err != nil {
@@ -31,19 +33,20 @@ func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 		return status
 	}
 	type sample struct {
-		page EventBacklogResponse
-		err  error
+		result EventRecipientBlockerResponse
+		err    error
 	}
-	cache := map[string]sample{}
+	cache := map[EventRecipientBlockerQuery]sample{}
 	for i := range out.Items {
 		row := &out.Items[i]
 		diagnostic := &CommitRecoveryDiagnostics{Status: "unavailable"}
 		row.Diagnostics = diagnostic
-		if row.Selection == nil || row.Status == "not_observed" || row.Status == "read_error" {
+		if row.Selection == nil || row.Status == "not_observed" || row.Status == "read_error" || row.Status == "unsupported_recipient" {
 			continue
 		}
-		subscription := strings.ToLower(row.Attempt.SubscriptionID)
-		snapshot, exists := cache[subscription]
+		publication := row.Selection.Publication
+		query := EventRecipientBlockerQuery{Source: publication.Source, ID: publication.ID, SubscriptionID: strings.ToLower(row.Attempt.SubscriptionID), ExpectedAcceptedAt: publication.AcceptedAt.UTC()}
+		snapshot, exists := cache[query]
 		if !exists {
 			if len(cache) >= CommitRecoveryDiagnosticsReadMax {
 				diagnostic.Status = "budget_exhausted"
@@ -53,29 +56,31 @@ func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 				diagnostic.Status = "read_error"
 				continue
 			}
-			page, readErr := c.GetEventBacklog(ctx, EventBacklogOptions{EventBacklogFilters: EventBacklogFilters{SubscriptionID: subscription}, Limit: EventBacklogPageMax, ConsumerLimit: 1})
-			snapshot = sample{page: page, err: readErr}
-			cache[subscription] = snapshot
+			result, readErr := c.GetEventRecipientBlocker(ctx, query)
+			snapshot = sample{result: result, err: readErr}
+			cache[query] = snapshot
 		}
 		if snapshot.err != nil {
 			diagnostic.Status = "read_error"
 			continue
 		}
-		page := snapshot.page
-		diagnostic.ObservedAt = &page.ObservedAt
-		diagnostic.Coverage = page.Coverage
-		diagnostic.Truncated = page.NextAfter != ""
-		diagnostic.Status = "not_found"
-		if page.Coverage != EventBacklogCoverage || page.ObservedAt.IsZero() {
-			diagnostic.Status = "unavailable"
+		result := snapshot.result
+		if result.Query.Source != query.Source || result.Query.ID != query.ID || result.Query.SubscriptionID != query.SubscriptionID || !result.Query.ExpectedAcceptedAt.Equal(query.ExpectedAcceptedAt) || result.ObservedAt.IsZero() {
 			continue
 		}
-		publication := row.Selection.Publication
-		for _, recipient := range page.Recipients {
-			if recipient.EventSource == publication.Source && recipient.EventID == publication.ID && recipient.AcceptedAt.Equal(publication.AcceptedAt) && strings.EqualFold(recipient.SubscriptionID, subscription) && recipient.ConsumerKind == "application" {
-				diagnostic.Status = "available"
-				diagnostic.Recipient = &recipient
-				break
+		diagnostic.ObservedAt = &result.ObservedAt
+		diagnostic.Coverage = "exact_recipient"
+		switch result.Status {
+		case "unavailable", "acceptance_replaced":
+			diagnostic.Status, diagnostic.Reason = result.Status, result.Reason
+		case "not_waiting":
+			if result.Recipient == nil && (result.RoutingState == "enqueued" || result.RoutingState == "filtered" || result.RoutingState == "failed") {
+				diagnostic.Status, diagnostic.RoutingState = result.Status, result.RoutingState
+			}
+		case "available":
+			recipient := result.Recipient
+			if recipient != nil && recipient.EventSource == query.Source && recipient.EventID == query.ID && recipient.AcceptedAt.Equal(query.ExpectedAcceptedAt) && strings.EqualFold(recipient.SubscriptionID, query.SubscriptionID) && recipient.ConsumerKind == "application" && recipient.State == result.RoutingState && (recipient.State == "pending" || recipient.State == "processing") {
+				diagnostic.Status, diagnostic.RoutingState, diagnostic.Recipient = "available", result.RoutingState, recipient
 			}
 		}
 	}

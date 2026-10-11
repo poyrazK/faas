@@ -427,3 +427,6 @@ type EventBacklogConsumer = api.EventBacklogConsumer
 type EventOrderingBlocker = api.EventOrderingBlocker
 type EventBacklogOptions = api.EventBacklogOptions
 type EventBacklogFilters = api.EventBacklogFilters
+
+type EventRecipientBlockerQuery = api.EventRecipientBlockerQuery
+type EventRecipientBlockerResponse = api.EventRecipientBlockerResponse
