@@ -45,9 +45,10 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 	} else if r == nil || r.StatusCode != 403 {
 		t.Fatalf("foreign origin: %v %v", r, err)
 	}
+	otherSession := uuid.NewString()
 	for _, frame := range []entitysocket.Frame{
 		{ProtocolVersion: 1, RequestID: "session/g1/" + session + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + session + `","generation":1}`)},
-		{ProtocolVersion: 1, RequestID: "session/g0/" + uuid.NewString() + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + uuid.NewString() + `","generation":0}`)},
+		{ProtocolVersion: 1, RequestID: "session/g0/" + otherSession + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + otherSession + `","generation":0}`)},
 		{ProtocolVersion: 1, RequestID: "session/g0/reclaim/" + uuid.NewString(), Payload: json.RawMessage(`{"kind":"reclaim","generation":0,"operation_id":"` + uuid.NewString() + `"}`)},
 	} {
 		c, _, err := dial("https://example.com")

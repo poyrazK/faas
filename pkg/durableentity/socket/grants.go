@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/durableentity"
@@ -45,12 +48,15 @@ func ValidOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	return err == nil && u.Host != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.String() == origin && (u.Scheme == "https" || (u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")))
 }
+func grantIdentity(s string) bool {
+	return strings.TrimSpace(s) != "" && len(s) <= api.MaxDurableEntityIdentityBytes && utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl)
+}
 func sessionUUID(s string) bool {
 	u, err := uuid.Parse(s)
 	return err == nil && u.Version() == 4 && u.String() == s
 }
 func (g *Grants) Mint(ctx context.Context, grant Grant, ttl time.Duration) (Grant, string, error) {
-	if !ValidOrigin(grant.Origin) || !sessionUUID(grant.SessionID) || grant.Generation > 9007199254740991 || ttl < time.Second || ttl > 5*time.Minute || grant.IssuerID == "" || grant.Entity.AccountID == "" || grant.Entity.AppID == "" || len(grant.Commands) == 0 || len(grant.Commands) > 4 {
+	if !ValidOrigin(grant.Origin) || !sessionUUID(grant.SessionID) || grant.Generation > 9007199254740991 || ttl < time.Second || ttl > 5*time.Minute || grant.IssuerID == "" || !grantIdentity(grant.Entity.AccountID) || !grantIdentity(grant.Entity.AppID) || !grantIdentity(grant.Entity.Namespace) || !grantIdentity(grant.Entity.Key) || len(grant.Commands) == 0 || len(grant.Commands) > 4 {
 		return Grant{}, "", ErrGrantDenied
 	}
 	seen := map[string]bool{}
@@ -151,6 +157,9 @@ func (g Grant) Authorize(frame Frame) bool {
 	}
 	var kind, session, query string
 	if json.Unmarshal(fields["kind"], &kind) != nil || json.Unmarshal(fields["session_id"], &session) != nil || session != g.SessionID {
+		return false
+	}
+	if kind != "open" && kind != "message" && kind != "close" && kind != "status" {
 		return false
 	}
 	allowed := false
