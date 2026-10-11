@@ -264,7 +264,7 @@ func docsURLForTemplate(name string) string {
 		return functionsDocsURL
 	case "cron-example", "cron-worker", "event-worker", "queue-worker", "slack-bot", "webhook-receiver":
 		return eventDrivenDocsURL
-	case "s3-uploader", "rest-api-postgres":
+	case "s3-uploader", "object-storage-node", "rest-api-postgres":
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
@@ -324,12 +324,13 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		values[pair.Key] = pair.Value
 	}
 	required := map[string][]string{
-		"s3-uploader":        []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
-		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
-		"rest-api-postgres":  []string{"DATABASE_URL"},
-		"secret-reload-node": []string{"DATABASE_URL"},
-		"customer-platform":  []string{"DATABASE_URL"},
-		"cron-worker":        []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+		"object-storage-node": []string{"STORAGE_APP_TOKEN"},
+		"s3-uploader":         []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
+		"slack-bot":           []string{"SLACK_SIGNING_SECRET"},
+		"rest-api-postgres":   []string{"DATABASE_URL"},
+		"secret-reload-node":  []string{"DATABASE_URL"},
+		"customer-platform":   []string{"DATABASE_URL"},
+		"cron-worker":         []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
 	for _, key := range required[tpl] {
@@ -411,6 +412,16 @@ func nextStepsFor(tpl string) []string {
 			"The Procfile release command installs the tenant-scoped document schema before activation.",
 			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
 			"Read README.md for external database secrets, credential issuance, rotation, usage, and suspension.",
+		}
+	case "object-storage-node":
+		return []string{
+			"cd <dest> && npm ci --ignore-scripts && npm test",
+			"Reserve the app, then attach a private managed bucket:",
+			"  gregale deploy --create-only --template object-storage-node --name <slug>",
+			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
+			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
+			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports local storage adoption.",
 		}
 	case "s3-uploader":
 		return []string{

@@ -1,4 +1,4 @@
-# ADR-981: Storage client leases and retirement
+# ADR-982: Storage client leases and retirement
 
 Status: Accepted
 

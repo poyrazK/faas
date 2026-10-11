@@ -22,7 +22,9 @@ For example, with [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJav
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { ObjectStorageBinding } from '@gregale/sdk-node/object-storage/runtime';
 
-const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', options => new S3Client(options));
+const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', options => new S3Client({
+  ...options, credentials: {...options.credentials}, // AWS annotates resolved credentials.
+}));
 await storage.reload(process.env); // Startup only; environment values do not change on SIGHUP.
 
 async function readAsset(key) {
@@ -95,7 +97,9 @@ import { ObjectStorageBinding } from '@gregale/sdk-node/object-storage/runtime';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 
 const shutdown = new AbortController();
-const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', options => new S3Client(options));
+const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', options => new S3Client({
+  ...options, credentials: {...options.credentials}, // AWS annotates resolved credentials.
+}));
 const reload = new SecretReloadCoordinator({
   consumers: [storage.secretConsumer()],
   signal: shutdown.signal,
@@ -542,3 +546,26 @@ invalidate the promotion fence; collect current evidence and retry. Rolling back
 the requirements migration is refused while any policy has a nonempty map; the
 guard locks policy writes so concurrent updates cannot evade it. Clear requirements
 explicitly before a reviewed rollback.
+
+## Node compute starter
+
+`gregale init --template object-storage-node --path files-app` materializes a private
+managed-storage application with authenticated binary PUT/GET, atomic storage
+and auth secret consumers, request leases, storage-aware local readiness and
+bounded shutdown. Reserve the app with `deploy --create-only`, attach assets
+using `gregale add bucket ... --permission read_write --prefix GREGALE_S3_ASSETS`,
+and supply STORAGE_APP_TOKEN through an external 0600 secrets file. Follow the
+[starter README](../cmd/gregale/templates/object-storage-node/README.md) for setup
+and the application safeguards. Provider credentials stay behind the gateway.
+
+The Dockerfile requires application ACK readiness and opts into SIGHUP. Read/list
+candidate validation is charged to gateway request budgets; it does not certify
+write permission or continuous provider health. Every response body retains its
+lease until completion or cancellation. The five-second shutdown budget aborts
+unfinished transfers after draining expires.
+
+`bash scripts/test-storage-node-starter.sh` checks the CLI-embedded artifact, its
+lockfile, app tests and actual Node/SigV4/gateway/provider-adapter memory-store
+journey. Its disposable local provider is not GCS/R2 or a native microVM
+qualification. The bundled helper drift check runs with Node SDK tests; regenerate
+using `npm run build && npm run starter:sync` in sdk/node after helper changes.

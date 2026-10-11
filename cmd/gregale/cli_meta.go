@@ -470,6 +470,7 @@ var templateNames13 = []string{
 	"event-worker",
 	"queue-worker",
 	"s3-uploader",
+	"object-storage-node",
 	"slack-bot",
 	"rest-api-postgres",
 	"cron-worker",

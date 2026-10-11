@@ -114,6 +114,11 @@ env:
   PROM_TARBALL_SHA256_LINUX_AMD64: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f"
 
 jobs:
+  storage-node-starter:
+    uses: ./.github/workflows/storage-node-starter.yml
+    permissions:
+      contents: read
+
   # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
   # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.

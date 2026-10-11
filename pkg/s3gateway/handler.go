@@ -400,7 +400,9 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 	if err != nil || bucket == "" || strings.Contains(bucket, "/") {
 		return "", "", false, false, errors.New("invalid bucket")
 	}
-	if len(parts) == 1 {
+	// Bucket operations from the JavaScript SDK use /bucket/. Preserve the
+	// original URI for SigV4; only classify its empty final segment here.
+	if len(parts) == 1 || parts[1] == "" {
 		return bucket, "", true, false, nil
 	}
 	key, err = url.PathUnescape(parts[1])

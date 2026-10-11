@@ -55,6 +55,25 @@ func TestSecretReloadNodeStarterHelper(t *testing.T) {
 	runNodeStarterTests(t, "secret-reload-node", "secret-reload.test.js")
 }
 
+// This opt-in handoff materializes the exact embedded CLI artifact into the
+// shell harness's fresh, owned directory for dependency installation and E2E.
+func TestObjectStorageNodeMaterializeForQualification(t *testing.T) {
+	dest := os.Getenv("GREGALE_STORAGE_NODE_STARTER_FIXTURE")
+	if dest == "" {
+		t.Skip("run scripts/test-storage-node-starter.sh for installed starter qualification")
+	}
+	if !filepath.IsAbs(dest) {
+		t.Fatal("fixture directory must be absolute")
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("fixture directory must exist and be empty", err)
+	}
+	if err = Materialize("object-storage-node", dest); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCustomerPlatformStarterHTTPIsolation(t *testing.T) {
 	runNodeStarterTests(t, "customer-platform", "test/http.test.js")
 }
