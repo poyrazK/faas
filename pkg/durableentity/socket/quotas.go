@@ -60,6 +60,7 @@ type quotaRecord struct {
 	PolicyRevision uint64              `json:"policy_revision,omitempty"`
 	PolicyChanges  []QuotaPolicyChange `json:"policy_changes,omitempty"`
 	Retirements    []QuotaRetirement   `json:"retirements,omitempty"`
+	Registry       *quotaRegistry      `json:"registry,omitempty"`
 }
 type QuotaError struct {
 	Budget          string
@@ -106,8 +107,11 @@ func (q *Quotas) read(ctx context.Context, key string) (quotaRecord, string, err
 		return quotaRecord{}, "", err
 	}
 	var r quotaRecord
-	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || (r.Schema < 1 || r.Schema > 3) || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > 64 {
+	if version == "" || len(body) > maxQuotaRecordBytes || json.Unmarshal(body, &r) != nil || (r.Schema < 1 || r.Schema > 4) || scopeKey(r.Scope) != key || !r.Limits.valid() || r.Window.IsZero() || r.GrantsIssued < 0 || r.GrantsIssued > 256 || r.Invocations < 0 || r.Invocations > 10000 || len(r.Grants) > 256 || len(r.Connections) > 32 || len(r.Entities) > entityCapacity(r) {
 		return quotaRecord{}, "", durableentity.ErrCorrupt
+	}
+	if err := q.loadRegistry(ctx, key, &r); err != nil {
+		return quotaRecord{}, "", err
 	}
 	if r.Migration != nil && !r.Migration.valid() {
 		return quotaRecord{}, "", durableentity.ErrCorrupt
@@ -212,7 +216,7 @@ func (q *Quotas) mutateMigration(ctx context.Context, key string, scope *quotaSc
 		if err = change(&r, now); err != nil {
 			return err
 		}
-		body, err := json.Marshal(r)
+		body, err := q.marshalQuota(ctx, key, r)
 		if err != nil {
 			return err
 		}
@@ -405,8 +409,8 @@ func (q *Quotas) AdmitInvocation(ctx context.Context, id durableentity.ID) error
 			}
 		}
 		if !found {
-			if len(r.Entities) >= 64 {
-				return quotaErr("entities", 64, 65, 0)
+			if len(r.Entities) >= entityCapacity(*r) {
+				return quotaErr("entities", int64(entityCapacity(*r)), int64(len(r.Entities)+1), 0)
 			}
 			r.Entities = append(r.Entities, entityReservation{key, q.Limits.EntityBytes})
 			grew = true

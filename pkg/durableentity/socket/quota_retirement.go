@@ -57,7 +57,7 @@ func validQuotaRetirements(r quotaRecord) bool {
 	if r.Schema < 3 {
 		return len(r.Retirements) == 0
 	}
-	if len(r.Retirements) == 0 || len(r.Retirements) > 256 {
+	if r.Schema == 3 && len(r.Retirements) == 0 || len(r.Retirements) > retirementCapacity(r) {
 		return false
 	}
 	seen, operations := map[string]bool{}, map[string]bool{}
@@ -94,7 +94,7 @@ func (q *Quotas) PreviewRetirement(ctx context.Context, id durableentity.ID) (Qu
 		return QuotaRetirementPreview{}, err
 	}
 	prune(&r, q.now())
-	out := QuotaRetirementPreview{Ready: r.Schema >= 2 && r.Limits == q.Limits && r.Migration != nil && r.Migration.Phase == "complete" && len(r.Connections) == 0 && len(r.Retirements) < 256}
+	out := QuotaRetirementPreview{Ready: r.Schema >= 2 && r.Limits == q.Limits && r.Migration != nil && r.Migration.Phase == "complete" && len(r.Connections) == 0 && retirementSpace(r, entityKey(id))}
 	for _, e := range r.Entities {
 		if e.Key == entityKey(id) {
 			out.ReservedBytes = e.Bytes
@@ -142,7 +142,7 @@ func (q *Quotas) TrackRetirement(ctx context.Context, id durableentity.ID, opera
 		if len(r.Connections) != 0 {
 			return durableentity.ErrBusy
 		}
-		if len(r.Retirements) == 256 {
+		if !retirementSpace(*r, entityKey(id)) {
 			return durableentity.ErrLimit
 		}
 		reserved := false
@@ -162,7 +162,7 @@ func (q *Quotas) TrackRetirement(ctx context.Context, id durableentity.ID, opera
 			return durableentity.ErrConflict
 		}
 		item := QuotaRetirement{EntityKey: entityKey(id), OperationID: operation, Actor: status.Actor, At: status.At, Phase: "held"}
-		r.Schema = 3
+		r.Schema = max(r.Schema, 3)
 		r.Retirements = append(r.Retirements, item)
 		for i := range r.Grants {
 			if r.Grants[i].Entity == id {

@@ -21,9 +21,14 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityQuotaMigrationEnabled = false
 	s.durableEntityQuotaPolicyEnabled = false
 	s.durableEntityRetirementEnabled = false
+	s.durableEntityRegistryEnabled = false
 	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
 	migration := getenv("FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED") == "1"
 	policy := getenv("FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED") == "1"
+	registry := getenv("FAAS_DURABLE_ENTITY_REGISTRY_ENABLED") == "1"
+	if registry && !policy {
+		return errors.New("entity registry requires quota policy management")
+	}
 	retirement := getenv("FAAS_DURABLE_ENTITY_RETIREMENT_ENABLED") == "1"
 	if retirement && !policy {
 		return errors.New("entity retirement requires quota policy management")
@@ -191,6 +196,7 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	s.durableEntityQuotaMigrationEnabled = migration
 	s.durableEntityQuotaPolicyEnabled = policy
 	s.durableEntityRetirementEnabled = retirement
+	s.durableEntityRegistryEnabled = registry
 	s.durableEntities, s.durableEntityApps, s.durableEntityOwner = engine, apps, uuid.NewString()
 	s.durableEntityAlarmsEnabled = alarms
 	s.durableEntityMaintenanceEnabled = maintenance

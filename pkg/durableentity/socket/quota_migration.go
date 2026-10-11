@@ -119,7 +119,23 @@ func migrationPlan(r quotaRecord, page durableentity.QuotaInventoryPage) (QuotaM
 			newEntities++
 		}
 	}
-	plan.EntityShortfall = max(0, len(r.Entities)+newEntities-64)
+	plan.EntityShortfall = max(0, len(r.Entities)+newEntities-entityCapacity(r))
+	if r.Schema == 4 {
+		counts := make([]int, registryShards)
+		known := map[string]bool{}
+		for _, e := range r.Entities {
+			counts[registryIndex(e.Key)]++
+			known[e.Key] = true
+		}
+		for key := range seen {
+			if !known[key] {
+				counts[registryIndex(key)]++
+			}
+		}
+		for _, count := range counts {
+			plan.EntityShortfall = max(plan.EntityShortfall, max(0, count-64))
+		}
+	}
 	plan.NewReservations = newEntities
 	plan.PageFits = plan.MissingUsage == 0 && plan.AboveEntityCap == 0 && plan.ByteShortfall == 0 && plan.EntityShortfall == 0
 	return plan, nil

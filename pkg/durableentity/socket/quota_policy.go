@@ -2,7 +2,6 @@ package socket
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -157,7 +156,7 @@ func (q *Quotas) ApplyPolicy(ctx context.Context, id durableentity.ID, p QuotaPo
 		r.PolicyChanges = append(r.PolicyChanges, change)
 		r.Limits = p.Limits
 		r.Migration = &QuotaMigration{ID: p.MigrationID, Revision: 1, Phase: "backfill", NotBefore: q.now().Add(api.MaxDurableEntityLease + api.DurableEntityInvokeTimeout), Limits: p.Limits}
-		body, err := json.Marshal(r)
+		body, err := q.marshalQuota(ctx, scopeKey(scope), r)
 		if err != nil {
 			return nil, err
 		}
