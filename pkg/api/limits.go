@@ -9639,3 +9639,6 @@ const CommitDeliveryReportFileMaxBytes = 64 << 20
 
 // CommitRecoveryApplyMax bounds sequential reviewed recovery attempts per call.
 const CommitRecoveryApplyMax = 50
+
+// CommitRecoveryStatusMax bounds subscriber observations per read-only status call.
+const CommitRecoveryStatusMax = 50

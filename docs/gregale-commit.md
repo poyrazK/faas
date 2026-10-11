@@ -1018,3 +1018,63 @@ API requests retain their behavior.
 Manual replay supports `--expected-generation N --expected-accepted-at RFC3339`.
 The generation must be nonnegative and the acceptance guard is required.
 See [ADR-937](adr/937-routing-replay-generation-guard.md).
+
+### Inspecting recovery results without replay
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --limit 50 --recipient-pages 5 \
+  --timeout 2m > recovery-status.json
+~~~
+
+Status validates the original source, publication selection and subscriber
+identities, then rereads guarded receipt evidence. It submits no recovery
+requests. Each item keeps the saved attempt unchanged alongside fresh
+recipient evidence, observed_at, current generation, reviewed
+expected_generation and generation_relation when available.
+
+Current status is completed, active, failed, unresolved,
+unsupported_recipient, read_error or not_observed. It describes the
+retained delivery evidence, separately from the saved request outcome.
+Retained latest replay takes precedence over original execution; when a saved
+acknowledged execution ID matches either execution, that matching execution is
+sampled and attribution is matches_acknowledged_execution. Otherwise
+attribution is unproven. A generation advance or observed completion never
+resolves an unknown attempt as successful. Missing or replaced acceptances,
+missing recipients and expired execution evidence remain unresolved.
+
+Counts cover the supplied result items, which may be a subset of the reviewed
+plan. Complete means the loop considered all those items without read error,
+item-limit truncation or interruption. A receipt-page limit can still leave
+recipient evidence unresolved, regardless of whether consumers completed or
+requests remain ambiguous. No history URL or saved action URL is followed. Inputs are copied
+and saved aggregate counts are ignored. Saved files are editable observations,
+not signed proof.
+
+The observation limit is 1..50 and receipt pages per item 1..20. Each CLI input
+file is limited to 64 MiB. The overall timeout covers the operation.
+Node/Python first refresh one receipt page per publication across the saved
+selection for validation; Go validates source and saved selection directly.
+Read failures preserve partial output. CLI exits nonzero for incomplete,
+unresolved, failed or unsupported observations and any saved unknown attempt.
+No automatic replay or retry follows status inspection.
+
+~~~go
+status, err := client.GetCommitRecoveryStatus(ctx, plan, applied, 50, 5)
+~~~
+
+~~~ts
+const status = await getCommitRecoveryStatus(source, plan, applied, {
+  limit: 50, recipientPages: 5, timeoutMs: 120000,
+});
+~~~
+
+~~~python
+status = await aget_commit_recovery_status(
+    client, source, plan, applied, limit=50, recipient_pages=5, timeout=120,
+)
+~~~
+
+Go returns partial status alongside a read error. Node/Python raise
+CommitRecoveryStatusError with partial output in result.
+See [ADR-938](adr/938-read-only-commit-recovery-status.md).

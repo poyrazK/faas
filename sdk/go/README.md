@@ -784,3 +784,12 @@ Commit recovery apply skips changed generations as `generation_changed`, and
 missing guards as `generation_guard_unavailable`. Direct selective replay can
 supply the nonnegative generation together with `expected_accepted_at`; the
 server checks both and failed state atomically before requeue.
+
+Read-only recovery status accepts the reviewed plan and saved apply result.
+It retains each attempt alongside fresh delivery state and routing generation;
+unknown attempts remain unknown even if delivery advances. Missing evidence
+stays unresolved, and partial read failures retain output. The helper never
+submits replay or follows saved action URLs. See
+[the recovery-status guide](../../docs/gregale-commit.md#inspecting-recovery-results-without-replay).
+
+Use client.GetCommitRecoveryStatus(ctx, plan, applied, 50, 5).

@@ -15,6 +15,8 @@ import (
 func cmdCommit(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "recovery-status":
+			return cmdCommitRecoveryStatus(args[1:])
 		case "recovery-apply":
 			return cmdCommitRecoveryApply(args[1:])
 		case "recovery-plan":
@@ -30,7 +32,7 @@ func cmdCommit(args []string) int {
 		}
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|history|delivery-report|recovery-plan|recovery-apply|inspect|wait|operation|receipt|blocked|replay>", "commit")
+		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|history|delivery-report|recovery-plan|recovery-apply|recovery-status|inspect|wait|operation|receipt|blocked|replay>", "commit")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:], "allow-tenant-selection")
