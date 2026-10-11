@@ -172,12 +172,12 @@ func TestDurableEntitySocketRegistryCleanupWorkerRequiresManagementAndCancels(t 
 		t.Fatal("worker enabled without cleanup management")
 	}
 	e, _, _, _ = entityQuotaFixture(t)
-	e.s.runDurableEntityRegistryCleanup(t.Context()) // Disabled worker returns.
+	e.s.durable.RunDurableEntityRegistryCleanup(t.Context()) // Disabled worker returns.
 	e.s.durable.RegistryCleanupEnabled = true
 	e.s.durable.RegistryCleanupWorkerEnabled = true
 	ctx, cancel := context.WithCancel(t.Context())
 	finished := make(chan struct{})
-	go func() { e.s.runDurableEntityRegistryCleanup(ctx); close(finished) }()
+	go func() { e.s.durable.RunDurableEntityRegistryCleanup(ctx); close(finished) }()
 	cancel()
 	select {
 	case <-finished:

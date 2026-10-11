@@ -1,4 +1,4 @@
-# ADR-972: Scoped durable browser sessions
+# ADR-988: Scoped durable browser sessions
 
 Status: implemented as an opt-in preview; native acceptance pending.
 

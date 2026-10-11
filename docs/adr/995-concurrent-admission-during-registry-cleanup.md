@@ -1,7 +1,7 @@
-# ADR 979: Concurrent admission during registry cleanup
+# ADR 995: Concurrent admission during registry cleanup
 
 Status: implemented behind the existing cleanup operator flag; native acceptance
-pending. Extends ADR 978. ADR 980 adds optional background continuation.
+pending. Extends ADR 994. ADR 996 adds optional background continuation.
 
 The original schema-5 cleanup holds every quota write through reader grace and
 all cleanup/verification passes. The monotonic epoch barrier already prevents

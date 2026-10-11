@@ -1,4 +1,4 @@
-# ADR 982: Bounded durable registry cleanup health
+# ADR 998: Bounded durable registry cleanup health
 
 ## Decision
 

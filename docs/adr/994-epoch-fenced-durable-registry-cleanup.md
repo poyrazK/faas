@@ -1,7 +1,7 @@
-# ADR 978: Epoch-fenced durable registry metadata cleanup
+# ADR 994: Epoch-fenced durable registry metadata cleanup
 
 Status: implemented behind an operator flag; native acceptance pending.
-ADR 979 supersedes the write hold for new schema-6 cleanups. Existing schema-5
+ADR 995 supersedes the write hold for new schema-6 cleanups. Existing schema-5
 operations retain the hold described here until completed.
 
 Registry shards are immutable and content-addressed, but hashes can be reused.

@@ -763,7 +763,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.realtime.RunManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
 		go srv.durable.RunAlarms(ctx)
-		go srv.runDurableEntityRegistryCleanup(ctx)
+		go srv.durable.RunDurableEntityRegistryCleanup(ctx)
 		go srv.durable.RunOutbox(ctx)
 		go srv.durable.RunMaintenance(ctx)
 		go srv.durable.RunHealth(ctx)

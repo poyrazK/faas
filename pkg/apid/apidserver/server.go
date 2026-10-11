@@ -59,19 +59,18 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	profileBackend              profiling.Backend
-	profileQuerySlots           chan struct{}
-	guestTracingEnabled         bool // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durableEntityRegistryHealth registryCleanupHealth
-	durable                     durable.Service // ADR-977; Host wired in newServer
-	object                      object.Service  // ADR-977; Host wired in newServer
-	devBridgeEnabled            bool
-	devBridgeURL                string
-	devBridgeObserver           *devbridge.Observer
-	operation                   operation.Service // ADR-977; Host wired in newServer
-	appEvents                   appevents.Service // ADR-977; Host wired in newServer
-	featureFlagsEnabled         bool
-	flagsWorkloadVerifier       *workloadidentity.Verifier
+	profileBackend        profiling.Backend
+	profileQuerySlots     chan struct{}
+	guestTracingEnabled   bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durable               durable.Service // ADR-977; Host wired in newServer
+	object                object.Service  // ADR-977; Host wired in newServer
+	devBridgeEnabled      bool
+	devBridgeURL          string
+	devBridgeObserver     *devbridge.Observer
+	operation             operation.Service // ADR-977; Host wired in newServer
+	appEvents             appevents.Service // ADR-977; Host wired in newServer
+	featureFlagsEnabled   bool
+	flagsWorkloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
@@ -2859,23 +2858,23 @@ func (s *server) handler() http.Handler {
 	// they're the customer-facing event surface; the existing
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/quotas", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityTenantQuotas))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/readiness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectDurableEntityReadiness))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-migration/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.planEntityQuotaMigration))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityQuotaMigration))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startEntityQuotaMigration))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stepEntityQuotaMigration))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityQuotaPolicy))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/registry/cleanup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityRegistryCleanup))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/cleanup/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startEntityRegistryCleanup))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/cleanup/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stepEntityRegistryCleanup))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/registry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityRegistry))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/enable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.enableEntityRegistry))))
-	mux.HandleFunc("GET /v1/apps/{slug}/entities/retirement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.inspectEntityRetirement))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/retirement/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startEntityRetirement))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/retirement/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.stepEntityRetirement))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-policy/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEntityQuotaPolicy))))
-	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-policy/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyEntityQuotaPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/quotas", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectEntityTenantQuotas))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/readiness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectDurableEntityReadiness))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-migration/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.PlanEntityQuotaMigration))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectEntityQuotaMigration))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.StartEntityQuotaMigration))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-migration/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.StepEntityQuotaMigration))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/quota-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectEntityQuotaPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/registry/cleanup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectEntityRegistryCleanup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/cleanup/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.StartEntityRegistryCleanup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/cleanup/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.StepEntityRegistryCleanup))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/registry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectEntityRegistry))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/registry/enable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.EnableEntityRegistry))))
+	mux.HandleFunc("GET /v1/apps/{slug}/entities/retirement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.InspectEntityRetirement))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/retirement/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.StartEntityRetirement))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/retirement/step", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.StepEntityRetirement))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-policy/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.PreviewEntityQuotaPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/entities/quota-policy/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.ApplyEntityQuotaPolicy))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/session-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mintEntitySessionGrant))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/entities/session-grants/{grant}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeEntitySessionGrant))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/session-connect", s.connectEntityBrowserSession)

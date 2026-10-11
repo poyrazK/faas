@@ -1,4 +1,4 @@
-# ADR 976: Permanent durable entity retirement and verified capacity credit
+# ADR 992: Permanent durable entity retirement and verified capacity credit
 
 Full-cap entity reservations survive indefinitely. Removing a quota entry alone
 would permit a stale owner or old request to recreate state without retaining

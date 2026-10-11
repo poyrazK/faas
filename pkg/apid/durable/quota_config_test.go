@@ -10,7 +10,7 @@ import (
 )
 
 func TestTenantAdmissionTranslatesGrantDenialWithoutProviderDetails(t *testing.T) {
-	// ADR-973: a revoked connection grant fails closed as forbidden, rather
+	// ADR-989: a revoked connection grant fails closed as forbidden, rather
 	// than reporting private storage details or a retryable admission error.
 	w := httptest.NewRecorder()
 	WriteTenantQuotaProblem(w, errors.Join(entitysocket.ErrGrantDenied, errors.New("private bucket detail")))

@@ -1,4 +1,4 @@
-# ADR 975: Audited durable entity quota increases
+# ADR 991: Audited durable entity quota increases
 
 Legacy quota admission takes the stricter of persisted and configured limits.
 Changing node settings cannot safely relax a durable policy, and entity caps live

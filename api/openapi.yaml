@@ -28853,6 +28853,1343 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
 
+  /v1/apps/{slug}/entities/quotas:
+    get:
+      tags:
+      - invocations
+      operationId: inspectDurableEntityTenantQuotas
+      summary: Inspect Durable Entity Tenant Quotas.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - &id001
+        name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - &id002
+        name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - &id003
+        name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - &id004
+        name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/readiness:
+    get:
+      tags:
+      - invocations
+      operationId: getDurableEntityReadiness
+      summary: Get Durable Entity Readiness.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/quota-migration/plan:
+    get:
+      tags:
+      - invocations
+      operationId: planDurableEntityQuotaMigration
+      summary: Plan Durable Entity Quota Migration.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      - name: cursor
+        in: query
+        description: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/quota-migration:
+    get:
+      tags:
+      - invocations
+      operationId: inspectDurableEntityQuotaMigration
+      summary: Inspect Durable Entity Quota Migration.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/quota-migration/start:
+    post:
+      tags:
+      - invocations
+      operationId: startDurableEntityQuotaMigration
+      summary: Start Durable Entity Quota Migration.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                migration_id: &id005
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_migration_id:
+                  type: string
+                  description: Prior migration identity, or empty for an initial migration.
+                expected_revision: &id006
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
+              required:
+              - migration_id
+              - expected_revision
+  /v1/apps/{slug}/entities/quota-migration/step:
+    post:
+      tags:
+      - invocations
+      operationId: stepDurableEntityQuotaMigration
+      summary: Step Durable Entity Quota Migration.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                migration_id: *id005
+                expected_revision: *id006
+              required:
+              - migration_id
+              - expected_revision
+  /v1/apps/{slug}/entities/quota-policy:
+    get:
+      tags:
+      - invocations
+      operationId: inspectDurableEntityQuotaPolicy
+      summary: Inspect Durable Entity Quota Policy.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/quota-policy/preview:
+    post:
+      tags:
+      - invocations
+      operationId: previewDurableEntityQuotaPolicy
+      summary: Preview Durable Entity Quota Policy.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties: &id007
+                operation_id: *id005
+                expected_revision: *id006
+                expected_migration_id:
+                  type: string
+                  description: Observed completed migration identity.
+                expected_migration_revision: *id006
+                migration_id: *id005
+                limits:
+                  type: object
+                  description: Proposed tenant admission caps; all fields are required.
+                  properties:
+                    connections:
+                      type: integer
+                      description: Approved connections cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    grants_per_minute:
+                      type: integer
+                      description: Approved grants per minute cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    invocations_per_minute:
+                      type: integer
+                      description: Approved invocations per minute cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    retained_bytes:
+                      type: integer
+                      description: Approved retained bytes cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    entity_bytes:
+                      type: integer
+                      description: Approved entity bytes cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                  required:
+                  - connections
+                  - grants_per_minute
+                  - invocations_per_minute
+                  - retained_bytes
+                  - entity_bytes
+              required:
+              - operation_id
+              - expected_revision
+              - expected_migration_revision
+              - migration_id
+              - limits
+  /v1/apps/{slug}/entities/quota-policy/apply:
+    post:
+      tags:
+      - invocations
+      operationId: applyDurableEntityQuotaPolicy
+      summary: Apply Durable Entity Quota Policy.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties: *id007
+              required:
+              - operation_id
+              - expected_revision
+              - expected_migration_revision
+              - migration_id
+              - limits
+  /v1/apps/{slug}/entities/registry:
+    get:
+      tags:
+      - invocations
+      operationId: listDurableEntityRegistry
+      summary: List Durable Entity Registry.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      - name: cursor
+        in: query
+        description: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/registry/enable:
+    post:
+      tags:
+      - invocations
+      operationId: enableDurableEntityRegistry
+      summary: Enable Durable Entity Registry.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                operation_id: *id005
+                expected_revision: &id008
+                  type: string
+                  description: Exact opaque revision returned by inspection; never convert it to a number.
+                  minLength: 1
+              required:
+              - operation_id
+              - expected_revision
+  /v1/apps/{slug}/entities/registry/cleanup:
+    get:
+      tags:
+      - invocations
+      operationId: inspectDurableEntityRegistryCleanup
+      summary: Inspect Durable Entity Registry Cleanup.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/registry/cleanup/start:
+    post:
+      tags:
+      - invocations
+      operationId: startDurableEntityRegistryCleanup
+      summary: Start Durable Entity Registry Cleanup.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                operation_id: *id005
+                expected_revision: *id008
+              required:
+              - operation_id
+              - expected_revision
+  /v1/apps/{slug}/entities/registry/cleanup/step:
+    post:
+      tags:
+      - invocations
+      operationId: stepDurableEntityRegistryCleanup
+      summary: Step Durable Entity Registry Cleanup.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                operation_id: *id005
+                expected_revision: *id006
+                restart_cleanup:
+                  type: boolean
+                  description: Restart bounded listing passes while preserving the existing epoch fence.
+                  default: false
+              required:
+              - operation_id
+              - expected_revision
+  /v1/apps/{slug}/entities/retirement:
+    get:
+      tags:
+      - invocations
+      operationId: previewDurableEntityRetirement
+      summary: Preview Durable Entity Retirement.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/retirement/start:
+    post:
+      tags:
+      - invocations
+      operationId: startDurableEntityRetirement
+      summary: Start Durable Entity Retirement.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                operation_id: *id005
+                expected_version:
+                  type: integer
+                  description: Exact entity version observed in the retirement preview.
+                  minimum: 0
+                expected_recovery_revision: *id008
+              required:
+              - operation_id
+              - expected_version
+              - expected_recovery_revision
+  /v1/apps/{slug}/entities/retirement/step:
+    post:
+      tags:
+      - invocations
+      operationId: stepDurableEntityRetirement
+      summary: Step Durable Entity Retirement.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '200':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                operation_id: *id005
+                expected_revision: *id006
+                restart_cleanup:
+                  type: boolean
+                  description: Restart verified retirement cleanup after an uncertain outcome.
+                  default: false
+              required:
+              - operation_id
+              - expected_revision
+  /v1/apps/{slug}/entities/session-grants:
+    post:
+      tags:
+      - invocations
+      operationId: mintDurableEntitySessionGrant
+      summary: Mint Durable Entity Session Grant.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      responses:
+        '201':
+          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
+            the operator guide.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Operator preview metadata, including nullable checkpoints and advisory observations.
+                  No business state is returned.
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Preview mutation input with server-side size, scope and revision validation.
+              properties:
+                namespace:
+                  type: string
+                  description: Exact entity namespace.
+                  minLength: 1
+                  maxLength: 256
+                key:
+                  type: string
+                  description: Exact logical entity key.
+                  minLength: 1
+                  maxLength: 256
+                env:
+                  type: string
+                  description: Registered environment; defaults to production.
+                platform_tenant_id:
+                  type: string
+                  description: Optional same-account platform tenant.
+                session_id:
+                  type: string
+                  description: Existing logical session identity.
+                generation:
+                  type: integer
+                  description: Current session generation.
+                  minimum: 1
+                origin:
+                  type: string
+                  description: Exact browser origin without a path, query or fragment.
+                  format: uri
+                commands:
+                  type: array
+                  description: Allowed command names; delegation does not grant other commands.
+                  items:
+                    type: string
+                ttl_seconds:
+                  type: integer
+                  description: Credential lifetime in seconds.
+                  minimum: 1
+                  maximum: 300
+              required:
+              - namespace
+              - key
+              - session_id
+              - generation
+              - origin
+              - commands
+              - ttl_seconds
+  /v1/apps/{slug}/entities/session-grants/{grant}:
+    delete:
+      tags:
+      - invocations
+      operationId: revokeDurableEntitySessionGrant
+      summary: Revoke Durable Entity Session Grant.
+      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
+        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
+        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
+        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+        contract.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: grant
+        in: path
+        required: true
+        description: Grant identity returned when minting the credential.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Credential revoked.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Entity identity is permanently retired. Use a new identity for new work.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/entities/connect:
+    get:
+      tags:
+      - invocations
+      operationId: connectDurableEntity
+      summary: Upgrade a scoped durable entity session to WebSocket.
+      description: Service transport requires Bearer authentication, MFA, deploy write access and exact entity selectors.
+        Origin headers are rejected. Every frame re-enters authentication and immutable-scope admission. Feature gates
+        and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session
+        helper handles framing, replay and generation fences.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - *id001
+      - *id002
+      - *id003
+      - *id004
+      responses:
+        '101':
+          description: WebSocket upgrade; subsequent frames follow the documented durable-session protocol.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/entities/session-connect:
+    get:
+      tags:
+      - invocations
+      operationId: connectDurableEntityBrowserSession
+      summary: Upgrade a scoped durable entity session to WebSocket.
+      description: Browser transport authenticates the short-lived grant through Sec-WebSocket-Protocol and requires
+        the exact Origin bound at issuance. Authorization headers and query parameters are rejected. Issuer revocation,
+        scope and generation are rechecked for commands. Feature gates and the application allowlist must be enabled;
+        native acceptance remains pending. The Node durable-session helper handles framing, replay and generation
+        fences.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      responses:
+        '101':
+          description: WebSocket upgrade; subsequent frames follow the documented durable-session protocol.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      security: []
+
   /v1/apps/{slug}/entities/inspect:
     get:
       tags: [invocations]

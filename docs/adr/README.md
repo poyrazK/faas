@@ -793,11 +793,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
 
-- [ADR-967: Durable entity developer workflow](967-durable-entity-developer-workflow.md)
-- [ADR-968: Durable entity operational visibility](968-durable-entity-operational-visibility.md)
-- [ADR-969: Durable entity generated clients](969-durable-entity-generated-clients.md)
-- [ADR-970: Reconnectable durable entity sessions](970-reconnectable-durable-entity-sessions.md)
-- [ADR-971: Durable session recovery and lifecycle](971-durable-session-recovery-and-lifecycle.md)
+- [ADR-983: Durable entity developer workflow](983-durable-entity-developer-workflow.md)
+- [ADR-984: Durable entity operational visibility](984-durable-entity-operational-visibility.md)
+- [ADR-985: Durable entity generated clients](985-durable-entity-generated-clients.md)
+- [ADR-986: Reconnectable durable entity sessions](986-reconnectable-durable-entity-sessions.md)
+- [ADR-987: Durable session recovery and lifecycle](987-durable-session-recovery-and-lifecycle.md)
 
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)

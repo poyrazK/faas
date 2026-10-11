@@ -1,4 +1,4 @@
-# ADR 977: Immutable registry shards under the quota root
+# ADR 993: Immutable registry shards under the quota root
 
 Status: implemented behind an operator flag; native acceptance pending.
 

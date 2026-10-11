@@ -393,7 +393,7 @@ func renderEnvContractDoc() string {
 }
 
 func TestEnvContractDurableObjectManagementRemainsOptIn(t *testing.T) {
-	// ADR-973..982: shipping the management code must not enable an
+	// ADR-989..998: shipping the management code must not enable an
 	// unqualified durable-object feature through daemon environment defaults.
 	contract := EnvContractByName()
 	for _, suffix := range []string{

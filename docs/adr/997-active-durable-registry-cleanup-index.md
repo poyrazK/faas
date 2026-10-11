@@ -1,7 +1,7 @@
-# ADR 981: Active durable registry cleanup discovery
+# ADR 997: Active durable registry cleanup discovery
 
 Status: implemented under the existing cleanup worker flag; native acceptance
-pending. Extends ADR 980.
+pending. Extends ADR 996.
 
 Routine scans of every quota root spend provider reads on inactive scopes and
 delay unfinished cleanup as root counts grow. Discover active work through

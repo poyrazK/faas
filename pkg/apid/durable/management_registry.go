@@ -1,9 +1,9 @@
-package apidserver
+package durable
 
 import (
 	"context"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"net/http"
 	"time"
 
@@ -12,29 +12,29 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) entityRegistryScope(w http.ResponseWriter, r *http.Request, acct state.Account, inspect bool) (durableentity.ID, string, bool) {
+func (s *Service) entityRegistryScope(w http.ResponseWriter, r *http.Request, acct state.Account, inspect bool) (durableentity.ID, string, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.durable.RegistryEnabled {
+	if !s.RegistryEnabled {
 		api.WriteProblem(w, api.ErrCapacity("entity registry management is disabled"))
 		return durableentity.ID{}, "", false
 	}
 	return s.entityQuotaMigrationScope(w, r, acct, inspect, inspect)
 }
-func (s *server) inspectEntityRegistry(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) InspectEntityRegistry(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, cursor, ok := s.entityRegistryScope(w, r, acct, true)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	page, err := s.durable.TenantQuotas.ListRegistry(ctx, id, cursor)
+	page, err := s.TenantQuotas.ListRegistry(ctx, id, cursor)
 	if err != nil {
 		writeEntityRegistryProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, page)
+	httpkit.WriteJSON(w, 200, page)
 }
-func (s *server) enableEntityRegistry(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) EnableEntityRegistry(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, _, ok := s.entityRegistryScope(w, r, acct, false)
 	if !ok {
 		return
@@ -43,26 +43,26 @@ func (s *server) enableEntityRegistry(w http.ResponseWriter, r *http.Request, ac
 		OperationID string `json:"operation_id"`
 		Revision    string `json:"expected_revision"`
 	}
-	if !decodeJSONLimit(w, r, &request, 2048) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, 2048) {
 		return
 	}
 	actor := acct.ID
-	if p, ok := principalFrom(r); ok && p.Key != nil {
+	if p, ok := httpkit.PrincipalFrom(r); ok && p.Key != nil {
 		actor += "/api-key:" + p.Key.ID
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	if err := s.durable.TenantQuotas.EnableRegistry(ctx, id, request.OperationID, request.Revision, actor); err != nil {
+	if err := s.TenantQuotas.EnableRegistry(ctx, id, request.OperationID, request.Revision, actor); err != nil {
 		writeEntityRegistryProblem(w, err)
 		return
 	}
-	status, err := s.durable.TenantQuotas.RegistryStatus(ctx, id)
+	status, err := s.TenantQuotas.RegistryStatus(ctx, id)
 	if err != nil {
 		writeEntityRegistryProblem(w, err)
 		return
 	}
-	s.audit.Emit(ctx, "durable_entity.registry_enabled", &acct.ID, map[string]any{"app_id": id.AppID, "environment_id": id.EnvironmentID, "platform_tenant_id": id.TenantID, "operation_id": request.OperationID})
-	writeJSON(w, 200, status)
+	s.Host.EmitAudit(ctx, "durable_entity.registry_enabled", &acct.ID, map[string]any{"app_id": id.AppID, "environment_id": id.EnvironmentID, "platform_tenant_id": id.TenantID, "operation_id": request.OperationID})
+	httpkit.WriteJSON(w, 200, status)
 }
 
 func writeEntityRegistryProblem(w http.ResponseWriter, err error) {
@@ -78,5 +78,5 @@ func writeEntityRegistryProblem(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(404, "durable_entity_registry_not_found", "Registry not found", "this scope has no quota ledger"))
 		return
 	}
-	durable.WriteTenantQuotaProblem(w, err)
+	WriteTenantQuotaProblem(w, err)
 }

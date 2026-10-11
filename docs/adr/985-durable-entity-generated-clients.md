@@ -1,4 +1,4 @@
-# ADR-969: Durable entity generated clients
+# ADR-985: Durable entity generated clients
 
 Status: Implemented; focused developer-workflow CI passed. Native acceptance pending.
 

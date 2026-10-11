@@ -266,7 +266,7 @@ attempts, scope failures, obsolete hints pruned and hint publication failures.
 Counts include grace waiting and can repeat across pages or nodes. They are
 observations, not an exact total backlog; do not sum them into one. Customer GETs
 do not expose cross-tenant page counts. No external notification is configured.
-See [ADR 982](adr/982-durable-registry-cleanup-health.md).
+See [ADR 998](adr/998-durable-registry-cleanup-health.md).
 
 ## Source and native acceptance
 

@@ -117,4 +117,4 @@ verification gaps, and committed-but-unacknowledged start/page writes.
 No local tests/builds or native acceptance were run. No PR was created and no
 production gate was enabled. The independent acceptance agent must qualify the
 operator quiescence/listing/failure contract above before populated-scope rollout.
-See [ADR 974](adr/974-fenced-durable-entity-quota-migration.md).
+See [ADR 990](adr/990-fenced-durable-entity-quota-migration.md).

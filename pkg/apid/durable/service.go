@@ -47,6 +47,7 @@ type Host interface {
 // Service is the durable entity preview. Configure fills the engine and
 // operator gates at boot; tests set the exported fields directly.
 type Service struct {
+	registryHealth               registryCleanupHealth
 	Host                         Host
 	Sockets                      *entitysocket.Hub
 	SessionGrants                *entitysocket.Grants

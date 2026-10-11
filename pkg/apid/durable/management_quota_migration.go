@@ -1,9 +1,9 @@
-package apidserver
+package durable
 
 import (
 	"context"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"net/http"
 	"net/url"
 	"time"
@@ -13,21 +13,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) entityQuotaMigrationScope(w http.ResponseWriter, r *http.Request, acct state.Account, inspect, plan bool) (durableentity.ID, string, bool) {
+func (s *Service) entityQuotaMigrationScope(w http.ResponseWriter, r *http.Request, acct state.Account, inspect, plan bool) (durableentity.ID, string, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.durable.QuotaMigrationEnabled || s.durable.TenantQuotas == nil || s.durable.Engine == nil {
+	if !s.QuotaMigrationEnabled || s.TenantQuotas == nil || s.Engine == nil {
 		api.WriteProblem(w, api.ErrCapacity("quota migration preview is disabled"))
 		return durableentity.ID{}, "", false
 	}
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return durableentity.ID{}, "", false
 	}
-	if !s.durable.Apps[app.ID] {
+	if !s.Apps[app.ID] {
 		api.WriteProblem(w, api.ErrCapacity("app is not enabled for durable entities"))
 		return durableentity.ID{}, "", false
 	}
-	if !inspect && !s.durable.RetryAvailable(w, acct, app) {
+	if !inspect && !s.RetryAvailable(w, acct, app) {
 		return durableentity.ID{}, "", false
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
@@ -46,12 +46,12 @@ func (s *server) entityQuotaMigrationScope(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("invalid migration selectors"))
 		return durableentity.ID{}, "", false
 	}
-	selectors, err := durable.InspectionQuery(query.Encode())
+	selectors, err := InspectionQuery(query.Encode())
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("provide exact entity scope selectors"))
 		return durableentity.ID{}, "", false
 	}
-	id, _, problem := s.durable.ResolveIdentity(r, acct, app, api.DurableEntityInvokeRequest{Namespace: selectors.Namespace, Key: selectors.Key, Environment: selectors.Environment, PlatformTenantID: selectors.PlatformTenantID}, inspect)
+	id, _, problem := s.ResolveIdentity(r, acct, app, api.DurableEntityInvokeRequest{Namespace: selectors.Namespace, Key: selectors.Key, Environment: selectors.Environment, PlatformTenantID: selectors.PlatformTenantID}, inspect)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return durableentity.ID{}, "", false
@@ -67,37 +67,37 @@ func writeQuotaMigrationProblem(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(409, "durable_entity_quota_migration_blocked", "Migration blocked", "inspect the read-only plan for missing usage, entity caps, reservation coverage or budget shortfalls"))
 		return
 	}
-	durable.WriteTenantQuotaProblem(w, err)
+	WriteTenantQuotaProblem(w, err)
 }
-func (s *server) planEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) PlanEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, cursor, ok := s.entityQuotaMigrationScope(w, r, acct, true, true)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	plan, err := s.durable.TenantQuotas.PlanMigration(ctx, id, cursor, s.durable.Engine)
+	plan, err := s.TenantQuotas.PlanMigration(ctx, id, cursor, s.Engine)
 	if err != nil {
 		writeQuotaMigrationProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, plan)
+	httpkit.WriteJSON(w, 200, plan)
 }
-func (s *server) inspectEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) InspectEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, _, ok := s.entityQuotaMigrationScope(w, r, acct, true, false)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	status, err := s.durable.TenantQuotas.MigrationStatus(ctx, id)
+	status, err := s.TenantQuotas.MigrationStatus(ctx, id)
 	if err != nil {
 		writeQuotaMigrationProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"migration": status})
+	httpkit.WriteJSON(w, 200, map[string]any{"migration": status})
 }
-func (s *server) startEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) StartEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, _, ok := s.entityQuotaMigrationScope(w, r, acct, false, false)
 	if !ok {
 		return
@@ -107,19 +107,19 @@ func (s *server) startEntityQuotaMigration(w http.ResponseWriter, r *http.Reques
 		ExpectedID string `json:"expected_migration_id"`
 		Revision   uint64 `json:"expected_revision"`
 	}
-	if !decodeJSONLimit(w, r, &request, 4096) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, 4096) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	status, err := s.durable.TenantQuotas.StartMigration(ctx, id, request.ID, request.ExpectedID, request.Revision)
+	status, err := s.TenantQuotas.StartMigration(ctx, id, request.ID, request.ExpectedID, request.Revision)
 	if err != nil {
 		writeQuotaMigrationProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, status)
+	httpkit.WriteJSON(w, 200, status)
 }
-func (s *server) stepEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *Service) StepEntityQuotaMigration(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, _, ok := s.entityQuotaMigrationScope(w, r, acct, false, false)
 	if !ok {
 		return
@@ -128,15 +128,15 @@ func (s *server) stepEntityQuotaMigration(w http.ResponseWriter, r *http.Request
 		ID       string `json:"migration_id"`
 		Revision uint64 `json:"expected_revision"`
 	}
-	if !decodeJSONLimit(w, r, &request, 4096) {
+	if !httpkit.DecodeJSONLimit(w, r, &request, 4096) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	status, err := s.durable.TenantQuotas.StepMigration(ctx, id, request.ID, request.Revision, s.durable.Engine)
+	status, err := s.TenantQuotas.StepMigration(ctx, id, request.ID, request.Revision, s.Engine)
 	if err != nil {
 		writeQuotaMigrationProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, status)
+	httpkit.WriteJSON(w, 200, status)
 }

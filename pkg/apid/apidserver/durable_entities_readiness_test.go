@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"net/http/httptest"
 	"testing"
 )
@@ -11,7 +12,7 @@ func TestDurableEntitySocketReadinessDoesNotAdmitOrClaimAcceptance(t *testing.T)
 	path := "/v1/apps/" + app.Slug + "/entities/readiness"
 	for range 2 {
 		response := e.do(t, "GET", path, nil, nil)
-		var report durableEntityReadiness
+		var report durable.DurableEntityReadiness
 		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &report) != nil || !report.ConfigurationReady || report.ReleaseReady || report.Scope != "serving_node" || response.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal(response.Code, response.Body.String())
 		}
@@ -37,7 +38,7 @@ func TestDurableEntitySocketReadinessDoesNotAdmitOrClaimAcceptance(t *testing.T)
 	}
 	e.s.durable.TenantQuotas = nil
 	response = e.do(t, "GET", path, nil, nil)
-	var disabled durableEntityReadiness
+	var disabled durable.DurableEntityReadiness
 	if json.Unmarshal(response.Body.Bytes(), &disabled) != nil || disabled.ConfigurationReady {
 		t.Fatal("missing quotas accepted", response.Body.String())
 	}

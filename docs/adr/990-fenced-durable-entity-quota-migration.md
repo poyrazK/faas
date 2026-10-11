@@ -1,4 +1,4 @@
-# ADR 974: Fenced durable entity quota migration
+# ADR 990: Fenced durable entity quota migration
 
 Tenant admission only reserves entities as they are invoked. Dormant historical
 state therefore needs reservation coverage before ingress returns on a populated

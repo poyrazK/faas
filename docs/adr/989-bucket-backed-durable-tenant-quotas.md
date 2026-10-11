@@ -1,4 +1,4 @@
-# ADR-973: Bucket-backed durable tenant admission quotas
+# ADR-989: Bucket-backed durable tenant admission quotas
 
 Status: implemented as an opt-in preview; native acceptance pending.
 
