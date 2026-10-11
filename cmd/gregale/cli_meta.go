@@ -1103,7 +1103,7 @@ var cliCommands = []cliCommand{
 				{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"},
 				{Name: "json", Short: "Print the machine-readable app cost report"},
 			}, Examples: []string{"gregale app my-api costs", "gregale app my-api costs --month 2026-10 --json"}},
-			{Name: "rename", Short: "Rename an app"},
+			{Name: "rename", Short: "Rename an app; the old hostname stops routing", Positionals: []string{"<new-slug>"}, Examples: []string{"gregale app my-api rename my-api-v2"}},
 			{Name: "restart", Short: "Request a snapshot restart, or track a fresh runtime-configuration restart", Flags: []cliFlag{
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},

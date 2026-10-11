@@ -2707,9 +2707,15 @@ gregale app my-api costs --month 2026-10 --json
 
 ### app rename
 
-Rename an app
+Rename an app; the old hostname stops routing
 
-`gregale app <slug> rename`
+`gregale app <slug> rename <new-slug>`
+
+Examples:
+
+```sh
+gregale app my-api rename my-api-v2
+```
 
 ### app restart
 
