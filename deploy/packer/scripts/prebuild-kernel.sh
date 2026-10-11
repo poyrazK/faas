@@ -5,7 +5,7 @@
 # Per ADR-005: image bakes ONE kernel version, pinned via SHA-256. The
 # FC kernel config from
 # https://raw.githubusercontent.com/firecracker-microvm/firecracker/v<fc_release>/
-#   resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config
+#   resources/guest_configs/microvm-kernel-ci-x86_64-6.18.config
 # is the source of truth for what built-in features the kernel has
 # (CONFIG_BLK_DEV_VIRTIO=y is the load-bearing one).
 #
@@ -13,11 +13,11 @@
 # source mounted at /tmp/src; the build itself targets /srv/fc/base.
 set -euo pipefail
 
-FC_KERNEL_VERSION="${FC_KERNEL_VERSION:-6.1.134}"
-FC_RELEASE_VERSION="${FC_RELEASE_VERSION:-1.7.0}"
+FC_KERNEL_VERSION="${FC_KERNEL_VERSION:-6.18.54}"
+FC_RELEASE_VERSION="${FC_RELEASE_VERSION:-1.17.0}"
 FC_KERNEL_TAR_URL="${FC_KERNEL_TAR_URL:-https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${FC_KERNEL_VERSION}.tar.xz}"
-FC_KERNEL_TAR_SHA256="${FC_KERNEL_TAR_SHA256:-60c70cdd70ddee384c004242e67844e3dd1fe28f75b26b3586859fff0a07bd23}"
-FC_KERNEL_CONFIG_URL="${FC_KERNEL_CONFIG_URL:-https://raw.githubusercontent.com/firecracker-microvm/firecracker/v1.7.0/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config}"
+FC_KERNEL_TAR_SHA256="${FC_KERNEL_TAR_SHA256:-9df30b02dd8102bbd0be52556288ef6889ddbe7f1ddb96fbf847d0becf3eacac}"
+FC_KERNEL_CONFIG_URL="${FC_KERNEL_CONFIG_URL:-https://raw.githubusercontent.com/firecracker-microvm/firecracker/v1.17.0/resources/guest_configs/microvm-kernel-ci-x86_64-6.18.config}"
 
 BASE_DIR="/srv/fc/base"
 mkdir -p "${BASE_DIR}"
