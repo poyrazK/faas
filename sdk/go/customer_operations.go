@@ -309,3 +309,15 @@ type OperationWorkflowCaseAction = api.OperationWorkflowCaseAction
 
 type OperationWorkflowPlaybook = api.OperationWorkflowPlaybook
 type OperationWorkflowPlaybookGuidance = api.OperationWorkflowPlaybookGuidance
+
+type OperationWorkflowPlaybookProgressStartRequest = api.OperationWorkflowPlaybookProgressStartRequest
+
+type OperationWorkflowPlaybookEvidence = api.OperationWorkflowPlaybookEvidence
+
+type OperationWorkflowPlaybookProgressUpdateRequest = api.OperationWorkflowPlaybookProgressUpdateRequest
+
+type OperationWorkflowPlaybookProgressItem = api.OperationWorkflowPlaybookProgressItem
+
+type OperationWorkflowPlaybookProgressChange = api.OperationWorkflowPlaybookProgressChange
+
+type OperationWorkflowPlaybookProgress = api.OperationWorkflowPlaybookProgress

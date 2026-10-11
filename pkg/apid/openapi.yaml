@@ -37849,7 +37849,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 56000
+          maximum: 62500
           default: 0
       - name: limit
         in: query
@@ -37945,7 +37945,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 56000
+          maximum: 62500
           default: 0
       - name: limit
         in: query
@@ -38048,7 +38048,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 56000
+          maximum: 62500
           default: 0
       - name: limit
         in: query
@@ -38177,7 +38177,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 56000
+          maximum: 62500
           default: 0
       - name: limit
         in: query
@@ -38244,6 +38244,372 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/apps/{slug}/workflow-readiness/playbook-progress:
+    post:
+      operationId: StartAccountWorkflowPlaybookProgress
+      summary: Start pinned workflow playbook progress
+      description: StartAccountWorkflowPlaybookProgress. Start from a currently matched fresh application playbook.
+        Pin exact rule, workflow version and immutable reporting definition. Repeated starts return the existing checklist.
+        Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication.
+        Checklist completion does not establish readiness, authorize execution or report business success. At most
+        100 records per exact case; the latest 64 review changes per record are retained.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.slug. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference
+          projections are not accepted.
+        schema:
+          type: string
+          format: uuid
+      - name: subject_type
+        in: query
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: StartAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookProgressStartRequest'
+      responses:
+        '200':
+          description: StartAccountWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or
+            review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}:
+    patch:
+      operationId: UpdateAccountWorkflowPlaybookProgress
+      summary: Update pinned workflow playbook progress
+      description: UpdateAccountWorkflowPlaybookProgress. Replace one frozen checklist item using the expected revision.
+        Record authenticated reviewer, note and scoped operation or milestone evidence. Conflicts return 409. Existing
+        guidance is never upgraded. Requires account write scope and MFA or customer operations-manage scope. Customer
+        identity derives from authentication. Checklist completion does not establish readiness, authorize execution
+        or report business success. At most 100 records per exact case; the latest 64 review changes per record are
+        retained.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.slug. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference
+          projections are not accepted.
+        schema:
+          type: string
+          format: uuid
+      - name: subject_type
+        in: query
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: id
+        in: path
+        required: true
+        description: UpdateAccountWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookProgressUpdateRequest'
+      responses:
+        '200':
+          description: UpdateAccountWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or
+            review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/platform-tenant-self/workflow-readiness/playbook-progress:
+    post:
+      operationId: StartPlatformTenantSelfWorkflowPlaybookProgress
+      summary: Start customer pinned workflow playbook progress
+      description: StartPlatformTenantSelfWorkflowPlaybookProgress. Start from a currently matched fresh application
+        playbook. Pin exact rule, workflow version and immutable reporting definition. Repeated starts return the
+        existing checklist. Requires account write scope and MFA or customer operations-manage scope. Customer identity
+        derives from authentication. Checklist completion does not establish readiness, authorize execution or report
+        business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: app_id
+        in: query
+        required: true
+        description: StartPlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity comes
+          from authentication.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: StartPlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: subject_type
+        in: query
+        required: true
+        description: StartPlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: StartPlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: StartPlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: StartPlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookProgressStartRequest'
+      responses:
+        '200':
+          description: StartPlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted
+            start or review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}:
+    patch:
+      operationId: UpdatePlatformTenantSelfWorkflowPlaybookProgress
+      summary: Update customer pinned workflow playbook progress
+      description: UpdatePlatformTenantSelfWorkflowPlaybookProgress. Replace one frozen checklist item using the expected
+        revision. Record authenticated reviewer, note and scoped operation or milestone evidence. Conflicts return
+        409. Existing guidance is never upgraded. Requires account write scope and MFA or customer operations-manage
+        scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize
+        execution or report business success. At most 100 records per exact case; the latest 64 review changes per
+        record are retained.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: app_id
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity
+          comes from authentication.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: subject_type
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: id
+        in: path
+        required: true
+        description: UpdatePlatformTenantSelfWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this
+          exact case.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookProgressUpdateRequest'
+      responses:
+        '200':
+          description: UpdatePlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted
+            start or review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
 components:
 
@@ -76645,18 +77011,18 @@ components:
 
     OperationWorkflowCoordinationTimelineEvent:
       type: object
-      description: OperationWorkflowCoordinationTimelineEvent. Retained inbox coordination projection metadata.
+      description: OperationWorkflowCoordinationTimelineEvent. Retained inbox and durable pinned playbook coordination metadata.
       required:
       - id
       - at
       - kind
       - summary
-      - subscription_id
-      - subscription_name
-      - notification_id
-      - sequence
       - reporting_operation_ids
       properties:
+        playbook_progress_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowCoordinationTimelineEvent.playbook_progress_id. Durable checklist identity for playbook start or review events; inbox fields are absent for these events.
         id:
           type: string
           description: OperationWorkflowCoordinationTimelineEvent.id. Stable identity within its subscription and notification.
@@ -76902,7 +77268,7 @@ components:
           description: OperationWorkflowCoordinationTimelineOptions.offset. Exact timeline query selector; customer
             identity comes from authentication.
           minimum: 0
-          maximum: 56000
+          maximum: 62500
         limit:
           type: integer
           description: OperationWorkflowCoordinationTimelineOptions.limit. Exact timeline query selector; customer identity
@@ -76945,6 +77311,7 @@ components:
       type: object
       description: OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
       required:
+      - playbook_progress
       - guidance
       - guidance_status
       - guidance_truncated
@@ -76962,6 +77329,13 @@ components:
       - evaluated_at
       - limitations
       properties:
+        playbook_progress:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookProgress'
+          description: OperationWorkflowCase.playbook_progress. Durable pinned checklists for this exact case, retained
+            independently of inboxes and current guidance; at most 100.
         guidance:
           type: array
           maxItems: 32
@@ -77134,6 +77508,250 @@ components:
           description: OperationWorkflowPlaybookGuidance.reporting_operation_id. Operation whose immutable definition
             supplied this playbook.
           format: uuid
+
+    OperationWorkflowPlaybookProgressStartRequest:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookProgressStartRequest. Durable advisory checklist coordination, independent
+        of application business success.
+      required:
+      - playbook_id
+      - playbook_version
+      - contract_version
+      - reporting_operation_id
+      properties:
+        playbook_id:
+          type: string
+          description: OperationWorkflowPlaybookProgressStartRequest.playbook_id. Exact matched rule identifier.
+        playbook_version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: OperationWorkflowPlaybookProgressStartRequest.playbook_version. Pinned rule revision.
+        contract_version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: OperationWorkflowPlaybookProgressStartRequest.contract_version. Pinned workflow contract version.
+        reporting_operation_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookProgressStartRequest.reporting_operation_id. Exact operation reporting
+            the matched current guidance.
+    OperationWorkflowPlaybookEvidence:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidence. Durable advisory checklist coordination, independent of application
+        business success.
+      required:
+      - operation_id
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidence.operation_id. Operation checked against exact customer, application,
+            environment and business subject.
+        milestone_id:
+          type: string
+          description: OperationWorkflowPlaybookEvidence.milestone_id. Optional retained fact additionally checked against
+            pinned workflow, instance and contract version.
+    OperationWorkflowPlaybookProgressUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookProgressUpdateRequest. Durable advisory checklist coordination, independent
+        of application business success.
+      required:
+      - revision
+      - item_index
+      - status
+      - note
+      - evidence
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+          description: OperationWorkflowPlaybookProgressUpdateRequest.revision. Expected current progress revision;
+            conflicting edits return 409.
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowPlaybookProgressUpdateRequest.item_index. Zero-based index in the frozen evidence
+            checklist.
+        status:
+          type: string
+          enum:
+          - pending
+          - completed
+          description: OperationWorkflowPlaybookProgressUpdateRequest.status. Human review state; completed requires
+            at least one scoped evidence reference.
+        note:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowPlaybookProgressUpdateRequest.note. Required review note, trimmed nonempty and
+            without control characters.
+        evidence:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookEvidence'
+          description: OperationWorkflowPlaybookProgressUpdateRequest.evidence. Replacement evidence references for
+            this item; empty allowed only for pending.
+    OperationWorkflowPlaybookProgressItem:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application
+        business success.
+      required:
+      - label
+      - status
+      - note
+      - evidence
+      properties:
+        label:
+          type: string
+          description: OperationWorkflowPlaybookProgressItem.label. Frozen application-authored evidence requirement.
+        status:
+          type: string
+          enum:
+          - pending
+          - completed
+          description: OperationWorkflowPlaybookProgressItem.status. Human checklist review state.
+        note:
+          type: string
+          description: OperationWorkflowPlaybookProgressItem.note. Latest reviewer note.
+        evidence:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookEvidence'
+          description: OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future
+            retention availability is not guaranteed.
+        reviewed_by:
+          type: string
+          description: OperationWorkflowPlaybookProgressItem.reviewed_by. Authenticated account or API-key reviewer,
+            assigned by the server.
+        reviewed_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgressItem.reviewed_at. Server review clock for the latest edit.
+    OperationWorkflowPlaybookProgressChange:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookProgressChange. Durable advisory checklist coordination, independent of
+        application business success.
+      required:
+      - revision
+      - item_index
+      - item
+      - at
+      - actor
+      properties:
+        revision:
+          type: integer
+          minimum: 2
+          description: OperationWorkflowPlaybookProgressChange.revision. Committed revision after this edit.
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowPlaybookProgressChange.item_index. Edited frozen checklist position.
+        item:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookProgressItem'
+          description: OperationWorkflowPlaybookProgressChange.item. Full reviewed item snapshot at this edit.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgressChange.at. Server commit preparation clock.
+        actor:
+          type: string
+          description: OperationWorkflowPlaybookProgressChange.actor. Server-derived reviewer identity.
+    OperationWorkflowPlaybookProgress:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookProgress. Durable advisory checklist coordination, independent of application
+        business success.
+      required:
+      - id
+      - revision
+      - playbook
+      - contract_version
+      - definition_id
+      - reporting_operation_id
+      - items
+      - completed_count
+      - checklist_complete
+      - created_at
+      - created_by
+      - updated_at
+      - history
+      - history_truncated
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookProgress.id. Stable checklist identity; repeated starts for the same
+            pinned case and definition return the existing record.
+        revision:
+          type: integer
+          minimum: 1
+          description: OperationWorkflowPlaybookProgress.revision. Optimistic concurrency revision.
+        playbook:
+          $ref: '#/components/schemas/OperationWorkflowPlaybook'
+          description: OperationWorkflowPlaybookProgress.playbook. Frozen full application guidance; deployment updates
+            never upgrade this record.
+        contract_version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: OperationWorkflowPlaybookProgress.contract_version. Pinned workflow contract revision.
+        definition_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookProgress.definition_id. Immutable original reporting definition.
+        reporting_operation_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookProgress.reporting_operation_id. Original reporting operation used when
+            the checklist started.
+        items:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookProgressItem'
+          description: OperationWorkflowPlaybookProgress.items. Frozen evidence labels and their latest review records.
+        completed_count:
+          type: integer
+          minimum: 0
+          maximum: 16
+          description: OperationWorkflowPlaybookProgress.completed_count. Number of checklist items reviewed as completed.
+        checklist_complete:
+          type: boolean
+          description: OperationWorkflowPlaybookProgress.checklist_complete. Every item in a nonempty checklist is completed;
+            conveys no application readiness or business outcome.
+        created_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgress.created_at. Server start clock.
+        created_by:
+          type: string
+          description: OperationWorkflowPlaybookProgress.created_by. Authenticated checklist creator.
+        updated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgress.updated_at. Latest review clock.
+        history:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookProgressChange'
+          description: OperationWorkflowPlaybookProgress.history. Most recent 64 committed item review snapshots, in
+            revision order.
+        history_truncated:
+          type: boolean
+          description: OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the
+            bounded history.
 
   responses:
     OperationConflict:

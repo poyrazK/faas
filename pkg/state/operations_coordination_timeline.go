@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -22,7 +23,7 @@ func (s *PgStore) WorkflowCoordinationTimeline(ctx context.Context, account, ten
 
 func workflowCoordinationTimeline(ctx context.Context, store readinessSubscriptionBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool) (api.OperationWorkflowCoordinationTimeline, error) {
 	out := api.OperationWorkflowCoordinationTimeline{Items: []api.OperationWorkflowCoordinationTimelineEvent{}, Sources: []api.OperationWorkflowCoordinationTimelineSource{}, RetentionLimited: true, Subject: api.OperationSubject{Type: opts.SubjectType, ID: opts.SubjectID}, Workflow: opts.Workflow, InstanceID: opts.InstanceID, Scope: opts.Scope, Limitations: []string{
-		"Only retained subscription inboxes are projected; deleted subscriptions, pruned notifications and unattributed failures are not workflow history.",
+		"Inbox events project retained subscription notifications; deleted subscriptions, pruned notifications and unattributed failures are not reconstructed. Durable playbook reviews have separate bounded retention.",
 		"Coordination snapshots retain the latest edit, not every past schedule, owner or note. Assignment histories are bounded and first acknowledgment actors may be unavailable.",
 		"Business outcome and watch entries use observation clocks; application occurrence times and causation are not inferred. This does not authorize execution.",
 		"Sources are read independently. Offset pages can move during edits, polling, deletion or retention pruning; refresh to start a new view.",
@@ -99,6 +100,32 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 			out.HistoryTruncated = out.HistoryTruncated || truncated
 			out.Items = append(out.Items, entries...)
 		}
+	}
+
+	if progressStore, ok := store.(workflowCaseBackend); ok && tenant != "" {
+		identityOpts := opts
+		identityOpts.Offset = 0
+		identityOpts.Limit = 0
+		identity, err := preparePlaybookProgressIdentity(ctx, progressStore, account, tenant, identityOpts, operator)
+		if err != nil {
+			return out, err
+		}
+		records, err := progressStore.readPlaybookProgress(ctx, identity)
+		if err != nil {
+			return out, err
+		}
+		for _, p := range records {
+			out.HistoryTruncated = out.HistoryTruncated || p.HistoryTruncated
+			out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/start", PlaybookProgressID: p.ID, At: p.CreatedAt, Kind: "playbook_started", Summary: "Started pinned playbook " + p.Playbook.ID, Actor: p.CreatedBy, ReportingOperationIDs: []string{p.ReportingOperationID}})
+			for _, change := range p.History {
+				ids := []string{}
+				for _, e := range change.Item.Evidence {
+					ids = append(ids, e.OperationID)
+				}
+				out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/" + fmt.Sprint(change.Revision), PlaybookProgressID: p.ID, At: change.At, Kind: "playbook_item_reviewed", Summary: change.Item.Label, Actor: change.Actor, Status: change.Item.Status, Note: change.Item.Note, ReportingOperationIDs: ids})
+			}
+		}
+		out.Limitations = append(out.Limitations, "Pinned playbook starts and bounded review changes are included independently of inbox retention. Checklist completion is human coordination, not business success.")
 	}
 	sort.Slice(out.Items, func(i, j int) bool {
 		a, b := out.Items[i], out.Items[j]

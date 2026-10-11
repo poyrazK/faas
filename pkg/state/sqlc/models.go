@@ -1767,6 +1767,16 @@ type CustomerOperationWorkflowStateReport struct {
 	ChangeReason       []byte
 }
 
+type CustomerWorkflowPlaybookProgress struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	TenantID  pgtype.UUID
+	CaseKey   string
+	Revision  int64
+	Payload   []byte
+}
+
 type CustomerWorkflowReadinessNotification struct {
 	SubscriptionID pgtype.UUID
 	Sequence       int64

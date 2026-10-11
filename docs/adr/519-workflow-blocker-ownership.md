@@ -1481,3 +1481,28 @@ Workflow manifests optionally declare playbooks at the business workflow level; 
 Case projection loads the operation and immutable definition referenced by the current retained application report under the exact account/customer/app/environment/subject identity. It selects the same workflow contract version, never a newer live deployment's guidance. Rules match active fresh nonterminal evidence: blocker code, missing milestone/dependency workflow, pending verification blocker code or unmet readiness reason. Identical repeated rules are deduplicated; invalid/conflicting retained rules suppress guidance. Missing/stale/contract-mismatched evidence yields evidence_unavailable; a missing reporting operation/definition yields definition_unavailable; undeclared rules yield not_declared; available rules may have no current matches. Infrastructure errors remain errors, not false absence. Guidance returns rule and workflow versions plus reporting operation identity separately from generic case suggestions and human coordination. Full retained verification observations are used rather than the public preview; omitted transition evaluations mark guidance as truncated.
 
 Playbooks do not modify blockers, readiness, evidence, follow-up owners or execution authority. Suggested teams are application guidance; checklists are advisory rather than automatically verified facts. The dashboard renders summaries/checklists as literal text and opens only credential-free HTTPS links with opener/referrer protection. No link is fetched automatically and no application action is invoked by case reads. APIs and all SDKs carry declarations and matched guidance; manifest YAML/TOML and operations documentation expose authoring. Existing definition JSON persistence is sufficient; no migration, worker or external notification is introduced.
+
+## Durable pinned playbook checklist progress
+
+Application-authored matched playbooks can start durable, exact-case checklists.
+Freeze the full rule, evidence labels, workflow contract version, immutable reporting
+definition and original reporting operation. A new deployment never silently upgrades
+ongoing work. The case identity includes account, application, customer, environment,
+business subject, workflow and instance. Operator and customer views share the same
+records under their existing read/write authorization boundaries; tenant-self requests
+cannot override customer identity. Account mutations require write scope and MFA.
+
+Starts use deterministic case/definition/rule/version identities and return existing
+work on retries. Limit storage to 100 checklists per case, serializing quota checks in
+Postgres under the existing account lock. Item edits replace evidence and notes under
+an optimistic revision fence. The server records authenticated reviewers and clocks.
+Validate operation references against exact scope and subject; milestone references
+additionally require the pinned workflow, instance and contract version. A completed
+item requires evidence but denotes human review only. Reopening is permitted.
+
+Retain latest item snapshots and the most recent 64 review changes, with explicit
+truncation and start/review timeline events independent of inbox retention. Records
+cascade with account/application/customer deletion and otherwise remain durable.
+No user-supplied reviewer, automatic action execution, readiness mutation or inferred
+business success is introduced. Evidence validation describes edit-time checks and
+must not imply continuing fact availability or business correctness.

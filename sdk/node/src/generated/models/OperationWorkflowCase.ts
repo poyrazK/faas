@@ -6,11 +6,16 @@ import type { OperationWorkflowCaseAction } from './OperationWorkflowCaseAction.
 import type { OperationWorkflowCoordinationTimeline } from './OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
 import type { OperationWorkflowPlaybookGuidance } from './OperationWorkflowPlaybookGuidance.js';
+import type { OperationWorkflowPlaybookProgress } from './OperationWorkflowPlaybookProgress.js';
 import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowReadinessFollowUp.js';
 /**
  * OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
  */
 export type OperationWorkflowCase = {
+  /**
+   * OperationWorkflowCase.playbook_progress. Durable pinned checklists for this exact case, retained independently of inboxes and current guidance; at most 100.
+   */
+  playbook_progress: Array<OperationWorkflowPlaybookProgress>;
   /**
    * OperationWorkflowCase.guidance. Matching application playbooks from the definition that reported current fresh nonterminal evidence.
    */

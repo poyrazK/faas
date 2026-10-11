@@ -50,6 +50,9 @@ import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkf
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
+import type { OperationWorkflowPlaybookProgress } from '../models/OperationWorkflowPlaybookProgress.js';
+import type { OperationWorkflowPlaybookProgressStartRequest } from '../models/OperationWorkflowPlaybookProgressStartRequest.js';
+import type { OperationWorkflowPlaybookProgressUpdateRequest } from '../models/OperationWorkflowPlaybookProgressUpdateRequest.js';
 import type { OperationWorkflowReadinessComparisonRequest } from '../models/OperationWorkflowReadinessComparisonRequest.js';
 import type { OperationWorkflowReadinessComparisonResponse } from '../models/OperationWorkflowReadinessComparisonResponse.js';
 import type { OperationWorkflowReadinessCoordinationRequest } from '../models/OperationWorkflowReadinessCoordinationRequest.js';
@@ -5875,6 +5878,324 @@ export class OperationsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Start pinned workflow playbook progress
+   * StartAccountWorkflowPlaybookProgress. Start from a currently matched fresh application playbook. Pin exact rule, workflow version and immutable reporting definition. Repeated starts return the existing checklist. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress StartAccountWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static startAccountWorkflowPlaybookProgress({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    requestBody,
+  }: {
+    /**
+     * StartAccountWorkflowPlaybookProgress.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    requestBody: OperationWorkflowPlaybookProgressStartRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update pinned workflow playbook progress
+   * UpdateAccountWorkflowPlaybookProgress. Replace one frozen checklist item using the expected revision. Record authenticated reviewer, note and scoped operation or milestone evidence. Conflicts return 409. Existing guidance is never upgraded. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress UpdateAccountWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static updateAccountWorkflowPlaybookProgress({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookProgressUpdateRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Start customer pinned workflow playbook progress
+   * StartPlatformTenantSelfWorkflowPlaybookProgress. Start from a currently matched fresh application playbook. Pin exact rule, workflow version and immutable reporting definition. Repeated starts return the existing checklist. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress StartPlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static startPlatformTenantSelfWorkflowPlaybookProgress({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    requestBody,
+  }: {
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    requestBody: OperationWorkflowPlaybookProgressStartRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update customer pinned workflow playbook progress
+   * UpdatePlatformTenantSelfWorkflowPlaybookProgress. Replace one frozen checklist item using the expected revision. Record authenticated reviewer, note and scoped operation or milestone evidence. Conflicts return 409. Existing guidance is never upgraded. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress UpdatePlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantSelfWorkflowPlaybookProgress({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookProgressUpdateRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}',
+      path: {
+        'id': id,
+      },
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

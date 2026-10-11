@@ -2938,3 +2938,43 @@ human checklists, not automatically verified requirements. Runbook and action
 links require absolute HTTPS URLs without embedded credentials. Gregale does
 not fetch or execute them; the application authenticates, authorizes and handles
 any resulting action.
+
+### Durable playbook checklist progress
+
+A matched playbook can now start an advisory checklist through
+`POST /v1/apps/{slug}/workflow-readiness/playbook-progress` or the corresponding
+`/v1/platform-tenant-self/workflow-readiness/playbook-progress` endpoint.
+Use the same exact case query selectors as the case overview, without pagination.
+Account requests require `tenant_id`, write scope and MFA. Customer identity is
+always authentication-derived and requires operations-manage scope.
+The start body includes `playbook_id`, `playbook_version`, `contract_version` and
+`reporting_operation_id` from matched guidance. Missing, stale, terminal or changed
+matches cannot start new work. Repeated starts for the same case, definition,
+workflow version and rule version return the existing checklist without resetting it.
+
+The checklist freezes the whole rule, required evidence labels, original reporting
+operation and immutable definition. Deployment changes and newer reports never
+upgrade a started checklist. Read all retained checklists in the case overview's
+`playbook_progress` field, including those no longer matching current guidance.
+At most 100 checklists are stored per exact case. They survive subscription deletion,
+are removed with their owning application/customer/account, and have no timed expiry.
+
+Update one item with `PATCH .../playbook-progress/{id}` and a body containing
+`revision`, zero-based `item_index`, `status` (`pending` or `completed`), a required
+review `note`, and an explicit `evidence` array. Each reference has `operation_id`
+and optional `milestone_id`. Operation evidence must belong to the same account,
+customer, application, environment and business subject. Milestone references must
+also be retained facts for the pinned workflow, instance and contract version.
+Each edit accepts up to eight evidence references and a note of at most 1,024 UTF-8
+bytes; request bodies are capped at 32,768 bytes. Completed items require at least
+one reference. The authenticated reviewer and server
+clock are assigned by Gregale; callers cannot impersonate a reviewer. A concurrent
+revision change returns 409 without overwriting committed work. Pending edits can
+reopen an item. Labels and pinned guidance cannot be edited.
+
+Case overviews show counts and remaining items. The dashboard supports starts and
+item reviews, and Go, Node and Python SDKs expose both write endpoints. The timeline
+includes starts and the latest 64 item review snapshots per checklist; truncation is
+explicit. Evidence is validated on edits, not continuously, and retention may later
+remove referenced facts. Human review and checklist completion do not change
+application-owned blockers, readiness, authorization, execution or business outcomes.

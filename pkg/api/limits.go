@@ -9714,7 +9714,7 @@ const OperationWorkflowReadinessAssignmentHistoryMax = 16
 const OperationWorkflowReadinessCoordinationRevisionMax int64 = 1<<53 - 1
 
 // Timeline projections share existing subscription/inbox and page budgets.
-const OperationWorkflowCoordinationTimelineEventsMax = OperationWorkflowReadinessFollowUpCandidatesMax * (OperationWorkflowReadinessAssignmentHistoryMax + 12)
+const OperationWorkflowCoordinationTimelineEventsMax = OperationWorkflowReadinessFollowUpCandidatesMax*(OperationWorkflowReadinessAssignmentHistoryMax+12) + OperationWorkflowPlaybookProgressPerCaseMax*(OperationWorkflowPlaybookProgressHistoryMax+1)
 const OperationWorkflowCoordinationTimelineOperationLinksMax = 48
 
 const OperationWorkflowCaseFollowUpsMax = OperationHistoryPageMax
@@ -9725,3 +9725,10 @@ const OperationWorkflowPlaybookSummaryMaxBytes = 1024
 const OperationWorkflowPlaybookURLMaxBytes = 2048
 const OperationWorkflowPlaybookEvidenceMax = 16
 const OperationWorkflowPlaybookEvidenceMaxBytes = 256
+
+// Durable advisory playbook coordination limits.
+const (
+	OperationWorkflowPlaybookProgressPerCaseMax   = 100
+	OperationWorkflowPlaybookProgressHistoryMax   = 64
+	OperationWorkflowPlaybookProgressBodyMaxBytes = 32768
+)

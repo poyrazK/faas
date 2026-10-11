@@ -603,6 +603,7 @@
   const row=node('li','');
   row.append(node('p',clock(event.at)+' · '+event.kind+' · '+event.summary));
   const details=[];
+  if(event.playbook_progress_id)details.push('Checklist: '+event.playbook_progress_id);
   if(event.actor)details.push('Actor: '+event.actor);
   if(event.owner)details.push('Owner: '+event.owner);
   if(event.status)details.push('Status: '+event.status);
@@ -612,10 +613,10 @@
   if(event.state_revision)details.push('Report revision: '+event.state_revision);
   if(details.length)row.append(node('p',details.join(' · ')));
   if(event.note)row.append(node('p',event.note));
-  const inbox=safeURL(root.dataset.queueUrl);inbox.searchParams.set('scope',result.scope);
+  if(event.subscription_id){const inbox=safeURL(root.dataset.queueUrl);inbox.searchParams.set('scope',result.scope);
   if(event.subscription_tenant_id)inbox.searchParams.set('tenant_id',event.subscription_tenant_id);
   inbox.hash='readiness-subscriptions/'+encodeURIComponent(event.subscription_id)+'/'+event.sequence;
-  const link=node('a','Inbox: '+event.subscription_name+' #'+event.sequence);link.href=inbox.href;row.append(link);
+  const link=node('a','Inbox: '+event.subscription_name+' #'+event.sequence);link.href=inbox.href;row.append(link);}
   for(const id of event.reporting_operation_ids||[]){
    const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(id));url.searchParams.set('scope',result.scope);
    row.append(node('span',' · '));const evidence=node('a','Operation evidence '+id);evidence.href=url.href;row.append(evidence);
@@ -632,8 +633,48 @@
   }
   for(const text of result.limitations||[])limitations.append(node('li',text));
   if(result.sources_truncated)limitations.append(node('li','Source coverage was truncated.'));
-  if(result.history_truncated)limitations.append(node('li','Older assignment changes are missing.'));
+  if(result.history_truncated)limitations.append(node('li','Older coordination review or assignment changes are missing.'));
   if(!result.sources.length)sources.append(node('li','No retained readiness inboxes are available for this role, application and environment.'));
+ }
+ async function savePlaybookProgress(id,body,button) {
+  const token=generation,query=new URLSearchParams(active);query.delete('offset');query.delete('limit');
+  button.disabled=true;message.textContent='Saving playbook progress…';
+  try {
+   const url=safeURL(root.dataset.caseUrl);if(!url.pathname.endsWith('/case'))throw new Error('Invalid progress destination.');
+   url.pathname=url.pathname.slice(0,-5)+'/playbook-progress'+(id?'/'+encodeURIComponent(id):'');url.search=query.toString();
+   const response=await fetch(url.href,{method:id?'PATCH':'POST',credentials:'same-origin',redirect:'error',cache:'no-store',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)});
+   if(!response.ok)throw new Error(response.status===409?'This checklist or its guidance changed. Reload the case before saving again.':'Playbook progress could not be saved (HTTP '+response.status+').');
+   if(token!==generation)return;
+   next=0;seen=new Set();items.replaceChildren();await loadTimeline(false);
+  }catch(error){if(token===generation)message.textContent=error instanceof Error?error.message:'Playbook progress could not be saved.';}
+  finally{button.disabled=false;}
+ }
+ function renderPlaybookProgress(records) {
+  caseView.append(node('h4','Playbook checklist progress'),node('p','Reviews follow pinned guidance. Completing a checklist does not establish readiness or business success. Evidence references were checked when saved.'));
+  if(!records.length)caseView.append(node('p','No playbook checklists have been started for this case.'));
+  for(const p of records){
+   const section=node('section','');section.append(node('p',p.playbook.summary+' · '+p.playbook.id+' v'+p.playbook.version+' · Workflow contract v'+p.contract_version+' · '+p.completed_count+'/'+p.items.length+' reviewed complete · Revision '+p.revision));
+   section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
+   const reportingURL=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(p.reporting_operation_id));reportingURL.searchParams.set('scope',active.get('scope'));const reportingLink=node('a','Original reporting operation');reportingLink.href=reportingURL.href;section.append(reportingLink);
+   if(!p.items.length)section.append(node('p','No evidence items were declared; checklist completion is not asserted.'));
+   if(p.checklist_complete)section.append(node('p','Checklist complete (human review).'));
+   if(p.history_truncated)section.append(node('p','Older checklist reviews are no longer retained.'));
+   p.items.forEach((item,index)=>{
+    const edit=node('form','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
+    for(const ref of item.evidence||[]){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(ref.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Saved evidence '+ref.operation_id+(ref.milestone_id?' / milestone '+ref.milestone_id:''));link.href=url.href;edit.append(link,node('span',' '));}
+    const status=node('select','');status.setAttribute('aria-label','Review status for '+item.label);
+    for(const value of ['pending','completed']){const option=node('option',value==='completed'?'Reviewed complete':'Pending');option.value=value;status.append(option);}status.value=item.status;
+    const note=node('textarea','');note.required=true;note.maxLength=1024;note.value=item.note;note.setAttribute('aria-label','Review note for '+item.label);
+    const evidence=node('textarea','');evidence.value=(item.evidence||[]).map(e=>e.operation_id+(e.milestone_id?'/'+e.milestone_id:'')).join('\n');evidence.setAttribute('aria-label','Evidence references for '+item.label);
+    edit.append(node('p','Evidence: one operation UUID per line, optionally followed by /milestone-ID. Completed items require evidence.'),status,note,evidence);
+    const button=node('button','Save review');button.type='submit';edit.append(button);
+    edit.addEventListener('submit',event=>{event.preventDefault();if(!edit.reportValidity())return;
+     const refs=evidence.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const separator=line.indexOf('/');return separator<0?{operation_id:line}:{operation_id:line.slice(0,separator),milestone_id:line.slice(separator+1)};});
+     if(status.value==='completed'&&!refs.length){message.textContent='Completed items require operation or milestone evidence.';return;}
+     void savePlaybookProgress(p.id,{revision:p.revision,item_index:index,status:status.value,note:note.value,evidence:refs},button);
+    });section.append(edit);
+   });caseView.append(section);
+  }
  }
  function renderWorkflowCase(result) {
   caseView.replaceChildren();caseView.append(node('h3','Workflow case overview'),node('p',result.summary));
@@ -660,12 +701,16 @@
   else if(!(result.guidance||[]).length)caseView.append(node('p','No playbook rules match the current retained evidence.'));
   for(const entry of result.guidance||[]) {
    const rule=entry.playbook;caseView.append(node('p',rule.summary+' · Playbook '+rule.id+' v'+rule.version+' · Workflow contract v'+entry.contract_version+(rule.owner?' · Suggested team: '+rule.owner:'')));
+   const existing=(result.playbook_progress||[]).find(p=>p.playbook.id===rule.id&&p.playbook.version===rule.version&&p.contract_version===entry.contract_version);
+   if(existing)caseView.append(node('p','A previously started checklist for these versions is shown below.'));
+   {const button=node('button','Start or open checklist');button.type='button';button.addEventListener('click',()=>void savePlaybookProgress('',{playbook_id:rule.id,playbook_version:rule.version,contract_version:entry.contract_version,reporting_operation_id:entry.reporting_operation_id},button));caseView.append(button);}
    if((rule.required_evidence||[]).length){caseView.append(node('p','Evidence checklist (advisory):'));const checklist=node('ul','');for(const text of rule.required_evidence)checklist.append(node('li',text));caseView.append(checklist);}
    for(const [value,label] of [[rule.runbook_url,'Open runbook'],[rule.action_url,'Open application action']]) {
     if(!value)continue;try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password)continue;const link=node('a',label);link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';caseView.append(link,node('span',' '));}catch{continue;}
    }
   }
   if(result.guidance_truncated)caseView.append(node('p','Playbook guidance is incomplete because its output or evaluated evidence was truncated.'));
+  renderPlaybookProgress(result.playbook_progress||[]);
   caseView.append(node('h4','Retained open follow-ups'),node('p',result.follow_up_count+' open · '+result.overdue_follow_up_count+' overdue'));
   for(const row of result.follow_ups||[]) {
    const details=[row.overdue?'Overdue':'Scheduled',row.coordination.owner||'Unassigned',clock(row.coordination.follow_up_at),row.coordination.status];

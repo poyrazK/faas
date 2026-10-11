@@ -159,3 +159,37 @@ func (c *Client) GetPlatformTenantSelfWorkflowCase(ctx context.Context, opts Ope
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/case?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
 	return out, err
 }
+
+func (c *Client) StartAccountWorkflowPlaybookProgress(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions, req OperationWorkflowPlaybookProgressStartRequest) (OperationWorkflowPlaybookProgress, error) {
+	var out OperationWorkflowPlaybookProgress
+	opts.Offset = 0
+	opts.Limit = 0
+	opts.AppID = ""
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/playbook-progress?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) UpdateAccountWorkflowPlaybookProgress(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookProgressUpdateRequest) (OperationWorkflowPlaybookProgress, error) {
+	var out OperationWorkflowPlaybookProgress
+	opts.Offset = 0
+	opts.Limit = 0
+	opts.AppID = ""
+	err := c.do(ctx, http.MethodPatch, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) StartPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, req OperationWorkflowPlaybookProgressStartRequest) (OperationWorkflowPlaybookProgress, error) {
+	var out OperationWorkflowPlaybookProgress
+	opts.Offset = 0
+	opts.Limit = 0
+	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/playbook-progress?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) UpdatePlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookProgressUpdateRequest) (OperationWorkflowPlaybookProgress, error) {
+	var out OperationWorkflowPlaybookProgress
+	opts.Offset = 0
+	opts.Limit = 0
+	err := c.do(ctx, http.MethodPatch, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}

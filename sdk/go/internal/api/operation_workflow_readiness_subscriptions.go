@@ -321,15 +321,16 @@ type OperationWorkflowCoordinationTimelineOptions struct {
 	Offset, Limit                                                        int
 }
 type OperationWorkflowCoordinationTimelineEvent struct {
+	PlaybookProgressID    string     `json:"playbook_progress_id,omitempty"`
 	ID                    string     `json:"id"`
 	At                    time.Time  `json:"at"`
 	Kind                  string     `json:"kind"`
 	Summary               string     `json:"summary"`
-	SubscriptionID        string     `json:"subscription_id"`
-	SubscriptionName      string     `json:"subscription_name"`
+	SubscriptionID        string     `json:"subscription_id,omitempty"`
+	SubscriptionName      string     `json:"subscription_name,omitempty"`
 	SubscriptionTenantID  string     `json:"subscription_tenant_id,omitempty"`
-	NotificationID        string     `json:"notification_id"`
-	Sequence              int64      `json:"sequence"`
+	NotificationID        string     `json:"notification_id,omitempty"`
+	Sequence              int64      `json:"sequence,omitempty"`
 	Actor                 string     `json:"actor,omitempty"`
 	Owner                 string     `json:"owner,omitempty"`
 	Status                string     `json:"status,omitempty"`
@@ -377,6 +378,7 @@ type OperationWorkflowCaseAction struct {
 	Sequence       int64  `json:"sequence,omitempty"`
 }
 type OperationWorkflowCase struct {
+	PlaybookProgress      []OperationWorkflowPlaybookProgress   `json:"playbook_progress"`
 	Guidance              []OperationWorkflowPlaybookGuidance   `json:"guidance"`
 	GuidanceStatus        string                                `json:"guidance_status"`
 	GuidanceTruncated     bool                                  `json:"guidance_truncated"`

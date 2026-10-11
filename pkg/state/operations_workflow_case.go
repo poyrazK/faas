@@ -12,6 +12,7 @@ type OperationWorkflowCaseStore interface {
 	WorkflowCase(context.Context, string, string, api.OperationWorkflowCoordinationTimelineOptions, bool) (api.OperationWorkflowCase, error)
 }
 type workflowCaseBackend interface {
+	readPlaybookProgress(context.Context, workflowPlaybookProgressRecord) ([]api.OperationWorkflowPlaybookProgress, error)
 	readinessSubscriptionBackend
 	readinessFollowUpBackend
 	OperationDefinitionByID(context.Context, string, string) (OperationDefinition, error)
@@ -104,6 +105,19 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 	if err = projectWorkflowCasePlaybooks(ctx, store, account, tenant, opts, &out); err != nil {
 		return out, err
 	}
+
+	identityOpts := opts
+	identityOpts.Offset = 0
+	identityOpts.Limit = 0
+	identity, err := preparePlaybookProgressIdentity(ctx, store, account, tenant, identityOpts, operator)
+	if err != nil {
+		return out, err
+	}
+	out.PlaybookProgress, err = store.readPlaybookProgress(ctx, identity)
+	if err != nil {
+		return out, err
+	}
+	out.Limitations = append(out.Limitations, "Playbook progress records human review of pinned guidance. Evidence references are checked on edit; checklist completion does not establish readiness or business success.")
 	out.EvaluatedAt = time.Now().UTC().Truncate(time.Microsecond)
 	return out, nil
 }

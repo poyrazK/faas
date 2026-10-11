@@ -23856,6 +23856,36 @@ func (q *Queries) InsertWorkflowOperationEffect(ctx context.Context, db DBTX, ar
 	return err
 }
 
+const insertWorkflowPlaybookProgress = `-- name: InsertWorkflowPlaybookProgress :execrows
+INSERT INTO customer_workflow_playbook_progress (id,account_id,app_id,tenant_id,case_key,revision,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING
+`
+
+type InsertWorkflowPlaybookProgressParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	TenantID  pgtype.UUID
+	CaseKey   string
+	Revision  int64
+	Payload   []byte
+}
+
+func (q *Queries) InsertWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg InsertWorkflowPlaybookProgressParams) (int64, error) {
+	result, err := db.Exec(ctx, insertWorkflowPlaybookProgress,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.CaseKey,
+		arg.Revision,
+		arg.Payload,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertWorkflowResume = `-- name: InsertWorkflowResume :one
 INSERT INTO workflow_run_resumes(run_id,resume_number,account_id,previous_status,previous_error,resumed_steps)
 VALUES($1,$2,$3,$4,$5,$6)
@@ -35405,6 +35435,44 @@ func (q *Queries) ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowPlaybookProgress = `-- name: ListWorkflowPlaybookProgress :many
+SELECT payload FROM customer_workflow_playbook_progress WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 AND case_key=$4 ORDER BY id LIMIT $5
+`
+
+type ListWorkflowPlaybookProgressParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	TenantID  pgtype.UUID
+	CaseKey   string
+	Limit     int32
+}
+
+func (q *Queries) ListWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg ListWorkflowPlaybookProgressParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listWorkflowPlaybookProgress,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.CaseKey,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		items = append(items, payload)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -69995,6 +70063,38 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateWorkflowPlaybookProgress = `-- name: UpdateWorkflowPlaybookProgress :execrows
+UPDATE customer_workflow_playbook_progress SET payload=$1,revision=$2 WHERE id=$3 AND account_id=$4 AND app_id=$5 AND tenant_id=$6 AND case_key=$7 AND revision=$8
+`
+
+type UpdateWorkflowPlaybookProgressParams struct {
+	Payload      []byte
+	NextRevision int64
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	TenantID     pgtype.UUID
+	CaseKey      string
+	Revision     int64
+}
+
+func (q *Queries) UpdateWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg UpdateWorkflowPlaybookProgressParams) (int64, error) {
+	result, err := db.Exec(ctx, updateWorkflowPlaybookProgress,
+		arg.Payload,
+		arg.NextRevision,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.CaseKey,
+		arg.Revision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateWorkflowScheduleLastAdmittedAt = `-- name: UpdateWorkflowScheduleLastAdmittedAt :execrows

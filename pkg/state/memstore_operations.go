@@ -10,6 +10,7 @@ import (
 )
 
 type operationMemory struct {
+	playbookProgress       map[string]workflowPlaybookProgressRecord
 	readinessSubscriptions map[string]readinessSubscriptionRecord
 	readinessInbox         map[string][]api.OperationWorkflowReadinessNotification
 	deliveryRetries        map[string]api.OperationDeliveryRetryResponse

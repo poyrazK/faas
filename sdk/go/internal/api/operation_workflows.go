@@ -1,5 +1,7 @@
 package api
 
+import "time"
+
 // OperationWorkflowSpec is the deployment-resolved projection attached to an
 // Operation definition. It is returned with a fact only when its milestone
 // name matches. Source manifests pin the milestone and instance ID pointer;
@@ -64,4 +66,58 @@ type OperationWorkflowPlaybookGuidance struct {
 	Playbook             OperationWorkflowPlaybook `json:"playbook" yaml:"playbook" toml:"playbook"`
 	ContractVersion      int                       `json:"contract_version" yaml:"contract_version" toml:"contract_version"`
 	ReportingOperationID string                    `json:"reporting_operation_id" yaml:"reporting_operation_id" toml:"reporting_operation_id"`
+}
+
+// OperationWorkflowPlaybookProgressStartRequest pins currently matched application guidance.
+type OperationWorkflowPlaybookProgressStartRequest struct {
+	PlaybookID           string `json:"playbook_id"`
+	PlaybookVersion      int    `json:"playbook_version"`
+	ContractVersion      int    `json:"contract_version"`
+	ReportingOperationID string `json:"reporting_operation_id"`
+}
+
+// OperationWorkflowPlaybookEvidence references scoped retained application evidence.
+type OperationWorkflowPlaybookEvidence struct {
+	OperationID string `json:"operation_id"`
+	MilestoneID string `json:"milestone_id,omitempty"`
+}
+
+// OperationWorkflowPlaybookProgressUpdateRequest replaces one checklist item under a revision fence.
+type OperationWorkflowPlaybookProgressUpdateRequest struct {
+	Revision  int64                               `json:"revision"`
+	ItemIndex int                                 `json:"item_index"`
+	Status    string                              `json:"status"`
+	Note      string                              `json:"note"`
+	Evidence  []OperationWorkflowPlaybookEvidence `json:"evidence"`
+}
+type OperationWorkflowPlaybookProgressItem struct {
+	Label      string                              `json:"label"`
+	Status     string                              `json:"status"`
+	Note       string                              `json:"note"`
+	Evidence   []OperationWorkflowPlaybookEvidence `json:"evidence"`
+	ReviewedBy string                              `json:"reviewed_by,omitempty"`
+	ReviewedAt *time.Time                          `json:"reviewed_at,omitempty"`
+}
+type OperationWorkflowPlaybookProgressChange struct {
+	Revision  int64                                 `json:"revision"`
+	ItemIndex int                                   `json:"item_index"`
+	Item      OperationWorkflowPlaybookProgressItem `json:"item"`
+	At        time.Time                             `json:"at"`
+	Actor     string                                `json:"actor"`
+}
+type OperationWorkflowPlaybookProgress struct {
+	ID                   string                                    `json:"id"`
+	Revision             int64                                     `json:"revision"`
+	Playbook             OperationWorkflowPlaybook                 `json:"playbook"`
+	ContractVersion      int                                       `json:"contract_version"`
+	DefinitionID         string                                    `json:"definition_id"`
+	ReportingOperationID string                                    `json:"reporting_operation_id"`
+	Items                []OperationWorkflowPlaybookProgressItem   `json:"items"`
+	CompletedCount       int                                       `json:"completed_count"`
+	ChecklistComplete    bool                                      `json:"checklist_complete"`
+	CreatedAt            time.Time                                 `json:"created_at"`
+	CreatedBy            string                                    `json:"created_by"`
+	UpdatedAt            time.Time                                 `json:"updated_at"`
+	History              []OperationWorkflowPlaybookProgressChange `json:"history"`
+	HistoryTruncated     bool                                      `json:"history_truncated"`
 }

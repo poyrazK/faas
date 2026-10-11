@@ -3,9 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * OperationWorkflowCoordinationTimelineEvent. Retained inbox coordination projection metadata.
+ * OperationWorkflowCoordinationTimelineEvent. Retained inbox and durable pinned playbook coordination metadata.
  */
 export type OperationWorkflowCoordinationTimelineEvent = {
+  /**
+   * OperationWorkflowCoordinationTimelineEvent.playbook_progress_id. Durable checklist identity for playbook start or review events; inbox fields are absent for these events.
+   */
+  playbook_progress_id?: string;
   /**
    * OperationWorkflowCoordinationTimelineEvent.id. Stable identity within its subscription and notification.
    */
@@ -25,11 +29,11 @@ export type OperationWorkflowCoordinationTimelineEvent = {
   /**
    * OperationWorkflowCoordinationTimelineEvent.subscription_id. Source readiness subscription UUID.
    */
-  subscription_id: string;
+  subscription_id?: string;
   /**
    * OperationWorkflowCoordinationTimelineEvent.subscription_name. Current source subscription name.
    */
-  subscription_name: string;
+  subscription_name?: string;
   /**
    * OperationWorkflowCoordinationTimelineEvent.subscription_tenant_id. Operator-only original subscription tenant used to navigate the source inbox; omitted for broad subscriptions.
    */
@@ -37,11 +41,11 @@ export type OperationWorkflowCoordinationTimelineEvent = {
   /**
    * OperationWorkflowCoordinationTimelineEvent.notification_id. Source inbox notification UUID.
    */
-  notification_id: string;
+  notification_id?: string;
   /**
    * OperationWorkflowCoordinationTimelineEvent.sequence. Source inbox sequence.
    */
-  sequence: number;
+  sequence?: number;
   /**
    * OperationWorkflowCoordinationTimelineEvent.actor. Retained coordination actor, when available.
    */

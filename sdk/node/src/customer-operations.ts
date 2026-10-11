@@ -342,7 +342,7 @@ export class GregaleOperationClient {
     q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 56000) throw new Error('Invalid timeline offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 62500) throw new Error('Invalid timeline offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {
@@ -357,7 +357,7 @@ export class GregaleOperationClient {
     q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 56000) throw new Error('Invalid timeline offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 62500) throw new Error('Invalid timeline offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {
@@ -365,6 +365,24 @@ export class GregaleOperationClient {
       q.set('limit', String(options.limit));
     }
     return this.request('/v1/platform-tenant-self/workflow-readiness/case?' + q, 'GET', undefined, undefined, signal);
+  }
+  startWorkflowPlaybookProgress(options: OperationWorkflowCoordinationTimelineOptions, body: OperationWorkflowPlaybookProgressStartRequest, signal?: AbortSignal): Promise<OperationWorkflowPlaybookProgress> {
+    const q = readinessSubscriptionQuery(options);
+    if (options.offset !== undefined || options.limit !== undefined) throw new Error('Pagination is not accepted for checklist writes');
+    if (!options.subjectType || !options.subjectID || !options.workflow || !options.instanceID) throw new Error('Explicit subject and workflow instance required');
+    q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
+    q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
+
+    return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress' + '?' + q, 'POST', body, undefined, signal);
+  }
+  updateWorkflowPlaybookProgress(options: OperationWorkflowCoordinationTimelineOptions, id: string, body: OperationWorkflowPlaybookProgressUpdateRequest, signal?: AbortSignal): Promise<OperationWorkflowPlaybookProgress> {
+    const q = readinessSubscriptionQuery(options);
+    if (options.offset !== undefined || options.limit !== undefined) throw new Error('Pagination is not accepted for checklist writes');
+    if (!options.subjectType || !options.subjectID || !options.workflow || !options.instanceID) throw new Error('Explicit subject and workflow instance required');
+    q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
+    q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
+    if (!UUID.test(id)) throw new Error('Checklist UUID required');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress' + '/' + encodeURIComponent(id) + '?' + q, 'PATCH', body, undefined, signal);
   }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
@@ -775,12 +793,19 @@ export interface OperationWorkflowReadinessAssignmentChange { from_owner: string
 export interface OperationWorkflowReadinessEscalationResponseEvent { escalation_notification_id: string; escalation_sequence: number; source: OperationWorkflowReadinessSnapshotEntry; checked_at: string; deadline_at: string; owner: string; reassigned: boolean }
 
 export interface OperationWorkflowCoordinationTimelineOptions extends OperationWorkflowReadinessSubscriptionOptions { subjectType: string; subjectID: string; workflow: string; instanceID: string; offset?: number; limit?: number }
-export interface OperationWorkflowCoordinationTimelineEvent { id: string; at: string; kind: string; summary: string; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; notification_id: string; sequence: number; actor?: string; owner?: string; status?: string; note?: string; follow_up_at?: string; expected_outcome_code?: string; reported_outcome_code?: string; state_revision?: number; reporting_operation_ids: string[] }
+export interface OperationWorkflowCoordinationTimelineEvent { playbook_progress_id?: string; id: string; at: string; kind: string; summary: string; subscription_id?: string; subscription_name?: string; subscription_tenant_id?: string; notification_id?: string; sequence?: number; actor?: string; owner?: string; status?: string; note?: string; follow_up_at?: string; expected_outcome_code?: string; reported_outcome_code?: string; state_revision?: number; reporting_operation_ids: string[] }
 export interface OperationWorkflowCoordinationTimelineSource { subscription_id: string; name: string; earliest_sequence: number; latest_sequence: number; retained_count: number; gap_before: boolean; missing_during_read: boolean }
 export interface OperationWorkflowCoordinationTimeline { items: OperationWorkflowCoordinationTimelineEvent[]; sources: OperationWorkflowCoordinationTimelineSource[]; subject: OperationSubject; workflow: string; instance_id: string; scope: string; platform_tenant_id?: string; evaluated_at: string; total_count: number; next_offset: number; has_more: boolean; retention_limited: boolean; sources_truncated: boolean; history_truncated: boolean; limitations: string[] }
 
 export interface OperationWorkflowCaseAction { kind: string; summary: string; owner?: string; operation_id?: string; subscription_id?: string; sequence?: number }
-export interface OperationWorkflowCase { guidance: OperationWorkflowPlaybookGuidance[]; guidance_status: string; guidance_truncated: boolean; status: string; summary: string; instance?: OperationWorkflowInstanceSnapshot; follow_ups: OperationWorkflowReadinessFollowUp[]; follow_up_count: number; overdue_follow_up_count: number; follow_ups_truncated: boolean; actions: OperationWorkflowCaseAction[]; actions_truncated: boolean; timeline: OperationWorkflowCoordinationTimeline; evidence_checked_at: string; coordination_checked_at: string; evaluated_at: string; limitations: string[] }
+export interface OperationWorkflowCase { playbook_progress: OperationWorkflowPlaybookProgress[]; guidance: OperationWorkflowPlaybookGuidance[]; guidance_status: string; guidance_truncated: boolean; status: string; summary: string; instance?: OperationWorkflowInstanceSnapshot; follow_ups: OperationWorkflowReadinessFollowUp[]; follow_up_count: number; overdue_follow_up_count: number; follow_ups_truncated: boolean; actions: OperationWorkflowCaseAction[]; actions_truncated: boolean; timeline: OperationWorkflowCoordinationTimeline; evidence_checked_at: string; coordination_checked_at: string; evaluated_at: string; limitations: string[] }
 
 export interface OperationWorkflowPlaybook { id: string; version: number; match_kind: 'blocker' | 'missing_milestone' | 'missing_dependency' | 'pending_verification' | 'requirement'; match_code: string; summary: string; owner?: string; required_evidence?: string[]; runbook_url?: string; action_url?: string }
 export interface OperationWorkflowPlaybookGuidance { playbook: OperationWorkflowPlaybook; contract_version: number; reporting_operation_id: string }
+
+export interface OperationWorkflowPlaybookProgressStartRequest { playbook_id: string; playbook_version: number; contract_version: number; reporting_operation_id: string }
+export interface OperationWorkflowPlaybookEvidence { operation_id: string; milestone_id?: string }
+export interface OperationWorkflowPlaybookProgressUpdateRequest { revision: number; item_index: number; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[] }
+export interface OperationWorkflowPlaybookProgressItem { label: string; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[]; reviewed_by?: string; reviewed_at?: string }
+export interface OperationWorkflowPlaybookProgressChange { revision: number; item_index: number; item: OperationWorkflowPlaybookProgressItem; at: string; actor: string }
+export interface OperationWorkflowPlaybookProgress { id: string; revision: number; playbook: OperationWorkflowPlaybook; contract_version: number; definition_id: string; reporting_operation_id: string; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean; created_at: string; created_by: string; updated_at: string; history: OperationWorkflowPlaybookProgressChange[]; history_truncated: boolean }

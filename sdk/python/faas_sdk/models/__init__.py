@@ -2213,8 +2213,18 @@ from .operation_workflow_planned_decision import OperationWorkflowPlannedDecisio
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
 from .operation_workflow_playbook import OperationWorkflowPlaybook
+from .operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
 from .operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
 from .operation_workflow_playbook_match_kind import OperationWorkflowPlaybookMatchKind
+from .operation_workflow_playbook_progress import OperationWorkflowPlaybookProgress
+from .operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
+from .operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
+from .operation_workflow_playbook_progress_item_status import OperationWorkflowPlaybookProgressItemStatus
+from .operation_workflow_playbook_progress_start_request import OperationWorkflowPlaybookProgressStartRequest
+from .operation_workflow_playbook_progress_update_request import OperationWorkflowPlaybookProgressUpdateRequest
+from .operation_workflow_playbook_progress_update_request_status import (
+    OperationWorkflowPlaybookProgressUpdateRequestStatus,
+)
 from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
 from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
 from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
@@ -5825,8 +5835,16 @@ __all__ = (
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
     "OperationWorkflowPlaybook",
+    "OperationWorkflowPlaybookEvidence",
     "OperationWorkflowPlaybookGuidance",
     "OperationWorkflowPlaybookMatchKind",
+    "OperationWorkflowPlaybookProgress",
+    "OperationWorkflowPlaybookProgressChange",
+    "OperationWorkflowPlaybookProgressItem",
+    "OperationWorkflowPlaybookProgressItemStatus",
+    "OperationWorkflowPlaybookProgressStartRequest",
+    "OperationWorkflowPlaybookProgressUpdateRequest",
+    "OperationWorkflowPlaybookProgressUpdateRequestStatus",
     "OperationWorkflowPolicyRequirement",
     "OperationWorkflowPrerequisiteRecovery",
     "OperationWorkflowPrerequisiteRecoveryReason",

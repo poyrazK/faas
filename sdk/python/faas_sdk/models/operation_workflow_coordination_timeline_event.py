@@ -15,7 +15,7 @@ T = TypeVar("T", bound="OperationWorkflowCoordinationTimelineEvent")
 
 @_attrs_define
 class OperationWorkflowCoordinationTimelineEvent:
-    """OperationWorkflowCoordinationTimelineEvent. Retained inbox coordination projection metadata."""
+    """OperationWorkflowCoordinationTimelineEvent. Retained inbox and durable pinned playbook coordination metadata."""
 
     id: str
     """OperationWorkflowCoordinationTimelineEvent.id. Stable identity within its subscription and notification."""
@@ -28,20 +28,23 @@ class OperationWorkflowCoordinationTimelineEvent:
     summary: str
     """OperationWorkflowCoordinationTimelineEvent.summary. Explanation of the retained event and any evidence
     limitation."""
-    subscription_id: UUID
-    """OperationWorkflowCoordinationTimelineEvent.subscription_id. Source readiness subscription UUID."""
-    subscription_name: str
-    """OperationWorkflowCoordinationTimelineEvent.subscription_name. Current source subscription name."""
-    notification_id: UUID
-    """OperationWorkflowCoordinationTimelineEvent.notification_id. Source inbox notification UUID."""
-    sequence: int
-    """OperationWorkflowCoordinationTimelineEvent.sequence. Source inbox sequence."""
     reporting_operation_ids: list[UUID]
     """OperationWorkflowCoordinationTimelineEvent.reporting_operation_ids. Available operation evidence links;
     absence does not imply success or failure."""
+    playbook_progress_id: UUID | Unset = UNSET
+    """OperationWorkflowCoordinationTimelineEvent.playbook_progress_id. Durable checklist identity for playbook
+    start or review events; inbox fields are absent for these events."""
+    subscription_id: UUID | Unset = UNSET
+    """OperationWorkflowCoordinationTimelineEvent.subscription_id. Source readiness subscription UUID."""
+    subscription_name: str | Unset = UNSET
+    """OperationWorkflowCoordinationTimelineEvent.subscription_name. Current source subscription name."""
     subscription_tenant_id: UUID | Unset = UNSET
     """OperationWorkflowCoordinationTimelineEvent.subscription_tenant_id. Operator-only original subscription
     tenant used to navigate the source inbox; omitted for broad subscriptions."""
+    notification_id: UUID | Unset = UNSET
+    """OperationWorkflowCoordinationTimelineEvent.notification_id. Source inbox notification UUID."""
+    sequence: int | Unset = UNSET
+    """OperationWorkflowCoordinationTimelineEvent.sequence. Source inbox sequence."""
     actor: str | Unset = UNSET
     """OperationWorkflowCoordinationTimelineEvent.actor. Retained coordination actor, when available."""
     owner: str | Unset = UNSET
@@ -71,22 +74,30 @@ class OperationWorkflowCoordinationTimelineEvent:
 
         summary = self.summary
 
-        subscription_id = str(self.subscription_id)
-
-        subscription_name = self.subscription_name
-
-        notification_id = str(self.notification_id)
-
-        sequence = self.sequence
-
         reporting_operation_ids = []
         for reporting_operation_ids_item_data in self.reporting_operation_ids:
             reporting_operation_ids_item = str(reporting_operation_ids_item_data)
             reporting_operation_ids.append(reporting_operation_ids_item)
 
+        playbook_progress_id: str | Unset = UNSET
+        if not isinstance(self.playbook_progress_id, Unset):
+            playbook_progress_id = str(self.playbook_progress_id)
+
+        subscription_id: str | Unset = UNSET
+        if not isinstance(self.subscription_id, Unset):
+            subscription_id = str(self.subscription_id)
+
+        subscription_name = self.subscription_name
+
         subscription_tenant_id: str | Unset = UNSET
         if not isinstance(self.subscription_tenant_id, Unset):
             subscription_tenant_id = str(self.subscription_tenant_id)
+
+        notification_id: str | Unset = UNSET
+        if not isinstance(self.notification_id, Unset):
+            notification_id = str(self.notification_id)
+
+        sequence = self.sequence
 
         actor = self.actor
 
@@ -114,15 +125,21 @@ class OperationWorkflowCoordinationTimelineEvent:
                 "at": at,
                 "kind": kind,
                 "summary": summary,
-                "subscription_id": subscription_id,
-                "subscription_name": subscription_name,
-                "notification_id": notification_id,
-                "sequence": sequence,
                 "reporting_operation_ids": reporting_operation_ids,
             }
         )
+        if playbook_progress_id is not UNSET:
+            field_dict["playbook_progress_id"] = playbook_progress_id
+        if subscription_id is not UNSET:
+            field_dict["subscription_id"] = subscription_id
+        if subscription_name is not UNSET:
+            field_dict["subscription_name"] = subscription_name
         if subscription_tenant_id is not UNSET:
             field_dict["subscription_tenant_id"] = subscription_tenant_id
+        if notification_id is not UNSET:
+            field_dict["notification_id"] = notification_id
+        if sequence is not UNSET:
+            field_dict["sequence"] = sequence
         if actor is not UNSET:
             field_dict["actor"] = actor
         if owner is not UNSET:
@@ -153,14 +170,6 @@ class OperationWorkflowCoordinationTimelineEvent:
 
         summary = d.pop("summary")
 
-        subscription_id = UUID(d.pop("subscription_id"))
-
-        subscription_name = d.pop("subscription_name")
-
-        notification_id = UUID(d.pop("notification_id"))
-
-        sequence = d.pop("sequence")
-
         reporting_operation_ids = []
         _reporting_operation_ids = d.pop("reporting_operation_ids")
         for reporting_operation_ids_item_data in _reporting_operation_ids:
@@ -168,12 +177,37 @@ class OperationWorkflowCoordinationTimelineEvent:
 
             reporting_operation_ids.append(reporting_operation_ids_item)
 
+        _playbook_progress_id = d.pop("playbook_progress_id", UNSET)
+        playbook_progress_id: UUID | Unset
+        if isinstance(_playbook_progress_id, Unset):
+            playbook_progress_id = UNSET
+        else:
+            playbook_progress_id = UUID(_playbook_progress_id)
+
+        _subscription_id = d.pop("subscription_id", UNSET)
+        subscription_id: UUID | Unset
+        if isinstance(_subscription_id, Unset):
+            subscription_id = UNSET
+        else:
+            subscription_id = UUID(_subscription_id)
+
+        subscription_name = d.pop("subscription_name", UNSET)
+
         _subscription_tenant_id = d.pop("subscription_tenant_id", UNSET)
         subscription_tenant_id: UUID | Unset
         if isinstance(_subscription_tenant_id, Unset):
             subscription_tenant_id = UNSET
         else:
             subscription_tenant_id = UUID(_subscription_tenant_id)
+
+        _notification_id = d.pop("notification_id", UNSET)
+        notification_id: UUID | Unset
+        if isinstance(_notification_id, Unset):
+            notification_id = UNSET
+        else:
+            notification_id = UUID(_notification_id)
+
+        sequence = d.pop("sequence", UNSET)
 
         actor = d.pop("actor", UNSET)
 
@@ -201,12 +235,13 @@ class OperationWorkflowCoordinationTimelineEvent:
             at=at,
             kind=kind,
             summary=summary,
+            reporting_operation_ids=reporting_operation_ids,
+            playbook_progress_id=playbook_progress_id,
             subscription_id=subscription_id,
             subscription_name=subscription_name,
+            subscription_tenant_id=subscription_tenant_id,
             notification_id=notification_id,
             sequence=sequence,
-            reporting_operation_ids=reporting_operation_ids,
-            subscription_tenant_id=subscription_tenant_id,
             actor=actor,
             owner=owner,
             status=status,
