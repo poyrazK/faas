@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -15,11 +16,30 @@ func cmdAppHealth(slug string, args []string) int {
 	history := fs.Bool("history", false, "Show recorded health changes")
 	limit := fs.Int("limit", api.AppHealthHistoryPageSize, "History page size")
 	before := fs.String("before", "", "History cursor from the preceding page")
+	wait := fs.Bool("wait", false, "wait for a fresh healthy default-scope assessment")
+	check := fs.Bool("check", false, "exit nonzero unless a single assessment is fresh, healthy, and default-scope")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum health wait (requires --wait)")
+	interval := fs.Duration("poll-interval", 2*time.Second, "health poll interval (requires --wait)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	var waitOptions, historyOptions bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "timeout", "poll-interval":
+			waitOptions = true
+		case "limit", "before":
+			historyOptions = true
+		}
+	})
+	if *check && (*wait || *history || historyOptions || waitOptions) {
+		return printErr("Invalid health check options", fmt.Errorf("--check cannot be combined with --wait, history options, --timeout, or --poll-interval"))
+	}
+	if (*wait && (*history || historyOptions)) || (waitOptions && !*wait) || (*wait && (*timeout <= 0 || *interval < time.Second || *interval > time.Hour)) {
+		return printErr("Invalid health wait options", fmt.Errorf("--wait excludes history options; --timeout and --poll-interval require --wait, a positive timeout, and a poll interval between 1s and 1h"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -31,15 +51,36 @@ func cmdAppHealth(slug string, args []string) int {
 		}
 		return printAppHealthHistory(client, slug, *limit, *before)
 	}
-	out, err := client.GetAppHealth(context.Background(), slug)
+	if *wait {
+		return waitAppHealth(client, slug, *timeout, *interval)
+	}
+	ctx := context.Background()
+	if *check {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	out, err := client.GetAppHealth(ctx, slug)
 	if err != nil {
 		return printErr("Health assessment failed", err)
 	}
+	passed := appHealthCheckPassed(out, time.Now())
+	if code := renderAppHealth(slug, out); code != 0 {
+		return code
+	}
+	if *check && !passed {
+		return printErr("Health check failed", fmt.Errorf("the assessment is not fresh, healthy, and default-scope (status=%s; scope=%s; fresh=%t); inspect the returned assessment before proceeding", compactInspectFailureText(out.Status), compactInspectFailureText(out.Scope), appHealthFresh(out, time.Now())))
+	}
+	return 0
+}
+
+func renderAppHealth(slug string, out api.AppHealthResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s: %s (%s) — %s\n", slug, out.Status, out.Phase, out.Summary)
 	_, _ = fmt.Fprintf(osStdout, "Evaluated: %s; scope: %s; valid for %ds\n", out.EvaluatedAt, out.Scope, out.ValidForSeconds)
+	renderAppHealthVerification(osStdout, slug, out)
 	for _, check := range out.Checks {
 		_, _ = fmt.Fprintf(osStdout, "  [%s] %s: %s\n", check.Status, check.Code, check.Detail)
 		if check.Reason != "" {

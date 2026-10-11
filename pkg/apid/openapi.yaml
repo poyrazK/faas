@@ -57458,6 +57458,11 @@ components:
       description: Persisted step status and action kind without customer values.
       required: [step_name, status, kind, attempt, retry_base]
       properties:
+        retry_eligible: { type: boolean, description: Advisory manual HTTP step retry eligibility using the captured graph and current quota. Absent means unavailable or ineligible. Actual retry rechecks state and quota. }
+        retry_reopened_steps:
+          type: array
+          description: Skipped dependency descendants that would reopen with this manual retry. Omitted when empty or ineligible.
+          items: { type: string }
         step_name: { type: string }
         status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead, skipped] }
         kind: { type: string, enum: [action, for_each, join, timer, event, callback, condition, unknown] }

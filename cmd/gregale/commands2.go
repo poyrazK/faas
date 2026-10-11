@@ -741,6 +741,7 @@ func cmdApp(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(a))
 		}
+		printAppReadContext(slug, *environment)
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
@@ -922,6 +923,7 @@ func cmdApp(args []string) int {
 		return 0
 	}
 
+	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
 		return printErr("Update failed", err)
@@ -929,7 +931,7 @@ func cmdApp(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
 	}
-	PrintOK(osStdout, "Updated")
+	printAppSettingsReceipt(slug, *environment, req)
 	if hint := requireAuthnStillOnHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
 	}
@@ -5274,7 +5276,7 @@ func createCronAndRender(ctx context.Context, client *Client, slug string, req a
 		target = "command " + formatCronCommand(c)
 	}
 	PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
-	_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
+	_, _ = fmt.Fprintf(osStdout, "  id: %s\nThe schedule is saved; this does not confirm a completed execution.\n\nTrigger now (POSIX shells):\n  %s crons run %s\n", c.ID, recoveryCLI(), recoveryArgument(c.ID))
 	return 0
 }
 
@@ -6633,6 +6635,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	if explain {
 		collector = newExplainCollector(slug, deployment)
 	}
+	printedLines := 0
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -6672,6 +6675,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
+			printedLines++
 			line := e.Data
 			if !jsonOutput {
 				line = formatRuntimeLogLine(e.Data)
@@ -6688,6 +6692,14 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
+		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
+		if deployment != "" {
+			next = recoveryCLI() + " deployment get " + recoveryArgument(deployment)
+		}
+		printEmptyResult("logs for app "+slug, fmt.Sprintf("deployment=%q; since=%q; level=%q; grep=%q; archive=%t", deployment, filter.Since, filter.Level, filter.Grep, archive != nil), next)
+		_, _ = fmt.Fprintln(osStdout, "No returned lines does not establish that the app emitted no logs; filters and retention may limit the result.")
 	}
 	return code
 }

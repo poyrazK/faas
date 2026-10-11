@@ -105,6 +105,16 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
+
+	_, _ = io.WriteString(w, `  if ($normalizedContext.Count -gt 1 -and $normalizedContext[1] -eq 'secrets') {
+    $secretWords = @($normalizedContext | Select-Object -Skip 1) + @($wordToComplete)
+    $secretNames = @(gregale @__gregaleProfileArgs completion secret-keys -- @secretWords 2>$null)
+    if ($LASTEXITCODE -eq 0) {
+      foreach ($name in $secretNames) { if ($name -ne '') { [System.Management.Automation.CompletionResult]::new($name, $name, 'ParameterValue', $name) } }
+      return
+    }
+  }
+`)
 	_, _ = fmt.Fprintln(w, "  $appSlugPosition = __gregaleAppSlugPosition $normalizedContext")
 	_, _ = fmt.Fprintln(w, "  if ($appSlugPosition) {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")

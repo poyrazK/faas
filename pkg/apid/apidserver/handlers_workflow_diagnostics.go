@@ -43,6 +43,10 @@ func (s *server) writeWorkflowRunDiagnostics(w http.ResponseWriter, r *http.Requ
 	if !s.workflowRuntimeEnabled {
 		result.Resume.Eligible = false
 		result.Resume.Blockers = append(result.Resume.Blockers, api.WorkflowRecoveryBlocker("runtime_disabled", ""))
+		for i := range result.Steps {
+			result.Steps[i].RetryEligible = false
+			result.Steps[i].RetryReopenedSteps = nil
+		}
 	}
 	writeJSON(w, http.StatusOK, result)
 }

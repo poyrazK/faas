@@ -35,7 +35,7 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  help                   Show this help message\n")
 	} else {
 		b.WriteString("Get started:\n")
-		for _, name := range []string{"start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+		for _, name := range []string{"menu", "start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
@@ -233,6 +233,8 @@ func run(args []string) (status int) {
 		return cmdDeployTarball(args[1:])
 	case "start":
 		return cmdStart(args[1:])
+	case "menu":
+		return cmdMenu(args[1:])
 	case "diff":
 		return environmentDiff(args[1:])
 	case "dev":
