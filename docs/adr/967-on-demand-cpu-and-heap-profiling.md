@@ -78,6 +78,35 @@ Node `Buffer` contents live outside the V8 heap and appear as `(external)`.
 `tracemalloc` costs Python throughput while tracing, so it runs only while a
 heap capture or continuous heap collection is active.
 
+### Automatic heap capture on memory pressure
+
+Leaks are rarely caught by hand before the OOM kill. While on-demand
+profiling is enabled for the deployment, guest-init samples `/proc/meminfo`
+every 2 s. When `MemAvailable` falls to 15% of `MemTotal` and a profile
+collector has polled the bridge in the last 2 s, it sends one
+memory-pressure report (guest event type `0x0A`: available, total and
+anonymous MiB) and re-arms only after availability recovers to 30%.
+`MemAvailable` counts reclaimable cache, so file-heavy workloads do not
+trigger, and it reflects the guest's real headroom regardless of kernel
+overhead.
+
+vmmd relays the report best-effort (no outbox: a lost report only means no
+automatic capture) to schedd's `ReportMemoryPressure` RPC. schedd queues a
+10 s heap capture on that instance with `trigger: memory_pressure` and a
+`trigger_detail`, under the same quota and single-active rules as manual
+captures plus at most one automatic capture per app per hour, and wakes its
+capture drain. Reports for parked instances, plans without profiling and
+instances owned by another scheduler are acknowledged and skipped.
+
+### Reading captures
+
+Capture views carry the same commit-pinned source links as continuous
+profiles: frames are linked to the capture deployment's recorded GitHub
+commit, with Go module and standard-library paths outside the repository
+left unlinked. The dashboard capture page renders a zoomable, searchable
+flamegraph per kind, the CLI prints source URLs, and continuous heap views
+are linked the same way.
+
 ### Continuous heap profiles
 
 `profiling.kinds: [cpu, heap]` adds heap snapshots once per window to

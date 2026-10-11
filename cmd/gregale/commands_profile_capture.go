@@ -95,11 +95,11 @@ func cmdDebugCaptures(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(list))
 	}
-	if _, err := fmt.Fprintln(osStdout, "ID\tSTATUS\tKINDS\tDURATION\tINSTANCE\tCREATED"); err != nil {
+	if _, err := fmt.Fprintln(osStdout, "ID\tSTATUS\tTRIGGER\tKINDS\tDURATION\tINSTANCE\tCREATED"); err != nil {
 		return printErr("Could not write captures", err)
 	}
 	for _, c := range list.Captures {
-		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%ds\t%s\t%s\n", c.ID, c.Status, strings.Join(c.Kinds, ","), c.DurationSeconds, c.InstanceID, c.CreatedAt.Format(time.RFC3339)); err != nil {
+		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%ds\t%s\t%s\n", c.ID, c.Status, profileCaptureTrigger(c), strings.Join(c.Kinds, ","), c.DurationSeconds, c.InstanceID, c.CreatedAt.Format(time.RFC3339)); err != nil {
 			return printErr("Could not write captures", err)
 		}
 	}
@@ -127,6 +127,9 @@ func printProfileCapture(c api.ProfileCapture) int {
 		return jsonOut(writeJSON(c))
 	}
 	_, err := fmt.Fprintf(osStdout, "Capture %s: %s\n", c.ID, c.Status)
+	if err == nil && c.Trigger == api.ProfileCaptureTriggerMemoryPressure {
+		_, err = fmt.Fprintf(osStdout, "Captured automatically on memory pressure: %s\n", c.TriggerDetail)
+	}
 	if err == nil && c.InstanceID != "" {
 		_, err = fmt.Fprintf(osStdout, "Instance %s, deployment %s, %d instrumented process(es)\n", c.InstanceID, c.DeploymentID, c.Processes)
 	}
@@ -209,11 +212,21 @@ func printProfileCaptureView(v api.ProfileCaptureView, top int) error {
 		if f.Line > 0 {
 			location = fmt.Sprintf("%s:%d", f.File, f.Line)
 		}
+		if f.Source != nil {
+			location = f.Source.URL
+		}
 		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", profileCaptureAmount(f.Self, v.Unit), profileCaptureAmount(f.Total, v.Unit), f.Name, location); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func profileCaptureTrigger(c api.ProfileCapture) string {
+	if c.Trigger == "" {
+		return api.ProfileCaptureTriggerManual
+	}
+	return c.Trigger
 }
 
 func profileCaptureAmount(v int64, unit string) string {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
@@ -65,7 +66,26 @@ func (s *server) getProfileCaptureView(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	view.Capture = capture
+	s.linkCaptureSources(r.Context(), acct, capture, &view)
 	writeJSON(w, http.StatusOK, view)
+}
+
+// linkCaptureSources links frames to the capture deployment's recorded
+// commit, exactly like continuous profiles. Captures without a deployment
+// (failed before reaching an instance) keep plain symbols.
+func (s *server) linkCaptureSources(ctx context.Context, acct state.Account, capture api.ProfileCapture, view *api.ProfileCaptureView) {
+	if capture.DeploymentID == "" {
+		return
+	}
+	app, err := s.store.AppByID(ctx, capture.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		return
+	}
+	dep, err := s.store.DeploymentByID(ctx, capture.DeploymentID)
+	if err != nil || dep.AppID != app.ID {
+		return
+	}
+	profiling.LinkCaptureSources(view, profileSourceProvenance(app, dep), app.Runtime)
 }
 
 // downloadProfileCapture serves the merged profile as gzip pprof for

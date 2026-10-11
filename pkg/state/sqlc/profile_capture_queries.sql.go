@@ -48,6 +48,25 @@ func (q *Queries) CountActiveProfileCaptures(ctx context.Context, db DBTX, appID
 	return count, err
 }
 
+const countRecentAutomaticProfileCaptures = `-- name: CountRecentAutomaticProfileCaptures :one
+SELECT count(*) FROM profile_captures
+WHERE app_id = $1::text::uuid AND capture->>'trigger' = $2::text
+  AND created_at >= $3::timestamptz
+`
+
+type CountRecentAutomaticProfileCapturesParams struct {
+	AppID   string
+	Trigger string
+	Since   pgtype.Timestamptz
+}
+
+func (q *Queries) CountRecentAutomaticProfileCaptures(ctx context.Context, db DBTX, arg CountRecentAutomaticProfileCapturesParams) (int64, error) {
+	row := db.QueryRow(ctx, countRecentAutomaticProfileCaptures, arg.AppID, arg.Trigger, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countRecentProfileCaptures = `-- name: CountRecentProfileCaptures :one
 SELECT count(*) FROM profile_captures
 WHERE account_id = $1::text::uuid AND created_at >= $2::timestamptz

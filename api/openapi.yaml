@@ -13194,7 +13194,7 @@ paths:
       tags: [apps]
       operationId: createProfileCapture
       summary: Capture CPU and/or heap profiles from a running instance now (ADR-967).
-      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour.
+      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
       requestBody:
         required: false
         content:
@@ -71230,6 +71230,8 @@ components:
         kinds: { type: array, items: { type: string, enum: [cpu, heap] } }
         duration_seconds: { type: integer }
         requested_instance_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, memory_pressure], description: Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory. }
+        trigger_detail: { type: string }
         instance_id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
         processes: { type: integer }
@@ -71263,6 +71265,7 @@ components:
         name: { type: string }
         file: { type: string }
         line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
         value: { type: integer, format: int64 }
         children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
     ProfileCaptureView:
@@ -71277,6 +71280,7 @@ components:
         functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
         flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
         empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
     ProfileHeapResponse:
       description: Continuous live heap near query.end (ADR-967).
       type: object
@@ -71290,6 +71294,7 @@ components:
         functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
         flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
         empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object

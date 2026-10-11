@@ -12,9 +12,9 @@
 <label>Instance (optional)<input type="text" name="instance_id" placeholder="earliest running instance" pattern="[0-9a-fA-F-]{36}"></label>
 <button type="submit">Start capture</button>
 </form>
-<p class="muted">The app must be running: captures do not wake a parked app. One capture per app runs at a time; captures are kept for 7 days.</p>
-{{if .Captures}}<table><thead><tr><th>Started</th><th>Status</th><th>Kinds</th><th>Duration</th><th>Instance</th></tr></thead><tbody>
-{{range .Captures}}<tr><td><a href="/dashboard/apps/{{$.AppSlug}}/profiles/captures/{{.ID}}">{{.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}</a></td><td>{{.Status}}</td><td>{{range $i, $k := .Kinds}}{{if $i}}, {{end}}{{$k}}{{end}}</td><td>{{.DurationSeconds}}s</td><td><code>{{.InstanceID}}</code></td></tr>
+<p class="muted">The app must be running: captures do not wake a parked app. One capture per app runs at a time; captures are kept for 7 days. When an instance runs low on memory, Gregale captures its heap automatically (at most once per hour per app).</p>
+{{if .Captures}}<table><thead><tr><th>Started</th><th>Status</th><th>Trigger</th><th>Kinds</th><th>Duration</th><th>Instance</th></tr></thead><tbody>
+{{range .Captures}}<tr><td><a href="/dashboard/apps/{{$.AppSlug}}/profiles/captures/{{.ID}}">{{.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}</a></td><td>{{.Status}}</td><td>{{if eq .Trigger "memory_pressure"}}memory pressure{{else}}manual{{end}}</td><td>{{range $i, $k := .Kinds}}{{if $i}}, {{end}}{{$k}}{{end}}</td><td>{{.DurationSeconds}}s</td><td><code>{{.InstanceID}}</code></td></tr>
 {{end}}</tbody></table>{{end}}
 </section>
 {{end}}

@@ -265,6 +265,22 @@ What a heap capture shows depends on the runtime:
 Memory that is allocated during a capture and still held at its end is the
 shape of a leak. Repeat a capture later and compare the top functions.
 
+The dashboard capture page shows a flamegraph per kind (click a frame to zoom,
+search by function name) and links frames to the deployment's recorded GitHub
+commit, like continuous profiles. `gregale debug captures` prints those links.
+
+### Automatic heap capture when memory runs low
+
+When an instance with collectors runs low on memory (the kernel's available
+memory falls to 15% of the guest's total), Gregale captures its heap for 10
+seconds automatically, before the workload is killed for running out of
+memory. These captures show `trigger: memory_pressure` with a detail such as
+"guest memory available fell to 31 MiB of 246 MiB", in the dashboard and in
+`gregale debug captures`. Gregale takes at most one automatic capture per app
+per hour and none while another capture of the app is running; they count
+toward the account's hourly capture limit. Reclaimable file cache does not
+count as used memory, so file-heavy workloads are not mistaken for leaks.
+
 The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
 `kinds`, `duration_seconds` and `instance_id`; poll
 `GET /v1/apps/{slug}/profiles/captures/{id}` until `status` is `ready` or

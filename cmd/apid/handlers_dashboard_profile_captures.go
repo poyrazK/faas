@@ -121,6 +121,7 @@ func (s *server) profileCaptureKinds(r *http.Request, acct state.Account, app st
 			out = append(out, dashboard.ProfileCaptureKindView{Kind: kind, Error: "The profile exceeds what the dashboard can display; download the pprof file instead."})
 			continue
 		}
+		s.linkCaptureSources(r.Context(), acct, capture, &view)
 		out = append(out, dashboard.BuildProfileCaptureKind(app.Slug, capture.ID, view))
 	}
 	return out

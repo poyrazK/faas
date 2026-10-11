@@ -39,7 +39,9 @@ func TestProfileCapturePanelAndPageRender(t *testing.T) {
 		}
 	}
 
-	view := api.ProfileCaptureView{Kind: "heap", Unit: "bytes", Total: 3 << 20, Functions: []api.ProfileCaptureFunction{{Name: "<script>grow", File: "app.js", Line: 4, Self: 2 << 20, Total: 3 << 20}}}
+	src := &api.ProfileSourceLocation{URL: "https://github.com/acme/app/blob/" + strings.Repeat("a", 40) + "/app.js#L4", Path: "app.js", Line: 4}
+	view := api.ProfileCaptureView{Kind: "heap", Unit: "bytes", Total: 3 << 20, Functions: []api.ProfileCaptureFunction{{Name: "<script>grow", File: "app.js", Line: 4, Self: 2 << 20, Total: 3 << 20, Source: src}},
+		Flamegraph: &api.ProfileCaptureStack{Name: "all", Value: 3 << 20, Children: []*api.ProfileCaptureStack{{Name: "<script>grow", File: "app.js", Line: 4, Source: src, Value: 3 << 20, Children: []*api.ProfileCaptureStack{}}}}}
 	page := ProfileCapturePage{AppSlug: "profile-app", Capture: capture, Kinds: []ProfileCaptureKindView{BuildProfileCaptureKind("profile-app", capture.ID, view)}}
 	rec = httptest.NewRecorder()
 	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture", Data: page}); err != nil {
@@ -49,7 +51,10 @@ func TestProfileCapturePanelAndPageRender(t *testing.T) {
 	if strings.Contains(body, "<script>grow") || !strings.Contains(body, "&lt;script&gt;grow") {
 		t.Fatal("function symbol was not escaped")
 	}
-	for _, want := range []string{"3.00 MiB", "2.00 MiB", "app.js:4", "/pprof?kind=heap", `value="66.7"`} {
+	if strings.Contains(body, `"<script>grow"`) {
+		t.Fatal("flamegraph JSON was not escaped for the script context")
+	}
+	for _, want := range []string{"3.00 MiB", "2.00 MiB", "app.js:4", "/pprof?kind=heap", `value="66.7"`, `data-flamegraph="heap"`, `href="` + src.URL + `"`, `"unit":"bytes"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("capture page missing %q", want)
 		}

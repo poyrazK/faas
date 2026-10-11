@@ -16,6 +16,9 @@ import (
 var (
 	ErrProfileCaptureQuota  = errors.New("profile capture limit reached for this account")
 	ErrProfileCaptureActive = errors.New("a profile capture is already queued or running for this app")
+	// ErrProfileCaptureRecent rejects an automatic capture inside the
+	// per-app minimum interval for its trigger.
+	ErrProfileCaptureRecent = errors.New("an automatic profile capture ran recently for this app")
 )
 
 // ProfileCaptureBlob is one collector's unparsed pprof profile.
@@ -48,6 +51,10 @@ type ProfileCaptureQueue interface {
 	FinishProfileCapture(ctx context.Context, id string, result api.ProfileCapture, blobs []ProfileCaptureBlob, now time.Time) error
 	// ExpireProfileCaptures fails interrupted captures and deletes expired ones.
 	ExpireProfileCaptures(ctx context.Context, now time.Time) (int64, error)
+	// QueueAutomaticProfileCapture queues a platform-triggered capture under
+	// the same quota and single-active rules as CreateProfileCapture, plus a
+	// per-app minimum interval for c.Trigger.
+	QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error
 }
 
 var (
@@ -69,8 +76,13 @@ const profileCaptureInterruptedReason = "capture was interrupted before it compl
 // profileCaptureRequestDoc is the stored request; lifecycle columns are
 // merged on read.
 func profileCaptureRequestDoc(c api.ProfileCapture) ([]byte, error) {
+	trigger := c.Trigger
+	if trigger == "" {
+		trigger = api.ProfileCaptureTriggerManual
+	}
 	return json.Marshal(map[string]any{"kinds": c.Kinds, "duration_seconds": c.DurationSeconds,
-		"requested_instance_id": c.RequestedInstanceID, "processes": 0, "profiles": []api.ProfileCaptureProfile{}})
+		"requested_instance_id": c.RequestedInstanceID, "trigger": trigger, "trigger_detail": c.TriggerDetail,
+		"processes": 0, "profiles": []api.ProfileCaptureProfile{}})
 }
 
 // profileCaptureResultDoc is merged into the stored document on finish.

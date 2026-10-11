@@ -61,5 +61,6 @@ func (s *server) getAppHeapProfile(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("profile exceeds supported query bounds"))
 		return
 	}
+	profiling.LinkCaptureSources(&view, profileSourceProvenance(app, dep), q.Runtime)
 	writeJSON(w, http.StatusOK, api.ProfileHeapResponse{Query: q, ProfileCaptureView: view})
 }

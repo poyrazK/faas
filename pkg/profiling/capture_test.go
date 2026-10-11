@@ -4,10 +4,36 @@ import (
 	"bytes"
 	"runtime"
 	"runtime/pprof"
+	"strings"
 	"testing"
 
 	"github.com/google/pprof/profile"
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestLinkCaptureSourcesFramesAndFunctions(t *testing.T) {
+	view := api.ProfileCaptureView{Kind: "heap", Unit: "bytes",
+		Functions:  []api.ProfileCaptureFunction{{Name: "grow", File: "/app/src/cache.js", Line: 12}, {Name: "fs", File: "node:fs", Line: 3}},
+		Flamegraph: &api.ProfileCaptureStack{Name: "all", Children: []*api.ProfileCaptureStack{{Name: "grow", File: "/app/src/cache.js", Line: 12}}}}
+	LinkCaptureSources(&view, sourceOrigin(), "node22")
+	if view.Source == nil || !view.Source.Available {
+		t.Fatalf("capture provenance missing: %+v", view.Source)
+	}
+	if got := view.Functions[0].Source; got == nil || got.Path != "apps/api/src/cache.js" || !strings.HasSuffix(got.URL, "#L12") {
+		t.Fatalf("function link = %+v", got)
+	}
+	if view.Functions[1].Source != nil {
+		t.Fatal("runtime-internal frame linked")
+	}
+	if view.Flamegraph.Children[0].Source == nil || view.Flamegraph.Source != nil {
+		t.Fatal("flamegraph frames not linked like functions")
+	}
+	goView := api.ProfileCaptureView{Functions: []api.ProfileCaptureFunction{{Name: "runtime.mallocgc", File: "runtime/malloc.go", Line: 9}}}
+	LinkCaptureSources(&goView, sourceOrigin(), "go124")
+	if goView.Functions[0].Source != nil {
+		t.Fatal("Go standard-library path linked to the repository")
+	}
+}
 
 func heapProfile(t *testing.T, sampleType string, fn string, bytes int64) []byte {
 	t.Helper()

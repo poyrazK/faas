@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -34,6 +35,17 @@ func (m *MemStore) profileCaptureLocked(accountID, appID, id string) (*memProfil
 }
 
 func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture) error {
+	return m.insertProfileCapture(accountID, appID, c, 0)
+}
+
+func (m *MemStore) QueueAutomaticProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error {
+	if c.Trigger == "" || c.Trigger == api.ProfileCaptureTriggerManual || minInterval <= 0 {
+		return fmt.Errorf("automatic profile capture needs a trigger and minimum interval")
+	}
+	return m.insertProfileCapture(accountID, appID, c, minInterval)
+}
+
+func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.profileInvestigationOwnedLocked(accountID, appID) {
@@ -48,6 +60,13 @@ func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID stri
 			return ErrProfileCaptureActive
 		}
 	}
+	if automaticInterval > 0 {
+		for _, row := range m.profileCaptures {
+			if row.capture.AppID == appID && row.capture.Trigger == c.Trigger && !row.capture.CreatedAt.Before(c.CreatedAt.Add(-automaticInterval)) {
+				return ErrProfileCaptureRecent
+			}
+		}
+	}
 	if recent >= api.ProfileCaptureMaxPerAccountHour {
 		return ErrProfileCaptureQuota
 	}
@@ -56,6 +75,9 @@ func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID stri
 	}
 	stored := copyProfileCapture(c)
 	stored.AppID, stored.Status = appID, api.ProfileCaptureQueued
+	if stored.Trigger == "" {
+		stored.Trigger = api.ProfileCaptureTriggerManual
+	}
 	stored.Profiles, stored.CompletedAt = []api.ProfileCaptureProfile{}, nil
 	m.profileCaptures[c.ID] = &memProfileCapture{accountID: accountID, capture: stored}
 	return nil

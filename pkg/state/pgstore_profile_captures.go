@@ -12,6 +12,20 @@ import (
 )
 
 func (s *PgStore) CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture) error {
+	return s.insertProfileCapture(ctx, accountID, appID, c, 0)
+}
+
+func (s *PgStore) QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error {
+	if c.Trigger == "" || c.Trigger == api.ProfileCaptureTriggerManual || minInterval <= 0 {
+		return fmt.Errorf("automatic profile capture needs a trigger and minimum interval")
+	}
+	return s.insertProfileCapture(ctx, accountID, appID, c, minInterval)
+}
+
+// insertProfileCapture enforces, under the app row lock, the account quota,
+// one active capture per app and, for automatic captures, the per-trigger
+// minimum interval.
+func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration) error {
 	doc, err := profileCaptureRequestDoc(c)
 	if err != nil {
 		return fmt.Errorf("encode profile capture: %w", err)
@@ -39,6 +53,15 @@ func (s *PgStore) CreateProfileCapture(ctx context.Context, accountID, appID str
 	}
 	if active > 0 {
 		return ErrProfileCaptureActive
+	}
+	if automaticInterval > 0 {
+		n, err := q.CountRecentAutomaticProfileCaptures(ctx, tx, sqlc.CountRecentAutomaticProfileCapturesParams{AppID: appID, Trigger: c.Trigger, Since: pgtypeFromTime(c.CreatedAt.Add(-automaticInterval))})
+		if err != nil {
+			return fmt.Errorf("count automatic profile captures: %w", err)
+		}
+		if n > 0 {
+			return ErrProfileCaptureRecent
+		}
 	}
 	if err := q.InsertProfileCapture(ctx, tx, sqlc.InsertProfileCaptureParams{ID: c.ID, AppID: appID, AccountID: accountID, Capture: doc,
 		CreatedAt: pgtypeFromTime(c.CreatedAt), ExpiresAt: pgtypeFromTime(c.ExpiresAt)}); err != nil {

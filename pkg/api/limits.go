@@ -162,6 +162,15 @@ const (
 	ProfileCaptureMaxProfileBytes = 3 << 20
 	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
 	ProfileCaptureMaxPerAccountHour = 60
+	// Automatic heap captures on memory pressure (ADR-967). guest-init reports
+	// pressure when MemAvailable falls to the threshold share of MemTotal and
+	// re-arms once it recovers above the re-arm share.
+	ProfileMemoryPressureAvailablePercent      = 15
+	ProfileMemoryPressureRearmAvailablePercent = 30
+	ProfileMemoryPressurePollInterval          = 2 * time.Second
+	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
+	ProfileCaptureAutomaticMinInterval = time.Hour
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
 	// ProfileCaptureMaxListed bounds GET /profiles/captures.

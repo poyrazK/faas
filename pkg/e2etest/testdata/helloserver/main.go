@@ -162,6 +162,8 @@ func main() {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
 	mux.HandleFunc("/work", serveWork)
+	mux.HandleFunc("/grow", serveGrow)
+	mux.HandleFunc("/release", serveRelease)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)

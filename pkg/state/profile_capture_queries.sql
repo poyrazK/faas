@@ -14,6 +14,11 @@ WHERE account_id = sqlc.arg(account_id)::text::uuid AND created_at >= sqlc.arg(s
 SELECT count(*) FROM profile_captures
 WHERE app_id = sqlc.arg(app_id)::text::uuid AND status IN ('queued', 'capturing');
 
+-- name: CountRecentAutomaticProfileCaptures :one
+SELECT count(*) FROM profile_captures
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND capture->>'trigger' = sqlc.arg(trigger)::text
+  AND created_at >= sqlc.arg(since)::timestamptz;
+
 -- name: InsertProfileCapture :exec
 INSERT INTO profile_captures (id, app_id, account_id, status, capture, created_at, expires_at)
 VALUES (sqlc.arg(id)::text::uuid, sqlc.arg(app_id)::text::uuid, sqlc.arg(account_id)::text::uuid, 'queued', sqlc.arg(capture)::jsonb, sqlc.arg(created_at)::timestamptz, sqlc.arg(expires_at)::timestamptz);

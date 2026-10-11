@@ -662,6 +662,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		// 1s poll tick on next wake.
 		defer func() { oomCancel() }()
 	}
+	// ADR-967: report memory pressure so the control plane can capture the
+	// heap before an OOM kill. Only deployments with on-demand profiling
+	// have collectors to capture from.
+	if m.ProfilingOnDemand {
+		pressureCtx, pressureCancel := context.WithCancel(context.Background())
+		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+		defer pressureCancel()
+	}
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}

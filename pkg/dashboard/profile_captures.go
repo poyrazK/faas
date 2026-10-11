@@ -27,18 +27,23 @@ type ProfileCapturePage struct {
 	Refresh bool
 }
 
+// ProfileCaptureKindView is one kind's table and flamegraph. Flamegraph and
+// Unit are serialized into the page for the inline renderer.
 type ProfileCaptureKindView struct {
-	Kind        string
-	Total       string
-	Rows        []ProfileCaptureRow
-	Empty       bool
-	Error       string
-	DownloadURL string
+	Kind        string                   `json:"kind"`
+	Unit        string                   `json:"unit"`
+	Total       string                   `json:"-"`
+	Rows        []ProfileCaptureRow      `json:"-"`
+	Empty       bool                     `json:"empty"`
+	Error       string                   `json:"-"`
+	DownloadURL string                   `json:"-"`
+	Flamegraph  *api.ProfileCaptureStack `json:"flamegraph,omitempty"`
 }
 
 type ProfileCaptureRow struct {
 	Name, Location, Self, Total string
 	SelfPercent                 float64
+	SourceURL                   string
 }
 
 // ProfileCaptureTopFunctions bounds the dashboard function table.
@@ -50,8 +55,11 @@ func ProfileCaptureURL(slug, id string) string {
 
 // BuildProfileCaptureKind summarizes one merged kind for the capture page.
 func BuildProfileCaptureKind(slug, id string, v api.ProfileCaptureView) ProfileCaptureKindView {
-	out := ProfileCaptureKindView{Kind: v.Kind, Total: FormatProfileAmount(v.Total, v.Unit), Empty: v.Empty,
+	out := ProfileCaptureKindView{Kind: v.Kind, Unit: v.Unit, Total: FormatProfileAmount(v.Total, v.Unit), Empty: v.Empty,
 		DownloadURL: ProfileCaptureURL(slug, id) + "/pprof?" + url.Values{"kind": {v.Kind}}.Encode()}
+	if !v.Empty {
+		out.Flamegraph = v.Flamegraph
+	}
 	for i, f := range v.Functions {
 		if i >= ProfileCaptureTopFunctions {
 			break
@@ -61,6 +69,9 @@ func BuildProfileCaptureKind(slug, id string, v api.ProfileCaptureView) ProfileC
 			location = fmt.Sprintf("%s:%d", f.File, f.Line)
 		}
 		row := ProfileCaptureRow{Name: f.Name, Location: location, Self: FormatProfileAmount(f.Self, v.Unit), Total: FormatProfileAmount(f.Total, v.Unit)}
+		if f.Source != nil {
+			row.SourceURL = f.Source.URL
+		}
 		if v.Total > 0 {
 			row.SelfPercent = 100 * float64(f.Self) / float64(v.Total)
 		}

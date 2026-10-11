@@ -8,6 +8,13 @@ const (
 	ProfileKindHeap = "heap"
 )
 
+// Capture triggers (ADR-967): a person or API client, or guest-init
+// reporting memory pressure on the instance.
+const (
+	ProfileCaptureTriggerManual         = "manual"
+	ProfileCaptureTriggerMemoryPressure = "memory_pressure"
+)
+
 // On-demand profile capture statuses (ADR-967).
 const (
 	ProfileCaptureQueued    = "queued"
@@ -37,21 +44,25 @@ type ProfileCaptureProfile struct {
 // Profiles list means the instance has no collector (custom image or a Go
 // app that does not call guestprofiling.Start).
 type ProfileCapture struct {
-	ID                  string                  `json:"id"`
-	AppID               string                  `json:"app_id"`
-	Status              string                  `json:"status"`
-	Kinds               []string                `json:"kinds"`
-	DurationSeconds     int                     `json:"duration_seconds"`
-	RequestedInstanceID string                  `json:"requested_instance_id,omitempty"`
-	InstanceID          string                  `json:"instance_id,omitempty"`
-	DeploymentID        string                  `json:"deployment_id,omitempty"`
-	Processes           int                     `json:"processes"`
-	Dropped             int                     `json:"dropped,omitempty"`
-	Reason              string                  `json:"reason,omitempty"`
-	Profiles            []ProfileCaptureProfile `json:"profiles"`
-	CreatedAt           time.Time               `json:"created_at"`
-	CompletedAt         *time.Time              `json:"completed_at,omitempty"`
-	ExpiresAt           time.Time               `json:"expires_at"`
+	ID                  string   `json:"id"`
+	AppID               string   `json:"app_id"`
+	Status              string   `json:"status"`
+	Kinds               []string `json:"kinds"`
+	DurationSeconds     int      `json:"duration_seconds"`
+	RequestedInstanceID string   `json:"requested_instance_id,omitempty"`
+	// Trigger is manual or memory_pressure; TriggerDetail explains an
+	// automatic capture ("guest memory available fell to 31 MiB of 246 MiB").
+	Trigger       string                  `json:"trigger,omitempty"`
+	TriggerDetail string                  `json:"trigger_detail,omitempty"`
+	InstanceID    string                  `json:"instance_id,omitempty"`
+	DeploymentID  string                  `json:"deployment_id,omitempty"`
+	Processes     int                     `json:"processes"`
+	Dropped       int                     `json:"dropped,omitempty"`
+	Reason        string                  `json:"reason,omitempty"`
+	Profiles      []ProfileCaptureProfile `json:"profiles"`
+	CreatedAt     time.Time               `json:"created_at"`
+	CompletedAt   *time.Time              `json:"completed_at,omitempty"`
+	ExpiresAt     time.Time               `json:"expires_at"`
 }
 
 // Done reports whether the capture reached a terminal status.
@@ -78,6 +89,7 @@ type ProfileCaptureStack struct {
 	Name     string                 `json:"name"`
 	File     string                 `json:"file,omitempty"`
 	Line     int64                  `json:"line,omitempty"`
+	Source   *ProfileSourceLocation `json:"source,omitempty"`
 	Value    int64                  `json:"value"`
 	Children []*ProfileCaptureStack `json:"children"`
 }
@@ -102,4 +114,7 @@ type ProfileCaptureView struct {
 	Functions  []ProfileCaptureFunction `json:"functions"`
 	Flamegraph *ProfileCaptureStack     `json:"flamegraph"`
 	Empty      bool                     `json:"empty"`
+	// Source is the capture deployment's recorded Git provenance; function
+	// and frame Source links use its commit.
+	Source *ProfileSource `json:"source,omitempty"`
 }

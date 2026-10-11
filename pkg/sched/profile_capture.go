@@ -2,11 +2,16 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/profileproto"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -50,6 +55,60 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 		return ProfileCaptureOutcome{}, err
 	}
 	return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID, Result: result}, nil
+}
+
+// QueueMemoryPressureCapture turns a guest memory-pressure report into one
+// automatic heap capture on that instance (ADR-967), so the heap is
+// profiled before an OOM kill. It returns queued=false with a reason when
+// the capture is skipped: rate limited, already running, not running, or
+// the plan lacks profiling.
+func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) (bool, string, error) {
+	queue, ok := e.store.(state.ProfileCaptureQueue)
+	if !ok {
+		return false, "profile capture storage is unavailable", nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return false, "", err
+	}
+	if ins.State != string(state.StateRunning) {
+		return false, "instance is not running", nil
+	}
+	app, err := e.store.AppByID(ctx, ins.AppID)
+	if err != nil {
+		return false, "", err
+	}
+	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return false, "", err
+	}
+	if limits, ok := api.LimitsFor(acct.Plan); !ok || !limits.Profiling.Enabled {
+		return false, "plan does not include profiling", nil
+	}
+	now := time.Now().UTC()
+	capture := api.ProfileCapture{ID: uuid.NewString(), AppID: app.ID, Kinds: []string{api.ProfileKindHeap},
+		DurationSeconds: int(api.ProfileCaptureAutomaticDuration / time.Second), RequestedInstanceID: ins.ID,
+		Trigger:       api.ProfileCaptureTriggerMemoryPressure,
+		TriggerDetail: fmt.Sprintf("guest memory available fell to %d MiB of %d MiB (%d MiB anonymous)", availableMB, totalMB, anonMB),
+		CreatedAt:     now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
+	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval); {
+	case errors.Is(err, state.ErrProfileCaptureRecent):
+		return false, "an automatic capture ran for this app within the minimum interval", nil
+	case errors.Is(err, state.ErrProfileCaptureActive):
+		return false, "a capture is already queued or running for this app", nil
+	case errors.Is(err, state.ErrProfileCaptureQuota):
+		return false, "the account's hourly capture quota is used", nil
+	case err != nil:
+		return false, "", err
+	}
+	if e.notif != nil {
+		payload, _ := json.Marshal(map[string]string{"capture_id": capture.ID})
+		if err := e.notif.Notify(ctx, db.NotifyProfileCapture, string(payload)); err != nil {
+			// The queued row is the source of truth; the safety tick claims it.
+			e.log.Warn("sched: profile_capture: notify failed", "capture_id", capture.ID, "err", err)
+		}
+	}
+	return true, "", nil
 }
 
 func pickProfileInstance(rows []state.Instance, instanceID string) (state.Instance, bool) {

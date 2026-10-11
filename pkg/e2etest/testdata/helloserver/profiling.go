@@ -45,6 +45,42 @@ func profileFixtureRetain(n int) {
 	}
 }
 
+var grown [][]byte
+
+const maxGrownMB = 512
+
+//go:noinline
+func profileFixtureGrow(mb int) int {
+	retainedMu.Lock()
+	defer retainedMu.Unlock()
+	for i := 0; i < mb && len(grown) < maxGrownMB; i++ {
+		b := make([]byte, 1<<20)
+		// Touch every page so the guest counts the memory as used.
+		for j := 0; j < len(b); j += 4096 {
+			b[j] = 1
+		}
+		grown = append(grown, b)
+	}
+	return len(grown)
+}
+
+// serveGrow retains N more MiB to drive guest memory pressure:
+// GET /grow?mb=4. GET /release drops everything grown.
+func serveGrow(w http.ResponseWriter, r *http.Request) {
+	mb, err := strconv.Atoi(r.URL.Query().Get("mb"))
+	if err != nil || mb < 1 || mb > 64 {
+		mb = 4
+	}
+	_, _ = w.Write([]byte(strconv.Itoa(profileFixtureGrow(mb)) + "\n"))
+}
+
+func serveRelease(w http.ResponseWriter, _ *http.Request) {
+	retainedMu.Lock()
+	grown = nil
+	retainedMu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // serveWork burns CPU and retains heap so captures have known hot frames:
 // GET /work?ms=50&retain=8.
 func serveWork(w http.ResponseWriter, r *http.Request) {
