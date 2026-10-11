@@ -155,6 +155,7 @@ WRAPPER_MODULES = (
     "commit.py",
     "operations_runtime.py",
     "job_operations_runtime.py",
+    "object_storage_runtime.py",
     "operations.py",
     "_operation_contract.py",
     "customer_operation_schema.sql",

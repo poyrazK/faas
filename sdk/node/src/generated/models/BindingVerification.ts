@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { BindingVerificationCheck } from './BindingVerificationCheck.js';
 /**
- * Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification checks bucket-list read access only; resident application adoption is not checked.
+ * Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
  */
 export type BindingVerification = {
   /**

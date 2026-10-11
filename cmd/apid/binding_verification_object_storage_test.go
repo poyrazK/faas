@@ -16,7 +16,7 @@ import (
 
 const passedObjectStorageVerification = `{"prefix":"ASSETS","environment":{"status":"passed","detail":"PRIVATE_DETAIL"},"configuration":{"status":"passed"},"connection":{"status":"passed"},"authorization":{"status":"passed"},"bucket_access":{"status":"passed"}}`
 
-func readyObjectStorageVerificationBinding(t *testing.T, e testEnv, app state.App, scope string) state.ObjectS3Credential {
+func readyObjectStorageVerificationBinding(t *testing.T, e testEnv, app state.App, scope string, permissions ...string) state.ObjectS3Credential {
 	t.Helper()
 	ctx := context.Background()
 	bucketID := uuid.NewString()
@@ -39,6 +39,9 @@ func readyObjectStorageVerificationBinding(t *testing.T, e testEnv, app state.Ap
 	credential := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: e.acct.ID, BucketID: bucket.ID,
 		AccessKeyID: access, SecretSealed: []byte(secret), KID: "age1test", Label: "compute", Permission: "read", Status: "active",
 		ManagedAppID: app.ID, ManagedScope: scope, ManagedPrefix: "ASSETS"}
+	if len(permissions) > 0 {
+		credential.Permission = permissions[0]
+	}
 	request := state.ObjectS3ComputeBindingCreateRequest{Credential: credential, MaxCredentialsPerBucket: 10, MaxSecretsPerApp: 30}
 	for _, suffix := range []string{"_ENDPOINT", "_REGION", "_BUCKET", "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY", "_ADDRESSING_STYLE"} {
 		request.Secrets = append(request.Secrets, state.AppSecret{AccountID: e.acct.ID, AppID: app.ID, Scope: scope,

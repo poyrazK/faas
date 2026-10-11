@@ -159,7 +159,7 @@ func renderBindingCheck(report bindingcheck.Report) {
 	for _, warning := range report.Warnings {
 		renderBindingCheckFinding("Warning", warning)
 	}
-	_, _ = fmt.Fprintln(osStdout, "This checks recorded probe evidence and instance timestamps. Application acknowledgements, when required, are version-bound self-attestations. It does not confirm resident credential use or application readiness; object-storage evidence covers bucket-list read access only.")
+	_, _ = fmt.Fprintln(osStdout, "This checks recorded probe evidence and instance timestamps. Application acknowledgements, when required, are version-bound self-attestations. It does not confirm resident credential use or application readiness; object-storage evidence lists the operations checked; write probes require explicit opt-in.")
 }
 
 func renderBindingCheckFinding(label string, finding bindingcheck.Finding) {

@@ -306,6 +306,9 @@ Compute remains stateless: this binding supplies S3 SDK configuration, not a
 persistent filesystem mount. The app must still have outbound access to
 `s3.gregale.dev` under its egress policy.
 
+See [object storage from compute workloads](object-storage-compute.md) for SDK
+runtime helpers, atomic credential reload and permission-aware write canaries.
+
 ### Release gates and staging smoke
 
 Run the read-only release preflight before promoting a release. It checks that

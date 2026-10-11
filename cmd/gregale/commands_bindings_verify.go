@@ -69,11 +69,12 @@ func cmdBindingsVerify(args []string) int {
 	all := fs.Bool("all", false, "verify services, managed PostgreSQL, object storage and configured outbound bindings")
 	postgresKey := fs.String("postgres", "", "verify a managed PostgreSQL binding by environment key")
 	objectStoragePrefix := fs.String("object-storage", "", "verify an object-storage binding by environment prefix (read access only)")
+	objectStorageWrite := fs.Bool("object-storage-write", false, "opt into a tiny upload and cleanup; also verify download for read/write bindings")
 	outboundID := fs.String("outbound", "", "verify a configured outbound integration by UUID")
 	deployment := fs.String("deployment", "", "exact live deployment id or vN revision to verify, including zero-traffic candidates")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
-	flagArgs, positionals := splitArgsForFlags(args, "all")
+	flagArgs, positionals := splitArgsForFlags(args, "all", "object-storage-write")
 	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 {
 		printBindingsVerifyUsage()
 		return 1
@@ -95,11 +96,11 @@ func cmdBindingsVerify(args []string) int {
 		}
 		outboundValue = id.String()
 	}
-	invalidSelection := selections > 1
+	invalidSelection := selections > 1 || *objectStorageWrite && objectStoragePrefixValue == ""
 	if selections > 0 {
 		invalidSelection = invalidSelection || len(positionals) != 1
 	} else {
-		invalidSelection = len(positionals) != 2
+		invalidSelection = invalidSelection || len(positionals) != 2
 	}
 	if invalidSelection {
 		printBindingsVerifyUsage()
@@ -139,7 +140,7 @@ func cmdBindingsVerify(args []string) int {
 		return runOutboundBindingProbe(context.Background(), probeClient, slug, outboundValue, *pollInterval, *waitTimeout)
 	}
 	if objectStoragePrefixValue != "" {
-		return runObjectStorageBindingProbe(context.Background(), probeClient, slug, objectStoragePrefixValue, *pollInterval, *waitTimeout)
+		return runObjectStorageBindingProbeWithWrite(context.Background(), probeClient, slug, objectStoragePrefixValue, *objectStorageWrite, *pollInterval, *waitTimeout)
 	}
 	return runServiceBindingProbe(context.Background(), probeClient, slug, service, *pollInterval, *waitTimeout)
 }

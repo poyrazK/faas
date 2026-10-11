@@ -54,7 +54,8 @@ func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (ma
 }
 
 func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Account, app state.App, dep state.Deployment, request api.ResolvedCreateAppTaskRequest) (*state.BindingVerificationPin, error) {
-	if request.CommandShell || len(request.Command) != 2 {
+	write := api.IsObjectStorageWriteProbeCommand(request.Command, request.CommandShell)
+	if !write && (request.CommandShell || len(request.Command) != 2) {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), bindingInventoryReadTimeout)
@@ -84,7 +85,7 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 		if len(section.issues) > 0 {
 			return nil, errors.New("binding metadata unavailable")
 		}
-	case api.AppTaskObjectStorageBindingProbeCommand:
+	case api.AppTaskObjectStorageBindingProbeCommand, api.AppTaskObjectStorageWriteProbeCommand:
 		if !middleware.HasScope(r, api.ScopesStorageManageSurface...) {
 			return nil, nil
 		}
@@ -105,13 +106,56 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 			matches = item.Name == selection
 		}
 		if matches {
+			mode := ""
+			if write {
+				// Pin the current binding permission, not a caller's broader claim.
+				if item.Access != request.Command[2] || !api.ValidObjectStorageWriteProbeMode(item.Access) || item.Scope != scope {
+					return nil, nil
+				}
+				allowed, err := s.objectStorageWriteProbeAllowed(ctx, acct.ID, app.ID, item.Name, scope)
+				if err != nil {
+					return nil, err
+				}
+				if !allowed {
+					return nil, nil
+				}
+				mode = item.Access
+			}
 			// The command selects a service name, while its public inventory key is an env key.
 			base := section.revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)]
 			return &state.BindingVerificationPin{Type: item.Type, Binding: selection,
-				Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration}, nil
+				Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration, ObjectStorageMode: mode}, nil
 		}
 	}
 	return nil, nil // A generic task can probe an unmanaged env key; it supplies no binding evidence.
+}
+
+// Do not deliberately create a temporary object in a bucket where its cleanup
+// may be prohibited by retention. This preflight does not bypass or freeze a
+// provider's policy; cleanup still has to succeed at execution time.
+func (s *server) objectStorageWriteProbeAllowed(ctx context.Context, accountID, appID, name, scope string) (bool, error) {
+	buckets, ok := s.store.(state.ObjectBucketStore)
+	locks, lockOK := s.store.(state.ObjectBucketObjectLockStore)
+	if !ok || !lockOK {
+		return false, errors.New("object-storage cleanup policy unavailable")
+	}
+	rows, err := buckets.ListObjectBuckets(ctx, accountID, appID)
+	if err != nil {
+		return false, err
+	}
+	for _, bucket := range rows {
+		if bucket.Name != name || bucket.Scope != scope || bucket.State != "ready" {
+			continue
+		}
+		lock, err := locks.GetObjectBucketObjectLock(ctx, accountID, appID, bucket.ID)
+		if err != nil {
+			return false, err
+		}
+		return lock.State == "ready" && !lock.EnabledRequired && !lock.NativeEnabledObserved &&
+			(lock.DesiredConfiguration == nil || !lock.DesiredConfiguration.Enabled) &&
+			(lock.ObservedConfiguration == nil || !lock.ObservedConfiguration.Enabled), nil
+	}
+	return false, nil
 }
 
 func (s *server) applyBindingVerification(parent context.Context, r *http.Request, acct state.Account, app state.App, inventory *api.AppBindingInventory, revisions, privateBindingIDs map[string]string) {
@@ -259,13 +303,28 @@ func normalizeBindingVerification(task state.BindingVerificationTask) *api.Bindi
 		statuses = []string{report.Configuration.Status, report.Identity.Status, report.Gateway.Status, report.Response.Status}
 	case api.BindingTypeObjectStorage:
 		var report api.ObjectStorageBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Prefix != task.Pin.Binding {
+		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Prefix != task.Pin.Binding || report.Mode != task.Pin.ObjectStorageMode {
 			result.Reason = "report_invalid"
 			return result
 		}
 		reportFailed = report.Error != ""
 		names = []string{"environment", "configuration", "connection", "authorization", "bucket_access"}
 		statuses = []string{report.Environment.Status, report.Configuration.Status, report.Connection.Status, report.Authorization.Status, report.BucketAccess.Status}
+		if task.Pin.ObjectStorageMode != "" {
+			if !api.ValidObjectStorageWriteProbeMode(task.Pin.ObjectStorageMode) || report.Upload == nil || report.Download == nil || report.Cleanup == nil ||
+				(task.Pin.ObjectStorageMode == "write" && report.Download.Status != "not_checked") {
+				result.Reason = "report_invalid"
+				return result
+			}
+			names = append(names, "upload", "cleanup")
+			statuses = append(statuses, report.Upload.Status, report.Cleanup.Status)
+			if task.Pin.ObjectStorageMode == "read_write" {
+				names, statuses = append(names, "download"), append(statuses, report.Download.Status)
+			}
+		} else if report.Upload != nil || report.Download != nil || report.Cleanup != nil {
+			result.Reason = "report_invalid"
+			return result
+		}
 	default:
 		result.Reason = "report_invalid"
 		return result

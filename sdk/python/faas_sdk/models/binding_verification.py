@@ -20,7 +20,8 @@ T = TypeVar("T", bound="BindingVerification")
 @_attrs_define
 class BindingVerification:
     """Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-
-    storage verification checks bucket-list read access only; resident application adoption is not checked.
+    storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup;
+    inspect checks for coverage. Resident application adoption is not checked.
 
     """
 
