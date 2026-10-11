@@ -17,8 +17,8 @@ var functionHandlerFileRE = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 // function runtime (ADR-985 shared-tree functions) and returns its clean path
 // relative to the source root. Node runtimes take a .js or .mjs file and
 // Python runtimes a .py file. Any other value, such as the historical
-// "handler.handler", keeps the runtime's default handler file, as do Go
-// runtimes, whose handler is the built executable.
+// "handler.handler", keeps the runtime's default handler file, as do the Go
+// and binary runtimes, whose handler is the built executable.
 func FunctionHandlerFile(runtime, handler string) (string, bool, error) {
 	handler = strings.TrimSpace(handler)
 	var exts []string

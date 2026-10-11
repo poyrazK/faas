@@ -143,7 +143,7 @@ func deployBinaryFunction(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, 
 	}); got != http.StatusCreated {
 		t.Fatalf("create binary function %s: status=%d", slug, got)
 	}
-	body, status := postFunctionDeployment(t, h, key, slug, source, api.FunctionRuntimeBinary, "handler")
+	body, status := postBinaryFunctionDeployment(t, h, key, slug, source, api.FunctionRuntimeBinary, "handler")
 	if status != http.StatusAccepted {
 		t.Fatalf("deploy %s: status=%d body=%s", slug, status, body)
 	}
@@ -181,9 +181,9 @@ func getBinaryFunction(t *testing.T, h *e2etest.Harness, key, slug, path string)
 	return body, resp.Header.Get("x-faas-wake-id"), resp.StatusCode
 }
 
-// postFunctionDeployment uploads a function source with the runtime and
+// postBinaryFunctionDeployment uploads a function source with the runtime and
 // handler fields the CLI sends for a function deploy.
-func postFunctionDeployment(t *testing.T, h *e2etest.Harness, key, slug string, source []byte, runtime, handler string) ([]byte, int) {
+func postBinaryFunctionDeployment(t *testing.T, h *e2etest.Harness, key, slug string, source []byte, runtime, handler string) ([]byte, int) {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
