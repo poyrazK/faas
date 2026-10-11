@@ -1,4 +1,4 @@
-// adr: 968 — bounded conditional transfers and cleanup never qualify ambiguous writes.
+// adr: 986 — bounded conditional transfers and cleanup never qualify ambiguous writes.
 package bindingprobe
 
 import (

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "migrations": "migrations/sql",
+  "output": "client/src/database.types.ts",
+  "identities": {
+    "alice": {
+      "subject": "alice"
+    },
+    "bob": {
+      "subject": "bob"
+    }
+  },
+  "verify": {
+    "collection": "data-api.requests.json",
+    "scenarios": [
+      "notes-rls"
+    ]
+  },
+  "check": {
+    "directory": "client",
+    "commands": [
+      [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      [
+        "npm",
+        "test"
+      ]
+    ]
+  }
+}

@@ -233,6 +233,7 @@ func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRe
 			DeploymentId: req.Snapshot.DeploymentID, VmstatePath: req.Snapshot.VMStatePath,
 			FcVersion: req.Snapshot.FCVersion, StorageKey: req.Snapshot.StorageKey,
 			VmstateStorageKey: req.Snapshot.VMStateStorageKey, Networkless: true,
+			MemBytes: req.Snapshot.MemBytes,
 		}
 	}
 	resp, err := c.cli.RestoreExecution(ctx, wireReq)
@@ -569,6 +570,9 @@ type SnapshotRef struct {
 	// default-local; populated on remote compute nodes.
 	VMStateStorageKey string
 	Networkless       bool
+	// MemBytes is the snapshot's recorded guest memory length; vmmd needs it
+	// to restore companion snapshots.
+	MemBytes int64
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -1075,6 +1079,7 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			StorageKey:        snap.StorageKey,
 			VmstateStorageKey: snap.VMStateStorageKey,
 			Networkless:       snap.Networkless,
+			MemBytes:          snap.MemBytes,
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,

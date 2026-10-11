@@ -18,6 +18,13 @@ const (
 	// telemetry. Reuse the normal request floor so one short sample cannot
 	// decide a rollout.
 	CircuitBreakerMinCPURequests int64 = 20
+	// CircuitBreakerMinDecisiveServerErrors lets a small candidate sample
+	// abort when it is failing outright. At a 1% step a low-traffic app takes
+	// many minutes to collect CircuitBreakerMinRequests candidate requests;
+	// a revision answering 5xx to most of them should not keep serving
+	// customers that long. Five 5xx covering at least half the candidate's
+	// requests is the same bar as the first-window 5xx rollback (ADR-625).
+	CircuitBreakerMinDecisiveServerErrors int64 = 5
 	// Managed service dependencies are less frequent than inbound requests, so
 	// require a smaller but still useful denominator before comparing rates.
 	CircuitBreakerMinDependencyCalls int64 = 10
@@ -97,6 +104,9 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 	}
 	if !o.OOMSignalAvailable {
 		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "workload OOM signal unavailable"}
+	}
+	if decision, ok := decisiveSmallSample5xx(o); ok {
+		return decision
 	}
 	if o.Candidate.Requests < CircuitBreakerMinRequests || o.Stable.Requests < CircuitBreakerMinRequests {
 		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: fmt.Sprintf(
@@ -193,4 +203,24 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 // latency, 5xx, cold-boot, OOM and dependency signals apply at every step.
 func cpuLoadComparable(o CircuitBreakerObservation) bool {
 	return o.Candidate.CPURequests*circuitBreakerCPUComparableLoadDivisor >= o.Stable.CPURequests
+}
+
+// decisiveSmallSample5xx aborts a candidate that is failing outright before
+// it reaches the ordinary sample floor. The stable predecessor still needs a
+// full sample, so a shared outage (both failing) keeps the normal hold.
+func decisiveSmallSample5xx(o CircuitBreakerObservation) (CircuitBreakerDecision, bool) {
+	c, s := o.Candidate, o.Stable
+	if c.Requests >= CircuitBreakerMinRequests || c.ServerErrors < CircuitBreakerMinDecisiveServerErrors ||
+		s.Requests < CircuitBreakerMinRequests || 2*c.ServerErrors < c.Requests {
+		return CircuitBreakerDecision{}, false
+	}
+	candidateErrorPct := 100 * float64(c.ServerErrors) / float64(c.Requests)
+	stableErrorPct := 100 * float64(s.ServerErrors) / float64(s.Requests)
+	if candidateErrorPct < stableErrorPct*circuitBreakerErrorRateFactor ||
+		candidateErrorPct < stableErrorPct+circuitBreakerErrorRateDeltaPct {
+		return CircuitBreakerDecision{}, false
+	}
+	return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+		"5xx regression (candidate %.1f%%, stable %.1f%%; %d/%d vs %d/%d requests; decisive before the %d-request floor)",
+		candidateErrorPct, stableErrorPct, c.ServerErrors, c.Requests, s.ServerErrors, s.Requests, CircuitBreakerMinRequests)}, true
 }

@@ -1,4 +1,4 @@
-// adr: 968 — writable canaries require explicit opt-in and matching operation evidence.
+// adr: 986 — writable canaries require explicit opt-in and matching operation evidence.
 package main
 
 import (

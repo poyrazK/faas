@@ -35,10 +35,12 @@ linters:
         # apid is control-plane only: it is the sole writer of customer-intent
         # rows and signals downstream via Postgres + pg_notify. It must never
         # reach into the VM / scheduler layer (CLAUDE.md: "apid must not call
-        # vmmd").
+        # vmmd"). pkg/apid/** is apid code lifted out of cmd/apid (ADR-977) and
+        # keeps the same ownership boundary.
         apid-control-plane-only:
           files:
             - "**/cmd/apid/**"
+            - "**/pkg/apid/**"
           deny:
             - pkg: github.com/onebox-faas/faas/pkg/fcvm
               desc: "apid is control-plane only; it must not touch the firecracker/jailer layer — record intent in Postgres and let schedd/vmmd react"
@@ -462,7 +464,7 @@ linters:
         linters:
           - staticcheck
       # Pre-existing SA5011 false-positives across all of cmd/apid/
-      # test code. The pattern is uniform: tests check
+      # test code (now pkg/apid/apidserver/, ADR-977). The pattern is uniform: tests check
       # `if p == nil { t.Fatalf(...) }` before dereferencing, but
       # staticcheck's dataflow analyzer doesn't know t.Fatalf
       # terminates. Blanket-excluding the directory rather than
@@ -472,7 +474,7 @@ linters:
       # a week. If a real nil-deref is later introduced, the
       # unit tests under that file (not staticcheck) will catch
       # it on the next CI run.
-      - path: "cmd/.*_test\\.go$"
+      - path: "(cmd/|pkg/apid/apidserver/).*_test\\.go$"
         linters:
           - staticcheck
       # Repo-wide SA5011 exclusion for tests: `t.Fatal`/`t.Fatalf`

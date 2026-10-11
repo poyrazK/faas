@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// adr: 985
+// adr: 995
 func TestObjectStorageComputeTriggerValidation(t *testing.T) {
 	in := []ObjectStorageComputeTrigger{{ID: "images", Prefix: "uploads/", Suffix: ".png"}}
 	normal, err := NormalizeObjectStorageComputeTriggers(in)

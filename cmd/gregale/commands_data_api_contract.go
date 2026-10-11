@@ -22,7 +22,7 @@ func validDataAPIAccessToken(token string) bool {
 	return len(token) <= 16<<10 && dataAPIAccessTokenShape.MatchString(token)
 }
 
-func verifyDataAPIServingContract(ctx context.Context, healthURL, token, expected string) error {
+func verifyDataAPIServingContract(ctx context.Context, healthURL, token, expected string, coordination ...*dataAPIRefreshVerification) error {
 	u, err := url.Parse(healthURL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/healthz" || !validDataAPIAccessToken(token) {
 		return errors.New("invalid serving contract URL or application JWT")
@@ -33,6 +33,9 @@ func verifyDataAPIServingContract(ctx context.Context, healthURL, token, expecte
 		return errors.New("invalid serving contract request")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if len(coordination) > 0 {
+		req.Header.Set("X-Gregale-Refresh-Token", coordination[0].token)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Cache-Control", "no-cache")
 	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -55,15 +58,25 @@ func verifyDataAPIServingContract(ctx context.Context, healthURL, token, expecte
 		return errors.New("could not read serving contract")
 	}
 	var contract struct {
-		Version     int    `json:"version"`
-		Ready       bool   `json:"ready"`
-		Fingerprint string `json:"fingerprint"`
+		RefreshProtocol    int    `json:"refresh_protocol"`
+		RefreshPaused      *bool  `json:"refresh_paused"`
+		RefreshVerified    bool   `json:"refresh_verified"`
+		RefreshFingerprint string `json:"refresh_fingerprint"`
+		Version            int    `json:"version"`
+		Ready              bool   `json:"ready"`
+		Fingerprint        string `json:"fingerprint"`
 	}
 	if len(body) > 8<<10 || json.Unmarshal(body, &contract) != nil || contract.Version != 1 || !contract.Ready || len(contract.Fingerprint) != 64 || strings.Trim(contract.Fingerprint, "0123456789abcdef") != "" {
 		return errors.New("invalid serving contract response")
 	}
-	if contract.Fingerprint != expected {
+	if expected != "" && contract.Fingerprint != expected {
 		return errors.New("serving schema differs from generated types; coordinate schema changes, fresh-refresh the runtime and rerun sync")
+	}
+	if len(coordination) > 0 {
+		check := coordination[0]
+		if contract.RefreshProtocol != 1 || contract.RefreshPaused == nil || *contract.RefreshPaused != check.paused || (check.paused && !contract.RefreshVerified) || (!check.paused && contract.RefreshFingerprint != expected) {
+			return errors.New("refresh barrier state or owner differs; keep traffic paused and inspect recovery")
+		}
 	}
 	return nil
 }

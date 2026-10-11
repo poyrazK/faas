@@ -1,4 +1,4 @@
-// adr: 968 — persist permission-pinned write evidence and enforce its command shape.
+// adr: 986 — persist permission-pinned write evidence and enforce its command shape.
 package state_test
 
 import (

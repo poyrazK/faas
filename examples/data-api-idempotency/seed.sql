@@ -1,0 +1,1 @@
+-- No seed orders: every accepted key is persisted by the caller's mutation.

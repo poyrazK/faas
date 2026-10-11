@@ -1,4 +1,4 @@
-// adr: 971 — policy-driven storage verification preserves explicit write consent.
+// adr: 989 — policy-driven storage verification preserves explicit write consent.
 package main
 
 import (

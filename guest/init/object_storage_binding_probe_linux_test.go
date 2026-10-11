@@ -1,7 +1,7 @@
 //go:build linux
 
 // adr: 426 — reserved guest dispatch uses deployment-scoped binding environment.
-// adr: 968 — opt-in write dispatch preserves mode and rejects malformed requests.
+// adr: 986 — opt-in write dispatch preserves mode and rejects malformed requests.
 package main
 
 import (

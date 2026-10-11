@@ -23,7 +23,7 @@ func loadDevSession(client *Client, target devTarget) (api.DevSessionResponse, e
 	defer cancel()
 	session, err := client.GetDevSession(ctx, target.Project, target.WorkspaceID)
 	if isNotFound(err) {
-		return session, fmt.Errorf("no developer environment for %s from this source directory; start one with `gregale dev`", target.Project)
+		return session, fmt.Errorf("no developer environment for %s from this source directory; start one with `gregale dev`, or pass --name if it was started with a different --name", target.Project)
 	}
 	return session, err
 }

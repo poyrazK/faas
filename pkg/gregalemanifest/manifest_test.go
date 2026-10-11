@@ -1669,7 +1669,7 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 	}
 }
 
-// adr: 985
+// adr: 995
 func TestValidateBucketComputeTriggers(t *testing.T) {
 	for _, decl := range []string{"", "    triggers: []\n", "    triggers:\n      - id: incoming\n        prefix: uploads/\n"} {
 		dir := t.TempDir()

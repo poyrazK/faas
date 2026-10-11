@@ -14369,7 +14369,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -14422,12 +14422,13 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
+    CONSTRAINT alert_rules_edge_security_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -14496,6 +14497,8 @@ CREATE TABLE public.api_consumer_plans (
     max_units_per_month bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    alert_thresholds_percent integer[] DEFAULT '{}'::integer[] NOT NULL,
+    CONSTRAINT api_consumer_plans_alert_thresholds_chk CHECK (((cardinality(alert_thresholds_percent) <= 5) AND (1 <= ALL (alert_thresholds_percent)) AND (100 >= ALL (alert_thresholds_percent)) AND ((cardinality(alert_thresholds_percent) = 0) OR (max_units_per_month > 0)))),
     CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
     CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
 );
@@ -14506,6 +14509,13 @@ CREATE TABLE public.api_consumer_plans (
 --
 
 COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).';
+
+
+--
+-- Name: COLUMN api_consumer_plans.alert_thresholds_percent; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_plans.alert_thresholds_percent IS 'Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.';
 
 
 --
@@ -14587,6 +14597,34 @@ CREATE TABLE public.api_consumer_route_usage_minutes (
 --
 
 COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.';
+
+
+--
+-- Name: api_consumer_usage_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_usage_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    threshold_percent integer NOT NULL,
+    limit_units bigint NOT NULL,
+    used_units bigint NOT NULL,
+    crossed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_usage_alerts_month_chk CHECK ((month_start = (date_trunc('month'::text, (month_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_usage_alerts_threshold_chk CHECK (((threshold_percent >= 1) AND (threshold_percent <= 100))),
+    CONSTRAINT api_consumer_usage_alerts_units_chk CHECK (((limit_units > 0) AND (used_units >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_usage_alerts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_usage_alerts IS 'One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.';
 
 
 --
@@ -15322,6 +15360,20 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: app_route_priorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_route_priorities (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_route_priorities_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20))),
+    CONSTRAINT app_route_priorities_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: app_route_removal_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15522,6 +15574,19 @@ CREATE TABLE public.app_service_address_cursors (
     account_id uuid NOT NULL,
     last_index integer NOT NULL,
     CONSTRAINT app_service_address_cursors_last_index_chk CHECK (((last_index >= 0) AND (last_index <= 65534)))
+);
+
+
+--
+-- Name: app_service_wake_ahead; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_service_wake_ahead (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_service_wake_ahead_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -18244,7 +18309,7 @@ CREATE TABLE public.edge_rules (
     match_expr jsonb,
     mode text DEFAULT 'enforce'::text NOT NULL,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
-    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text]))),
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
     CONSTRAINT edge_rules_match_headers_shape_chk CHECK (((jsonb_typeof(match_headers) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()'::jsonpath)) <= 10))),
     CONSTRAINT edge_rules_mode_chk CHECK ((mode = ANY (ARRAY['enforce'::text, 'log'::text]))),
@@ -24262,11 +24327,29 @@ CREATE TABLE public.platform_tenant_rate_cards (
     price_millicents_per_unit bigint NOT NULL,
     effective_from timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
     CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = 'request'::text))
 );
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.included_units_per_month; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.included_units_per_month IS 'Free request units per tenant per UTC calendar month across all attributed apps, consumed in minute order while this card is effective.';
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.';
 
 
 --
@@ -29062,6 +29145,22 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 
 --
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_once_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_once_uniq UNIQUE (consumer_id, month_start, threshold_percent);
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_usage_events api_consumer_usage_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29390,6 +29489,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_route_priorities app_route_priorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_route_removal_policies app_route_removal_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29467,6 +29574,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -35358,6 +35473,13 @@ CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_co
 
 
 --
+-- Name: api_consumer_usage_alerts_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_usage_alerts_lookup_idx ON public.api_consumer_usage_alerts USING btree (account_id, app_id, consumer_id, crossed_at DESC);
+
+
+--
 -- Name: api_consumer_usage_events_app_window_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35631,6 +35753,13 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 
 
 --
+-- Name: app_route_priorities_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_route_priorities_account_idx ON public.app_route_priorities USING btree (account_id);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35712,6 +35841,13 @@ CREATE UNIQUE INDEX app_secrets_managed_postgres_binding_idx ON public.app_secre
 --
 
 CREATE INDEX app_secrets_org_id_idx ON public.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_service_wake_ahead_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead USING btree (account_id);
 
 
 --
@@ -45633,6 +45769,38 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 
 --
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_usage_events api_consumer_usage_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46217,6 +46385,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_route_priorities app_route_priorities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_route_removal_policies app_route_removal_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46358,6 +46542,22 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

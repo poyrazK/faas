@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 985
+// adr: 995
 func TestObjectComputeTriggersMem(t *testing.T) { objectComputeTriggersSuite(t, state.NewMemStore()) }
 func TestObjectComputeTriggersPG(t *testing.T) {
 	st, _ := pgStore(t)

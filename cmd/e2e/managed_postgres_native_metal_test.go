@@ -183,6 +183,9 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if result.RuntimeProof != postgresprobe.Proof(runID, uri(binding)) || result.ReaderProof != postgresprobe.Proof(runID, uri(bindings[mp.CredentialReadOnly])) || result.Counter <= last.Counter || (last.Marker != "" && result.Marker != last.Marker) {
 			t.Fatal("guest received wrong credentials or lost SQL data")
 		}
+		if result.PoolGeneration == 0 || result.WriterConnections == 0 || result.ReaderConnections == 0 || (wakeMethod == "restore" && result.PoolGeneration < 2) {
+			t.Fatal("SQL guest did not retain pools or complete its restore reconnect hook")
+		}
 		if wakeMethod != "" {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
@@ -209,7 +212,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		source := buildTarGz(t, map[string]string{
 			"Dockerfile":       "FROM scratch\nCOPY --chmod=0755 postgres-probe /postgres-probe\nCOPY --chmod=0755 postgres-probe /bin/sh\nEXPOSE 8080\nCMD [\"/postgres-probe\"]\n",
 			"postgres-probe":   string(binary),
-			"gregale.yaml":     "hosting:\n  port: 8080\n  health: /healthz\nrelease:\n  command: /postgres-probe migrate\n",
+			"gregale.yaml":     "hosting:\n  port: 8080\n  health: /healthz\nlifecycle:\n  after_restore:\n    path: /internal/after-restore\n    timeout_ms: 2000\nrelease:\n  command: /postgres-probe migrate\n",
 			"faas-build-token": runID,
 		})
 		body, status := postMultipartDeployment(t, h, key, slug, source, true, "")
@@ -228,6 +231,10 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		release, err := store.ReleaseAppTaskByDeployment(ctx, deploymentID)
 		if err != nil || release.Kind != state.AppTaskKindRelease || release.Status != state.AppTaskSucceeded {
 			t.Fatal("normal deployment did not complete its SQL migration release")
+		}
+		currentApp, err := store.AppByID(ctx, appID)
+		if err != nil || currentApp.Manifest.AfterRestore == nil || currentApp.Manifest.AfterRestore.Path != postgresprobe.RestorePath {
+			t.Fatal("source deployment did not persist its pool reconnect hook")
 		}
 		if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
 			t.Fatal("initial SQL guest snapshot did not park")
@@ -325,6 +332,16 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		last = probe(t, rotated, "")
 	}
 	phase("running_rotation_and_retirement", func(t *testing.T) { rotate(t, false) })
+	phase("pooled_disconnect_recovery", func(t *testing.T) {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
+			t.Fatalf("park pooled SQL app: status=%d", status)
+		}
+		initialSnapshot = waitAfterRestoreSnapshot(t, store, deploymentID, initialSnapshot)
+		// The snapshot retains application pools, but their external TCP
+		// sessions are now gone. Only the real restore hook repairs them.
+		proxy.Disconnect()
+		last = probe(t, bindings[mp.CredentialReadWrite], "restore")
+	})
 	phase("rotated_snapshot_restore", func(t *testing.T) {
 		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park SQL app: status=%d", status)

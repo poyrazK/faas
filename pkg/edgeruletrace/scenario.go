@@ -98,7 +98,7 @@ func ParseScenarioConfig(data []byte) (Input, error) {
 	}
 	return NormalizeInput(Input{
 		Project: config.Project, Environment: config.Environment,
-		App: config.App, Host: u.Hostname(), Path: requestPath, Method: strings.TrimSpace(config.Request.Method),
+		App: config.App, Host: u.Hostname(), Path: requestPath, Query: u.RawQuery, Method: strings.TrimSpace(config.Request.Method),
 		ClientIP: config.Request.ClientIP, Country: config.Request.Country, Headers: headers,
 		Body: body, BodyProvided: bodyProvided,
 	})

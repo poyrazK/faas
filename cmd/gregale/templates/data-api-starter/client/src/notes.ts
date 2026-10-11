@@ -1,8 +1,13 @@
-import { createDataClient, type DataClientOptions } from '@gregale/data'
+import { createDataClient, cursorPage as sdkCursorPage, cursorFrom, type DataClientOptions } from '@gregale/data'
 import type { Database } from './database.types.js'
 
 type NoteBatchItem = Pick<Database['api']['Tables']['notes']['Insert'], 'body' | 'priority'>
 type DetailBatchItem = Pick<Database['api']['Tables']['note_details']['Insert'], 'note_id' | 'summary'>
+
+const noteOrder = [
+  { column: 'created_at', ascending: false },
+  { column: 'id', ascending: false, unique: true },
+] as const
 
 export type NoteCursor = Pick<Database['api']['Tables']['notes']['Row'], 'created_at' | 'id'>
 
@@ -32,10 +37,10 @@ export function notesClient(options: DataClientOptions & { subject: string }) {
     cursorPage: ({ after, size = 20, priority }: { after?: NoteCursor; size?: number; priority?: number } = {}) => {
       if (!Number.isSafeInteger(size) || size < 1) throw new RangeError('Cursor page size must be a positive safe integer')
       const cursor = after === undefined ? undefined : noteCursor(after)
-      let query = db.from('notes').select('id,body,priority,created_at,version')
-        .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(size)
-      if (cursor) query = query.or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
-      return priority === undefined ? query : query.eq('priority', priority)
+      const query = db.from('notes').select('id,body,priority,created_at,version')
+      return sdkCursorPage(priority === undefined ? query : query.eq('priority', priority), {
+        order: noteOrder, size, after: cursor === undefined ? undefined : cursorFrom(cursor, noteOrder),
+      })
     },
     page: ({ offset = 0, size = 20, priority }: { offset?: number; size?: number; priority?: number } = {}) => {
       if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(size) || size < 1 || size - 1 > Number.MAX_SAFE_INTEGER - offset) {

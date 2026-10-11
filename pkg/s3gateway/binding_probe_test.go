@@ -1,6 +1,6 @@
 // adr: 426 — the guest canary exercises signed read permission and the
 // provider listing path without object writes or credential diagnostics.
-// adr: 968 — explicit write probes exercise signed transfers and exact cleanup.
+// adr: 986 — explicit write probes exercise signed transfers and exact cleanup.
 package s3gateway
 
 import (

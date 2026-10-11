@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// adr: 983
+// adr: 993
 // Golden signatures calculated independently with Python stdlib HMAC/SHA256,
 // not the Go SDK signer (which omits explicit zero) or our compatibility helper.
 func TestSigV4ExplicitZeroContentLength(t *testing.T) {
