@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
     from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
     from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
     from ..models.operation_workflow_state import OperationWorkflowState
@@ -35,9 +36,16 @@ class OperationWorkflowPerformanceInstance:
     resolution_verifications: list[OperationWorkflowResolutionVerification]
     awaiting_verification_count: int
     resolution_verification_count: int
+    refresh_priority: OperationWorkflowConditionRefreshPriority | Unset = UNSET
+    """Evidence and explanation for one ongoing workflow with overdue condition reports. Rankings use the same
+    token-bound sample, complete-history eligibility and pinned definitions as active condition coverage. Owner
+    lists and unassigned condition counts include all qualifying identities before the 16-fact preview cap. The
+    oldest evidence has the earliest selected overdue report timestamp with canonical identity breaking ties, and is
+    included independently of the preview. This is observational prioritization without business severity or
+    execution authority."""
     refresh_evidence_count: int | Unset = UNSET
-    """Exact number of overdue selected conditions for this workflow and refresh owner. Present on
-    condition_refresh_owner contributors."""
+    """Exact number of selected overdue conditions for this contributor. Owner dimensions restrict the count to
+    that owner; workflow priority dimensions count all overdue conditions across owners."""
     refresh_evidence_truncated: bool | Unset = UNSET
     refresh_evidence: list[OperationWorkflowDecisionOutcomeEvidence] | Unset = UNSET
     """First 16 matching overdue condition facts in canonical identity order with pinned refresh guidance and
@@ -66,6 +74,10 @@ class OperationWorkflowPerformanceInstance:
         awaiting_verification_count = self.awaiting_verification_count
 
         resolution_verification_count = self.resolution_verification_count
+
+        refresh_priority: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.refresh_priority, Unset):
+            refresh_priority = self.refresh_priority.to_dict()
 
         refresh_evidence_count = self.refresh_evidence_count
 
@@ -99,6 +111,8 @@ class OperationWorkflowPerformanceInstance:
                 "resolution_verification_count": resolution_verification_count,
             }
         )
+        if refresh_priority is not UNSET:
+            field_dict["refresh_priority"] = refresh_priority
         if refresh_evidence_count is not UNSET:
             field_dict["refresh_evidence_count"] = refresh_evidence_count
         if refresh_evidence_truncated is not UNSET:
@@ -115,6 +129,7 @@ class OperationWorkflowPerformanceInstance:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
         from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
         from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
         from ..models.operation_workflow_state import OperationWorkflowState
@@ -140,6 +155,13 @@ class OperationWorkflowPerformanceInstance:
         awaiting_verification_count = d.pop("awaiting_verification_count")
 
         resolution_verification_count = d.pop("resolution_verification_count")
+
+        _refresh_priority = d.pop("refresh_priority", UNSET)
+        refresh_priority: OperationWorkflowConditionRefreshPriority | Unset
+        if isinstance(_refresh_priority, Unset):
+            refresh_priority = UNSET
+        else:
+            refresh_priority = OperationWorkflowConditionRefreshPriority.from_dict(_refresh_priority)
 
         refresh_evidence_count = d.pop("refresh_evidence_count", UNSET)
 
@@ -176,6 +198,7 @@ class OperationWorkflowPerformanceInstance:
             resolution_verifications=resolution_verifications,
             awaiting_verification_count=awaiting_verification_count,
             resolution_verification_count=resolution_verification_count,
+            refresh_priority=refresh_priority,
             refresh_evidence_count=refresh_evidence_count,
             refresh_evidence_truncated=refresh_evidence_truncated,
             refresh_evidence=refresh_evidence,

@@ -53,6 +53,8 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.RefreshAgeURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_age"})
+		data.RefreshBlockedURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_blocked"})
 		data.RefreshOwnerGroups = workflowConditionRefreshOwnerLinks(data.SummaryURL, opts, summary)
 		data.ActiveConditionGroups = workflowActiveConditionLinks(data.SummaryURL, opts, summary)
 		data.ConditionGroups = workflowConditionOutcomeLinks(data.SummaryURL, opts, summary)

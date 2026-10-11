@@ -50,6 +50,10 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		return fmt.Sprintf("State %s · contract %d", group.State, group.ContractVersion)
 	case "blocker":
 		return fmt.Sprintf("%s / %s · contract %d · owner %s", group.Operation, group.Code, group.ContractVersion, owner)
+	case "condition_refresh_age":
+		return "Refresh priority · oldest overdue report age"
+	case "condition_refresh_blocked":
+		return "Refresh priority · full workflow blocked duration"
 	case "condition_refresh_owner":
 		return "Overdue condition refresh · owner " + owner
 	case "verification_owner":

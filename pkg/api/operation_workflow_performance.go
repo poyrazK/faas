@@ -247,3 +247,13 @@ type OperationWorkflowConditionRefreshOwnerGroup struct {
 	ElapsedTime           OperationWorkflowDurationDistribution `json:"elapsed_time"`
 	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
 }
+
+// OperationWorkflowConditionRefreshPriority explains ranking within the ongoing sampled cohort.
+type OperationWorkflowConditionRefreshPriority struct {
+	OldestEvidence           OperationWorkflowDecisionOutcomeEvidence `json:"oldest_evidence"`
+	OldestEvidenceAgeSeconds int64                                    `json:"oldest_evidence_age_seconds"`
+	BlockedSeconds           int64                                    `json:"blocked_seconds"`
+	RefreshOwners            []string                                 `json:"refresh_owners"`
+	UnassignedConditionCount int64                                    `json:"unassigned_condition_count"`
+	Explanation              string                                   `json:"explanation"`
+}

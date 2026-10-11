@@ -310,3 +310,5 @@ export type { OperationWorkflowActiveConditionSummary, OperationWorkflowActiveCo
 export type { OperationWorkflowConditionFreshness } from './customer-operations.js';
 
 export type { OperationWorkflowConditionRefreshOwnerGroup } from './customer-operations.js';
+
+export type { OperationWorkflowConditionRefreshPriority } from './customer-operations.js';

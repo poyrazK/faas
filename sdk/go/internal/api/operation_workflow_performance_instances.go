@@ -32,6 +32,7 @@ type OperationWorkflowPerformanceInstanceOptions struct {
 
 // OperationWorkflowPerformanceInstance is a complete-history contributor.
 type OperationWorkflowPerformanceInstance struct {
+	RefreshPriority             *OperationWorkflowConditionRefreshPriority `json:"refresh_priority,omitempty"`
 	RefreshEvidence             []OperationWorkflowDecisionOutcomeEvidence `json:"refresh_evidence,omitempty"`
 	RefreshEvidenceCount        int64                                      `json:"refresh_evidence_count,omitempty"`
 	RefreshEvidenceTruncated    bool                                       `json:"refresh_evidence_truncated,omitempty"`

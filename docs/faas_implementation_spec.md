@@ -2336,3 +2336,42 @@ open this same bound contributor view.
 Refresh instructions are displayed as text and never executed. Applications own
 verification, authorization and actions. Reporting freshness, condition results,
 and workflow state staleness remain separate observations.
+
+### Workflow refresh prioritization
+
+The ongoing performance contributor view adds overall
+`condition_refresh_age` and `condition_refresh_blocked` dimensions. Both require
+`cohort=ongoing` and the summary token, reject all condition/decision/state/
+blocker/owner selectors, and include eligible workflows with at least one
+selected overdue condition report. Each workflow appears once across all teams.
+These views use the same bounded latest-100 sample, complete-history requirement,
+pinned definitions, conflict exclusions and evaluation time as active coverage.
+Condition and owner display caps do not hide qualifying workflows. A fresh
+summary with zero overdue workflows produces an empty ranked list.
+
+Age priority ranks by the age in whole seconds of the oldest selected overdue
+report, not seconds past its refresh deadline. Blocked priority ranks by full
+observed workflow blocked duration, not duration attributed to a condition or
+team. Stable workflow identity breaks equal-score ties. Response `duration`
+statistics and contributor `observed_seconds` use the selected ranking measure.
+A change in retained evidence requires refreshing the bound summary.
+
+Each contributor includes `refresh_priority`, with the oldest overdue report's
+full qualifying evidence and pinned deadline/guidance, its age, the full blocked
+duration, all distinct assigned refresh owners in lexical order, an exact
+unassigned condition count, and a plain explanation of the ranking. Timestamp
+ties for the oldest evidence use canonical condition identity. Assigned owner
+lists are bounded by the existing 256-condition identity eligibility limit;
+they remain complete even when the 16-fact canonical evidence preview is
+truncated. The oldest ranking fact is included independently of that preview.
+`refresh_evidence_count` counts all overdue conditions in these workflow views;
+`refresh_evidence_truncated` explicitly flags omitted preview facts. Existing
+owner contributor views continue to count and preview only their selected owner.
+
+Dashboard summary links open either priority view. Each ranked workflow shows
+all teams, report timestamps, refresh deadlines, full blocked duration,
+application-declared guidance and links to the reporting Operations and workflow
+history. These observations do not assign business severity, infer causation,
+expire facts, or trigger verification or actions. Applications keep execution
+and authorization. Existing definition/history metadata is sufficient; no
+migration or new persistence is introduced.

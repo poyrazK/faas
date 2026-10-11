@@ -250,7 +250,15 @@ def sync_detailed(
     one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
     decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
     include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
-    preview limit. Conflicting snapshots and incomplete histories are excluded.
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):
@@ -387,7 +395,15 @@ def sync(
     one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
     decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
     include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
-    preview limit. Conflicting snapshots and incomplete histories are excluded.
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):
@@ -519,7 +535,15 @@ async def asyncio_detailed(
     one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
     decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
     include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
-    preview limit. Conflicting snapshots and incomplete histories are excluded.
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):
@@ -654,7 +678,15 @@ async def asyncio(
     one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
     decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
     include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
-    preview limit. Conflicting snapshots and incomplete histories are excluded.
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded.
 
     Args:
         app_id (UUID):

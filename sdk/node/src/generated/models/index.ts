@@ -1093,6 +1093,7 @@ export type { OperationWorkflowConditionFreshness } from './OperationWorkflowCon
 export type { OperationWorkflowConditionOutcomeGroup } from './OperationWorkflowConditionOutcomeGroup.js';
 export type { OperationWorkflowConditionOutcomeSummary } from './OperationWorkflowConditionOutcomeSummary.js';
 export type { OperationWorkflowConditionRefreshOwnerGroup } from './OperationWorkflowConditionRefreshOwnerGroup.js';
+export type { OperationWorkflowConditionRefreshPriority } from './OperationWorkflowConditionRefreshPriority.js';
 export type { OperationWorkflowControlResponse } from './OperationWorkflowControlResponse.js';
 export type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
 export type { OperationWorkflowDecisionOutcomeEvidence } from './OperationWorkflowDecisionOutcomeEvidence.js';

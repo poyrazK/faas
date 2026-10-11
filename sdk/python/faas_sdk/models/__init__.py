@@ -2086,6 +2086,7 @@ from .operation_workflow_condition_outcome_group_condition_result import (
 )
 from .operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
 from .operation_workflow_condition_refresh_owner_group import OperationWorkflowConditionRefreshOwnerGroup
+from .operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
 from .operation_workflow_control_response import OperationWorkflowControlResponse
 from .operation_workflow_decision import OperationWorkflowDecision
 from .operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
@@ -5569,6 +5570,7 @@ __all__ = (
     "OperationWorkflowConditionOutcomeGroupConditionResult",
     "OperationWorkflowConditionOutcomeSummary",
     "OperationWorkflowConditionRefreshOwnerGroup",
+    "OperationWorkflowConditionRefreshPriority",
     "OperationWorkflowControlResponse",
     "OperationWorkflowDecision",
     "OperationWorkflowDecisionOutcomeEvidence",
