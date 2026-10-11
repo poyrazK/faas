@@ -26965,6 +26965,55 @@ func (q *Queries) ListCloneCheckpointMigrationHoldingsForRetirement(ctx context.
 	return items, nil
 }
 
+const listCloneCheckpointMigrationResumesForRetirement = `-- name: ListCloneCheckpointMigrationResumesForRetirement :many
+SELECT s.dispatch_id, s.instance_id, s.app_id, s.deployment_id, s.wake_id, s.request_reason, s.lease_token, s.source_node_id, s.lease_created_at, s.lease_expires_at, s.dispatched_at FROM project_environment_clone_migration_resumes s
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ s.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',s.deployment_id::text))))
+AND ($2::text='' OR s.dispatch_id>NULLIF($2::text,'')::uuid)
+ORDER BY s.dispatch_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointMigrationResumesForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterDispatchID string
+	PageLimit       int32
+}
+
+// Original source resume requests survive lease and catalog deletion.
+func (q *Queries) ListCloneCheckpointMigrationResumesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationResumesForRetirementParams) ([]ProjectEnvironmentCloneMigrationResume, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointMigrationResumesForRetirement, arg.OperationID, arg.AfterDispatchID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneMigrationResume{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneMigrationResume
+		if err := rows.Scan(
+			&i.DispatchID,
+			&i.InstanceID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WakeID,
+			&i.RequestReason,
+			&i.LeaseToken,
+			&i.SourceNodeID,
+			&i.LeaseCreatedAt,
+			&i.LeaseExpiresAt,
+			&i.DispatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCloneCheckpointWakeDispatchesForRetirement = `-- name: ListCloneCheckpointWakeDispatchesForRetirement :many
 SELECT w.instance_id, w.app_id, w.deployment_id, w.node_id, w.wake_id, w.request_reason, w.method, w.dispatched_at FROM project_environment_clone_wake_dispatches w
 JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid

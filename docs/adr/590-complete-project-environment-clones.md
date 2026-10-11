@@ -10010,7 +10010,31 @@ because it cannot exclude a fenced clone request.
 PostgreSQL tests cover source ownership, parked rollback, pending/expired leases,
 queued fence races, stale snapshots, retention and migration replay. Router tests
 verify record-before-RPC ordering and rejection after an unknown reply. This is
-control-plane dispatch evidence, not proof of native closure. Authenticated
-source resume recovery and host-generation proof-backed release remain pending.
+control-plane dispatch evidence. Native host-generation correlation and
+proof-backed release remain pending.
 Native KVM acceptance and live provider qualification were not performed;
 public full-stage admission remains gated.
+
+### Authenticated source cancel/resume recovery inventory
+
+A private recovery reader now pages immutable source resume dispatches under the
+current compensation lease. It authenticates original source compensation,
+materialization and the frozen retirement plan, requires the requested/retired
+fence and rechecks worker authority before commit. Invalid cursors and bounds
+fail before reading; `CheckpointWorkloadMigrationResumeRecoveryBatchMax` centrally
+caps each page. Failed authentication returns no partial private source identity.
+
+Selection uses original target deployment IDs or the complete operation request
+namespace without joining current source leases, instances or extra deployment
+rows. Dispatch UUID ordering preserves independent lease identities. The original
+source token and timestamps remain in a private field excluded from JSON; the
+source identity type makes no claim about snapshot completion or current lease
+state. Returned records are independent copies, recoverable after worker handoff.
+
+PostgreSQL tests cover original field preservation, pending/expired source
+ownership, source and extra catalog deletion, namespace isolation, paging,
+private serialization, invalid bounds and stale/foreign workers. A recovery read
+neither permits resume replay nor proves native closure or evidence release.
+Host-generation correlation, native producer closure and proof-backed release
+still require a qualified native protocol. No native VM or live provider was
+exercised; public full-stage admission remains gated.

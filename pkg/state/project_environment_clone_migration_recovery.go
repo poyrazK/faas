@@ -30,3 +30,22 @@ type ProjectEnvironmentCloneMigrationAdoption struct {
 type ProjectEnvironmentCloneMigrationAdoptionRecoveryStore interface {
 	ListProjectEnvironmentCloneMigrationAdoptionsForRetirement(context.Context, ProjectEnvironmentCloneLease, string, int) ([]ProjectEnvironmentCloneMigrationAdoption, error)
 }
+
+// ProjectEnvironmentCloneMigrationResume preserves original source restart
+// uncertainty. Reading never authorizes resume replay or evidence release.
+type ProjectEnvironmentCloneMigrationResume struct {
+	DispatchID, AppID, DeploymentID, WakeID, RequestReason string
+	SourceLease                                            ProjectEnvironmentCloneMigrationResumeSource `json:"-"`
+	DispatchedAt                                           time.Time
+}
+
+type ProjectEnvironmentCloneMigrationResumeRecoveryStore interface {
+	ListProjectEnvironmentCloneMigrationResumesForRetirement(context.Context, ProjectEnvironmentCloneLease, string, int) ([]ProjectEnvironmentCloneMigrationResume, error)
+}
+
+// ProjectEnvironmentCloneMigrationResumeSource records only original source
+// identity. It makes no claim about snapshot completion or current lease state.
+type ProjectEnvironmentCloneMigrationResumeSource struct {
+	InstanceID, LeaseToken, SourceNodeID string
+	CreatedAt, LeaseExpiresAt            time.Time
+}

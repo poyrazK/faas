@@ -1374,6 +1374,8 @@ type Querier interface {
 	// The permanent fence retains original source leases and their instance owners.
 	// Do not filter expiry or terminal state, or infer destination launch ownership.
 	ListCloneCheckpointMigrationHoldingsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationHoldingsForRetirementParams) ([]ListCloneCheckpointMigrationHoldingsForRetirementRow, error)
+	// Original source resume requests survive lease and catalog deletion.
+	ListCloneCheckpointMigrationResumesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationResumesForRetirementParams) ([]ProjectEnvironmentCloneMigrationResume, error)
 	// Original dispatch rows survive metadata deletion; never join current instances
 	// or infer ownership from their current state or a caller-supplied deployment.
 	ListCloneCheckpointWakeDispatchesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointWakeDispatchesForRetirementParams) ([]ProjectEnvironmentCloneWakeDispatch, error)

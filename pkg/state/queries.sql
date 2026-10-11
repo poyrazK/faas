@@ -16102,3 +16102,13 @@ ORDER BY a.dispatch_id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: RecordCloneCheckpointMigrationResume :exec
 SELECT record_clone_checkpoint_migration_resume(sqlc.arg(instance_id)::uuid,sqlc.arg(source_node_id)::text,sqlc.arg(lease_token)::text);
+
+-- Original source resume requests survive lease and catalog deletion.
+-- name: ListCloneCheckpointMigrationResumesForRetirement :many
+SELECT s.* FROM project_environment_clone_migration_resumes s
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=sqlc.arg(operation_id)::uuid
+WHERE r.state IN ('requested','retired') AND (
+ s.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',s.deployment_id::text))))
+AND (sqlc.arg(after_dispatch_id)::text='' OR s.dispatch_id>NULLIF(sqlc.arg(after_dispatch_id)::text,'')::uuid)
+ORDER BY s.dispatch_id LIMIT sqlc.arg(page_limit)::integer;

@@ -8857,3 +8857,6 @@ const CloneCompensationReceiptMaxBytes = 4 << 10
 
 // Private recovery pages bound retained destination adoption dispatch reads.
 const CheckpointWorkloadMigrationAdoptionRecoveryBatchMax = 100
+
+// Private recovery pages bound retained source cancel/resume dispatch reads.
+const CheckpointWorkloadMigrationResumeRecoveryBatchMax = 100
