@@ -247,11 +247,10 @@ func TestTenantQuotaUncertainWritesAndCorruptionFailClosed(t *testing.T) {
 	}
 	b.uncertain = true
 	lease, err := q.AcquireConnection(t.Context(), id)
-	if !errors.Is(err, durableentity.ErrUncertain) {
-		t.Fatal(err)
+	if !errors.Is(err, durableentity.ErrUncertain) || lease != "" {
+		t.Fatal("uncertain lease returned authority", lease, err)
 	}
-	// An uncertain lease is not usable authority, even if a diagnostic ID exists.
-	_ = lease
+	// An uncertain lease is charged, but its identity is never returned.
 	usage, err = q.Inspect(t.Context(), id)
 	if err != nil || usage.Connections != 1 {
 		t.Fatal(usage, err)

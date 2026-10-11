@@ -81,6 +81,9 @@ func (s *server) connectDurableEntity(w http.ResponseWriter, r *http.Request, ac
 	s.durableEntitySockets.Serve(w, r, acct.ID, string(identity), func(frame entitysocket.Frame) entitysocket.Reply {
 		if s.durableEntityTenantQuotas != nil {
 			if err := s.durableEntityTenantQuotas.CheckConnection(r.Context(), id, lease); err != nil {
+				if errors.Is(err, entitysocket.ErrGrantDenied) {
+					return entitysocket.Reply{Status: 403}
+				}
 				return entitysocket.Reply{Status: 503}
 			}
 		}

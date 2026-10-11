@@ -291,7 +291,10 @@ func (q *Quotas) AcquireConnection(ctx context.Context, id durableentity.ID) (st
 		r.Connections = append(r.Connections, connectionLease{lease, now.Add(Lifetime + api.DurableEntityInvokeTimeout + WriteTimeout + IdleTimeout)})
 		return nil
 	})
-	return lease, err
+	if err != nil {
+		return "", err
+	}
+	return lease, nil
 }
 func (q *Quotas) ReleaseConnection(ctx context.Context, id durableentity.ID, lease string) error {
 	scope, err := scopeFor(id)
@@ -315,6 +318,9 @@ func (q *Quotas) CheckConnection(ctx context.Context, id durableentity.ID, lease
 		return err
 	}
 	r, _, err := q.read(ctx, scopeKey(scope))
+	if errors.Is(err, durableentity.ErrNotFound) {
+		return ErrGrantDenied
+	}
 	if err != nil {
 		return err
 	}

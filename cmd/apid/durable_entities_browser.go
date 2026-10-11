@@ -183,6 +183,9 @@ func (s *server) connectEntityBrowserSession(w http.ResponseWriter, r *http.Requ
 		}
 		if s.durableEntityTenantQuotas != nil {
 			if err := s.durableEntityTenantQuotas.CheckConnection(r.Context(), grant.Entity, lease); err != nil {
+				if errors.Is(err, entitysocket.ErrGrantDenied) {
+					return entitysocket.Reply{Status: 403}
+				}
 				return entitysocket.Reply{Status: 503}
 			}
 		}
