@@ -689,6 +689,47 @@ func TestCreateDeploymentMultipart_FunctionHappyPath(t *testing.T) {
 	// test (server_test.go::TestCreateDeploymentImage).
 }
 
+func TestCreateDeploymentMultipart_PersistsRevisionEnvironmentOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+
+	e := setup(t, api.PlanPro)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "env-pin", Type: "function", Runtime: "node22"}, nil)
+	raw := buildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{
+		"index.js": []byte("exports.handler = () => 1;\n"),
+	})
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	body, ct := multipartUpload(t, map[string]multipartPart{
+		"source":       {filename: "src.tar.gz", body: raw},
+		"runtime":      {body: []byte("node22")},
+		"handler":      {body: []byte("index.handler")},
+		"override_env": {body: []byte(`{"MCP_CATALOG_EXPECTED_SHA256":"` + digest + `"}`)},
+	})
+	req := httptest.NewRequest("POST", "/v1/apps/env-pin/deployments", body)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (%s)", rec.Code, rec.Body)
+	}
+	app, err := e.store.AppBySlug(t.Context(), "env-pin")
+	if err != nil {
+		t.Fatalf("AppBySlug: %v", err)
+	}
+	dep, err := e.store.LatestDeployment(t.Context(), app.ID)
+	if err != nil {
+		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(dep.OverrideEnv, &got); err != nil {
+		t.Fatalf("decode stored override env: %v", err)
+	}
+	if got["MCP_CATALOG_EXPECTED_SHA256"] != digest {
+		t.Fatalf("stored MCP catalog pin = %q, want %q", got["MCP_CATALOG_EXPECTED_SHA256"], digest)
+	}
+}
+
 func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)

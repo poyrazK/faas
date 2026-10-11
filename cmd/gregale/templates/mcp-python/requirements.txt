@@ -1,0 +1,3 @@
+# Required for validating external OAuth JWTs and resolving signing keys.
+PyJWT[crypto]>=2.10.1,<3.0
+psycopg[pool,binary]>=3.2,<4.0

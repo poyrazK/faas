@@ -102,6 +102,9 @@ func TruncateRunes(s string, maxRunes int) string {
 // alert_rules.metric mirrors this list — see migrations/00349.
 // Issue #1395 B3 adds three durable observability metrics backed by
 // app_errors, request_telemetry, and usage_daily.
+// MCP task-age alerting reads the starter's latest fresh app custom gauge;
+// metrics-stale alerting detects missing, expired, or invalid task gauges and,
+// for min=0 worker apps, the dedicated observer heartbeat.
 var AllowedAlertRuleMetrics = []string{
 	"error_rate_pct",
 	"latency_p50_ms",
@@ -133,6 +136,9 @@ var AllowedAlertRuleMetrics = []string{
 	"safedeploy_audit_emit_failing",
 	"deployment_audit_gc_failing",
 	"canary_fleet_in_flight_high",
+	"mcp_tasks_oldest_age_seconds",
+	"mcp_tasks_metrics_stale",
+	"mcp_task_promotion_hold_age_seconds",
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
@@ -171,10 +177,13 @@ func AllowedAlertRuleAction(v string) bool {
 	return containsString(AllowedAlertRuleActions, v)
 }
 
-// Pre-auth target observations and signal health can be influenced by
-// external login traffic. Their alerts must never change a deployment.
+// Pre-auth target observations, signal health, and MCP task signals are
+// notification-only; their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" {
+		return action == "" || action == "webhook"
+	}
+	if metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true

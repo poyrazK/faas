@@ -207,6 +207,9 @@ func (s *PgStore) beginServiceRolloutCutoverTx(ctx context.Context, tx pgx.Tx, i
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
 	}
+	if err := checkMCPTaskCompatibilityCutoverTx(ctx, tx, target.AppID, target.Scope, target.ID); err != nil {
+		return target, err
+	}
 	previous, _ := previousServiceRolloutRow(target, rows)
 	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionPromote, target.ID, previous.id, target.ServiceRolloutHandoff.Reason)
 	if err != nil {

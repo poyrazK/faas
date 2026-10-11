@@ -419,6 +419,7 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+		MCPTaskMigrationOverride: req.MCPTaskMigrationOverride,
 	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx

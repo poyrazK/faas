@@ -2,6 +2,8 @@ const DEFAULT_API_URL = 'https://api.gregale.dev';
 const METRIC_NAMES = Object.freeze({
   outstanding: 'mcp_tasks_outstanding',
   oldestAge: 'mcp_tasks_oldest_age_seconds',
+  withoutCompatibleWorker: 'mcp_tasks_without_compatible_worker',
+  observerHeartbeat: 'mcp_tasks_observer_heartbeat',
 });
 const PUSH_TIMEOUT_MS = 5000;
 
@@ -25,7 +27,7 @@ export function resolveMcpTaskMetricsSettings({ env = process.env, role = 'combi
   return { appSlug, token, apiURL: safeAPIURL(configuredURL) };
 }
 
-export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = DEFAULT_API_URL, fetchImpl = globalThis.fetch, intervalMs = 15_000, keepAlive = false, onError = () => {} }) {
+export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = DEFAULT_API_URL, fetchImpl = globalThis.fetch, intervalMs = 15_000, keepAlive = false, observer = false, onError = () => {} }) {
   if (!store || typeof store.queueMetrics !== 'function') throw new Error('MCP task metrics require a task store queueMetrics method');
   if (typeof appSlug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(appSlug)) throw new Error('Invalid MCP task scaling app slug');
   if (typeof token !== 'string' || !token.trim()) throw new Error('MCP task scaling token is required');
@@ -33,6 +35,7 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 5000 || intervalMs > 300_000) throw new Error('MCP task metrics interval must be between 5000 and 300000 milliseconds');
   const baseURL = safeAPIURL(apiURL);
   const endpoint = name => new URL(`/v1/apps/${encodeURIComponent(appSlug)}/custom-metrics/${name}`, baseURL).href;
+  const compatibilityEndpoint = new URL(`/v1/apps/${encodeURIComponent(appSlug)}/mcp-task-compatibility`, baseURL).href;
   let stopped = false;
   let publishing;
 
@@ -47,18 +50,35 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
     if (response.status !== 204) throw new Error(`Gregale custom metric push failed with HTTP ${response.status}`);
   }
 
+  async function pushCompatibilityReport(metrics) {
+    const response = await fetchImpl(compatibilityEndpoint, {
+      method: 'PUT',
+      redirect: 'error',
+      signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ handlers: metrics.handlerCompatibility, truncated: metrics.compatibilityTruncated }),
+    });
+    if (response.status !== 204) throw new Error(`Gregale MCP task compatibility report failed with HTTP ${response.status}`);
+  }
+
   function publish() {
     if (stopped || publishing) return publishing;
     publishing = (async () => {
       const metrics = await store.queueMetrics();
       if (!metrics || !Number.isSafeInteger(metrics.outstandingTasks) || metrics.outstandingTasks < 0 ||
-          !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) {
+          !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0 ||
+          !Number.isSafeInteger(metrics.withoutCompatibleWorkerTasks) || metrics.withoutCompatibleWorkerTasks < 0) {
         throw new Error('MCP task queue metrics returned invalid values');
       }
       await Promise.all([
         push(METRIC_NAMES.outstanding, metrics.outstandingTasks),
         push(METRIC_NAMES.oldestAge, Math.min(metrics.oldestAgeSeconds, 1_000_000_000_000)),
+        push(METRIC_NAMES.withoutCompatibleWorker, metrics.withoutCompatibleWorkerTasks),
       ]);
+      if (observer) {
+        await pushCompatibilityReport(metrics);
+        await push(METRIC_NAMES.observerHeartbeat, 1);
+      }
     })().catch(() => {
       try { onError(); } catch { /* Metrics reporting must not stop task execution. */ }
     }).finally(() => { publishing = undefined; });
@@ -67,7 +87,9 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
 
   // Publish immediately, then keep the gauge fresh on a bounded cadence. All
   // worker replicas may publish the same aggregate safely; the API upserts one
-  // app-scoped gauge and never stores task or customer identifiers.
+  // app-scoped gauges and never stores task or customer identifiers. Only the
+  // dedicated observer publishes its heartbeat, so worker gauges cannot mask
+  // loss of the always-on publisher required for scale-to-zero.
   void publish();
   const timer = setInterval(() => { void publish(); }, intervalMs);
   if (!keepAlive) timer.unref?.();

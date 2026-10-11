@@ -196,6 +196,47 @@ func TestCreateAlertRule_ActionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreateMCPTaskAgeAlert_NotificationOnly(t *testing.T) {
+	e := setupAlerts(t, api.PlanPro)
+	mustSeedApp(t, e, "alerts-mcp-age")
+	req := alertRuleReq()
+	req.Name = "mcp oldest task age"
+	req.Metric = string(state.AlertMetricMCPTasksOldestAgeSeconds)
+	req.Threshold = 300
+	rollback := string(state.AlertActionRollback)
+	req.Action = &rollback
+	rec := e.do(t, "POST", "/v1/apps/alerts-mcp-age/alerts", req, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeAlertRuleInvalid)
+
+	webhook := string(state.AlertActionWebhook)
+	req.Action = &webhook
+	created := mustCreateAlertRule(t, e, "alerts-mcp-age", req)
+	if created.Metric != string(state.AlertMetricMCPTasksOldestAgeSeconds) || created.Action != webhook {
+		t.Fatalf("created metric/action = %q/%q, want MCP task age/webhook", created.Metric, created.Action)
+	}
+}
+
+func TestCreateMCPTaskMetricsStaleAlert_NotificationOnly(t *testing.T) {
+	e := setupAlerts(t, api.PlanPro)
+	mustSeedApp(t, e, "alerts-mcp-stale")
+	req := alertRuleReq()
+	req.Name = "mcp task metrics stale"
+	req.Metric = string(state.AlertMetricMCPTasksMetricsStale)
+	req.Comparison = string(state.AlertGt)
+	req.Threshold = 0
+	rollback := string(state.AlertActionRollback)
+	req.Action = &rollback
+	rec := e.do(t, "POST", "/v1/apps/alerts-mcp-stale/alerts", req, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeAlertRuleInvalid)
+
+	webhook := string(state.AlertActionWebhook)
+	req.Action = &webhook
+	created := mustCreateAlertRule(t, e, "alerts-mcp-stale", req)
+	if created.Metric != string(state.AlertMetricMCPTasksMetricsStale) || created.Action != webhook {
+		t.Fatalf("created metric/action = %q/%q, want MCP task metrics freshness/webhook", created.Metric, created.Action)
+	}
+}
+
 // TestListAlertRules_IncludesAccountWide seeds an account-wide rule
 // (AppID == "") and an app-scoped rule, then asserts both appear in
 // the per-app listing. Account-wide rules are visible at every

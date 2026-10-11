@@ -38,7 +38,9 @@ class UpdateAlertRuleRequest:
     name: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     metric: UpdateAlertRuleRequestMetric | Unset = UNSET
-    """Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400."""
+    """Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task age reads a
+    fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is
+    missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1."""
     comparison: UpdateAlertRuleRequestComparison | Unset = UNSET
     threshold: float | Unset = UNSET
     window_spec: UpdateAlertRuleRequestWindowSpec | Unset = UNSET
@@ -47,8 +49,8 @@ class UpdateAlertRuleRequest:
     """New plaintext HMAC secret. Omit to keep the existing secret."""
     cooldown_minutes: int | Unset = UNSET
     action: UpdateAlertRuleRequestAction | Unset = UNSET
-    """Replace the action. Omit to leave the existing action in place. Pre-auth target metrics support webhook
-    only."""
+    """Replace the action. Omit to leave the existing action in place. Pre-auth target and MCP task metrics support
+    webhook only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

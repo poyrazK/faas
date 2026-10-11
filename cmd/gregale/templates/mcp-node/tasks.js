@@ -1,10 +1,11 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
+const WORKER_CAPABILITY_HEARTBEAT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 const MAX_TASK_SUBSCRIPTIONS = 64;
 const MAX_TASK_SUBSCRIPTION_IDS = 64;
@@ -12,6 +13,8 @@ const MAX_WATCHED_TASKS = 512;
 const TASK_INPUT_REQUIRED = Symbol('task input required');
 const INPUT_METHODS = new Set(['elicitation/create', 'sampling/createMessage', 'roots/list']);
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TASK_TOOL_NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
+const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function clientSupportsMcpTasks(ctx) {
   const capabilities = ctx?.mcpReq?.envelope?.['io.modelcontextprotocol/clientCapabilities'];
@@ -64,27 +67,37 @@ function inputMethodsFor(clientCapabilities) {
   return methods;
 }
 
-export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, workerConcurrency = 1, workerEnabled = true, keepAlive = false, onError = () => {} }) {
+export function createMcpTaskRuntime({ store, handlers, deploymentID = '', pollIntervalMs = 2000, workerConcurrency = 1, workerEnabled = true, keepAlive = false, drainTimeoutMs = 10_000, onDrain = () => {}, onError = () => {} }) {
   if (!store || typeof store.initialize !== 'function' || typeof store.claim !== 'function') throw new Error('MCP Tasks require a durable task store');
   if (!handlers || typeof handlers !== 'object' || Array.isArray(handlers)) throw new Error('MCP Tasks require a handler registry');
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 500 || pollIntervalMs > 30_000) throw new Error('MCP task polling must be between 500 and 30000 milliseconds');
   if (!Number.isSafeInteger(workerConcurrency) || workerConcurrency < 1 || workerConcurrency > 16) throw new Error('MCP task worker concurrency must be between 1 and 16');
   if (typeof workerEnabled !== 'boolean' || typeof keepAlive !== 'boolean') throw new Error('MCP task worker options must be boolean');
 
+  if (!Number.isSafeInteger(drainTimeoutMs) || drainTimeoutMs < 1000 || drainTimeoutMs > 300_000) throw new Error('MCP drain timeout must be between 1 and 300 seconds');
   const supportedHandlers = [];
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
-    if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
+    if (!TASK_TOOL_NAME_PATTERN.test(name) || !handler || typeof handler.version !== 'string' || !TASK_HANDLER_VERSION_PATTERN.test(handler.version)) throw new Error('Invalid MCP task handler registration');
+    if (handler.validate !== undefined && typeof handler.validate !== 'function') throw new Error('MCP task handler validate must be a function');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
-      if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
+      if (!TASK_HANDLER_VERSION_PATTERN.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
       supportedHandlers.push({ name, version });
       executionHandlers.set(JSON.stringify([name, version]), execute);
     }
   }
 
   const active = new Set();
+  const executions = new Map();
+  let stopPromise;
+  let claimPromise;
+  let capabilityPromise;
   const taskSubscriptions = new Set();
   let timer;
+  let workerCapabilityTimer;
+  let workerCapabilityHeartbeatBusy = false;
+  let lastWorkerCapabilityCleanup = 0;
+  const workerID = randomUUID();
   let taskSubscriptionTimer;
   let taskSubscriptionPollBusy = false;
   let taskStoreUnsubscribe;
@@ -96,6 +109,24 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
 
   function reportError() {
     try { onError(); } catch { /* Never let diagnostics stop task workers. */ }
+  }
+
+  async function refreshWorkerCapabilities() {
+    if (!workerEnabled || closed || workerCapabilityHeartbeatBusy || typeof store.heartbeatWorkerCapabilities !== 'function') return;
+    workerCapabilityHeartbeatBusy = true;
+    try {
+      capabilityPromise = store.heartbeatWorkerCapabilities(workerID, supportedHandlers, deploymentID);
+      await capabilityPromise;
+      const now = Date.now();
+      if (now - lastWorkerCapabilityCleanup >= 60 * 60 * 1000 && typeof store.cleanupStaleWorkerCapabilities === 'function') {
+        await store.cleanupStaleWorkerCapabilities();
+        lastWorkerCapabilityCleanup = now;
+      }
+    } catch {
+      reportError();
+    } finally {
+      workerCapabilityHeartbeatBusy = false;
+    }
   }
 
   function ownerPartition(authInfo, authMode) {
@@ -224,6 +255,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
 
     const controller = new AbortController();
     let abortReason = '';
+    executions.set(task.task_id, { task, abort() { abortReason = 'drain_timeout'; controller.abort(); } });
     let heartbeatBusy = false;
     let pausedForInput = false;
     const heartbeat = setInterval(async () => {
@@ -275,15 +307,16 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         },
       });
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
-      else if (abortReason !== 'lease_lost') await store.complete(task.task_id, task.lease_token, result);
+      else if (abortReason !== 'lease_lost' && abortReason !== 'drain_timeout') await store.complete(task.task_id, task.lease_token, result);
     } catch (error) {
       if (error === TASK_INPUT_REQUIRED) return;
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
-      else if (abortReason !== 'lease_lost') {
+      else if (abortReason !== 'lease_lost' && abortReason !== 'drain_timeout') {
         await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task execution failed' });
       }
     } finally {
       clearInterval(heartbeat);
+      executions.delete(task.task_id);
     }
   }
 
@@ -297,8 +330,10 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         await store.cleanupExpired();
       }
       while (!closed && active.size < workerConcurrency) {
-        const task = await store.claim(MAX_ATTEMPTS, LEASE_MS, supportedHandlers);
+        claimPromise = store.claim(MAX_ATTEMPTS, LEASE_MS, supportedHandlers);
+        const task = await claimPromise;
         if (!task) break;
+        if (closed) { await store.release(task.task_id, task.lease_token); break; }
         let work;
         work = runTask(task).catch(reportError).finally(() => {
           active.delete(work);
@@ -319,31 +354,68 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
       await store.initialize();
       closed = false;
       if (workerEnabled) {
+        await refreshWorkerCapabilities();
+        workerCapabilityTimer = setInterval(() => { void refreshWorkerCapabilities(); }, WORKER_CAPABILITY_HEARTBEAT_MS);
+        if (!keepAlive) workerCapabilityTimer.unref?.();
         timer = setInterval(() => { void drain(); }, pollIntervalMs);
         if (!keepAlive) timer.unref?.();
         await drain();
       }
     },
     async stop() {
+      if (stopPromise) return stopPromise;
       if (closed) return;
       closed = true;
       clearInterval(timer);
-      clearInterval(taskSubscriptionTimer);
-      taskSubscriptionTimer = undefined;
-      const unsubscribe = taskStoreUnsubscribe;
-      taskStoreUnsubscribe = undefined;
-      taskStoreSubscribePromise = undefined;
-      if (unsubscribe) await unsubscribe();
-      for (const watcher of [...taskSubscriptions]) {
-        watcher.closed = true;
-        try { watcher.onClose?.(); } catch { reportError(); }
-        taskSubscriptions.delete(watcher);
-      }
-      await Promise.allSettled([...active]);
+      clearInterval(workerCapabilityTimer);
+      const deadline = Date.now() + drainTimeoutMs;
+      const emit = (state, unfinishedTasks = 0) => { try { onDrain({ state, unfinishedTasks, activeTasks: executions.size, deadline: new Date(deadline).toISOString() }); } catch { reportError(); } };
+      emit('draining');
+      let expired = [];
+      let timeout;
+      const expiry = new Promise(resolve => { timeout = setTimeout(() => {
+        expired = [...executions.values()];
+        for (const execution of expired) execution.abort();
+        resolve();
+      }, drainTimeoutMs); });
+      stopPromise = (async () => {
+        // Complete an in-flight registration before withdrawing capabilities.
+        await capabilityPromise?.catch(reportError);
+        if (workerEnabled && typeof store.removeWorkerCapabilities === 'function') {
+          try { await store.removeWorkerCapabilities(workerID); } catch { reportError(); }
+        }
+        clearInterval(taskSubscriptionTimer);
+        taskSubscriptionTimer = undefined;
+        const unsubscribe = taskStoreUnsubscribe;
+        taskStoreUnsubscribe = undefined;
+        taskStoreSubscribePromise = undefined;
+        if (unsubscribe) await unsubscribe();
+        for (const watcher of [...taskSubscriptions]) {
+          watcher.closed = true;
+          try { watcher.onClose?.(); } catch { reportError(); }
+          taskSubscriptions.delete(watcher);
+        }
+        // Claims that finish after shutdown are returned without execution.
+        await claimPromise?.catch(reportError);
+        await Promise.race([Promise.allSettled([...active]), expiry]);
+        clearTimeout(timeout);
+        const unfinished = [...new Map([...expired, ...executions.values()].map(execution => [execution.task.task_id, execution])).values()];
+        // Abort locally before revoking leases: even an uncooperative handler
+        // returning during release cannot publish its result.
+        for (const execution of unfinished) execution.abort();
+        try {
+          if (typeof store.releaseMany === 'function') await store.releaseMany(unfinished.map(({ task }) => task));
+          else await Promise.all(unfinished.map(({ task }) => store.release(task.task_id, task.lease_token)));
+        } catch { reportError(); } // Lease expiry remains the fallback on database failure.
+        emit(unfinished.length ? 'timed_out' : 'completed', unfinished.length);
+      })();
+      return stopPromise;
     },
     async create(toolName, args, authInfo, authMode, clientCapabilities = {}) {
-      const handler = handlers[toolName];
+      if (closed) throw new Error('MCP task runtime is draining');
+      const handler = Object.hasOwn(handlers, toolName) ? handlers[toolName] : undefined;
       if (!handler || typeof handler.execute !== 'function') throw new Error('MCP task tool is not registered');
+      handler.validate?.(args);
       const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities) });
       if (workerEnabled) void drain();
       return {
@@ -354,6 +426,10 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         ttlMs: Math.max(0, new Date(task.expires_at).getTime() - new Date(task.created_at).getTime()),
         pollIntervalMs,
       };
+    },
+    canCreate(toolName) {
+      const handler = Object.hasOwn(handlers, toolName) ? handlers[toolName] : undefined;
+      return !!handler && typeof handler.execute === 'function';
     },
     async get(taskID, authInfo, authMode, canAccessTool) {
       const task = await store.get({ taskID, authInfo, authMode });
@@ -443,12 +519,75 @@ export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canA
   }, ({ taskId }, ctx) => runtime.update(taskId, ctx.mcpReq.inputResponses, authInfo, authMode, canAccessTool));
 }
 
-export const mcpTaskHandlers = Object.freeze({
-  build_report: Object.freeze({
-    version: '1',
-    async execute({ report, steps }, { signal }) {
+const registeredMcpTaskHandlers = Object.create(null);
+export const mcpTaskHandlers = new Proxy(registeredMcpTaskHandlers, {
+  set() { throw new TypeError('Register task handlers with registerMcpTaskHandler()'); },
+  defineProperty() { throw new TypeError('Register task handlers with registerMcpTaskHandler()'); },
+  deleteProperty() { throw new TypeError('Task handlers cannot be removed while the runtime is configured'); },
+});
+
+// Register handlers before starting the web or worker runtime. Keep the active
+// version stable across all processes sharing a queue and retain old versions
+// until their queued tasks have drained.
+export function registerMcpTaskHandler(name, handler) {
+  if (typeof name !== 'string' || !TASK_TOOL_NAME_PATTERN.test(name)) throw new TypeError('MCP task tool name must contain 1 to 128 visible ASCII characters');
+  if (!handler || typeof handler !== 'object' || Array.isArray(handler)
+    || typeof handler.version !== 'string' || !TASK_HANDLER_VERSION_PATTERN.test(handler.version)
+    || typeof handler.validate !== 'function' || typeof handler.execute !== 'function') {
+    throw new TypeError('MCP task handlers require a version, validate function, and execute function');
+  }
+  const previousVersions = handler.previousVersions ?? {};
+  if (!previousVersions || typeof previousVersions !== 'object' || Array.isArray(previousVersions)) throw new TypeError('MCP task previousVersions must be an object');
+  for (const [version, execute] of Object.entries(previousVersions)) {
+    if (!TASK_HANDLER_VERSION_PATTERN.test(version) || version === handler.version || typeof execute !== 'function') {
+      throw new TypeError('Invalid MCP task previous handler version');
+    }
+  }
+  if (Object.hasOwn(registeredMcpTaskHandlers, name)) throw new Error(`MCP task handler ${name} is already registered`);
+  registeredMcpTaskHandlers[name] = Object.freeze({
+    version: handler.version,
+    previousVersions: Object.freeze({ ...previousVersions }),
+    validate: handler.validate,
+    execute: handler.execute,
+  });
+  return mcpTaskHandlers[name];
+}
+
+registerMcpTaskHandler('build_report', {
+    version: '2',
+    previousVersions: {
+      '1': async ({ report, steps }, { signal }) => {
+        for (let step = 0; step < steps; step++) await delay(200, undefined, { signal });
+        return { content: [{ type: 'text', text: `Report ${report} is ready after ${steps} steps.` }] };
+      },
+    },
+    validate(args) {
+      if (!args || typeof args !== 'object' || Array.isArray(args)
+        || typeof args.report !== 'string' || !args.report.trim() || args.report.length > 80
+        || !Number.isInteger(args.steps) || args.steps < 1 || args.steps > 20
+        || (args.request_approval !== undefined && typeof args.request_approval !== 'boolean')) {
+        throw new Error('Invalid build_report task arguments');
+      }
+    },
+    async execute({ report, steps, request_approval }, { signal, requestInput }) {
+      if (request_approval) {
+        const response = await requestInput('approval', {
+          method: 'elicitation/create',
+          params: {
+            mode: 'form',
+            message: 'Approve generating this report?',
+            requestedSchema: {
+              type: 'object',
+              properties: { approved: { type: 'boolean', title: 'Approve report generation' } },
+              required: ['approved'],
+            },
+          },
+        });
+        if (response.action !== 'accept' || response.content?.approved !== true) {
+          return { content: [{ type: 'text', text: 'Report was not approved.' }] };
+        }
+      }
       for (let step = 0; step < steps; step++) await delay(200, undefined, { signal });
       return { content: [{ type: 'text', text: `Report ${report} is ready after ${steps} steps.` }] };
     },
-  }),
 });

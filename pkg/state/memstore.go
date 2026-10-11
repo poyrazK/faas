@@ -137,6 +137,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	mcpTaskPromotionHolds       map[string]MCPTaskPromotionHold
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64
 	checkedRollbacks            map[string]api.RollbackOperation
@@ -198,6 +199,7 @@ type MemStore struct {
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
+	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectWriteFences           map[string]ObjectBucketWriteFence
@@ -5023,6 +5025,11 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	} else if len(siblings) == 0 {
 		return Deployment{}, 0, ErrTrafficPercentSumInvalid
 	}
+	if terminal {
+		if err := m.checkMCPTaskCompatibilityCutoverLocked(d); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 
 	proposed := map[string]int{id: params.TrafficPercent}
 	weights := RedistributeTraffic(toHelperSiblings(siblings), 100-params.TrafficPercent)
@@ -5038,6 +5045,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if terminal {
 		d.RolloutState = "complete"
 		d.RolloutCompletedAt = &now
+		d.MCPTaskMigrationOverride = false
 		for _, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
@@ -5181,6 +5189,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
 		return Deployment{}, err
+	}
+	if newPercent == 100 && d.TrafficPercent != 100 && len(siblings) > 0 {
+		if err := m.checkMCPTaskCompatibilityReportLocked(d); err != nil {
+			return Deployment{}, err
+		}
+		d.MCPTaskMigrationOverride = false
 	}
 	d.TrafficPercent = newPercent
 	m.putDeploymentLocked(id, d)
@@ -8190,6 +8204,11 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 	}
 	all := make([]Deployment, 0)
 	for _, deployment := range m.deployments {
+		if filter.ExcludeMCPTaskHolds {
+			if _, held := m.mcpTaskPromotionHolds[deployment.ID]; held {
+				continue
+			}
+		}
 		if deployment.DeletedAt != nil && !filter.IncludeDeleted {
 			continue
 		}
@@ -8453,19 +8472,39 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 }
 
 func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error) {
-	return m.markDeploymentLive(ctx, id, false)
+	return m.markDeploymentLive(ctx, id, false, false)
 }
 
 func (m *MemStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
-	return m.markDeploymentLive(ctx, id, true)
+	return m.markDeploymentLive(ctx, id, true, false)
 }
 
-func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) (err error) {
+// MarkMCPTaskRecoveryDeploymentLive fences a replay against lifecycle changes
+// and newer same-scope revisions under the activation transaction/mutex.
+func (m *MemStore) MarkMCPTaskRecoveryDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) error {
+	return m.markDeploymentLive(ctx, id, fenceGitDriven, true)
+}
+
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven, recovery bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if recovery {
+		if d.Status == DeploySuperseded {
+			return ErrDeploymentSuperseded
+		}
+		if d.Status.IsTerminal() || d.DeletedAt != nil {
+			return ErrInvalidStateTransition
+		}
+		if app, exists := m.apps[d.AppID]; !exists || app.Status == AppDeleted {
+			return ErrInvalidStateTransition
+		}
+		if d.Status == DeployLive {
+			return nil
+		}
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
@@ -8512,8 +8551,8 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 		return err
 	}
-	if fenceGitDriven {
-		if (d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0 {
+	if fenceGitDriven || recovery {
+		if fenceGitDriven && ((d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0) {
 			return ErrInvalidStateTransition
 		}
 		if d.Status == DeploySuperseded {
@@ -8572,6 +8611,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		if len(siblings) == 0 && d.TrafficPercent != 100 && d.TrafficPercent != 0 {
 			return ErrTrafficPercentSumInvalid
 		}
+		if d.TrafficPercent == 100 && len(siblings) > 0 {
+			if err := m.checkMCPTaskCompatibilityReportLocked(d); err != nil {
+				return err
+			}
+			d.MCPTaskMigrationOverride = false
+		}
 		d.Status = DeployLive
 		d.Error = ""
 		d.RolloutState = "complete"
@@ -8614,6 +8659,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		// Commit the stable cutover as one mutex-protected mutation. The old
 		// live row remains visible throughout the replacement build and is
 		// retired only when the replacement is ready to serve.
+		if err := m.checkMCPTaskCompatibilityCutoverLocked(d); err != nil {
+			return err
+		}
 		d.Status = DeployLive
 		d.Error = ""
 		d.TrafficPercent = 100
@@ -8653,6 +8701,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			m.putDeploymentLocked(otherID, other)
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
+		d.MCPTaskMigrationOverride = false
 		m.putDeploymentLocked(id, d)
 		return nil
 	}
@@ -8777,6 +8826,16 @@ func (m *MemStore) cancelDeploymentTx(_ context.Context, id, principal string, r
 	d.CancelReason = string(reason)
 	if err := finalizeCancelledDeploymentState(&d, now, reason); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
+	}
+	if hold, held := m.mcpTaskPromotionHolds[id]; held && hold.LastRecoveryOutcome != "cancelled" {
+		if err := m.appendMCPTaskAuditLocked(id, DeployMCPTaskHoldCancelled, principal, map[string]any{"outcome": "cancelled"}); err != nil {
+			return Deployment{}, nil, err
+		}
+		hold.recovery.Payload = nil
+		hold.recovery.leaseUntil = time.Time{}
+		hold.recovery.wakeRequested = false
+		hold.LastRecoveryOutcome, hold.LastRecoveryAt, hold.LastRecoveryErrorCode = "cancelled", &now, ""
+		m.mcpTaskPromotionHolds[id] = hold
 	}
 	m.putDeploymentLocked(id, d)
 	for taskID, task := range m.appTasks {

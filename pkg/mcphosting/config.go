@@ -14,26 +14,20 @@ import (
 	"strings"
 )
 
-var endpointPath = regexp.MustCompile(`^/(?:[A-Za-z0-9._~-]+/?)*$`)
 var uriTemplateExpression = regexp.MustCompile(`\{(?:[+#./;?&])?[A-Za-z0-9_.%~-]+(?:\*|:[1-9][0-9]*)?(?:,(?:[A-Za-z0-9_.%~-]+(?:\*|:[1-9][0-9]*)?))*\}`)
 var taskEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 func validateEndpoint(value string) error {
-	if !endpointPath.MatchString(value) || len(value) > 1024 {
+	if !api.ValidMCPProbeEndpointPath(value) {
 		return fmt.Errorf("MCP endpoint must be a literal absolute path without escapes, query, fragment or route patterns")
-	}
-	for _, segment := range strings.Split(value, "/") {
-		if segment == "." || segment == ".." {
-			return fmt.Errorf("MCP endpoint must not contain dot segments")
-		}
 	}
 	return nil
 }
 
 const (
 	ConfigFile            = "gregale-mcp.json"
-	ProtocolVersion       = "2026-07-28"
-	LegacyProtocolVersion = "2025-11-25"
+	ProtocolVersion       = api.MCPProtocolVersion
+	LegacyProtocolVersion = api.MCPLegacyProtocolVersion
 )
 
 // Config is deliberately separate from the guest and deployment manifests:

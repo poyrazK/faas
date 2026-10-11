@@ -55,6 +55,8 @@ if TYPE_CHECKING:
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
+    from ..models.deployment_promotion_hold import DeploymentPromotionHold
+    from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
     from ..models.log_excerpt import LogExcerpt
     from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
@@ -83,6 +85,8 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
+    promotion_hold: DeploymentPromotionHold | Unset = UNSET
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
     rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
@@ -287,6 +291,11 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        worker_drain = UNSET if isinstance(self.worker_drain, Unset) else self.worker_drain.to_dict()
+        promotion_hold: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.promotion_hold, Unset):
+            promotion_hold = self.promotion_hold.to_dict()
 
         stage_state: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stage_state, Unset):
@@ -593,6 +602,10 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if worker_drain is not UNSET:
+            field_dict["worker_drain"] = worker_drain
+        if promotion_hold is not UNSET:
+            field_dict["promotion_hold"] = promotion_hold
         if stage_state is not UNSET:
             field_dict["stage_state"] = stage_state
         if revision is not UNSET:
@@ -737,6 +750,14 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        from ..models.deployment_promotion_hold import DeploymentPromotionHold
+
+        from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
+        _worker_drain = d.pop("worker_drain", UNSET)
+        worker_drain = UNSET if isinstance(_worker_drain, Unset) else DeploymentWorkerDrainStatus.from_dict(_worker_drain)
+        _promotion_hold = d.pop("promotion_hold", UNSET)
+        promotion_hold = UNSET if isinstance(_promotion_hold, Unset) else DeploymentPromotionHold.from_dict(_promotion_hold)
 
         _stage_state = d.pop("stage_state", UNSET)
         stage_state: DeploymentResponseStageState | Unset
@@ -1282,6 +1303,8 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            worker_drain=worker_drain,
+            promotion_hold=promotion_hold,
             stage_state=stage_state,
             revision=revision,
             build_id=build_id,

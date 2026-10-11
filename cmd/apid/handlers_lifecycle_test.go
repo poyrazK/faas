@@ -48,7 +48,7 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 func TestWorkerCustomMetricManifestRoundTrip(t *testing.T) {
 	want := &api.WorkerScaling{
 		Min: 1, Max: 10, Metric: api.ScalingMetricCustom,
-		Name: "mcp_tasks_outstanding", Target: 4,
+		Name: "mcp_tasks_outstanding", Target: 4, ObserverAppSlug: "mcp-observer",
 	}
 	stateManifest := stateManifestFromAPI(api.AppManifest{
 		ExecutionMode:  api.ExecutionModeWorker,
@@ -60,6 +60,23 @@ func TestWorkerCustomMetricManifestRoundTrip(t *testing.T) {
 	got := apiManifestFromState(stateManifest)
 	if !reflect.DeepEqual(got.WorkerReplicas, want) {
 		t.Fatalf("round-tripped worker scaling = %+v, want %+v", got.WorkerReplicas, want)
+	}
+}
+
+func TestLifecycleObserverLinkMustNameSeparateApp(t *testing.T) {
+	manifest := api.AppManifest{
+		ExecutionMode: api.ExecutionModeWorker,
+		WorkerReplicas: &api.WorkerScaling{
+			Min: 0, Max: 5, Metric: api.ScalingMetricCustom,
+			Name: "mcp_tasks_outstanding", Target: 4, ObserverAppSlug: "mcp-worker",
+		},
+	}
+	if problem := lifecycleObserverLinkProblem("mcp-worker", manifest); problem == nil {
+		t.Fatal("self-linked task observer was accepted")
+	}
+	manifest.WorkerReplicas.ObserverAppSlug = "mcp-observer"
+	if problem := lifecycleObserverLinkProblem("mcp-worker", manifest); problem != nil {
+		t.Fatalf("separate observer app was rejected: %v", problem)
 	}
 }
 

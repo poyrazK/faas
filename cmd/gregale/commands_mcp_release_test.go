@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -19,15 +20,16 @@ import (
 
 func TestMCPCandidatePromotion(t *testing.T) {
 	for _, tc := range []struct {
-		name                         string
-		valid, preview, first, drift bool
-		want                         int
+		name                                          string
+		valid, preview, first, drift, catalogDegraded bool
+		want                                          int
 	}{
-		{"valid candidate", true, true, false, false, 0},
-		{"first deployment", true, true, true, false, 0},
-		{"failed doctor preserves serving", false, true, false, false, 1},
-		{"missing preview fails closed", true, false, false, false, 1},
-		{"catalog expansion blocks promotion", true, true, false, true, 1},
+		{"valid candidate", true, true, false, false, false, 0},
+		{"first deployment", true, true, true, false, false, 0},
+		{"failed doctor preserves serving", false, true, false, false, false, 1},
+		{"missing preview fails closed", true, false, false, false, false, 1},
+		{"catalog expansion blocks promotion", true, true, false, true, false, 1},
+		{"degraded catalog blocks promotion", true, true, false, false, true, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
@@ -45,6 +47,17 @@ func TestMCPCandidatePromotion(t *testing.T) {
 				}
 				if r.Header.Get("Origin") != "" {
 					w.WriteHeader(403)
+					return
+				}
+				if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+					if tc.catalogDegraded {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusServiceUnavailable)
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"status": "degraded", "catalog_revision": 4,
+							"catalog_sha256": strings.Repeat("a", 64),
+						})
+					}
 					return
 				}
 				var req struct {
@@ -69,6 +82,74 @@ func TestMCPCandidatePromotion(t *testing.T) {
 					t.Error("missing control credential")
 				}
 				switch r.URL.Path {
+				case "/v1/apps/my-mcp/instances":
+					_ = json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "instance-a", AppID: "app", DeploymentID: "candidate", State: "running"}})
+				case "/v1/apps/my-mcp/deployments/candidate/instances/instance-a/mcp-health":
+					healthStatus := http.StatusOK
+					catalogStatus := "ok"
+					if tc.catalogDegraded {
+						healthStatus = http.StatusServiceUnavailable
+						catalogStatus = "degraded"
+					}
+					health := fmt.Sprintf(`{"status":%q,"catalog_revision":1,"catalog_sha256":%q}`, catalogStatus, strings.Repeat("a", 64))
+					_ = json.NewEncoder(w).Encode(api.MCPInstanceHealthProbeResponse{
+						AppID: "app", DeploymentID: "candidate", InstanceID: "instance-a",
+						HTTPStatus: healthStatus, HealthBody: health,
+					})
+				case "/v1/apps/my-mcp/deployments/candidate/instances/instance-a/mcp-probe":
+					var probe api.MCPInstanceProtocolProbeRequest
+					if err := json.NewDecoder(r.Body).Decode(&probe); err != nil {
+						t.Errorf("decode exact-instance protocol request: %v", err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					method, valid := api.MCPProbeRPCMethod(probe.RPCRequest)
+					if !valid || !api.MCPProbeRPCMatchesVersion(probe.RPCRequest, probe.ProtocolVersion) {
+						t.Errorf("invalid exact-instance protocol request: %s", probe.RPCRequest)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					var request struct {
+						ID json.RawMessage `json:"id"`
+					}
+					_ = json.Unmarshal(probe.RPCRequest, &request)
+					response := api.MCPInstanceProtocolProbeResponse{
+						AppID: "app", DeploymentID: "candidate", InstanceID: "instance-a",
+						HTTPStatus: http.StatusOK, ContentType: "application/json",
+						ProtocolVersion: api.MCPProtocolVersion,
+					}
+					var result any
+					switch method {
+					case "initialize":
+						result = map[string]any{
+							"protocolVersion": api.MCPProtocolVersion,
+							"capabilities":    map[string]any{"tools": map[string]any{}},
+						}
+					case "notifications/initialized":
+						response.HTTPStatus = http.StatusAccepted
+						response.ContentType = ""
+					case "server/discover":
+						result = map[string]any{
+							"supportedVersions": []string{api.MCPProtocolVersion},
+							"capabilities":      map[string]any{"tools": map[string]any{}},
+						}
+					case "tools/list":
+						result = map[string]any{"tools": []any{map[string]any{"name": "add", "inputSchema": map[string]any{"type": "object"}}}}
+					default:
+						t.Errorf("unexpected MCP protocol method: %s", method)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					if method != "notifications/initialized" {
+						encoded, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+						if err != nil {
+							t.Errorf("encode MCP protocol response: %v", err)
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						response.Body = string(encoded)
+					}
+					_ = json.NewEncoder(w).Encode(response)
 				case "/v1/apps/my-mcp":
 					if r.Method == "PATCH" {
 						updates++

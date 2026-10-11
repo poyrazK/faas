@@ -9739,10 +9739,11 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK ((NOT (metric = ANY (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
 );
@@ -10012,6 +10013,20 @@ CREATE TABLE public.app_custom_metrics (
     observed_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_custom_metrics_name_shape CHECK ((name ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT app_custom_metrics_value_finite CHECK (((value >= (0)::double precision) AND (value = value) AND (value < 'Infinity'::double precision)))
+);
+
+
+--
+-- Name: app_mcp_task_compatibility; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_mcp_task_compatibility (
+    app_id uuid NOT NULL,
+    handlers jsonb NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_mcp_task_compatibility_handlers_shape CHECK (((jsonb_typeof(handlers) = 'array'::text) AND (jsonb_array_length(handlers) <= 256))),
+    CONSTRAINT app_mcp_task_compatibility_handlers_size CHECK ((octet_length((handlers)::text) <= 131072))
 );
 
 
@@ -12373,7 +12388,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text])))
+    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])))
 );
 
 
@@ -12452,6 +12467,17 @@ CREATE TABLE public.deployment_logs (
     stream text DEFAULT 'stdout'::text NOT NULL,
     line text NOT NULL,
     written_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_task_migration_overrides (
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    used_at timestamp with time zone
 );
 
 
@@ -21683,6 +21709,14 @@ ALTER TABLE ONLY public.app_custom_metrics
 
 
 --
+-- Name: app_mcp_task_compatibility app_mcp_task_compatibility_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_task_compatibility
+    ADD CONSTRAINT app_mcp_task_compatibility_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_default_domains app_default_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22584,6 +22618,14 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides deployment_mcp_task_migration_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
+    ADD CONSTRAINT deployment_mcp_task_migration_overrides_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -35364,6 +35406,14 @@ ALTER TABLE ONLY public.app_custom_metrics
 
 
 --
+-- Name: app_mcp_task_compatibility app_mcp_task_compatibility_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_task_compatibility
+    ADD CONSTRAINT app_mcp_task_compatibility_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_default_domains app_default_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36697,6 +36747,14 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides deployment_mcp_task_migration_overrides_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
+    ADD CONSTRAINT deployment_mcp_task_migration_overrides_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -42699,3 +42757,29 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+
+CREATE TABLE deployment_mcp_task_holds (
+    deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+    detail text NOT NULL CHECK (octet_length(detail) <= 8192),
+    observed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+ALTER TABLE deployment_mcp_task_holds
+    ADD COLUMN first_held_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    ADD COLUMN recovery_channel text NOT NULL DEFAULT '' CHECK (recovery_channel IN ('', 'snapshot_written', 'deployment_ready')),
+    ADD COLUMN recovery_payload jsonb CHECK (octet_length(recovery_payload::text) <= 65536),
+    ADD COLUMN owner_node text NOT NULL DEFAULT '',
+    ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    ADD COLUMN next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    ADD COLUMN lease_until timestamptz,
+    ADD COLUMN claim_generation bigint NOT NULL DEFAULT 0,
+    ADD COLUMN wake_requested boolean NOT NULL DEFAULT false;
+CREATE INDEX deployment_mcp_task_holds_due_idx ON deployment_mcp_task_holds (next_attempt_at)
+    WHERE recovery_payload IS NOT NULL;
+
+ALTER TABLE deployment_mcp_task_holds
+    ADD COLUMN last_recovery_outcome text NOT NULL DEFAULT '' CHECK (last_recovery_outcome IN ('', 'held', 'retry', 'recovered', 'inactive', 'cancelled')),
+    ADD COLUMN last_recovery_at timestamptz,
+    ADD COLUMN last_recovery_error_code text NOT NULL DEFAULT '' CHECK (length(last_recovery_error_code) <= 128);
+
+CREATE INDEX deployment_audit_worker_drain_idx ON public.deployment_audit (deployment_id,id DESC) WHERE kind IN ('deploy.worker_drain_started','deploy.worker_drain_completed');

@@ -115,25 +115,28 @@ Scaffold, deploy and verify stateless MCP servers
 
 ### mcp init
 
-Create the Node MCP starter
+Create an MCP starter in Node, Go or Python
 
-`gregale mcp init --path <DIR>`
+`gregale mcp init --path <DIR> [--runtime <RUNTIME>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | empty destination directory | required |
+| `--runtime <RUNTIME>` | starter language (node, go or python; default node) | one of `node` · `go` · `python` |
 
 Examples:
 
 ```sh
 gregale mcp init --path ./my-mcp
+gregale mcp init --path ./my-mcp --runtime go
+gregale mcp init --path ./my-mcp --runtime python
 ```
 
 ### mcp deploy
 
-Deploy the worktree, enable streaming and verify MCP discovery
+Deploy the worktree, pin the candidate catalog to its deployment revision, verify MCP discovery and promote
 
-`gregale mcp deploy [--path <DIR>] --name <SLUG> [--profile <NAME>] [--token-env <ENV>] [--secrets-file <PATH>] [--timeout <SECONDS>]`
+`gregale mcp deploy [--path <DIR>] --name <SLUG> [--profile <NAME>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--mcp-task-migration-override] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -142,12 +145,50 @@ Deploy the worktree, enable streaming and verify MCP discovery
 | `--profile <NAME>` | app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--token-env <ENV>` | client token for external OAuth verification |  |
 | `--secrets-file <PATH>` | sealed app secrets |  |
+| `--release-policy <PATH>` | role-specific catalog baselines to verify before promotion |  |
+| `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once | consumed when candidate traffic is promoted |  |
 | `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
 
 Examples:
 
 ```sh
 gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
+```
+
+### mcp status
+
+Inspect catalog integrity and qualify MCP initialization plus catalog discovery
+on every running replica of each serving deployment. Gregale selects replicas
+from platform inventory, probes each instance directly, then confirms the
+replica set stayed stable. The protocol probe only initializes and lists
+definitions; it does not invoke tools, read resource contents, render prompts,
+or access task data. It also checks the public endpoint using each configured
+role, which verifies that front-door authentication and routing work as expected.
+Use `--watch` to poll for changes in health, protocol qualification, catalog
+digests, or serving replica membership. With `--json`, the watcher emits an
+initial snapshot and then one NDJSON event for each change.
+
+`gregale mcp status --app <SLUG> [--endpoint <PATH>] [--token-env <ENV> | --release-policy <PATH>] [--timeout <DURATION>] [--watch] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | Gregale MCP app slug | required |
+| `--endpoint <PATH>` | literal MCP endpoint path (default `/mcp`) |  |
+| `--token-env <ENV>` | environment variable containing a workload bearer token |  |
+| `--release-policy <PATH>` | verify each role's caller-visible catalog against its baseline | mutually exclusive with `--token-env` |
+| `--timeout <DURATION>` | overall health and protocol qualification deadline (default 10s) |  |
+| `--watch` | continue polling and report only the initial state and changes; Ctrl+C stops |  |
+| `--interval <DURATION>` | polling interval with `--watch` (default 30s; maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale mcp status --app my-mcp
+gregale mcp status --app my-mcp --json
+gregale mcp status --app my-mcp --token-env MCP_READER_TOKEN
+gregale mcp status --app my-mcp --release-policy release.json
+gregale mcp status --app my-mcp --watch --interval 15s
+gregale mcp status --app my-mcp --watch --interval 15s --json
 ```
 
 ### mcp doctor
@@ -489,6 +530,108 @@ Examples:
 
 ```sh
 gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+### mcp tasks
+
+Configure and inspect durable task worker scaling
+
+#### mcp tasks setup
+
+Preview or apply the task-backlog scaling policy
+
+`gregale mcp tasks setup [--app <SLUG>] [--min <N>] [--max <N>] [--target <N>] [--observer-app <SLUG>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--min <N>` | minimum replicas (default 1; use 0 with an always-on observer) |  |
+| `--max <N>` | maximum replicas (default 10) |  |
+| `--target <N>` | outstanding tasks per worker (default 4) |  |
+| `--observer-app <SLUG>` | link the separate always-on worker app publishing task metrics |  |
+| `--apply` | apply the proposed worker scaling policy |  |
+
+Examples:
+
+```sh
+gregale mcp tasks setup --app mcp-worker
+gregale mcp tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
+```
+
+For project manifests, the persistent link is `worker.scale.observer_app_slug`.
+
+#### mcp tasks status
+
+Show task scaling policy, metric freshness and optional health checks
+
+`gregale mcp tasks status [--app <SLUG>] [--details] [--max-oldest-age <DURATION>] [--max-without-compatible-worker <COUNT>] [--require-fresh] [--sustain-for <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--details` | show the observer's latest waiting counts and live worker compatibility by tool version |  |
+| `--max-oldest-age <DURATION>` | fail when oldest queued task age exceeds this duration |  |
+| `--max-without-compatible-worker <COUNT>` | fail when more than this many claimable tasks lack a live worker for their tool and handler version |  |
+| `--require-fresh` | fail when task metrics are missing or stale; min=0 also requires a ready linked observer app and its heartbeat |  |
+| `--sustain-for <DURATION>` | require an active violation to persist this long before failing |  |
+| `--poll-interval <DURATION>` | poll interval while waiting for a sustained violation (default 15s) |  |
+
+Examples:
+
+```sh
+gregale mcp tasks status --app mcp-worker --json
+gregale mcp tasks status --app mcp-worker --details
+gregale mcp tasks status --app mcp-worker --max-oldest-age 5m --require-fresh --sustain-for 2m
+gregale mcp tasks status --app mcp-worker --max-without-compatible-worker 0 --require-fresh
+```
+
+#### mcp tasks observer setup
+
+Check observer configuration and optionally ensure an always-on replica
+
+`gregale mcp tasks observer setup --app <OBSERVER> --worker-app <WORKER> [--config <PATH>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <OBSERVER>` | always-on observer worker app slug | required |
+| `--worker-app <WORKER>` | task worker app whose metrics the observer publishes | required |
+| `--config <PATH>` | local MCP source config (default `gregale-mcp.json`) |  |
+| `--apply` | ensure the observer worker has at least one configured replica |  |
+
+Setup checks the task config, observer process entrypoint, shared namespace,
+metrics target slugs and secret-backed database and metrics credentials. With
+`--apply`, it raises the observer's configured worker minimum to one; it does
+not create the app or provision secrets.
+
+Examples:
+
+```sh
+gregale mcp tasks observer setup --app mcp-observer --worker-app mcp-worker
+gregale mcp tasks observer setup --app mcp-observer --worker-app mcp-worker --apply
+```
+
+#### mcp tasks observer status
+
+Check observer app readiness, credentials, namespace and heartbeat
+
+`gregale mcp tasks observer status --worker-app <WORKER> [--app <OBSERVER>] [--config <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--worker-app <WORKER>` | task worker app whose metrics the observer publishes | required |
+| `--app <OBSERVER>` | observer app slug (defaults to the worker's linked observer) |  |
+| `--config <PATH>` | optional MCP source config for custom credential env names |  |
+
+Status exits nonzero until the observer is ready and publishes a fresh
+`mcp_tasks_observer_heartbeat` to the worker app. It reports secret names and
+binding state only, never secret values. PostgreSQL read-only grants and API
+key scopes cannot be verified by the CLI.
+
+Examples:
+
+```sh
+gregale mcp tasks observer status --worker-app mcp-worker
+gregale mcp tasks observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
 ```
 
 ### mcp watch
@@ -1296,7 +1439,7 @@ Add an alert rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
-| `--metric <METRIC>` | metric, e.g. error_rate_pct or latency_p95_ms |  |
+| `--metric <METRIC>` | metric; MCP task age is mcp_tasks_oldest_age_seconds; publisher freshness is mcp_tasks_metrics_stale (includes the no-compatible-worker gauge and observer heartbeat for min=0 workers) |  |
 | `--comparison <OP>` | gt\|gte\|lt\|lte |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -1311,6 +1454,8 @@ Examples:
 
 ```sh
 printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin
+printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app mcp-worker --name mcp-oldest-task-age --metric mcp_tasks_oldest_age_seconds --comparison gt --threshold 300 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin
+printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app mcp-worker --name mcp-task-metrics-stale --metric mcp_tasks_metrics_stale --comparison gt --threshold 0 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin
 ```
 
 ### alerts info
@@ -3400,6 +3545,22 @@ gregale deployment summary v42 --app my-api
 gregale deployment wait v42 --app my-api
 ```
 
+### deployment retry-hold
+
+`gregale deployment retry-hold <ID|vN> [--app SLUG]`
+
+Schedules recovery for an active MCP compatibility hold. An active attempt keeps
+its lease and gets a follow-up retry. The worker still requires fresh compatible
+observer evidence and repeats readiness, smoke, and promotion checks. This action
+does not grant a migration override. Use `gregale deployment <ID|vN>` to inspect
+attempt count, next eligible retry time, and last outcome; `--json` includes the
+full `promotion_hold` object.
+
+```sh
+gregale deployment retry-hold v42 --app my-api
+gregale deployment v42 --app my-api --json
+```
+
 ### deployment advance
 
 Advance a canary by one stage with route enforcement
@@ -3561,7 +3722,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3579,7 +3740,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -3619,6 +3780,7 @@ Deploy an app, function, or project
 | `--healthcheck-grpc` | use standard gRPC health for startup readiness |  |
 | `--healthcheck-grpc-service <SERVICE>` | service name for --healthcheck-grpc; empty checks overall health |  |
 | `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
+| `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once | single-app deploy only; consumed at stable cutover |
 | `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
@@ -5132,7 +5294,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |

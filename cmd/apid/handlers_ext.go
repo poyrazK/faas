@@ -182,6 +182,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if prob := lifecycleProblem(acct.Plan, manifest, maxConcurrency); prob != nil {
 			return prob
 		}
+		if prob := lifecycleObserverLinkProblem(app.Slug, manifest); prob != nil {
+			return prob
+		}
 	}
 	if req.MinInstances == nil {
 		// fall through to the egress allowlist branch
@@ -2225,6 +2228,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
 			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
+			api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 		default:
 			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
 				"Gregale could not update this deployment's traffic split.",
@@ -5679,6 +5684,32 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 // --- response helpers ------------------------------------------------------
 
 func (s *server) deploymentResponse(d state.Deployment, app state.App) api.DeploymentResponse {
+	var workerDrain *api.DeploymentWorkerDrainStatus
+	// Live worker deployments can also drain during scale-in. The audit
+	// summary survives instance deletion and scheduler restarts.
+	if d.Status == state.DeployLive || d.Status.IsTerminal() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		drain, err := s.store.DeploymentWorkerDrainStatus(ctx, d.ID)
+		cancel()
+		if err != nil {
+			s.log.Warn("load worker drain status", "deployment_id", d.ID, "err", err)
+		} else if drain != nil {
+			workerDrain = &api.DeploymentWorkerDrainStatus{Active: drain.Active, Completed: drain.Completed, TimedOut: drain.TimedOut, Failed: drain.Failed, Overdue: drain.Overdue, Deadline: drain.Deadline}
+		}
+	}
+	var promotionHold *api.DeploymentPromotionHold
+	if !d.Status.IsTerminal() && d.Status != state.DeployLive {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hold, err := s.store.MCPTaskPromotionHold(ctx, d.ID)
+		cancel()
+		if err != nil {
+			s.log.Warn("load MCP task promotion hold", "deployment_id", d.ID, "err", err)
+		} else if hold != nil {
+			promotionHold = &api.DeploymentPromotionHold{Code: api.CodeMCPTaskCompatibilityGate, Detail: hold.Detail, ObservedAt: hold.ObservedAt,
+				HeldAt: hold.HeldAt, RecoveryAttempts: hold.RecoveryAttempts, NextRetryAt: hold.NextRetryAt, RecoveryInProgress: hold.RecoveryInProgress,
+				LastRecoveryOutcome: hold.LastRecoveryOutcome, LastRecoveryAt: hold.LastRecoveryAt, LastRecoveryErrorCode: hold.LastRecoveryErrorCode}
+		}
+	}
 	// Issue #460 / ADR-053: echo the override_* columns on the
 	// response. Env values are NEVER echoed (override_env_keys
 	// carries only the key set). Env-secret refs ARE echoed
@@ -5694,6 +5725,8 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		len(d.OverrideReadinessProbe) > 0 ||
 		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
+		PromotionHold:     promotionHold,
+		WorkerDrain:       workerDrain,
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
 		AppID:             d.AppID,

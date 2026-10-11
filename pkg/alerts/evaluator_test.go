@@ -358,6 +358,147 @@ func TestEvaluator_RequestCountIgnoresUnrelatedMissingSeries(t *testing.T) {
 	}
 }
 
+func TestEvaluator_MCPTasksOldestAgeRequiresFreshCustomMetric(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	staleAt := now.Add(-time.Duration(api.CustomMetricFreshnessSeconds+1) * time.Second)
+	cases := []struct {
+		name          string
+		observedAt    time.Time
+		value         float64
+		publishMetric bool
+		wantFired     int
+		wantDegraded  int
+		wantState     state.AlertState
+	}{
+		{name: "fresh breach fires", observedAt: now, value: 301, publishMetric: true, wantFired: 1, wantState: state.AlertStateFiring},
+		{name: "fresh healthy gauge stays ok", observedAt: now, value: 299, publishMetric: true, wantState: state.AlertStateOk},
+		{name: "missing signal degrades", wantDegraded: 1, wantState: state.AlertStateDegraded},
+		{name: "stale signal degrades", observedAt: staleAt, publishMetric: true, wantDegraded: 1, wantState: state.AlertStateDegraded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			rule, ident, _ := seedRule(t, store, state.AlertMetricMCPTasksOldestAgeSeconds, state.AlertGt, 300)
+			if tc.publishMetric {
+				if err := store.PutCustomMetric(context.Background(), rule.AppID, string(state.AlertMetricMCPTasksOldestAgeSeconds), tc.value, tc.observedAt, api.MaxCustomMetricsPerApp); err != nil {
+					t.Fatalf("PutCustomMetric: %v", err)
+				}
+			}
+			dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+			ev, _ := makeEvaluator(t, store, nil, ident, dispatch)
+			stats, err := ev.RunOnce(context.Background())
+			if err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+			if stats.Fired != tc.wantFired || stats.SkippedDegraded != tc.wantDegraded {
+				t.Fatalf("stats = %+v, want fired=%d degraded=%d", stats, tc.wantFired, tc.wantDegraded)
+			}
+			if dispatch.callCount() != tc.wantFired {
+				t.Fatalf("dispatch calls = %d, want %d", dispatch.callCount(), tc.wantFired)
+			}
+			got, err := store.AlertRuleByID(context.Background(), rule.ID)
+			if err != nil {
+				t.Fatalf("AlertRuleByID: %v", err)
+			}
+			if got.State != tc.wantState {
+				t.Errorf("state = %q, want %q", got.State, tc.wantState)
+			}
+		})
+	}
+}
+
+func TestEvaluator_MCPTasksMetricsStaleAlertsOnMissingOrExpiredGauge(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	staleAt := now.Add(-time.Duration(api.CustomMetricFreshnessSeconds+1) * time.Second)
+	cases := []struct {
+		name                 string
+		outstandingAt        *time.Time
+		oldestAgeAt          *time.Time
+		compatibilityAt      *time.Time
+		compatibilityMissing bool
+		heartbeatAt          *time.Time
+		heartbeatInvalid     bool
+		scaleToZero          bool
+		wantFired            int
+	}{
+		{name: "worker gauges fresh", outstandingAt: &now, oldestAgeAt: &now},
+		{name: "scale-to-zero observer heartbeat fresh", outstandingAt: &now, oldestAgeAt: &now, heartbeatAt: &now, scaleToZero: true},
+		{name: "scale-to-zero observer heartbeat missing", outstandingAt: &now, oldestAgeAt: &now, scaleToZero: true, wantFired: 1},
+		{name: "scale-to-zero observer heartbeat stale", outstandingAt: &now, oldestAgeAt: &now, heartbeatAt: &staleAt, scaleToZero: true, wantFired: 1},
+		{name: "scale-to-zero observer heartbeat invalid", outstandingAt: &now, oldestAgeAt: &now, heartbeatAt: &now, heartbeatInvalid: true, scaleToZero: true, wantFired: 1},
+		{name: "outstanding missing", oldestAgeAt: &now, wantFired: 1},
+		{name: "oldest age missing", outstandingAt: &now, wantFired: 1},
+		{name: "compatibility metric missing", outstandingAt: &now, oldestAgeAt: &now, compatibilityMissing: true, wantFired: 1},
+		{name: "outstanding stale", outstandingAt: &staleAt, oldestAgeAt: &now, wantFired: 1},
+		{name: "oldest age stale", outstandingAt: &now, oldestAgeAt: &staleAt, wantFired: 1},
+		{name: "compatibility metric stale", outstandingAt: &now, oldestAgeAt: &now, compatibilityAt: &staleAt, wantFired: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			rule, ident, _ := seedRule(t, store, state.AlertMetricMCPTasksMetricsStale, state.AlertGt, 0)
+			if tc.scaleToZero {
+				manifest := state.AppManifest{WorkerReplicas: &state.WorkerScaling{
+					Min: 0, Max: 4, Metric: "custom", Name: "mcp_tasks_outstanding", Target: 4,
+				}}
+				if _, err := store.UpdateApp(context.Background(), rule.AppID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+					t.Fatalf("UpdateApp(scale to zero): %v", err)
+				}
+			}
+			compatibilityAt := tc.compatibilityAt
+			if compatibilityAt == nil && !tc.compatibilityMissing {
+				compatibilityAt = &now
+			}
+			for _, metric := range []struct {
+				name       string
+				observedAt *time.Time
+			}{
+				{name: "mcp_tasks_outstanding", observedAt: tc.outstandingAt},
+				{name: "mcp_tasks_oldest_age_seconds", observedAt: tc.oldestAgeAt},
+				{name: "mcp_tasks_without_compatible_worker", observedAt: compatibilityAt},
+				{name: "mcp_tasks_observer_heartbeat", observedAt: tc.heartbeatAt},
+			} {
+				if metric.observedAt == nil {
+					continue
+				}
+				value := 0.0
+				if metric.name == "mcp_tasks_observer_heartbeat" {
+					value = 1
+					if tc.heartbeatInvalid {
+						value = 0
+					}
+				}
+				if err := store.PutCustomMetric(context.Background(), rule.AppID, metric.name, value, *metric.observedAt, api.MaxCustomMetricsPerApp); err != nil {
+					t.Fatalf("PutCustomMetric(%s): %v", metric.name, err)
+				}
+			}
+			dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+			ev, _ := makeEvaluator(t, store, nil, ident, dispatch)
+			stats, err := ev.RunOnce(context.Background())
+			if err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+			if stats.Fired != tc.wantFired || stats.SkippedDegraded != 0 {
+				t.Fatalf("stats = %+v, want fired=%d and no degraded evaluation", stats, tc.wantFired)
+			}
+			if dispatch.callCount() != tc.wantFired {
+				t.Fatalf("dispatch calls = %d, want %d", dispatch.callCount(), tc.wantFired)
+			}
+			got, err := store.AlertRuleByID(context.Background(), rule.ID)
+			if err != nil {
+				t.Fatalf("AlertRuleByID: %v", err)
+			}
+			wantState := state.AlertStateOk
+			if tc.wantFired == 1 {
+				wantState = state.AlertStateFiring
+			}
+			if got.State != wantState {
+				t.Errorf("state = %q, want %q", got.State, wantState)
+			}
+		})
+	}
+}
+
 // TestEvaluator_NoIdentityAtBoot — identity loader returns nil.
 // Evaluator counts SkippedNoIdentity and does NOT call dispatch.
 func TestEvaluator_NoIdentityAtBoot(t *testing.T) {

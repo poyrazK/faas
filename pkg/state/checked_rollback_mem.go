@@ -169,6 +169,9 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 		r.Status = "routing"
 		r.AuditID = d.ServiceRolloutHandoff.BindingsCheck.AuditID
 	} else {
+		if err := m.checkMCPTaskCompatibilityCutoverLocked(d); err != nil {
+			return r, err
+		}
 		accountID := uuid.MustParse(m.apps[r.AppID].AccountID)
 		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx)})
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(d.ID), AccountID: &accountID, Kind: DeployRolledBack, Actor: "apid:checked_rollback", At: time.Now().UTC(), Data: data})
@@ -197,6 +200,7 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 		d.TrafficPercent = 100
 		d.RolloutState = "complete"
 		d.RolloutCompletedAt = &now
+		d.MCPTaskMigrationOverride = false
 		m.putDeploymentLocked(d.ID, d)
 		r.Status = "complete"
 		r.CompletedAt = &now

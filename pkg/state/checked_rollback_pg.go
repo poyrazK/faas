@@ -223,6 +223,12 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 		r.Status = "routing"
 		r.AuditID = d.ServiceRolloutHandoff.BindingsCheck.AuditID
 	} else {
+		if err = checkMCPTaskCompatibilityCutoverTx(ctx, tx, r.AppID, r.Scope, d.ID); err != nil {
+			return r, err
+		}
+		if err = consumeMCPTaskMigrationOverrideTx(ctx, tx, d.ID); err != nil {
+			return r, err
+		}
 		if err = q.RetainCheckedRollbackPredecessor(ctx, tx, mustPgUUID(r.CurrentDeploymentID)); err != nil {
 			return r, err
 		}

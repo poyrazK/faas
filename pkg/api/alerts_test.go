@@ -332,6 +332,21 @@ func TestPreAuthTargetAlertActionIsNotificationOnly(t *testing.T) {
 	}
 }
 
+func TestMCPTaskAlertsAreNotificationOnly(t *testing.T) {
+	for _, metric := range []string{"mcp_tasks_oldest_age_seconds", "mcp_tasks_metrics_stale"} {
+		for _, action := range []string{"", "webhook"} {
+			if !api.AlertRuleActionAllowedForMetric(metric, action) {
+				t.Fatalf("MCP task metric %q rejected action %q", metric, action)
+			}
+		}
+		for _, action := range []string{"rollback", "demote", "promote"} {
+			if api.AlertRuleActionAllowedForMetric(metric, action) {
+				t.Fatalf("MCP task metric %q accepted deployment action %q", metric, action)
+			}
+		}
+	}
+}
+
 func TestAllowedClosedSets_OrderedAndNonEmpty(t *testing.T) {
 	// Pin order + non-empty for the closed sets the OpenAPI spec
 	// enumerates verbatim. Drift would break the spec.

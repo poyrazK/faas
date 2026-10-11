@@ -23,7 +23,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|policy|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|status|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -31,8 +31,12 @@ func cmdMCP(args []string) int {
 		return cmdMCPInit(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "status":
+		return cmdMCPStatus(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
+	case "tasks":
+		return cmdMCPTasks(args[1:])
 	case "lock":
 		return cmdMCPLock(args[1:])
 	case "diff":
@@ -53,13 +57,17 @@ func cmdMCP(args []string) int {
 func cmdMCPInit(args []string) int {
 	fs := newFlagSet("mcp-init", flag.ContinueOnError)
 	dir := fs.String("path", "", "empty destination directory")
+	runtime := fs.String("runtime", "node", "starter language (node, go or python)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *dir == "" {
-		return printErr("MCP init", errors.New("--path is required"))
+		return printErr("MCP init", errors.New("--path is required and positional arguments are not accepted"))
 	}
-	return cmdInit([]string{"--template", "mcp-node", "--path", *dir})
+	if *runtime != "node" && *runtime != "go" && *runtime != "python" {
+		return printErr("MCP init", errors.New("--runtime must be node, go or python"))
+	}
+	return cmdInit([]string{"--template", "mcp-" + *runtime, "--path", *dir})
 }
 
 func mcpToken(env string) (string, error) {
@@ -538,6 +546,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 type mcpDeployOptions struct {
 	path, slug, profile, tokenEnv, secretsFile string
 	releasePolicy                              string
+	mcpTaskMigrationOverride                   bool
 	timeout                                    int
 }
 
@@ -550,12 +559,13 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.tokenEnv, "token-env", "", "MCP client token for post-deployment verification")
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
 	fs.StringVar(&o.releasePolicy, "release-policy", "", "role-specific catalog baselines to verify before promotion")
+	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || o.slug == "" || o.timeout <= 0 {
-		return printErr("Invalid MCP deploy", errors.New("--name and a positive --timeout are required"))
+	if fs.NArg() != 0 || o.slug == "" || o.timeout <= 0 || o.timeout > int((24*time.Hour)/time.Second) {
+		return printErr("Invalid MCP deploy", errors.New("--name and a --timeout from 1s to 24h are required"))
 	}
 	return runMCPDeploy(o)
 }
@@ -568,6 +578,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	cfg, err := mcphosting.Load(dir)
 	if err != nil {
 		return printErr("MCP configuration", err)
+	}
+	if err := validateMCPDeploySecretsFile(o.secretsFile); err != nil {
+		return printErr("MCP catalog pin", err)
 	}
 	token, err := mcpToken(o.tokenEnv)
 	if err != nil {
@@ -595,25 +608,86 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
 	}
-	deployArgs := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
-	if o.profile != "" {
-		deployArgs = append(deployArgs, "--profile", o.profile)
-	}
-	if o.secretsFile != "" {
-		deployArgs = append(deployArgs, "--secrets-file", o.secretsFile)
-	}
+	deployArgs := mcpDeployArgs(o, dir, true)
 	// Preserve the existing ingress gate until the new app passes readiness.
 	var candidate api.DeploymentResponse
-	code := quietMCPDeploy(deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
+	code := quietMCPDeploy(ctx, deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
 	if code != 0 {
 		return code
 	}
-	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles)
+	discoveryID := candidate.ID
+	var pinReceipt *mcpCatalogPinReceipt
+	candidate, pinnedDigest, err := pinMCPCandidateRevision(ctx, c, o, dir, cfg, candidate)
+	if err != nil {
+		return printErr("MCP catalog pin", err)
+	}
+	if pinnedDigest != "" {
+		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
+	}
+	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles, pinReceipt)
 }
 
-func quietMCPDeploy(args []string, execution deployExecution) int {
+func validateMCPDeploySecretsFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	pairs, err := readSecretsFile(path)
+	if err != nil {
+		return err
+	}
+	for _, pair := range pairs {
+		if pair.Key == "MCP_CATALOG_EXPECTED_SHA256" {
+			return errors.New("remove MCP_CATALOG_EXPECTED_SHA256 from --secrets-file; mcp deploy pins it on the candidate revision")
+		}
+	}
+	return nil
+}
+
+func mcpDeployArgs(o mcpDeployOptions, dir string, includeSecrets bool) []string {
+	args := []string{"--path", dir, "--source=worktree", "--name", o.slug, "--app", "--wait", "--no-traffic", "--timeout", strconv.Itoa(o.timeout)}
+	if o.mcpTaskMigrationOverride {
+		args = append(args, "--mcp-task-migration-override")
+	}
+	if o.profile != "" {
+		args = append(args, "--profile", o.profile)
+	}
+	if includeSecrets && o.secretsFile != "" {
+		args = append(args, "--secrets-file", o.secretsFile)
+	}
+	return args
+}
+
+func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions, dir string, cfg mcphosting.Config, candidate api.DeploymentResponse) (api.DeploymentResponse, string, error) {
+	preview, err := mcpCandidatePreview(ctx, c, candidate.ID, cfg)
+	if err != nil {
+		return api.DeploymentResponse{}, "", err
+	}
+	health := probeMCPCatalogHealth(ctx, preview, 5*time.Second)
+	digest, err := mcpCatalogDigestForPin(health)
+	if err != nil {
+		return api.DeploymentResponse{}, "", err
+	}
+	if digest == "" {
+		return candidate, "", nil
+	}
+
+	var pinned api.DeploymentResponse
+	code := quietMCPDeploy(ctx, mcpDeployArgs(o, dir, false), deployExecution{
+		onQueued:    func(dep api.DeploymentResponse) { pinned = dep },
+		overrideEnv: map[string]string{"MCP_CATALOG_EXPECTED_SHA256": digest},
+	})
+	if code != 0 {
+		return api.DeploymentResponse{}, "", fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)
+	}
+	if pinned.ID == "" {
+		return api.DeploymentResponse{}, "", errors.New("catalog-pinned deployment completed without a deployment id")
+	}
+	return pinned, digest, nil
+}
+
+func quietMCPDeploy(ctx context.Context, args []string, execution deployExecution) int {
 	old := osStdout
 	osStdout = io.Discard
 	defer func() { osStdout = old }()
-	return cmdDeployTarballToExisting(context.Background(), args, false, execution)
+	return cmdDeployTarballToExisting(ctx, args, false, execution)
 }

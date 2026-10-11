@@ -64,6 +64,8 @@ type Loop struct {
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
 	remoteDeleteFailures         prometheus.Counter
+	mcpRecoveryAttempts          *prometheus.CounterVec
+	mcpHoldDuration              prometheus.Histogram
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by the With*Channel helpers.
@@ -136,6 +138,9 @@ func NewLoop(cfg LoopConfig) *Loop {
 			Name: "imaged_snapshot_remote_delete_failures_total",
 			Help: "Remote snapshot artifact deletion failures; the snapshot row remains as a retryable durable tombstone.",
 		})
+		loop.mcpRecoveryAttempts = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "imaged_mcp_task_promotion_recovery_attempts_total", Help: "Durable MCP promotion recovery attempts by outcome."}, []string{"outcome"})
+		loop.mcpHoldDuration = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "imaged_mcp_task_promotion_hold_duration_seconds", Help: "Hold duration when MCP promotion recovery completes.", Buckets: []float64{5, 15, 30, 60, 300, 900, 3600, 86400}})
+		cfg.Handler.ops.Registry().MustRegister(loop.mcpRecoveryAttempts, loop.mcpHoldDuration)
 		cfg.Handler.ops.Registry().MustRegister(
 			loop.remoteDeleteBacklogCount,
 			loop.remoteDeleteBacklogOldestAge,
@@ -277,6 +282,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	l.recoverBuildHandoffs(ctx)
+	l.recoverMCPTaskPromotions(ctx)
 	l.reconcileStaleDeployments(ctx)
 	if l.handler != nil {
 		if err := l.handler.MaterializePendingJobs(ctx); err != nil {
@@ -307,6 +313,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
+			l.recoverMCPTaskPromotions(ctx)
 		case <-jobMaterializationTicker.C:
 			if l.handler != nil {
 				if err := l.handler.MaterializePendingJobs(ctx); err != nil {
@@ -344,6 +351,7 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 	now := l.now().UTC()
 	cutoff := now.Add(-staleDeploymentThreshold)
 	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		ExcludeMCPTaskHolds: true,
 		Statuses: []state.DeploymentStatus{
 			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
 		},
@@ -357,6 +365,14 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		return
 	}
 	for _, deployment := range rows {
+		hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)
+		if holdErr != nil {
+			l.log.Warn("imaged: inspect MCP task hold before stale cancellation", "deployment", deployment.ID, "err", holdErr)
+			continue
+		}
+		if hold != nil {
+			continue
+		}
 		if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
 			// A staged artifact is deliberately waiting for its graph, rather
 			// than a lost snapshot handoff. Its coordinator owns cancellation.
@@ -401,6 +417,7 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 		return
 	}
 	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		ExcludeMCPTaskHolds: true,
 		Statuses: []state.DeploymentStatus{
 			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
 		},

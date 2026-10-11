@@ -6797,6 +6797,12 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 		if grace <= 0 {
 			grace = 30
 		}
+		deadline := time.Now().Add(time.Duration(grace) * time.Second)
+		drainOutcome := "failed"
+		if mode == state.InstanceModeWorker {
+			e.auditWorkerDrain(ctx, *ins, deadline, "draining")
+			defer func() { e.auditWorkerDrain(ctx, *ins, deadline, drainOutcome) }()
+		}
 		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace)
 		if serr != nil {
 			e.log.Warn("sched: stop instance signal-grace failed; falling through to destroy",
@@ -6831,9 +6837,16 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 			Mode:            string(mode),
 			LifecycleReason: LifecycleReasonCleanExit,
 		}
+		if serr == nil && out != nil {
+			drainOutcome = "completed"
+		}
 		if out != nil {
 			outcome.ExitCode = out.ExitCode
 			outcome.KillSignalSent = out.KillSignalSent
+			if out.KillSignalSent {
+				drainOutcome = "timed_out"
+				outcome.LifecycleReason = LifecycleReasonDrainTimeout
+			}
 		}
 		return outcome, nil
 	case state.InstanceModeService:
@@ -6888,10 +6901,7 @@ type StopOptions struct {
 // SignalAndKill for the worker/job dispatch path; the request /
 // service / mirror path leaves both at zero (snapshotAndPark
 // doesn't capture an exit code). LifecycleReason is the
-// engine-side aggregation — today always LifecycleReasonCleanExit
-// for the success path; a future taxonomy addition can
-// distinguish killed_after_grace (grace expired + SIGKILL
-// escalation) from the clean-exit case.
+// engine-side aggregation — clean_exit or drain_timeout after a forced kill.
 type StopOutcome struct {
 	Instance        string
 	Mode            string
@@ -6901,11 +6911,8 @@ type StopOutcome struct {
 }
 
 // LifecycleReason is the engine-side reason code for a StopInstance
-// transition. M-2 surfaces two: clean_exit (workload exited
-// within the grace window) and unknown (legacy / no-grace
-// path). Future taxonomy additions (killed_after_grace,
-// oom, sigkilled_timeout) land alongside the per-mode
-// expansion in M-3.
+// transition. A worker/job killed after its grace window reports drain_timeout;
+// successful graceful exits and request/service parking report clean_exit.
 type LifecycleReason string
 
 const (
@@ -6913,7 +6920,8 @@ const (
 	// workload exited cleanly within the grace window
 	// (worker/job) or snapshotAndPark succeeded (request/
 	// service).
-	LifecycleReasonCleanExit LifecycleReason = "clean_exit"
+	LifecycleReasonCleanExit    LifecycleReason = "clean_exit"
+	LifecycleReasonDrainTimeout LifecycleReason = "drain_timeout"
 )
 
 // lockedRunning loads an instance, takes its app lock, and returns it only if it

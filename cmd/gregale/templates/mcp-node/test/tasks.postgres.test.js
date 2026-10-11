@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
-import { createPostgresMcpTaskStore } from '../task-store.js';
+import { createMcpTaskQueueObserver, createPostgresMcpTaskStore } from '../task-store.js';
 import { createMcpTaskRuntime } from '../tasks.js';
 
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
@@ -103,6 +103,10 @@ function create(store, subject, args = { report: 'weekly' }) {
 
 function get(store, taskID, subject) {
   return store.get({ taskID, authInfo: principal(subject), authMode: 'external-oauth' });
+}
+
+function sqlIdentifier(value) {
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 async function eventually(fn, message) {
@@ -210,6 +214,71 @@ test('PostgreSQL persists encrypted task inputs, results, and failures with call
   await store.cleanupExpired();
   const remaining = await pool.query('SELECT 1 FROM gregale_mcp_tasks WHERE namespace = $1', [namespace]);
   assert.equal(remaining.rowCount, 0, 'expired task payloads are removed');
+});
+
+test('PostgreSQL observer metrics require a role without table writes or schema creation privileges', postgresOnly, async t => {
+  const { adminPool, namespace, schema } = await harness(t);
+  const role = `gregale_mcp_observer_${randomUUID().replaceAll('-', '')}`;
+  const password = randomBytes(32).toString('hex');
+  const quotedRole = sqlIdentifier(role);
+  const quotedSchema = sqlIdentifier(schema);
+  const databaseName = (await adminPool.query('SELECT current_database() AS name')).rows[0].name;
+  const quotedDatabase = sqlIdentifier(databaseName);
+  let observerPool;
+  let roleCreated = false;
+
+  try {
+    await adminPool.query(`CREATE ROLE ${quotedRole} LOGIN PASSWORD '${password}'`);
+    roleCreated = true;
+    await adminPool.query(`GRANT CONNECT ON DATABASE ${quotedDatabase} TO ${quotedRole}`);
+    await adminPool.query(`GRANT USAGE ON SCHEMA ${quotedSchema} TO ${quotedRole}`);
+    await adminPool.query(`GRANT SELECT ON TABLE ${quotedSchema}.gregale_mcp_tasks TO ${quotedRole}`);
+    await adminPool.query(`GRANT SELECT ON TABLE ${quotedSchema}.gregale_mcp_task_worker_handlers TO ${quotedRole}`);
+
+    observerPool = new Pool({
+      connectionString: databaseURL,
+      user: role,
+      password,
+      max: 2,
+      connectionTimeoutMillis: 5_000,
+      statement_timeout: 10_000,
+      options: `-c search_path=${schema}`,
+    });
+    const observer = createMcpTaskQueueObserver({ pool: observerPool, namespace });
+    assert.deepEqual(await observer.queueMetrics(), { outstandingTasks: 0, oldestAgeSeconds: 0, withoutCompatibleWorkerTasks: 0 });
+
+    for (const privilege of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      await adminPool.query(`GRANT ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_task_worker_handlers TO ${quotedRole}`);
+      await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
+      await adminPool.query(`REVOKE ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_task_worker_handlers FROM ${quotedRole}`);
+    }
+
+    for (const privilege of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      await adminPool.query(`GRANT ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_tasks TO ${quotedRole}`);
+      await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
+      await adminPool.query(`REVOKE ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_tasks FROM ${quotedRole}`);
+    }
+
+    for (const privilege of ['INSERT (namespace)', 'UPDATE (namespace)', 'REFERENCES (namespace)']) {
+      await adminPool.query(`GRANT ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_tasks TO ${quotedRole}`);
+      await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
+      await adminPool.query(`REVOKE ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_tasks FROM ${quotedRole}`);
+    }
+
+    await adminPool.query(`GRANT CREATE ON SCHEMA ${quotedSchema} TO ${quotedRole}`);
+    await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
+    await adminPool.query(`REVOKE CREATE ON SCHEMA ${quotedSchema} FROM ${quotedRole}`);
+
+    await adminPool.query(`GRANT CREATE ON DATABASE ${quotedDatabase} TO ${quotedRole}`);
+    await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
+    await adminPool.query(`REVOKE CREATE ON DATABASE ${quotedDatabase} FROM ${quotedRole}`);
+  } finally {
+    await observerPool?.end();
+    if (roleCreated) {
+      await adminPool.query(`DROP OWNED BY ${quotedRole}`).catch(() => {});
+      await adminPool.query(`DROP ROLE IF EXISTS ${quotedRole}`);
+    }
+  }
 });
 
 test('PostgreSQL SKIP LOCKED lets concurrent workers claim each queued task once', postgresOnly, async t => {

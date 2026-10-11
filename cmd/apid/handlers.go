@@ -307,6 +307,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
 		return state.App{}, prob
 	}
+	if prob := lifecycleObserverLinkProblem(req.Slug, lifecycle); prob != nil {
+		return state.App{}, prob
+	}
 	// Issue #1056 / ADR-074: paused warm-pool capacity is a paid-tier
 	// customer control. Zero is the default and explicit disable value;
 	// non-zero values require Hobby+ and are bounded by the app's

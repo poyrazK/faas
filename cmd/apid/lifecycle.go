@@ -77,6 +77,16 @@ func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency in
 	return nil
 }
 
+func lifecycleObserverLinkProblem(appSlug string, manifest api.AppManifest) *api.Problem {
+	if manifest.WorkerReplicas == nil || manifest.WorkerReplicas.ObserverAppSlug == "" {
+		return nil
+	}
+	if manifest.WorkerReplicas.ObserverAppSlug == appSlug {
+		return api.ErrValidation("worker_replicas.observer_app_slug must identify a separate observer app")
+	}
+	return nil
+}
+
 func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 	healthPath := req.HealthPath
 	if healthPath == "" {
@@ -126,6 +136,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		workerReplicas = &state.WorkerScaling{
 			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
 			Metric: manifest.WorkerReplicas.Metric, Name: manifest.WorkerReplicas.Name, Target: manifest.WorkerReplicas.Target,
+			ObserverAppSlug: manifest.WorkerReplicas.ObserverAppSlug,
 		}
 	}
 	stopGracePeriodS := 0
@@ -172,6 +183,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		workerReplicas = &api.WorkerScaling{
 			Min: manifest.WorkerReplicas.Min, Max: manifest.WorkerReplicas.Max,
 			Metric: manifest.WorkerReplicas.Metric, Name: manifest.WorkerReplicas.Name, Target: manifest.WorkerReplicas.Target,
+			ObserverAppSlug: manifest.WorkerReplicas.ObserverAppSlug,
 		}
 	}
 	var stopGrace time.Duration

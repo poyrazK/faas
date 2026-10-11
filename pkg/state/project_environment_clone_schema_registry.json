@@ -622,6 +622,16 @@
     "kind": "configuration"
   },
   {
+    "table": "app_mcp_task_compatibility",
+    "columns": [
+      "app_id",
+      "handlers",
+      "observed_at",
+      "truncated"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_openapi_docs",
     "columns": [
       "account_id",
@@ -1940,6 +1950,36 @@
       "seq",
       "stream",
       "written_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_mcp_task_holds",
+    "columns": [
+      "attempts",
+      "claim_generation",
+      "deployment_id",
+      "detail",
+      "first_held_at",
+      "last_recovery_at",
+      "last_recovery_error_code",
+      "last_recovery_outcome",
+      "lease_until",
+      "next_attempt_at",
+      "observed_at",
+      "owner_node",
+      "recovery_channel",
+      "recovery_payload",
+      "wake_requested"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_mcp_task_migration_overrides",
+    "columns": [
+      "created_at",
+      "deployment_id",
+      "used_at"
     ],
     "kind": "operational"
   },
@@ -5679,6 +5719,22 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_workflow_schedule_cursors",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "last_evaluated_at",
+      "last_run_id",
+      "platform_tenant_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ]
+  },
+  {
     "table": "platform_tenants",
     "columns": [
       "account_id",
@@ -7665,22 +7721,6 @@
       "workflow_name"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "platform_tenant_workflow_schedule_cursors",
-    "kind": "operational",
-    "columns": [
-      "app_id",
-      "deployment_id",
-      "last_evaluated_at",
-      "last_run_id",
-      "platform_tenant_id",
-      "scheduled_for",
-      "status",
-      "trigger_snapshot",
-      "updated_at",
-      "workflow_name"
-    ]
   },
   {
     "table": "workflow_schedule_cursors",

@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import defaults from './task-limits.json' with { type: 'json' };
 
 const TABLE = 'gregale_mcp_tasks';
+const WORKER_HANDLERS_TABLE = 'gregale_mcp_task_worker_handlers';
 const MAX_ARGUMENT_BYTES = 256 * 1024;
 const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_INPUT_STATE_BYTES = 256 * 1024;
@@ -35,7 +36,24 @@ const CREATE_SCHEMA = `
     CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL))
   )`;
 
+const CREATE_WORKER_HANDLERS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS ${WORKER_HANDLERS_TABLE} (
+    namespace text NOT NULL,
+    worker_id uuid NOT NULL,
+    tool_name text NOT NULL,
+    handler_version text NOT NULL,
+    deployment_id text NOT NULL DEFAULT '',
+    heartbeat_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (namespace, worker_id, tool_name, handler_version)
+  );
+  CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx
+    ON ${WORKER_HANDLERS_TABLE} (namespace, tool_name, handler_version, heartbeat_at DESC);
+  CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx
+    ON ${WORKER_HANDLERS_TABLE} (namespace, heartbeat_at)`;
+
 const MIGRATE_SCHEMA = `
+  ALTER TABLE ${WORKER_HANDLERS_TABLE}
+    ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT '';
   ALTER TABLE ${TABLE}
     ADD COLUMN IF NOT EXISTS input_state_encrypted bytea,
     ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}',
@@ -64,11 +82,12 @@ const CREATE_TASK_NOTIFY_FUNCTION = `
   BEGIN
     IF TG_OP = 'INSERT' THEN
       PERFORM pg_notify('gregale_mcp_task_' || md5(NEW.namespace), NEW.task_id::text);
-    ELSIF NEW.status IS DISTINCT FROM OLD.status OR
+    ELSIF current_setting('gregale.mcp_task_rewrap', true) IS DISTINCT FROM 'on' AND (
+          NEW.status IS DISTINCT FROM OLD.status OR
           NEW.updated_at IS DISTINCT FROM OLD.updated_at OR
           NEW.result_encrypted IS DISTINCT FROM OLD.result_encrypted OR
           NEW.error_encrypted IS DISTINCT FROM OLD.error_encrypted OR
-          NEW.input_state_encrypted IS DISTINCT FROM OLD.input_state_encrypted THEN
+          NEW.input_state_encrypted IS DISTINCT FROM OLD.input_state_encrypted) THEN
       PERFORM pg_notify('gregale_mcp_task_' || md5(NEW.namespace), NEW.task_id::text);
     END IF;
     RETURN NEW;
@@ -102,29 +121,63 @@ function encodeJSON(value, limit, label) {
   return encoded;
 }
 
-function encryptJSON(value, key, aad, limit, label) {
-  const plaintext = encodeJSON(value, limit, label);
+function encryptPayload(plaintext, key, keyID, aad, formatVersion = 2) {
+  const keyIDBytes = Buffer.from(keyID, 'ascii');
   const nonce = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(Buffer.from(aad));
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  return Buffer.concat([Buffer.from([1]), nonce, cipher.getAuthTag(), ciphertext]);
+  if (formatVersion === 1) return Buffer.concat([Buffer.from([1]), nonce, cipher.getAuthTag(), ciphertext]);
+  return Buffer.concat([Buffer.from([2, keyIDBytes.length]), keyIDBytes, nonce, cipher.getAuthTag(), ciphertext]);
 }
 
-function decryptJSON(value, key, aad) {
-  if (!Buffer.isBuffer(value) || value.length < 30 || value[0] !== 1) throw new Error('Invalid encrypted MCP task payload');
-  const nonce = value.subarray(1, 13);
-  const tag = value.subarray(13, 29);
-  const ciphertext = value.subarray(29);
-  const decipher = createDecipheriv('aes-256-gcm', key, nonce);
-  decipher.setAAD(Buffer.from(aad));
-  decipher.setAuthTag(tag);
-  return JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8'));
+function encryptJSON(value, key, keyID, aad, limit, label, formatVersion) {
+  return encryptPayload(encodeJSON(value, limit, label), key, keyID, aad, formatVersion);
 }
 
-function decryptInputState(value, key, namespace, taskID) {
+function decryptPayload(value, keyring, aad) {
+  if (!Buffer.isBuffer(value) || value.length < 30) throw new Error('Invalid encrypted MCP task payload');
+  let offset;
+  let candidates;
+  if (value[0] === 1) {
+    offset = 1;
+    candidates = keyring.keys;
+  } else if (value[0] === 2) {
+    const keyIDLength = value[1];
+    if (!keyIDLength || keyIDLength > 64 || value.length < 2 + keyIDLength + 28) throw new Error('Invalid encrypted MCP task payload');
+    const keyIDBytes = value.subarray(2, 2 + keyIDLength);
+    if ([...keyIDBytes].some(byte => byte > 0x7f)) throw new Error('Invalid encrypted MCP task payload');
+    const keyID = keyIDBytes.toString('ascii');
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(keyID)) throw new Error('Invalid encrypted MCP task payload');
+    const key = keyring.byID.get(keyID);
+    if (!key) throw new Error('Unknown MCP task payload key ID');
+    offset = 2 + keyIDLength;
+    candidates = [key];
+  } else {
+    throw new Error('Invalid encrypted MCP task payload');
+  }
+  if (value.length < offset + 28) throw new Error('Invalid encrypted MCP task payload');
+  const nonce = value.subarray(offset, offset + 12);
+  const tag = value.subarray(offset + 12, offset + 28);
+  const ciphertext = value.subarray(offset + 28);
+  for (const key of candidates) {
+    try {
+      const decipher = createDecipheriv('aes-256-gcm', key, nonce);
+      decipher.setAAD(Buffer.from(aad));
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch { /* V1 payloads do not identify their key; try the retained keys. */ }
+  }
+  throw new Error('Could not decrypt MCP task payload with configured keys');
+}
+
+function decryptJSON(value, keyring, aad) {
+  return JSON.parse(decryptPayload(value, keyring, aad).toString('utf8'));
+}
+
+function decryptInputState(value, keyring, namespace, taskID) {
   if (value == null) return { requests: Object.create(null), responses: Object.create(null) };
-  const state = decryptJSON(value, key, taskAAD(namespace, taskID, 'input-state'));
+  const state = decryptJSON(value, keyring, taskAAD(namespace, taskID, 'input-state'));
   if (!state || typeof state !== 'object' || !state.requests || typeof state.requests !== 'object' || !state.responses || typeof state.responses !== 'object') {
     throw new Error('Invalid encrypted MCP task input state');
   }
@@ -160,7 +213,17 @@ function taskAAD(namespace, taskID, field) {
   return `gregale-mcp-task:v1:${namespace}:${taskID}:${field}`;
 }
 
-function rowTask(row, payloadKey, namespace, includeArguments = false) {
+function needsPayloadRewrapSQL(column) {
+  return `(${column} IS NOT NULL AND CASE
+    WHEN octet_length(${column}) < 2 THEN TRUE
+    WHEN get_byte(${column}, 0) <> 2 THEN TRUE
+    WHEN get_byte(${column}, 1) = 0 OR get_byte(${column}, 1) > 64 THEN TRUE
+    WHEN octet_length(${column}) < 2 + get_byte(${column}, 1) + 28 THEN TRUE
+    ELSE substring(${column} FROM 3 FOR get_byte(${column}, 1)) <> $2::bytea
+  END)`;
+}
+
+function rowTask(row, payloadKeyring, namespace, includeArguments = false) {
   const taskID = String(row.task_id);
   const task = {
     task_id: taskID,
@@ -175,11 +238,11 @@ function rowTask(row, payloadKey, namespace, includeArguments = false) {
     cancel_requested_at: row.cancel_requested_at,
     input_methods: Array.isArray(row.input_methods) ? row.input_methods : [],
   };
-  if (includeArguments) task.arguments = decryptJSON(row.arguments_encrypted, payloadKey, taskAAD(namespace, taskID, 'arguments'));
-  if (row.result_encrypted != null) task.result = decryptJSON(row.result_encrypted, payloadKey, taskAAD(namespace, taskID, 'result'));
-  if (row.error_encrypted != null) task.error = decryptJSON(row.error_encrypted, payloadKey, taskAAD(namespace, taskID, 'error'));
+  if (includeArguments) task.arguments = decryptJSON(row.arguments_encrypted, payloadKeyring, taskAAD(namespace, taskID, 'arguments'));
+  if (row.result_encrypted != null) task.result = decryptJSON(row.result_encrypted, payloadKeyring, taskAAD(namespace, taskID, 'result'));
+  if (row.error_encrypted != null) task.error = decryptJSON(row.error_encrypted, payloadKeyring, taskAAD(namespace, taskID, 'error'));
   if (row.input_state_encrypted != null) {
-    task.input_requests = outstandingRequests(decryptInputState(row.input_state_encrypted, payloadKey, namespace, taskID));
+    task.input_requests = outstandingRequests(decryptInputState(row.input_state_encrypted, payloadKeyring, namespace, taskID));
   }
   return task;
 }
@@ -193,20 +256,43 @@ function principalFor(authInfo, authMode) {
   return JSON.stringify([resource, subject, clientId]);
 }
 
-export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, maxOutstanding = defaults.maxOutstanding, maxOutstandingPerOwner = defaults.maxOutstandingPerOwner }) {
+function ownerHashPredicate(hashes, firstParameter) {
+  return `owner_hash IN (${hashes.map((_, index) => `decode($${firstParameter + index}, 'hex')`).join(', ')})`;
+}
+
+export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ownerKeyID = 'default', previousOwnerKeys = [], payloadEncryptionVersion = 1, ttlMs, maxOutstanding = defaults.maxOutstanding, maxOutstandingPerOwner = defaults.maxOutstandingPerOwner }) {
   if (!pool || typeof pool.query !== 'function') throw new Error('MCP Tasks require a PostgreSQL connection pool');
   if (typeof namespace !== 'string' || !namespace || namespace.length > 255) throw new Error('MCP Tasks require a stable app namespace');
+  const keyIDPattern = /^[A-Za-z0-9._-]{1,64}$/;
   if (typeof ownerKey !== 'string' || Buffer.byteLength(ownerKey) < 32) throw new Error('MCP task owner key must contain at least 32 bytes');
+  if (typeof ownerKeyID !== 'string' || !keyIDPattern.test(ownerKeyID)) throw new Error('Invalid MCP task owner key ID');
+  if (!Array.isArray(previousOwnerKeys) || previousOwnerKeys.length > 16) throw new Error('MCP task previous_owner_keys must contain at most 16 keys');
+  if (payloadEncryptionVersion !== 1 && payloadEncryptionVersion !== 2) throw new Error('MCP task payload encryption version must be 1 or 2');
   if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 30 * 24 * 60 * 60 * 1000) throw new Error('MCP task TTL must be between one minute and 30 days');
   for (const limit of [maxOutstanding, maxOutstandingPerOwner]) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('MCP task admission limits must be positive integers');
   }
   if (maxOutstandingPerOwner > maxOutstanding) throw new Error('MCP task owner limit must not exceed the namespace limit');
 
-  const masterKey = Buffer.from(ownerKey);
-  const ownerKeyBytes = createHmac('sha256', masterKey).update('gregale-mcp-task-owner:v1').digest();
-  const payloadKey = createHmac('sha256', masterKey).update('gregale-mcp-task-payload:v1').digest();
-  const ownerHash = (authInfo, authMode) => createHmac('sha256', ownerKeyBytes).update(principalFor(authInfo, authMode)).digest();
+  const keySpecs = [{ id: ownerKeyID, key: ownerKey }, ...previousOwnerKeys];
+  const seenKeyIDs = new Set();
+  const ownerKeys = keySpecs.map(spec => {
+    if (!spec || typeof spec.id !== 'string' || !keyIDPattern.test(spec.id) || seenKeyIDs.has(spec.id)) throw new Error('MCP task owner key IDs must be valid and unique');
+    if (typeof spec.key !== 'string' || Buffer.byteLength(spec.key) < 32) throw new Error(`MCP task owner key ${spec.id} must contain at least 32 bytes`);
+    seenKeyIDs.add(spec.id);
+    const masterKey = Buffer.from(spec.key);
+    return {
+      id: spec.id,
+      ownerHashKey: createHmac('sha256', masterKey).update('gregale-mcp-task-owner:v1').digest(),
+      payloadKey: createHmac('sha256', masterKey).update('gregale-mcp-task-payload:v1').digest(),
+    };
+  });
+  const activeOwnerKey = ownerKeys[0];
+  const payloadKeyring = { activeKeyID: ownerKeyID, active: activeOwnerKey.payloadKey, keys: ownerKeys.map(key => key.payloadKey), byID: new Map(ownerKeys.map(key => [key.id, key.payloadKey])) };
+  const ownerHashes = (authInfo, authMode) => {
+    const principal = principalFor(authInfo, authMode);
+    return ownerKeys.map(key => createHmac('sha256', key.ownerHashKey).update(principal).digest());
+  };
   // PostgreSQL channels are shared across every connection to a database. Keep
   // notifications scoped to this app namespace and put only the task UUID in
   // the payload so other app subscriptions cannot observe namespace metadata.
@@ -312,6 +398,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       await withTransaction(pool, async (client, dedicated) => {
         if (dedicated) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [TABLE]);
         await client.query(CREATE_SCHEMA);
+        await client.query(CREATE_WORKER_HANDLERS_SCHEMA);
         await client.query(MIGRATE_SCHEMA);
         await client.query(CREATE_QUEUE_INDEX);
         await client.query(CREATE_ADMISSION_INDEX);
@@ -319,23 +406,43 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         await client.query(CREATE_TASK_NOTIFY_TRIGGER);
       });
     },
-    queueMetrics: createMcpTaskQueueObserver({ pool, namespace }).queueMetrics,
+    queueMetrics: createQueueMetricsObserver({ pool, namespace, verifyReadOnly: false }).queueMetrics,
+    async heartbeatWorkerCapabilities(workerID, handlers, deploymentID = '') {
+      if (!Array.isArray(handlers) || handlers.length === 0) return;
+      const names = handlers.map(handler => handler.name);
+      const versions = handlers.map(handler => handler.version);
+      await pool.query(`
+        INSERT INTO ${WORKER_HANDLERS_TABLE}(namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at)
+        SELECT $1,$2::uuid,handler.tool_name,handler.handler_version,$5,clock_timestamp()
+          FROM unnest($3::text[],$4::text[]) AS handler(tool_name,handler_version)
+        ON CONFLICT (namespace,worker_id,tool_name,handler_version)
+        DO UPDATE SET deployment_id=EXCLUDED.deployment_id,heartbeat_at=EXCLUDED.heartbeat_at
+      `, [namespace, workerID, names, versions, deploymentID]);
+    },
+    async removeWorkerCapabilities(workerID) {
+      await pool.query(`DELETE FROM ${WORKER_HANDLERS_TABLE} WHERE namespace=$1 AND worker_id=$2::uuid`, [namespace, workerID]);
+    },
+    async cleanupStaleWorkerCapabilities() {
+      await pool.query(`DELETE FROM ${WORKER_HANDLERS_TABLE} WHERE namespace=$1 AND heartbeat_at < clock_timestamp()-interval '1 day'`, [namespace]);
+    },
     async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [] }) {
       if (typeof toolName !== 'string' || !/^[a-z][a-z0-9_.-]{0,127}$/.test(toolName)) throw new Error('Invalid MCP task tool name');
       if (typeof handlerVersion !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handlerVersion)) throw new Error('Invalid MCP task handler version');
       if (!Array.isArray(inputMethods) || inputMethods.some(method => !SUPPORTED_INPUT_METHODS.has(method))) throw new Error('Invalid MCP task input capabilities');
       const taskID = randomUUID();
-      const encryptedArgs = encryptJSON(args, payloadKey, taskAAD(namespace, taskID, 'arguments'), MAX_ARGUMENT_BYTES, 'MCP task arguments');
-      const owner = ownerHash(authInfo, authMode);
+      const encryptedArgs = encryptJSON(args, payloadKeyring.active, ownerKeyID, taskAAD(namespace, taskID, 'arguments'), MAX_ARGUMENT_BYTES, 'MCP task arguments', payloadEncryptionVersion);
+      const owners = ownerHashes(authInfo, authMode);
+      const owner = owners[0];
+      const ownerValues = owners.map(hash => hash.toString('hex'));
       const result = await withTransaction(pool, async client => {
         // Serialize admission across web replicas, using the same database clock
         // and transaction as the insert. Waiting for input still consumes capacity.
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:admission:${namespace}`]);
         const counts = await client.query(`
-          SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE owner_hash = $2)::int AS owned
+          SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${ownerHashPredicate(owners, 2)})::int AS owned
             FROM ${TABLE} WHERE namespace = $1 AND expires_at > clock_timestamp()
              AND status IN ('queued', 'running', 'input_required')
-        `, [namespace, owner]);
+        `, [namespace, ...ownerValues]);
         if (counts.rows[0].total >= maxOutstanding || counts.rows[0].owned >= maxOutstandingPerOwner) {
           const error = new Error('MCP task queue capacity reached; retry after outstanding tasks finish');
           error.code = 'MCP_TASK_CAPACITY';
@@ -352,34 +459,36 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs]);
       });
       if (!result.rows?.[0]) throw new Error('Could not persist MCP task');
-      return rowTask(result.rows[0], payloadKey, namespace);
+      return rowTask(result.rows[0], payloadKeyring, namespace);
     },
     async get({ taskID, authInfo, authMode }) {
       if (typeof taskID !== 'string' || !UUID_PATTERN.test(taskID)) return null;
+      const owners = ownerHashes(authInfo, authMode);
       const result = await pool.query(`
         SELECT task_id::text AS task_id, tool_name, handler_version, status,
                created_at, updated_at, expires_at, attempt_count,
                lease_token, cancel_requested_at, result_encrypted, error_encrypted,
                input_state_encrypted, input_methods
           FROM ${TABLE}
-         WHERE namespace = $1 AND task_id = $2::uuid AND owner_hash = $3
+         WHERE namespace = $1 AND task_id = $2::uuid AND ${ownerHashPredicate(owners, 3)}
            AND expires_at > clock_timestamp()
-      `, [namespace, taskID, ownerHash(authInfo, authMode)]);
-      return result.rows?.[0] ? rowTask(result.rows[0], payloadKey, namespace) : null;
+      `, [namespace, taskID, ...owners.map(hash => hash.toString('hex'))]);
+      return result.rows?.[0] ? rowTask(result.rows[0], payloadKeyring, namespace) : null;
     },
     async getMany({ taskIDs, authInfo, authMode }) {
       const ids = [...new Set((Array.isArray(taskIDs) ? taskIDs : []).filter(taskID => typeof taskID === 'string' && UUID_PATTERN.test(taskID)))];
       if (ids.length === 0) return [];
+      const owners = ownerHashes(authInfo, authMode);
       const result = await pool.query(`
         SELECT task_id::text AS task_id, tool_name, handler_version, status,
                created_at, updated_at, expires_at, attempt_count,
                lease_token, cancel_requested_at, result_encrypted, error_encrypted,
                input_state_encrypted, input_methods
           FROM ${TABLE}
-         WHERE namespace = $1 AND task_id = ANY($2::uuid[]) AND owner_hash = $3
+         WHERE namespace = $1 AND task_id = ANY($2::uuid[]) AND ${ownerHashPredicate(owners, 3)}
            AND expires_at > clock_timestamp()
-      `, [namespace, ids, ownerHash(authInfo, authMode)]);
-      return (result.rows || []).map(row => rowTask(row, payloadKey, namespace));
+      `, [namespace, ids, ...owners.map(hash => hash.toString('hex'))]);
+      return (result.rows || []).map(row => rowTask(row, payloadKeyring, namespace));
     },
     async subscribe(listener) {
       if (typeof listener !== 'function') throw new Error('MCP task store subscriptions require a listener');
@@ -406,7 +515,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         if (!selected.rows?.[0]) return { ready: false, responses: {} };
         if (selected.rows[0].cancel_requested_at != null) return { ready: false, cancelled: true, responses: {} };
 
-        const state = decryptInputState(selected.rows[0].input_state_encrypted, payloadKey, namespace, taskID);
+        const state = decryptInputState(selected.rows[0].input_state_encrypted, payloadKeyring, namespace, taskID);
         for (const [key, request] of entries) {
           if (Object.hasOwn(state.requests, key)) {
             if (!isDeepStrictEqual(state.requests[key], request)) throw new Error('MCP task input request keys cannot be reused for different requests');
@@ -419,7 +528,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         const responses = Object.fromEntries(entries.filter(([key]) => Object.hasOwn(state.responses, key)).map(([key]) => [key, state.responses[key]]));
         const pending = entries.some(([key]) => !Object.hasOwn(state.responses, key));
         if (pending) {
-          const encrypted = encryptJSON(state, payloadKey, taskAAD(namespace, taskID, 'input-state'), MAX_INPUT_STATE_BYTES, 'MCP task input state');
+          const encrypted = encryptJSON(state, payloadKeyring.active, ownerKeyID, taskAAD(namespace, taskID, 'input-state'), MAX_INPUT_STATE_BYTES, 'MCP task input state', payloadEncryptionVersion);
           await client.query(`
             UPDATE ${TABLE}
                SET status = 'input_required', input_state_encrypted = $4,
@@ -439,18 +548,19 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       encodeJSON(inputResponses, MAX_INPUT_STATE_BYTES, 'MCP task input responses');
 
       return withTransaction(pool, async client => {
+        const owners = ownerHashes(authInfo, authMode);
         const selected = await client.query(`
           SELECT status, input_state_encrypted
             FROM ${TABLE}
-           WHERE namespace = $1 AND task_id = $2::uuid AND owner_hash = $3
+           WHERE namespace = $1 AND task_id = $2::uuid AND ${ownerHashPredicate(owners, 3)}
              AND expires_at > clock_timestamp()
            FOR UPDATE
-        `, [namespace, taskID, ownerHash(authInfo, authMode)]);
+        `, [namespace, taskID, ...owners.map(hash => hash.toString('hex'))]);
         const row = selected.rows?.[0];
         if (!row) return false;
         if (row.status !== 'input_required' || row.input_state_encrypted == null) return true;
 
-        const state = decryptInputState(row.input_state_encrypted, payloadKey, namespace, taskID);
+        const state = decryptInputState(row.input_state_encrypted, payloadKeyring, namespace, taskID);
         let changed = false;
         for (const [key, response] of responseEntries) {
           if (!Object.hasOwn(state.requests, key) || Object.hasOwn(state.responses, key)) continue;
@@ -460,7 +570,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         if (!changed) return true;
 
         const pending = Object.keys(state.requests).some(key => !Object.hasOwn(state.responses, key));
-        const encrypted = encryptJSON(state, payloadKey, taskAAD(namespace, taskID, 'input-state'), MAX_INPUT_STATE_BYTES, 'MCP task input state');
+        const encrypted = encryptJSON(state, payloadKeyring.active, ownerKeyID, taskAAD(namespace, taskID, 'input-state'), MAX_INPUT_STATE_BYTES, 'MCP task input state', payloadEncryptionVersion);
         await client.query(`
           UPDATE ${TABLE}
              SET input_state_encrypted = $3,
@@ -474,6 +584,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
     },
     async requestCancel({ taskID, authInfo, authMode }) {
       if (typeof taskID !== 'string' || !UUID_PATTERN.test(taskID)) return false;
+      const owners = ownerHashes(authInfo, authMode);
       const result = await pool.query(`
         UPDATE ${TABLE}
            SET status = CASE WHEN status IN ('queued', 'input_required') THEN 'cancelled' ELSE status END,
@@ -481,10 +592,10 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
                updated_at = CASE WHEN status IN ('queued', 'running', 'input_required') THEN clock_timestamp() ELSE updated_at END,
                lease_token = CASE WHEN status IN ('queued', 'input_required') THEN NULL ELSE lease_token END,
                lease_expires_at = CASE WHEN status IN ('queued', 'input_required') THEN NULL ELSE lease_expires_at END
-         WHERE namespace = $1 AND task_id = $2::uuid AND owner_hash = $3
+         WHERE namespace = $1 AND task_id = $2::uuid AND ${ownerHashPredicate(owners, 3)}
            AND expires_at > clock_timestamp()
          RETURNING task_id
-      `, [namespace, taskID, ownerHash(authInfo, authMode)]);
+      `, [namespace, taskID, ...owners.map(hash => hash.toString('hex'))]);
       return (result.rowCount ?? result.rows?.length ?? 0) > 0;
     },
     async claim(maxAttempts, leaseMs, supportedHandlers) {
@@ -528,7 +639,25 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
                    task.result_encrypted, task.error_encrypted,
                    task.input_state_encrypted, task.input_methods
       `, [namespace, maxAttempts, leaseToken, leaseMs, supportedHandlers == null ? null : JSON.stringify(supportedHandlers)]);
-      return result.rows?.[0] ? rowTask(result.rows[0], payloadKey, namespace, true) : null;
+      return result.rows?.[0] ? rowTask(result.rows[0], payloadKeyring, namespace, true) : null;
+    },
+    async releaseMany(tasks) {
+      if (!tasks.length) return;
+      await pool.query({ text: `UPDATE ${TABLE} AS task
+        SET status=CASE WHEN task.cancel_requested_at IS NULL THEN 'queued' ELSE 'cancelled' END,
+            resume_pending=task.cancel_requested_at IS NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        FROM unnest($2::uuid[], $3::uuid[]) AS owner(task_id,lease_token)
+        WHERE task.namespace=$1 AND task.task_id=owner.task_id AND task.lease_token=owner.lease_token AND task.status='running'`,
+        values: [namespace, tasks.map(task => task.task_id), tasks.map(task => task.lease_token)], query_timeout: 5000 });
+    },
+    async release(taskID, leaseToken) {
+      const result = await pool.query(`UPDATE ${TABLE}
+        SET status=CASE WHEN cancel_requested_at IS NULL THEN 'queued' ELSE 'cancelled' END,
+            resume_pending=cancel_requested_at IS NULL, lease_token=NULL, lease_expires_at=NULL,
+            updated_at=clock_timestamp()
+        WHERE namespace=$1 AND task_id=$2::uuid AND lease_token=$3::uuid AND status='running'
+        RETURNING status`, [namespace, taskID, leaseToken]);
+      return result.rows?.[0]?.status ?? null;
     },
     async heartbeat(taskID, leaseToken, leaseMs) {
       const result = await pool.query(`
@@ -541,7 +670,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       return { owned: true, cancelRequested: result.rows[0].cancel_requested_at != null };
     },
     async complete(taskID, leaseToken, value) {
-      const encrypted = encryptJSON(value, payloadKey, taskAAD(namespace, taskID, 'result'), MAX_RESULT_BYTES, 'MCP task result');
+      const encrypted = encryptJSON(value, payloadKeyring.active, ownerKeyID, taskAAD(namespace, taskID, 'result'), MAX_RESULT_BYTES, 'MCP task result', payloadEncryptionVersion);
       const result = await pool.query(`
         UPDATE ${TABLE}
            SET status = CASE WHEN cancel_requested_at IS NULL THEN 'completed' ELSE 'cancelled' END,
@@ -554,7 +683,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       return result.rows?.[0]?.status ?? null;
     },
     async fail(taskID, leaseToken, error) {
-      const encrypted = encryptJSON(error, payloadKey, taskAAD(namespace, taskID, 'error'), MAX_RESULT_BYTES, 'MCP task error');
+      const encrypted = encryptJSON(error, payloadKeyring.active, ownerKeyID, taskAAD(namespace, taskID, 'error'), MAX_RESULT_BYTES, 'MCP task error', payloadEncryptionVersion);
       const result = await pool.query(`
         UPDATE ${TABLE}
            SET status = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
@@ -588,28 +717,230 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
          WHERE task.namespace = expired.namespace AND task.task_id = expired.task_id
       `, [namespace, limit]);
     },
+    async rewrapBatch(limit = 32) {
+      if (payloadEncryptionVersion !== 2) return 0;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 256) throw new Error('MCP task rewrap batch size is invalid');
+      const needsRewrap = [
+        'arguments_encrypted', 'result_encrypted', 'error_encrypted', 'input_state_encrypted',
+      ].map(needsPayloadRewrapSQL).join(' OR ');
+      return withTransaction(pool, async client => {
+        await client.query("SELECT set_config('gregale.mcp_task_rewrap', 'on', true)");
+        const selected = await client.query(`
+          SELECT task_id::text AS task_id, arguments_encrypted, result_encrypted,
+                 error_encrypted, input_state_encrypted
+            FROM ${TABLE}
+           WHERE namespace = $1 AND expires_at > clock_timestamp()
+             AND (${needsRewrap})
+           ORDER BY created_at LIMIT $3 FOR UPDATE SKIP LOCKED
+        `, [namespace, Buffer.from(ownerKeyID, 'ascii'), limit]);
+        for (const row of selected.rows || []) {
+          const rotate = (value, field, maxBytes, label) => {
+            if (value == null) return null;
+            const aad = taskAAD(namespace, row.task_id, field);
+            const plaintext = decryptPayload(value, payloadKeyring, aad);
+            if (plaintext.length > maxBytes) throw new Error(`${label} exceeds the ${maxBytes}-byte MCP task limit`);
+            return encryptPayload(plaintext, payloadKeyring.active, ownerKeyID, aad, 2);
+          };
+          const args = rotate(row.arguments_encrypted, 'arguments', MAX_ARGUMENT_BYTES, 'MCP task arguments');
+          const result = rotate(row.result_encrypted, 'result', MAX_RESULT_BYTES, 'MCP task result');
+          const error = rotate(row.error_encrypted, 'error', MAX_RESULT_BYTES, 'MCP task error');
+          const inputState = rotate(row.input_state_encrypted, 'input-state', MAX_INPUT_STATE_BYTES, 'MCP task input state');
+          await client.query(`
+            UPDATE ${TABLE}
+               SET arguments_encrypted = $3, result_encrypted = $4,
+                   error_encrypted = $5, input_state_encrypted = $6
+             WHERE namespace = $1 AND task_id = $2::uuid
+          `, [namespace, row.task_id, args, result, error, inputState]);
+        }
+        return selected.rows?.length ?? 0;
+      });
+    },
   };
 }
 
 // Read-only observers never initialize schema, decrypt payloads, or claim work.
-export function createMcpTaskQueueObserver({ pool, namespace }) {
+function createQueueMetricsObserver({ pool, namespace, verifyReadOnly }) {
+  async function assertReadOnly() {
+    const result = await pool.query(`
+      SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL AS table_exists,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT'), false) AS can_insert,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE'), false) AS can_update,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'DELETE'), false) AS can_delete,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRUNCATE'), false) AS can_truncate,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES'), false) AS can_reference,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRIGGER'), false) AS can_create_trigger,
+             pg_catalog.has_database_privilege(current_user, current_database(), 'CREATE') AS can_create_schemas,
+             COALESCE((
+               SELECT pg_catalog.has_schema_privilege(current_user, n.nspname, 'CREATE')
+                 FROM pg_catalog.pg_class AS c
+                 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE c.oid = pg_catalog.to_regclass($1)::oid
+             ), false) AS can_create_in_task_schema
+    `, [TABLE]);
+    const row = result.rows?.[0];
+    if (!row || row.table_exists !== true || [
+      row.can_insert,
+      row.can_update,
+      row.can_delete,
+      row.can_truncate,
+      row.can_reference,
+      row.can_create_trigger,
+      row.can_create_schemas,
+      row.can_create_in_task_schema,
+    ].some(Boolean)) {
+      throw new Error('MCP task observer requires read-only PostgreSQL access');
+    }
+    const capabilityResult = await pool.query(`
+      SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL AS table_exists,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT'), false) AS can_insert,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE'), false) AS can_update,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'DELETE'), false) AS can_delete,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRUNCATE'), false) AS can_truncate,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES'), false) AS can_reference,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRIGGER'), false) AS can_create_trigger,
+             COALESCE((SELECT pg_catalog.has_schema_privilege(current_user, n.nspname, 'CREATE')
+                         FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid=c.relnamespace
+                        WHERE c.oid=pg_catalog.to_regclass($1)::oid), false) AS can_create_in_task_schema
+    `, [WORKER_HANDLERS_TABLE]);
+    const capabilityRow = capabilityResult.rows?.[0];
+    if (!capabilityRow || capabilityRow.table_exists !== true || [
+      capabilityRow.can_insert, capabilityRow.can_update, capabilityRow.can_delete,
+      capabilityRow.can_truncate, capabilityRow.can_reference, capabilityRow.can_create_trigger,
+      capabilityRow.can_create_in_task_schema,
+    ].some(Boolean)) {
+      throw new Error('MCP task observer requires read-only PostgreSQL access');
+    }
+  }
+
   async function queueMetrics() {
-      const result = await pool.query(`
-        SELECT LEAST(COUNT(*), 1000000000000::bigint)::text AS outstanding_tasks,
-               LEAST(GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at))), 0), 1000000000000)::text AS oldest_age_seconds
-          FROM ${TABLE}
-         WHERE namespace = $1
-           AND expires_at > clock_timestamp()
-           AND status IN ('queued', 'running')
+    if (verifyReadOnly) await assertReadOnly();
+    const result = await pool.query(`
+      SELECT LEAST(COUNT(*), 1000000000000::bigint)::text AS outstanding_tasks,
+             LEAST(GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at))), 0), 1000000000000)::text AS oldest_age_seconds,
+             (SELECT LEAST(COUNT(*), 1000000000000::bigint)::text
+                FROM ${TABLE} AS queued
+               WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
+                 AND (queued.status='queued' OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp()))
+                 AND (queued.attempt_count<3 OR (queued.status='queued' AND queued.resume_pending AND queued.attempt_count=3))
+                 AND NOT EXISTS (
+                   SELECT 1 FROM ${WORKER_HANDLERS_TABLE} AS handler
+                    WHERE handler.namespace=queued.namespace AND handler.tool_name=queued.tool_name
+                      AND handler.handler_version=queued.handler_version
+                      AND handler.heartbeat_at>clock_timestamp()-interval '45 seconds'
+                 )) AS without_compatible_worker_tasks
+        FROM ${TABLE}
+       WHERE namespace = $1
+         AND expires_at > clock_timestamp()
+         AND status IN ('queued', 'running')
+    `, [namespace]);
+    const row = result.rows?.[0];
+    if (!row) throw new Error('Could not read MCP task queue metrics');
+    const outstandingTasks = Number(row.outstanding_tasks);
+    const oldestAgeSeconds = Number(row.oldest_age_seconds);
+    const withoutCompatibleWorkerTasks = Number(row.without_compatible_worker_tasks);
+    if (!Number.isSafeInteger(outstandingTasks) || outstandingTasks < 0 || !Number.isFinite(oldestAgeSeconds) || oldestAgeSeconds < 0 ||
+        !Number.isSafeInteger(withoutCompatibleWorkerTasks) || withoutCompatibleWorkerTasks < 0) {
+      throw new Error('MCP task queue metrics returned invalid values');
+    }
+    let handlerCompatibility = [];
+    let compatibilityTruncated = false;
+    if (verifyReadOnly) {
+      let compatibilityResult;
+      try {
+        compatibilityResult = await pool.query(`
+        WITH pending AS (
+          SELECT queued.namespace, queued.tool_name, queued.handler_version
+            FROM ${TABLE} AS queued
+           WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
+             AND queued.status IN ('queued','running','input_required')
+        ), waiting AS (
+          SELECT tool_name, handler_version, COUNT(*)::bigint AS waiting_tasks
+            FROM pending
+           GROUP BY tool_name, handler_version
+        ), limited_waiting AS (
+          SELECT *, COUNT(*) OVER () AS queue_pair_count
+            FROM waiting
+           ORDER BY waiting_tasks DESC, tool_name, handler_version
+           LIMIT 257
+        ), by_deployment AS (
+          SELECT waiting.tool_name, waiting.handler_version, waiting.waiting_tasks, waiting.queue_pair_count,
+                 handler.deployment_id, COUNT(DISTINCT handler.worker_id)::bigint AS workers
+            FROM limited_waiting AS waiting
+            LEFT JOIN ${WORKER_HANDLERS_TABLE} AS handler
+              ON handler.namespace=$1 AND handler.tool_name=waiting.tool_name
+             AND handler.handler_version=waiting.handler_version
+             AND handler.heartbeat_at>clock_timestamp()-interval '45 seconds'
+           GROUP BY waiting.tool_name, waiting.handler_version, waiting.waiting_tasks,
+                    waiting.queue_pair_count, handler.deployment_id
+        ), ranked AS (
+          SELECT *,
+                 SUM(workers) OVER (PARTITION BY tool_name,handler_version) AS all_workers,
+                 COUNT(*) OVER (PARTITION BY tool_name,handler_version) AS deployment_count,
+                 ROW_NUMBER() OVER (PARTITION BY tool_name,handler_version ORDER BY workers DESC,deployment_id) AS deployment_rank
+            FROM by_deployment
+        )
+        SELECT tool_name,handler_version,
+               LEAST(waiting_tasks,1000000000000::bigint)::text AS waiting_tasks,
+               LEAST(all_workers,1000000000000::bigint)::text AS live_compatible_workers,
+               COALESCE(deployment_id,'') AS deployment_id,
+               LEAST(workers,1000000000000::bigint)::text AS deployment_workers,
+               deployment_count, queue_pair_count
+          FROM ranked
+         WHERE deployment_rank<=64
+         ORDER BY waiting_tasks DESC,tool_name,handler_version,deployment_rank
       `, [namespace]);
-      const row = result.rows?.[0];
-      if (!row) throw new Error('Could not read MCP task queue metrics');
-      const outstandingTasks = Number(row.outstanding_tasks);
-      const oldestAgeSeconds = Number(row.oldest_age_seconds);
-      if (!Number.isSafeInteger(outstandingTasks) || outstandingTasks < 0 || !Number.isFinite(oldestAgeSeconds) || oldestAgeSeconds < 0) {
-        throw new Error('MCP task queue metrics returned invalid values');
+      } catch (error) {
+        if (error?.code !== '42703') throw error;
+        // The read-only observer cannot migrate an old worker table. Keep
+        // queue metrics available and publish a fail-closed compatibility
+        // snapshot until a worker adds deployment identity.
+        compatibilityTruncated = true;
+        return { outstandingTasks, oldestAgeSeconds, withoutCompatibleWorkerTasks, handlerCompatibility, compatibilityTruncated };
       }
-      return { outstandingTasks, oldestAgeSeconds };
+      const rows = compatibilityResult.rows ?? [];
+      const byHandler = new Map();
+      let deploymentEntries = 0;
+      for (const row of rows) {
+        const key = JSON.stringify([row.tool_name, row.handler_version]);
+        let item = byHandler.get(key);
+        if (!item) {
+          item = {
+            tool_name: row.tool_name,
+            handler_version: row.handler_version,
+            waiting_tasks: Number(row.waiting_tasks),
+            live_compatible_workers: Number(row.live_compatible_workers),
+            unknown_deployment_workers: Number(row.live_compatible_workers),
+            deployments: [],
+          };
+          byHandler.set(key, item);
+        }
+        if (Number(row.queue_pair_count) > 256 || Number(row.deployment_count) > 64) compatibilityTruncated = true;
+        const workers = Number(row.deployment_workers);
+        if (row.deployment_id && workers > 0 && deploymentEntries < 768) {
+          item.deployments.push({ deployment_id: row.deployment_id, workers });
+          item.unknown_deployment_workers -= workers;
+          deploymentEntries += 1;
+        } else if (row.deployment_id && workers > 0) {
+          compatibilityTruncated = true;
+        }
+      }
+      handlerCompatibility = [...byHandler.values()];
+      if (handlerCompatibility.length > 256) {
+        compatibilityTruncated = true;
+        handlerCompatibility = handlerCompatibility.slice(0, 256);
+      }
+    }
+    return { outstandingTasks, oldestAgeSeconds, withoutCompatibleWorkerTasks, handlerCompatibility, compatibilityTruncated };
   }
   return { queueMetrics };
+}
+
+export function createMcpTaskQueueObserver({ pool, namespace }) {
+  return createQueueMetricsObserver({ pool, namespace, verifyReadOnly: true });
 }

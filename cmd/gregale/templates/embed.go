@@ -1,4 +1,4 @@
-// Package templates ships the twenty `gregale deploy --template <name>`
+// Package templates ships the twenty-two `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -12,7 +12,7 @@
 // Note on Go templates: the templates ship WITHOUT a go.mod because Go's
 // //go:embed refuses to descend into a directory that contains one —
 // it treats the file as a module boundary. Materialize writes one for the
-// hello-go app because it is also the local app-shape marker. function-go must
+// hello-go and mcp-go apps because each is also the local app-shape marker. function-go must
 // remain marker-free so a later zero-config deploy sees handler.go as a
 // function; the CLI adds its module file only to the upload archive.
 package templates
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -44,10 +44,9 @@ var FS embed.FS
 const GoToolchainVersion = "1.25.13"
 
 // Names is the canonical template list, kept here so the CLI can
-// validate --template before touching the embed FS. The seven
-// "hello/function" scaffolds ship with `gregale deploy`; the
-// stateless-contract and event-driven scaffolds are scaffolded by
-// `gregale init` (commands_init.go). Names must stay in
+// validate --template before touching the embed FS. The hello/function and
+// stateless-contract scaffolds ship with `gregale deploy`; `gregale init`
+// (commands_init.go) can materialize every template. Names must stay in
 // lockstep with the //go:embed directive above — adding a template
 // means a new entry in BOTH places.
 var Names = []string{
@@ -71,6 +70,8 @@ var Names = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-go",
+	"mcp-python",
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
@@ -135,10 +136,10 @@ func Materialize(name, dest string) error {
 	// hello-go is an HTTP app and needs its module marker. function-go stays
 	// marker-free so a later zero-config deploy detects handler.go as a
 	// function; the packer adds its build module to the upload archive.
-	if name == "hello-go" {
+	if name == "hello-go" || name == "mcp-go" {
 		modPath := filepath.Join(dest, "go.mod")
 		if _, err := os.Stat(modPath); os.IsNotExist(err) {
-			_ = os.WriteFile(modPath, []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)), 0o644)
+			_ = os.WriteFile(modPath, generatedGoMod(name), 0o644)
 		}
 	}
 	return nil
@@ -202,8 +203,8 @@ func TarGz(name, dest string) error {
 			return err
 		}
 	}
-	if name == "hello-go" || name == "function-go" {
-		modContent := []byte(fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion))
+	if name == "hello-go" || name == "function-go" || name == "mcp-go" {
+		modContent := generatedGoMod(name)
 		hdr := &tar.Header{
 			Name:     name + "/go.mod",
 			Mode:     0o644,
@@ -218,6 +219,14 @@ func TarGz(name, dest string) error {
 		}
 	}
 	return nil
+}
+
+func generatedGoMod(name string) []byte {
+	content := fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)
+	if name == "mcp-go" {
+		content += "\nrequire (\n\tgithub.com/jackc/pgx/v5 v5.11.0\n\tgolang.org/x/sync v0.22.0\n\tgolang.org/x/text v0.41.0\n)\n\nrequire (\n\tgithub.com/jackc/pgpassfile v1.0.0 // indirect\n\tgithub.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect\n\tgithub.com/jackc/puddle/v2 v2.2.2 // indirect\n)\n"
+	}
+	return []byte(content)
 }
 
 func copyFromFS(w io.Writer, root fs.FS, name string) error {
@@ -266,11 +275,13 @@ func NameIsValid(name string) bool {
 //	"stateless-contract" — managed-service scaffolds that BYO credentials (7)
 //	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
+//	"mcp"                — stateless MCP server starters (3)
 //	""                   — unknown / not in Names
 //
 // The grouping mirrors the template sections in the public docs site:
 // hello/function are the "just run it" tier, stateless-contract
-// scaffolds are the "BYO managed service" tier, ai is the LLM tier.
+// scaffolds are the "BYO managed service" tier, ai is the LLM tier,
+// and mcp contains the protocol-specific language starters.
 // Adding a template means a new entry in BOTH Names AND this switch.
 func CategoryFor(name string) string {
 	switch name {
@@ -284,7 +295,7 @@ func CategoryFor(name string) string {
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
-	case "mcp-node":
+	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"
 	}
 	return ""

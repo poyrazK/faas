@@ -264,7 +264,7 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
-	case "mcp-node":
+	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
 	default:
 		return cliDocsURL
@@ -355,6 +355,10 @@ func nextStepsFor(tpl string) []string {
 	switch tpl {
 	case "mcp-node":
 		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
+	case "mcp-go":
+		return []string{"cd <dest> && go run .", "Review gregale-mcp.json and configure OAuth scopes before exposing private tools.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy"}
+	case "mcp-python":
+		return []string{"cd <dest> && python -m pip install -r requirements.txt && python server.py", "Review gregale-mcp.json and configure OAuth scopes before exposing private tools.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy"}
 	case "customer-platform":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",

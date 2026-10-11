@@ -3566,9 +3566,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
-			// match, so /v1/internal/apps/foo/routes and
-			// /v1/internal/apps/foo/service-endpoints and
-			// /v1/internal/apps/foo/streaming-cap all
+			// match, so /v1/internal/apps/foo/routes,
+			// /v1/internal/apps/foo/service-endpoints,
+			// /v1/internal/apps/foo/streaming-cap,
+			// /v1/internal/apps/foo/mcp-health, and
+			// /v1/internal/apps/foo/mcp-probe all
 			// reach this dispatcher. Each reader validates its
 			// complete suffix before serving a response.
 			resolve := gateway.ResolveSlugFn(func(slug string) (string, bool) { //nolint:contextcheck // ADR-093 ResolveSlugFn signature is fixed; ctx captured from per-request r.Context().
@@ -3584,6 +3586,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
 				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/mcp-health") || strings.HasSuffix(r.URL.Path, "/mcp-probe") {
+				var probeForward func(gateway.Target) http.Handler
+				if deps.nodeCache != nil {
+					probeForward = deps.nodeCache.Forwarding()
+				}
+				resolveProbeTarget := func(ctx context.Context, appID, deploymentID, instanceID string) (gateway.Target, bool, error) {
+					deployment, err := pgStore.DeploymentByID(ctx, deploymentID)
+					if errors.Is(err, state.ErrNotFound) {
+						return gateway.Target{}, false, nil
+					}
+					if err != nil {
+						return gateway.Target{}, false, err
+					}
+					if deployment.AppID != appID || (deployment.Status != state.DeploySnapshotting && deployment.Status != state.DeployLive) {
+						return gateway.Target{}, false, nil
+					}
+					instance, err := pgStore.InstanceByID(ctx, instanceID)
+					if errors.Is(err, state.ErrNotFound) {
+						return gateway.Target{}, false, nil
+					}
+					if err != nil {
+						return gateway.Target{}, false, err
+					}
+					if instance.AppID != appID || instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
+						return gateway.Target{}, false, nil
+					}
+					return gateway.Target{
+						AppID: appID, DeploymentID: deploymentID, InstanceID: instance.ID,
+						NodeID: instance.NodeID, WakeID: instance.WakeID,
+						Port: schedpkg.DeploymentRuntimePort(deployment),
+					}, true, nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/mcp-probe") {
+					internalMCPInstanceProtocolProbeHandler(resolve, resolveProbeTarget, probeForward, log).ServeHTTP(w, r)
+					return
+				}
+				internalMCPInstanceProbeHandler(resolve, resolveProbeTarget, probeForward, log).ServeHTTP(w, r)
 				return
 			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)

@@ -797,7 +797,7 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("action must be one of %v (or omitted for webhook)", api.AllowedAlertRuleActions))
 	}
 	if req.Action != nil && !api.AlertRuleActionAllowedForMetric(req.Metric, *req.Action) {
-		return api.ErrAlertRuleInvalid("pre-auth target metrics support webhook action only")
+		return api.ErrAlertRuleInvalid(alertMetricActionRestriction(req.Metric))
 	}
 	if !api.IsFiniteFloat(req.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
@@ -861,7 +861,7 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("action must be one of %v (or empty for webhook)", api.AllowedAlertRuleActions))
 	}
 	if !api.AlertRuleActionAllowedForMetric(string(merged.Metric), string(merged.Action)) {
-		return api.ErrAlertRuleInvalid("pre-auth target metrics support webhook action only")
+		return api.ErrAlertRuleInvalid(alertMetricActionRestriction(string(merged.Metric)))
 	}
 	if !api.IsFiniteFloat(merged.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
@@ -876,6 +876,19 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return api.ErrAlertRuleInvalid("webhook_url must be http(s)")
 	}
 	return nil
+}
+
+func alertMetricActionRestriction(metric string) string {
+	if metric == string(state.AlertMetricMCPTaskPromotionHoldAgeSeconds) {
+		return "MCP promotion hold alerts support webhook action only"
+	}
+	if metric == string(state.AlertMetricMCPTasksOldestAgeSeconds) {
+		return "MCP task age alerts support webhook action only"
+	}
+	if metric == string(state.AlertMetricMCPTasksMetricsStale) {
+		return "MCP task metrics freshness alerts support webhook action only"
+	}
+	return "pre-auth target metrics support webhook action only"
 }
 
 // alertRuleRowForValidation folds an existing row + a partial update

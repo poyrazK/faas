@@ -45,6 +45,7 @@ type resumableUploadProgress func(uploaded, total int64)
 // upload commit.
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
 	return (sh == shapeApp || sh == shapeFunction) &&
+		len(ann.OverrideEnv) == 0 &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&
 		canaryStages == ""

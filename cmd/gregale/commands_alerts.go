@@ -121,7 +121,7 @@ func cmdAlertAdd(args []string) int {
 	fs := newFlagSet("alerts add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
-	metric := fs.String("metric", "", "metric (closed set; one of error_rate_pct|latency_p50_ms|latency_p95_ms|latency_p99_ms|cold_start_pct|request_count|failed_invocations)")
+	metric := fs.String("metric", "", "metric (closed set; includes MCP task age and metrics freshness)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
@@ -225,6 +225,9 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, acti
 	}
 	if *action != "" && !api.AllowedAlertRuleAction(*action) {
 		return printErr("Invalid action", fmt.Errorf("--action %q must be webhook|rollback|demote|promote", *action)) == 0
+	}
+	if !api.AlertRuleActionAllowedForMetric(*metric, *action) {
+		return printErr("Invalid action", fmt.Errorf("this metric supports webhook action only")) == 0
 	}
 	return true
 }
@@ -459,6 +462,9 @@ func validateAlertUpdateFlags(metric, comparison, windowSpec, action *string, th
 	}
 	if *action != "" && !api.AllowedAlertRuleAction(*action) {
 		return printErr("Invalid action", fmt.Errorf("--action %q must be webhook|rollback|demote|promote", *action)) == 0
+	}
+	if *metric != "" && *action != "" && !api.AlertRuleActionAllowedForMetric(*metric, *action) {
+		return printErr("Invalid action", fmt.Errorf("this metric supports webhook action only")) == 0
 	}
 	if !math.IsNaN(*threshold) && !api.IsFiniteFloat(*threshold) {
 		return printErr("Invalid threshold", fmt.Errorf("--threshold must be a finite number; got %v", *threshold)) == 0

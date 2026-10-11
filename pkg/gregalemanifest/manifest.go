@@ -1639,11 +1639,12 @@ func (w *WorkerSpec) DrainTimeoutSeconds() int {
 
 // WorkerScaleSpec defines autoscaling parameters for background workers.
 type WorkerScaleSpec struct {
-	Min    int     `yaml:"min"`
-	Max    int     `yaml:"max"`
-	Metric string  `yaml:"metric"`
-	Name   string  `yaml:"name,omitempty"`
-	Target float64 `yaml:"target,omitempty"`
+	Min             int     `yaml:"min"`
+	Max             int     `yaml:"max"`
+	Metric          string  `yaml:"metric"`
+	Name            string  `yaml:"name,omitempty"`
+	Target          float64 `yaml:"target,omitempty"`
+	ObserverAppSlug string  `yaml:"observer_app_slug,omitempty"`
 }
 
 // ToAPI converts WorkerScaleSpec to api.WorkerScaling.
@@ -1654,6 +1655,7 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 		Metric: s.Metric,
 		Name:   s.Name,
 		Target: s.Target,
+		ObserverAppSlug: s.ObserverAppSlug,
 	}
 }
 
@@ -1709,6 +1711,14 @@ func (s WorkerScaleSpec) Validate() error {
 	if s.Max < s.Min {
 		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
 	}
+	if s.ObserverAppSlug != "" {
+		if !api.ValidAppSlug(s.ObserverAppSlug) {
+			return fmt.Errorf("observer_app_slug %q is not a valid app slug", s.ObserverAppSlug)
+		}
+		if s.Metric != api.ScalingMetricCustom || s.Name != "mcp_tasks_outstanding" {
+			return fmt.Errorf("observer_app_slug requires the mcp_tasks_outstanding custom metric")
+		}
+	}
 	if s.Metric == "" {
 		if s.Name != "" || s.Target != 0 {
 			return fmt.Errorf("name and target require a worker metric")
@@ -1717,6 +1727,9 @@ func (s WorkerScaleSpec) Validate() error {
 	}
 	if problem := api.ValidateScalingTargets("worker.scale", []api.ScalingTarget{{Metric: s.Metric, Name: s.Name, Value: s.Target}}); problem != nil {
 		return fmt.Errorf("%s", problem.Detail)
+	}
+	if s.Min == 0 && s.Metric == api.ScalingMetricCustom && s.Name == "mcp_tasks_outstanding" && s.ObserverAppSlug == "" {
+		return fmt.Errorf("observer_app_slug is required to scale MCP task workers to zero")
 	}
 	return nil
 }

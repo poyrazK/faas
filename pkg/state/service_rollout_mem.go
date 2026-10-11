@@ -85,6 +85,9 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
 	}
+	if err := m.checkMCPTaskCompatibilityCutoverLocked(target); err != nil {
+		return target, err
+	}
 	previous, _ := previousMemServiceRolloutRow(target, rows)
 	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionPromote, target.ID, previous.id, "")
 	if err != nil {
@@ -122,6 +125,7 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
+	target.MCPTaskMigrationOverride = false
 	m.deployments[id] = target
 	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
@@ -142,6 +146,9 @@ func (m *MemStore) beginServiceRolloutCutoverLocked(ctx context.Context, id stri
 	}
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
+	}
+	if err := m.checkMCPTaskCompatibilityCutoverLocked(target); err != nil {
+		return target, err
 	}
 	previous, _ := previousMemServiceRolloutRow(target, rows)
 	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionPromote, target.ID, previous.id, "")

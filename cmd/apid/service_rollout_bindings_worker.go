@@ -134,6 +134,10 @@ func (s *server) serviceRolloutBindingSweep(ctx context.Context, cursor *int) er
 		} else if errors.Is(err, state.ErrServiceRolloutNotReady) {
 			code = "service_rollout_not_ready"
 			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "The exact recipient must have ready service capacity before routing can change."}}
+		} else if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
+			problem := api.ErrMCPTaskCompatibilityGate(err.Error())
+			code = problem.Code
+			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: candidate.ID, Message: problem.Detail}}
 		}
 		if updateErr := statusStore.UpdateServiceRolloutBindingStatus(ctx, candidate.ID, gate.RequestID, code, blockers); updateErr != nil && !errors.Is(updateErr, state.ErrServiceRolloutInvalid) && ctx.Err() == nil {
 			s.log.Warn("persist service binding blocker", "deployment_id", candidate.ID, "err", updateErr)

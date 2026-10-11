@@ -94,6 +94,10 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if errors.Is(err, state.ErrServiceRolloutNotReady) {
 		return "blocked", "service_rollout_not_ready", []api.BindingCheckFinding{{Code: "service_rollout_not_ready", DeploymentID: target.ID, Message: "The rollback target needs ready service capacity before traffic can move."}}, nil
 	}
+	if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
+		problem := api.ErrMCPTaskCompatibilityGate(err.Error())
+		return "blocked", problem.Code, []api.BindingCheckFinding{{Code: problem.Code, DeploymentID: target.ID, Message: problem.Detail}}, nil
+	}
 	if err != nil {
 		return "", "", nil, err
 	}

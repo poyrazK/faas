@@ -354,6 +354,8 @@ func cmdDeployment(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "retry-hold":
+		return cmdDeploymentRetryHold(args[1:])
 	case "advance":
 		return cmdDeploymentAdvance(args[1:])
 	case "set-min-instances":
@@ -588,6 +590,26 @@ func cmdDeploymentGet(args []string) int {
 	}
 	if d.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "error_code:", d.ErrorCode)
+	}
+	if drain := d.WorkerDrain; drain != nil {
+		_, _ = fmt.Fprintf(osStdout, "%-14s active=%d completed=%d timed_out=%d failed=%d overdue=%d\n", "worker_drain:", drain.Active, drain.Completed, drain.TimedOut, drain.Failed, drain.Overdue)
+		if drain.Deadline != nil {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "drain_deadline:", drain.Deadline.Format(time.RFC3339))
+		}
+	}
+	if d.PromotionHold != nil {
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n%-14s %s\n", "promotion_hold:", d.PromotionHold.Code, "hold_detail:", d.PromotionHold.Detail)
+		h := d.PromotionHold
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n%-14s %d\n%-14s %t\n", "held_since:", h.HeldAt.Format(time.RFC3339), "hold_retries:", h.RecoveryAttempts, "retry_running:", h.RecoveryInProgress)
+		if h.NextRetryAt != nil {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "next_retry:", h.NextRetryAt.Format(time.RFC3339))
+		}
+		if h.LastRecoveryOutcome != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "last_recovery:", h.LastRecoveryOutcome)
+		}
+		if h.LastRecoveryErrorCode != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "recovery_error:", h.LastRecoveryErrorCode)
+		}
 	}
 	renderDeploymentHostingReceipt(osStdout, d.APIHostingReceipt)
 	if *showScan {

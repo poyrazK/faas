@@ -532,6 +532,9 @@ func cmdWorkersScale(args []string) int {
 		newScaling.Name = *nameFlag
 		scalingChanged = true
 	}
+	if newScaling.Metric != api.ScalingMetricCustom || newScaling.Name != mcpTasksOutstandingMetric {
+		newScaling.ObserverAppSlug = ""
+	}
 	if *metricFlag != "" && *targetFlag < 0 && existingScaling != nil &&
 		existingScaling.Metric != "" && existingScaling.Metric != newScaling.Metric {
 		return printErr("Invalid scaling target", fmt.Errorf("--target is required when switching worker metrics"))

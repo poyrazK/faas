@@ -726,11 +726,14 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
 			continue
 		}
-		if (haveQueueTarget || haveQueueLagTarget) && (app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker) {
+		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
+		if workerWorkload && (haveQueueTarget || haveQueueLagTarget || len(customTargets) > 0) {
 			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
-				// Keep existing app/binding gauges for visibility. These
-				// aggregate observations never authorize a scoped mutation.
-				if t.metrics != nil {
+				// Keep queue gauges for visibility. These aggregate
+				// observations never authorize a scoped mutation. Custom
+				// worker metrics are read by ReconcileWorkerPools, which
+				// owns the freshness and environment-scope checks.
+				if t.metrics != nil && (haveQueueTarget || haveQueueLagTarget) {
 					signal, have, err := t.readQueueState(ctx, app, now)
 					if err != nil {
 						t.log.Warn("targets: worker queue telemetry failed", "app_id", app.ID, "err", err)

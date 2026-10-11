@@ -16,5 +16,5 @@ async function shutdown(signal) {
   return shutdownPromise;
 }
 
-process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
-process.once('SIGINT', () => { void shutdown('SIGINT'); });
+process.once('SIGTERM', () => { void shutdown('SIGTERM').then(() => process.exit(process.exitCode || 0)); });
+process.once('SIGINT', () => { void shutdown('SIGINT').then(() => process.exit(process.exitCode || 0)); });

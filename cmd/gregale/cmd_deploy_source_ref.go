@@ -128,6 +128,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		PRNumber:               ann.PRNumber,
 		TrafficPercent:         ann.TrafficPercent,
 		Canary:                 ann.Canary,
+		MCPTaskMigrationOverride: ann.MCPTaskMigrationOverride,
 		NoTriggers:             noTriggers,
 		RollbackOn5xx:          ann.RollbackOn5xx,
 		DisableStartupCPUBoost: ann.DisableStartupCPUBoost,

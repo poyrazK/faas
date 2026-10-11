@@ -1089,7 +1089,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string) error {
 	var unsupported []string
 	for _, name := range []string{
-		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
+		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
 		"wait", "no-wait", "timeout", "app-protocol",
 	} {
@@ -1463,7 +1463,8 @@ func workerReplicasEqual(a, b *api.WorkerScaling) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Target == b.Target
+	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Name == b.Name &&
+		a.Target == b.Target && a.ObserverAppSlug == b.ObserverAppSlug
 }
 
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
@@ -2120,17 +2121,20 @@ func cmdDeployTarball(args []string) int {
 // `gregale deploy` calls leave both fields unset and retain the signal-driven
 // behavior below.
 type deployExecution struct {
-	onQueued            func(api.DeploymentResponse)
-	onSourceSync        func(time.Duration, error)
-	onStage             func(string, string, int64, string)
-	onTerminal          func(api.DeploymentResponse) int
-	onWaitEnd           func()
-	onFailure           func(api.DeploymentResponse, string, string)
-	onError             func(error)
-	prefixBuildLogs     bool
-	compactProgress     bool // Guided sessions own their review and progress display.
-	streamLogsOnJSON    bool
-	developerSource     *devSourceSyncState
+	onQueued         func(api.DeploymentResponse)
+	onSourceSync     func(time.Duration, error)
+	onStage          func(string, string, int64, string)
+	onTerminal       func(api.DeploymentResponse) int
+	onWaitEnd        func()
+	onFailure        func(api.DeploymentResponse, string, string)
+	onError          func(error)
+	prefixBuildLogs  bool
+	compactProgress  bool // Guided sessions own their review and progress display.
+	streamLogsOnJSON bool
+	developerSource  *devSourceSyncState
+	// overrideEnv carries non-secret values that belong only to the new
+	// deployment revision. MCP hosting uses it to pin a candidate catalog.
+	overrideEnv         map[string]string
 	extraSourceExcludes []string
 	// Long-lived sessions can finish the same source doctor checks before
 	// presenting their review. Reuse that result instead of repeating prose
@@ -2289,6 +2293,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// pointer through.
 	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = server default 100)")
 	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
+	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
@@ -2457,6 +2462,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// implementation while making `gregale deploy --dry-run` safe by
 	// construction.
 	*diff = preview
+	if *mcpTaskMigrationOverride && (*diff || *simplePlan || *githubSnippet) {
+		return printErr("Invalid flags", errors.New("--mcp-task-migration-override requires a single-app deployment and cannot be used with preview, --plan, or --github"))
+	}
 	// A linked environment is meaningful for real deployments and project
 	// previews. The single-app diff engine has no environment input, so keep
 	// its existing read-only behavior when the scope was not explicit.
@@ -2537,7 +2545,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2678,7 +2686,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe",
-			"rollback-on-5xx", "disable-startup-cpu-boost",
+			"rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
 			// configuration from the scanned source. Reject single-app
@@ -2883,7 +2891,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2907,16 +2916,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			})
 		}
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, *repo, *ref, api.DeployAnnotations{
-			SourceBranch:           *sourceBranch,
-			Reason:                 *reason,
-			Tag:                    *tag,
-			Environment:            *environment,
-			DeployedBy:             resolveDeployedBy(*deployedBy),
-			PRNumber:               *prNumber,
-			TrafficPercent:         optTrafficPercent(*trafficPercent),
-			Canary:                 canarySpec,
-			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			SourceBranch:             *sourceBranch,
+			Reason:                   *reason,
+			Tag:                      *tag,
+			Environment:              *environment,
+			DeployedBy:               resolveDeployedBy(*deployedBy),
+			PRNumber:                 *prNumber,
+			TrafficPercent:           optTrafficPercent(*trafficPercent),
+			Canary:                   canarySpec,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+			RollbackOn5xx:            rollbackOn5xxPtr,
+			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
@@ -3569,7 +3579,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3897,21 +3908,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
-			Scope:                  manifestScope,
-			SourceURL:              sourceURL,
-			CommitSHA:              commitSHA,
-			Environment:            *environment,
-			Reason:                 *reason,
-			Tag:                    *tag,
-			DeployedBy:             resolveDeployedBy(*deployedBy),
-			PRNumber:               *prNumber,
-			Workflows:              workflowDefs,
-			TrafficPercent:         optTrafficPercent(*trafficPercent),
-			Canary:                 canarySpec,
-			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			NoTriggers: *noTriggers,
-			Companions: sidecarDefs,
+			Scope:                    manifestScope,
+			SourceURL:                sourceURL,
+			CommitSHA:                commitSHA,
+			Environment:              *environment,
+			Reason:                   *reason,
+			Tag:                      *tag,
+			DeployedBy:               resolveDeployedBy(*deployedBy),
+			PRNumber:                 *prNumber,
+			Workflows:                workflowDefs,
+			TrafficPercent:           optTrafficPercent(*trafficPercent),
+			Canary:                   canarySpec,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+			RollbackOn5xx:            rollbackOn5xxPtr,
+			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers:  *noTriggers,
+			Companions:  sidecarDefs,
+			OverrideEnv: execution.overrideEnv,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -4064,20 +4077,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
-		Image:                  *image,
-		Scope:                  manifestScope,
-		Environment:            *environment,
-		RollbackOn5xx:          rollbackOn5xxPtr,
-		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-		Overrides:              deployHealthcheckOverrides(healthcheck),
-		Workflows:              workflowDefs,
-		Companions:             sidecarDefs,
-		TrafficPercent:         optTrafficPercent(*trafficPercent),
-		Reason:                 annPtr(*reason),
-		Tag:                    annPtr(*tag),
-		DeployedBy:             annPtr(resolveDeployedBy(*deployedBy)),
-		PRNumber:               annIntPtr(*prNumber),
-		Canary:                 canarySpec,
+		Image:                    *image,
+		Scope:                    manifestScope,
+		Environment:              *environment,
+		RollbackOn5xx:            rollbackOn5xxPtr,
+		DisableStartupCPUBoost:   disableStartupCPUBoostPtr,
+		MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+		Overrides:                deployHealthcheckOverrides(healthcheck),
+		Workflows:                workflowDefs,
+		Companions:               sidecarDefs,
+		TrafficPercent:           optTrafficPercent(*trafficPercent),
+		Reason:                   annPtr(*reason),
+		Tag:                      annPtr(*tag),
+		DeployedBy:               annPtr(resolveDeployedBy(*deployedBy)),
+		PRNumber:                 annIntPtr(*prNumber),
+		Canary:                   canarySpec,
 	})
 	if err != nil {
 		code := printErr("Deploy failed", err)
@@ -6823,6 +6837,10 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		return terminalExitForDeploymentWithFailureContext(ctx, c, d, appSlug, nil)
 	}
 	terminalDeployment := func(d api.DeploymentResponse) int {
+		if d.PromotionHold != nil {
+			warnWaitStopped("promotion held: %s; inspect with gregale deployment %s", d.PromotionHold.Detail, d.ID)
+			return 3
+		}
 		return terminalDeploymentWithFailure(d, "", d.Error)
 	}
 	terminalBuild := func(b api.BuildResponse) int {
@@ -7057,7 +7075,7 @@ func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.Deployme
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
-	if isCompletedDeployment(got) {
+	if got.PromotionHold != nil || isCompletedDeployment(got) {
 		return got, true
 	}
 	return api.DeploymentResponse{}, false

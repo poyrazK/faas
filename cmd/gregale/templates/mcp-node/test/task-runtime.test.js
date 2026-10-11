@@ -101,6 +101,7 @@ test('dedicated workers enable the optional metrics publisher with the scoped ap
   assert.equal(publishedSettings.token, 'metrics-write-secret');
   assert.equal(publishedSettings.apiURL, 'https://api.staging.gregale.dev');
   assert.equal(typeof publishedSettings.store.queueMetrics, 'function');
+  assert.equal(publishedSettings.observer, false);
   await service.close();
   assert.equal(publisherCloseCount, 1);
 });
@@ -151,6 +152,39 @@ test('an external observer needs no payload key and never initializes schema or 
   });
   assert.equal(reads, 1);
   assert.equal(publishedSettings.keepAlive, true);
+  assert.equal(publishedSettings.observer, true);
   assert.equal(service.taskRuntime, undefined);
   await service.close();
+});
+
+test('an observer health check failure prevents metrics publisher startup and logs no database details', async () => {
+  const errors = [];
+  const originalError = console.error;
+  let poolCloseCount = 0;
+  let publisherStarted = false;
+  console.error = message => errors.push(message);
+  try {
+    await assert.rejects(startMcpTaskRuntime(config, {
+      env: {
+        ...baseEnv,
+        MCP_TASK_NAMESPACE: 'storefront-prod',
+        MCP_TASKS_SCALING_APP_SLUG: 'storefront-worker',
+        MCP_TASKS_SCALING_TOKEN: 'metrics-secret',
+      },
+      role: 'observer',
+      createPool: () => ({ async end() { poolCloseCount++; } }),
+      createObserver: () => ({ async queueMetrics() { throw new Error('postgres://private-user:secret@db.example/production'); } }),
+      createMetricsPublisher() {
+        publisherStarted = true;
+        return { async close() {} };
+      },
+    }), /Could not initialize the durable MCP task runtime/);
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(publisherStarted, false);
+  assert.equal(poolCloseCount, 1);
+  assert.deepEqual(errors, [JSON.stringify({ event: 'mcp_task_observer_health_check_failed' })]);
+  assert.ok(!errors.join('\n').includes('private-user'));
 });

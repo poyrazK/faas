@@ -81,6 +81,7 @@ func spoolRoot() string {
 //	handler   string — handler path, required when runtime is set.
 //	source_url string — optional informational repository provenance URL.
 //	commit_sha string — optional lowercase hexadecimal Git commit identifier.
+//	override_env string — optional JSON object of per-deployment plaintext env values.
 //
 // DeployedApps is enforced at app-create time via
 // store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
@@ -139,7 +140,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		canarySpec             *api.CanaryPresetSpec
 		rollbackOn5xx          *bool
 		disableStartupCPUBoost *bool
+		mcpTaskMigrationOverride bool
 		healthcheck            *api.DeploymentHealthcheck
+		overrideEnv            map[string]string
+		overrideEnvSeen        bool
 		noTriggers             bool
 		ann                    annotationForm
 		stagedManifest         sourceRefManifestStaged
@@ -293,10 +297,29 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			disableStartupCPUBoost = &value
+		case "mcp_task_migration_override":
+			b, readErr := io.ReadAll(io.LimitReader(part, 16))
+			value, parseErr := strconv.ParseBool(strings.TrimSpace(string(b)))
+			if readErr != nil || parseErr != nil {
+				api.WriteProblem(w, api.ErrValidation("mcp_task_migration_override must be a boolean"))
+				return
+			}
+			mcpTaskMigrationOverride = value
 		case "healthcheck":
 			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
 			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
 				api.WriteProblem(w, api.ErrValidation("healthcheck must be a valid startup probe object"))
+				return
+			}
+		case "override_env":
+			if overrideEnvSeen {
+				api.WriteProblem(w, api.ErrValidation("override_env may be specified only once"))
+				return
+			}
+			overrideEnvSeen = true
+			b, readErr := io.ReadAll(io.LimitReader(part, (1<<20)+1))
+			if readErr != nil || len(b) > 1<<20 || !json.Valid(b) || json.Unmarshal(b, &overrideEnv) != nil || overrideEnv == nil {
+				api.WriteProblem(w, api.ErrValidation("override_env must be a JSON object of string values smaller than 1 MiB"))
 				return
 			}
 		case "no_triggers":
@@ -343,11 +366,17 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, Sidecars: sidecars}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
-	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
-	if healthProblem != nil {
-		api.WriteProblem(w, healthProblem)
+	if len(overrideEnv) > 0 {
+		if rolloutReq.Overrides == nil {
+			rolloutReq.Overrides = &api.CreateDeploymentOverrides{}
+		}
+		rolloutReq.Overrides.Env = overrideEnv
+	}
+	deploymentOverrides, overrideProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if overrideProblem != nil {
+		api.WriteProblem(w, overrideProblem)
 		return
 	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
@@ -376,7 +405,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, deploymentOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

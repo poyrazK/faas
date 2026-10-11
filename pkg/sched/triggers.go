@@ -69,8 +69,8 @@ const (
 	// long-lived worker assigned to a live deployment scope.
 	TriggerWorkerSingleton = "worker.singleton"
 
-	// TriggerWorkerPool — queue-depth reconciliation for a worker fleet. It
-	// uses the explicit deployment admission path and is distinct from the
+	// TriggerWorkerPool — backlog-driven reconciliation for a worker fleet.
+	// It uses the explicit deployment admission path and is distinct from the
 	// singleton lifecycle repair trigger for wake-timeline observability.
 	TriggerWorkerPool = "worker.pool"
 

@@ -1666,11 +1666,12 @@ type ServiceReplicas struct {
 
 // WorkerScaling is the queue-driven autoscaling policy for worker-mode apps.
 type WorkerScaling struct {
-	Min    int     `json:"min"`
-	Max    int     `json:"max"`
-	Metric string  `json:"metric,omitempty"`
-	Name   string  `json:"name,omitempty"`
-	Target float64 `json:"target,omitempty"`
+	Min             int     `json:"min"`
+	Max             int     `json:"max"`
+	Metric          string  `json:"metric,omitempty"`
+	Name            string  `json:"name,omitempty"`
+	Target          float64 `json:"target,omitempty"`
+	ObserverAppSlug string  `json:"observer_app_slug,omitempty"`
 }
 
 // AppManifest is the runner-scaffold and app-owned lifecycle payload. Stored
@@ -1940,6 +1941,29 @@ type CustomMetric struct {
 	ObservedAt time.Time
 }
 
+// MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a
+// single tool and handler version.
+type MCPTaskHandlerCompatibility struct {
+	ToolName                 string
+	HandlerVersion           string
+	WaitingTasks             int64
+	LiveCompatibleWorkers    int64
+	UnknownDeploymentWorkers int64
+	Deployments              []MCPTaskHandlerDeploymentWorkers
+}
+
+type MCPTaskHandlerDeploymentWorkers struct {
+	DeploymentID string
+	Workers      int64
+}
+
+// MCPTaskCompatibilityReport is the latest observer snapshot for one app.
+type MCPTaskCompatibilityReport struct {
+	Handlers   []MCPTaskHandlerCompatibility
+	Truncated  bool
+	ObservedAt time.Time
+}
+
 // EffectiveTargets is the ADR-194 reader for a policy's declared signals.
 // It is the ONLY way a trigger should reach the targets: callers that read
 // Target directly miss the multi-signal form, and callers that read Targets
@@ -2176,6 +2200,10 @@ type Deployment struct {
 	RootfsKey   string
 	RootfsBytes int64
 	Status      DeploymentStatus
+	// MCPTaskMigrationOverride is a one-use rollout grant stored separately
+	// from the deployment row. It is set only by an explicit deployment API
+	// request and consumed by the stable deployment cutover.
+	MCPTaskMigrationOverride bool `json:"-"`
 	// Priority is the deployment-queue priority (lower = run
 	// sooner). Range [0, 1000], default 100. Migration 00362
 	// widens the column CHECK + adds the partial index that
@@ -2621,14 +2649,15 @@ type Deployment struct {
 // are applied by the store so an operator cannot accidentally load the full
 // deployment history into apid.
 type OperatorDeploymentFilter struct {
-	AccountID      string
-	AppID          string
-	Statuses       []DeploymentStatus
-	IncludeDeleted bool
-	CreatedBefore  time.Time
-	OldestFirst    bool
-	Limit          int
-	Offset         int
+	ExcludeMCPTaskHolds bool
+	AccountID           string
+	AppID               string
+	Statuses            []DeploymentStatus
+	IncludeDeleted      bool
+	CreatedBefore       time.Time
+	OldestFirst         bool
+	Limit               int
+	Offset              int
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
@@ -3129,10 +3158,10 @@ type OperatorIntent struct {
 }
 
 // AlertMetric is a closed vocabulary for the metric side of an AlertRule
-// condition (issue #396, ADR-045). Names mirror the AppMetricsResponse
-// payload verbatim so the evaluator and the customer-facing metrics
-// endpoint cannot drift. failed_invocations is the only non-Prometheus
-// metric; its source dimension comes through AlertRule.FailureSource.
+// condition (issue #396, ADR-045). Prometheus-backed names mirror the
+// AppMetricsResponse payload; durable and pushed metrics use their own
+// evaluator sources. failed_invocations is the only metric with a separate
+// source dimension in AlertRule.FailureSource.
 //
 // Issue #1233 / ADR-123 — extended with 5 metrics backing the alert
 // preset catalog (api_up / account_spend_eur / deployment_failed /
@@ -3143,6 +3172,9 @@ type OperatorIntent struct {
 // daily_cost_cents from the durable observability rollups. F2 adds
 // cert_issuance_failed, backed by custom_domains.cert_failed_at. Issue
 // #1398 O2 adds the ADR-082 multi-window SLO burn-rate signal.
+// MCP hosting adds mcp_tasks_oldest_age_seconds from the app's fresh pushed
+// custom metric and mcp_tasks_metrics_stale for missing, expired, or invalid
+// gauges; min=0 workers also require the dedicated observer heartbeat.
 type AlertMetric string
 
 const (
@@ -3188,6 +3220,15 @@ const (
 	// safedeploy_in_flight_rollouts > 50 for 10 min. Warning;
 	// operator back-pressure signal.
 	AlertMetricCanaryFleetInFlightHigh AlertMetric = "canary_fleet_in_flight_high"
+	// AlertMetricMCPTasksOldestAgeSeconds reads the fresh pushed gauge the
+	// MCP Tasks runtime publishes alongside its scaling backlog metric.
+	AlertMetricMCPTasksOldestAgeSeconds AlertMetric = "mcp_tasks_oldest_age_seconds"
+	// AlertMetricMCPTasksMetricsStale fires when any required task gauge is
+	// missing, expired, or invalid. For min=0 worker apps it also requires a fresh
+	// observer heartbeat equal to 1. Unlike the gauge alert, it evaluates to a
+	// binary 1/0 so a broken publisher can notify operators.
+	AlertMetricMCPTasksMetricsStale           AlertMetric = "mcp_tasks_metrics_stale"
+	AlertMetricMCPTaskPromotionHoldAgeSeconds AlertMetric = "mcp_task_promotion_hold_age_seconds"
 )
 
 // AlertComparison is the textual form of the comparison operator stored
@@ -5323,7 +5364,15 @@ const (
 	// clean evidence to blocking findings or unavailable evidence. The
 	// payload is the durable quarantine signal; traffic controllers may
 	// consume it without making the scanner own instance teardown.
-	DeployScanRegressed DeploymentAuditKind = "deploy.scan_regressed"
+	DeployScanRegressed         DeploymentAuditKind = "deploy.scan_regressed"
+	DeployMCPTaskHeld           DeploymentAuditKind = "deploy.mcp_task_held"
+	DeployMCPTaskRetryRequested DeploymentAuditKind = "deploy.mcp_task_retry_requested"
+	DeployMCPTaskRetryStarted   DeploymentAuditKind = "deploy.mcp_task_retry_started"
+	DeployMCPTaskRetryCompleted DeploymentAuditKind = "deploy.mcp_task_retry_completed"
+	DeployMCPTaskRecovered      DeploymentAuditKind = "deploy.mcp_task_recovered"
+	DeployMCPTaskHoldCancelled  DeploymentAuditKind = "deploy.mcp_task_hold_cancelled"
+	DeployWorkerDrainStarted    DeploymentAuditKind = "deploy.worker_drain_started"
+	DeployWorkerDrainCompleted  DeploymentAuditKind = "deploy.worker_drain_completed"
 )
 
 // DeploymentAudit is one row of the deployment_audit table

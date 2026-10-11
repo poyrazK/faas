@@ -209,6 +209,8 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 		api.WriteProblem(w, api.ErrCanaryStepConflict(expected, observed))
 	case errors.Is(err, state.ErrCanaryStateInvalid):
 		api.WriteProblem(w, api.ErrRolloutStateInvalid("current"))
+	case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
+		api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 	case errors.Is(err, state.ErrTrafficPercentSumInvalid):
 		api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 	case errors.Is(err, state.ErrNotFound):

@@ -388,6 +388,21 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 					signal = api.ScalingMetricCustom
 				}
 			}
+			if currentReplicas > desired && mcpTasksScaleToZeroConfigured(app) {
+				heartbeat, hasHeartbeat := stored[mcpTasksObserverHeartbeatMetric]
+				heartbeatFresh := hasHeartbeat && now.Sub(heartbeat.ObservedAt) <= freshness && heartbeat.Value == 1
+				observerReady, readinessErr := e.mcpTasksObserverReady(ctx, app)
+				if readinessErr != nil {
+					return 0, "", fmt.Errorf("verify MCP task observer readiness: %w", readinessErr)
+				}
+				if !observerReady || !heartbeatFresh {
+					// A recent worker-side backlog gauge cannot authorize scale-in
+					// when the dedicated observer is unavailable. Keep this pool at
+					// its current size until both the linked app and heartbeat recover.
+					desired = currentReplicas
+					signal = ""
+				}
+			}
 			if !haveCustomSignal && !haveQueue && !haveLagSignal {
 				if currentReplicas > 0 {
 					return 0, "", fmt.Errorf("custom worker scaling metric is missing or stale: %w", state.ErrConflict)
@@ -408,6 +423,66 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 		desired = max
 	}
 	return desired, signal, nil
+}
+
+const mcpTasksObserverHeartbeatMetric = "mcp_tasks_observer_heartbeat"
+
+func mcpTasksScaleToZeroConfigured(app state.App) bool {
+	scaling := app.Manifest.WorkerReplicas
+	if scaling == nil || scaling.Min != 0 || scaling.Metric != api.ScalingMetricCustom || scaling.Name != "mcp_tasks_outstanding" {
+		return false
+	}
+	if app.ScalingPolicy == nil {
+		return false
+	}
+	for _, target := range app.ScalingPolicy.EffectiveTargets() {
+		if target.Metric == api.ScalingMetricCustom && target.Name == "mcp_tasks_outstanding" {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) mcpTasksObserverReady(ctx context.Context, worker state.App) (bool, error) {
+	scaling := worker.Manifest.WorkerReplicas
+	if scaling == nil || scaling.ObserverAppSlug == "" {
+		return false, nil
+	}
+	observer, err := e.store.AppBySlug(ctx, scaling.ObserverAppSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if observer.ID == worker.ID || observer.AccountID != worker.AccountID || observer.Status != state.AppActive ||
+		(observer.Manifest.ExecutionMode != api.ExecutionModeWorker && observer.WorkloadClass != state.WorkloadClassWorker) ||
+		observer.Manifest.WorkerReplicas == nil || observer.Manifest.WorkerReplicas.Min < 1 {
+		return false, nil
+	}
+	liveDeployments, err := e.store.LiveDeployments(ctx, observer.ID)
+	if err != nil {
+		return false, err
+	}
+	if len(liveDeployments) == 0 {
+		return false, nil
+	}
+	live := make(map[string]struct{}, len(liveDeployments))
+	for _, deployment := range liveDeployments {
+		live[deployment.ID] = struct{}{}
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, observer.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, instance := range instances {
+		if instance.Mode == string(state.InstanceModeWorker) && instance.State == string(state.StateRunning) {
+			if _, ok := live[instance.DeploymentID]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, scope string, target float64) (int, error) {

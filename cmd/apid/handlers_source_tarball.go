@@ -58,6 +58,7 @@ type sidecarPayload struct {
 	Canary                 *api.CanaryPresetSpec      `json:"canary,omitempty"`
 	RollbackOn5xx          *bool                      `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost *bool                      `json:"disable_startup_cpu_boost,omitempty"`
+	MCPTaskMigrationOverride bool                      `json:"mcp_task_migration_override,omitempty"`
 	Healthcheck            *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	NoTriggers             bool                       `json:"no_triggers,omitempty"`
 }
@@ -147,7 +148,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
