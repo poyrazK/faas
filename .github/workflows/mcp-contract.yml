@@ -7,12 +7,12 @@ on:
       - 'pkg/mcphosting/**'
       - 'pkg/gateway/mcp_policy*'
       - 'pkg/api/mcp_policy*'
-      - 'cmd/apid/handlers_mcp_policy*'
+      - 'pkg/apid/apidserver/handlers_mcp_policy*'
       - 'scripts/ci/mcp-qualification-check.py'
       - 'scripts/ops/mcp-qualification.py'
       - 'pkg/secretscan/**'
-      - 'cmd/apid/secretscan*.go'
-      - 'cmd/apid/handlers_templates*.go'
+      - 'pkg/apid/apidserver/secretscan*.go'
+      - 'pkg/apid/apidserver/handlers_templates*.go'
       - 'pkg/apihostingscorecard/**'
       - 'pkg/productcap/**'
       - 'cmd/gregale/**'
@@ -191,8 +191,8 @@ jobs:
         # runner is shut down (exit 143). Mirror ci.yml unit-tests-pg-1: omit
         # test DWARF, serialize the apid backend and bound the Go heap.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
-        run: go test -race -v -p=1 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+        run: go test -race -v -p=1 ./pkg/apid/apidserver -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1

@@ -61,6 +61,20 @@ func repoRoot(t *testing.T) string {
 	return ""
 }
 
+// daemonSourceDirs maps daemons whose code lives outside cmd/<daemon> to
+// the directory that holds it: cmd/apid/main.go only calls
+// apidserver.Main (ADR-977).
+var daemonSourceDirs = map[string]string{
+	"apid": filepath.Join("pkg", "apid", "apidserver"),
+}
+
+func daemonSourceDir(repoRoot, daemon string) string {
+	if dir, ok := daemonSourceDirs[daemon]; ok {
+		return filepath.Join(repoRoot, dir)
+	}
+	return filepath.Join(repoRoot, "cmd", daemon)
+}
+
 // loadDaemonRoleRequire walks every .go file in cmd/<daemon>/ and
 // returns the (Identifier, AllowedRoles...) captured by the call
 //
@@ -78,7 +92,7 @@ func repoRoot(t *testing.T) string {
 // future file-reorganization without re-tweaking the parser.
 func loadDaemonRoleRequire(t *testing.T, repoRoot, daemon string) ([]string, error) {
 	t.Helper()
-	dmnDir := filepath.Join(repoRoot, "cmd", daemon)
+	dmnDir := daemonSourceDir(repoRoot, daemon)
 	entries, err := os.ReadDir(dmnDir)
 	if err != nil {
 		return nil, err
@@ -132,7 +146,7 @@ func loadDaemonRoleRequire(t *testing.T, repoRoot, daemon string) ([]string, err
 		})
 	}
 	if !found {
-		return nil, &os.PathError{Op: "parse", Path: filepath.Join(repoRoot, "cmd", daemon), Err: os.ErrNotExist}
+		return nil, &os.PathError{Op: "parse", Path: dmnDir, Err: os.ErrNotExist}
 	}
 	return allows, nil
 }
@@ -155,7 +169,7 @@ var rolesFromAllowIdents = map[string]string{
 // role.FromConfig call in main.go alongside role.Require).
 func loadDaemonEnvKey(t *testing.T, repoRoot, daemon string) (string, error) {
 	t.Helper()
-	dmnDir := filepath.Join(repoRoot, "cmd", daemon)
+	dmnDir := daemonSourceDir(repoRoot, daemon)
 	entries, err := os.ReadDir(dmnDir)
 	if err != nil {
 		return "", err

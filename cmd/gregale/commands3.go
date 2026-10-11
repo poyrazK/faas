@@ -596,17 +596,27 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 		printSecretsQuotaStamp(ctx, client, app, scope)
 	}
 	if restart {
-		out, err := client.RestartAppFresh(ctx, app)
+		wakeID, parked, err := restartAfterSecretChange(ctx, client, app)
 		if err != nil {
 			return printErr("Restart failed", err)
+		}
+		if parked {
+			if jsonOutput {
+				return jsonOut(writeJSON(secretsSetReceipt{
+					App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
+					Warnings: []string{parkedSecretChangeNote},
+				}))
+			}
+			PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			return 0
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(secretsSetReceipt{
 				App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
-				RestartRequested: true, WakeID: out.WakeID,
+				RestartRequested: true, WakeID: wakeID,
 			}))
 		}
-		PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", out.WakeID)
+		PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", wakeID)
 		return 0
 	}
 	if jsonOutput {
@@ -878,6 +888,25 @@ func secretsUnset(args []string) int {
 	return executeSecretsUnset(context.Background(), client, *app, key, *scope, *restart, *waitForAck, *timeout)
 }
 
+const parkedSecretChangeNote = "App is parked; its next wake boots with the updated secrets, so no restart was needed."
+
+// restartAfterSecretChange restarts an app so running instances pick up a
+// secret change. The restart API refuses an app that is not active, and a
+// parked app has no instance running the old environment: its next wake
+// boots with the change. That case reports parked instead of failing the
+// command after the secret was already written (hunt #9 H9-74: `secrets unset
+// --restart` on a parked app removed the secret and exited 5).
+func restartAfterSecretChange(ctx context.Context, client *Client, app string) (wakeID string, parked bool, err error) {
+	out, err := client.RestartAppFresh(ctx, app)
+	if err == nil {
+		return out.WakeID, false, nil
+	}
+	if info, getErr := client.GetApp(ctx, app); getErr == nil && info.Status == "evicted_cold" {
+		return "", true, nil
+	}
+	return "", false, err
+}
+
 func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope string, restart, waitForAck bool, timeout time.Duration) int {
 	revocation, err := client.UnsetSecretWithScopeAndStatus(ctx, app, key, scope)
 	if err != nil {
@@ -887,11 +916,18 @@ func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope st
 	// `secrets set --restart`, a restart applies the removal now.
 	wakeID := ""
 	if restart {
-		out, err := client.RestartAppFresh(ctx, app)
+		var parked bool
+		wakeID, parked, err = restartAfterSecretChange(ctx, client, app)
 		if err != nil {
 			return printErr("Secret removed, but restart failed", err)
 		}
-		wakeID = out.WakeID
+		if parked {
+			// Nothing runs the old environment; skip the restart receipt.
+			restart = false
+			if !jsonOutput {
+				PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			}
+		}
 	}
 	if jsonOutput {
 		receipt := map[string]any{
