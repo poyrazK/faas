@@ -80,6 +80,13 @@ acknowledgements, corruption, shard and tenant-budget bounds, and admission
 interleaved with retirement. Operator API coverage checks authorization, exact
 replay, listing, disabled routes and configuration prerequisites.
 
+Source commit `070d605adae00ad42cd02932c07c89981e608845` passed
+[remote CI 38156802430](https://github.com/poyrazK/faas/actions/runs/38156802430):
+four durable Go packages under the race detector, seven new registry tests,
+focused CLI/generated contract checks, 29 focused API race tests (including two
+registry tests), 16 Node SDK tests and packed-starter acceptance. No local build,
+test or native run was performed.
+
 Native GCS/KVM acceptance remains required before production enablement. The
 acceptance agent must verify conditional create/CAS acknowledgements, stale
 reader rejection, shard visibility/corruption fail-closed behavior, multi-node
