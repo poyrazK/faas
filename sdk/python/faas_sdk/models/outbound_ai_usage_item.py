@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="OutboundAIUsageItem")
 
 
@@ -30,6 +32,8 @@ class OutboundAIUsageItem:
     cached_input_tokens: int
     cache_write_tokens: int
     output_tokens: int
+    cost_millicents: int | Unset = UNSET
+    """Priced from the list in effect at each call and rounded up per call; zero without a price list."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +55,8 @@ class OutboundAIUsageItem:
 
         output_tokens = self.output_tokens
 
+        cost_millicents = self.cost_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +72,8 @@ class OutboundAIUsageItem:
                 "output_tokens": output_tokens,
             }
         )
+        if cost_millicents is not UNSET:
+            field_dict["cost_millicents"] = cost_millicents
 
         return field_dict
 
@@ -90,6 +98,8 @@ class OutboundAIUsageItem:
 
         output_tokens = d.pop("output_tokens")
 
+        cost_millicents = d.pop("cost_millicents", UNSET)
+
         outbound_ai_usage_item = cls(
             caller=caller,
             model=model,
@@ -100,6 +110,7 @@ class OutboundAIUsageItem:
             cached_input_tokens=cached_input_tokens,
             cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
+            cost_millicents=cost_millicents,
         )
 
         outbound_ai_usage_item.additional_properties = d

@@ -132,7 +132,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "start", "tenant-surfaces", "platform-tenants", "consumers", "trusted-publishers":
 		return "API"
-	case "add", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "ai", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -748,6 +748,39 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Positionals: []string{"<uuid>", "<cents>"},
+	},
+	{
+		Name:    "ai",
+		DocSlug: "ai",
+		Short:   "AI gateway: provider, token and cost limits, prices, usage and fallback routes on outbound integrations",
+		Examples: []string{
+			"gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 --daily-cost 25",
+			"gregale ai prices set <integration-id> --price model=gpt-4o-mini,input=0.15,cached=0.075,output=0.60",
+			"gregale ai usage <integration-id> --date 2026-10-11",
+			"gregale ai routes create --name chat --target <primary-id> --target <backup-id>:gpt-4o-mini",
+		},
+		Subcommands: []cliSub{
+			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "provider", Short: "AI wire format", Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "off"}},
+				{Name: "daily-tokens", Short: "UTC-day input+output token limit, or none", Value: "N"},
+				{Name: "daily-cost", Short: "UTC-day cost limit in EUR, or none", Value: "EUR"},
+				{Name: "monthly-cost", Short: "calendar-month cost limit in EUR, or none", Value: "EUR"},
+			}},
+			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
+				{Name: "daily-tokens", Short: "token limit, or none", Req: true, Value: "N"},
+			}},
+			{Name: "prices", Short: "Show the price list, or replace it with `prices set <integration-id> --price ...`", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
+				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
+			}},
+			{Name: "usage", Short: "Show one UTC day of token usage and cost by caller and model", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "date", Short: "UTC day within the last 90 days", Value: "YYYY-MM-DD"},
+			}},
+			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes", Positionals: []string{"<list|create|set|rm>", "[<route-id>]"}, Flags: []cliFlag{
+				{Name: "name", Short: "route name for create", Value: "NAME"},
+				{Name: "target", Short: "<integration-id>[:<model>] in fallback order (repeat)", Value: "TARGET"},
+			}},
+		},
 	},
 	{
 		Name:    "alerts",

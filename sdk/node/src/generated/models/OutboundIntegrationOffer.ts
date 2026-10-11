@@ -42,5 +42,13 @@ export type OutboundIntegrationOffer = {
    * UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means no limit.
    */
   ai_daily_token_limit?: number | null;
+  /**
+   * UTC-day cost limit priced from the integration's price list (ADR-983).
+   */
+  ai_daily_cost_limit_millicents?: number | null;
+  /**
+   * Calendar-month cost limit priced from the integration's price list (ADR-983).
+   */
+  ai_monthly_cost_limit_millicents?: number | null;
 };
 

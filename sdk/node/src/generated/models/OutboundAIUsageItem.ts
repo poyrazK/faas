@@ -24,5 +24,9 @@ export type OutboundAIUsageItem = {
   cached_input_tokens: number;
   cache_write_tokens: number;
   output_tokens: number;
+  /**
+   * Priced from the list in effect at each call and rounded up per call; zero without a price list.
+   */
+  cost_millicents?: number;
 };
 

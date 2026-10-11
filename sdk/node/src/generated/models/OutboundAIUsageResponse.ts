@@ -22,5 +22,16 @@ export type OutboundAIUsageResponse = {
    */
   resets_at: string;
   items: Array<OutboundAIUsageItem>;
+  daily_cost_millicents?: number;
+  daily_cost_limit_millicents?: number | null;
+  /**
+   * Calendar month of usage_date as YYYY-MM.
+   */
+  month?: string;
+  /**
+   * Settled cost of the month through usage_date.
+   */
+  monthly_cost_millicents?: number;
+  monthly_cost_limit_millicents?: number | null;
 };
 

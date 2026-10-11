@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.outbound_ai_usage_item import OutboundAIUsageItem
 
@@ -27,6 +29,13 @@ class OutboundAIUsageResponse:
     resets_at: datetime.datetime
     """End of usage_date in UTC."""
     items: list[OutboundAIUsageItem]
+    daily_cost_millicents: int | Unset = UNSET
+    daily_cost_limit_millicents: int | None | Unset = UNSET
+    month: str | Unset = UNSET
+    """Calendar month of usage_date as YYYY-MM."""
+    monthly_cost_millicents: int | Unset = UNSET
+    """Settled cost of the month through usage_date."""
+    monthly_cost_limit_millicents: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +55,24 @@ class OutboundAIUsageResponse:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        daily_cost_millicents = self.daily_cost_millicents
+
+        daily_cost_limit_millicents: int | None | Unset
+        if isinstance(self.daily_cost_limit_millicents, Unset):
+            daily_cost_limit_millicents = UNSET
+        else:
+            daily_cost_limit_millicents = self.daily_cost_limit_millicents
+
+        month = self.month
+
+        monthly_cost_millicents = self.monthly_cost_millicents
+
+        monthly_cost_limit_millicents: int | None | Unset
+        if isinstance(self.monthly_cost_limit_millicents, Unset):
+            monthly_cost_limit_millicents = UNSET
+        else:
+            monthly_cost_limit_millicents = self.monthly_cost_limit_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +85,16 @@ class OutboundAIUsageResponse:
                 "items": items,
             }
         )
+        if daily_cost_millicents is not UNSET:
+            field_dict["daily_cost_millicents"] = daily_cost_millicents
+        if daily_cost_limit_millicents is not UNSET:
+            field_dict["daily_cost_limit_millicents"] = daily_cost_limit_millicents
+        if month is not UNSET:
+            field_dict["month"] = month
+        if monthly_cost_millicents is not UNSET:
+            field_dict["monthly_cost_millicents"] = monthly_cost_millicents
+        if monthly_cost_limit_millicents is not UNSET:
+            field_dict["monthly_cost_limit_millicents"] = monthly_cost_limit_millicents
 
         return field_dict
 
@@ -88,6 +125,32 @@ class OutboundAIUsageResponse:
 
             items.append(items_item)
 
+        daily_cost_millicents = d.pop("daily_cost_millicents", UNSET)
+
+        def _parse_daily_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        daily_cost_limit_millicents = _parse_daily_cost_limit_millicents(d.pop("daily_cost_limit_millicents", UNSET))
+
+        month = d.pop("month", UNSET)
+
+        monthly_cost_millicents = d.pop("monthly_cost_millicents", UNSET)
+
+        def _parse_monthly_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        monthly_cost_limit_millicents = _parse_monthly_cost_limit_millicents(
+            d.pop("monthly_cost_limit_millicents", UNSET)
+        )
+
         outbound_ai_usage_response = cls(
             usage_date=usage_date,
             ai_provider=ai_provider,
@@ -95,6 +158,11 @@ class OutboundAIUsageResponse:
             daily_token_limit=daily_token_limit,
             resets_at=resets_at,
             items=items,
+            daily_cost_millicents=daily_cost_millicents,
+            daily_cost_limit_millicents=daily_cost_limit_millicents,
+            month=month,
+            monthly_cost_millicents=monthly_cost_millicents,
+            monthly_cost_limit_millicents=monthly_cost_limit_millicents,
         )
 
         outbound_ai_usage_response.additional_properties = d

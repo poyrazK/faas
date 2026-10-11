@@ -2,7 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateOutboundAIRouteRequest } from '../models/CreateOutboundAIRouteRequest.js';
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
+import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
+import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
@@ -13,6 +17,9 @@ import type { OutboundIntegrationOfferList } from '../models/OutboundIntegration
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRequest.js';
+import type { PutOutboundAIPricesRequest } from '../models/PutOutboundAIPricesRequest.js';
+import type { PutOutboundAIRouteTargetsRequest } from '../models/PutOutboundAIRouteTargetsRequest.js';
+import type { PutOutboundBindingAIBudgetRequest } from '../models/PutOutboundBindingAIBudgetRequest.js';
 import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
@@ -353,6 +360,216 @@ export class OutboundService {
     });
   }
   /**
+   * Read the AI price list in effect.
+   * Requires MFA and read scope (ADR-983).
+   * @returns OutboundAIPriceListResponse The price list in effect.
+   * @throws ApiError
+   */
+  public static getOutboundIntegrationAiPrices({
+    integration,
+  }: {
+    /**
+     * UUID of the AI integration whose price list is read or replaced.
+     */
+    integration: string,
+  }): CancelablePromise<OutboundAIPriceListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-prices',
+      path: {
+        'integration': integration,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a customer AI integration's price list.
+   * Requires MFA and deploy-write scope (ADR-983). The new list prices calls settled from now on; earlier lists stay for costs already recorded.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundIntegrationAiPrices({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the AI integration whose price list is read or replaced.
+     */
+    integration: string,
+    requestBody: PutOutboundAIPricesRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/ai-prices',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the account's AI fallback routes.
+   * Requires MFA and read scope (ADR-983).
+   * @returns OutboundAIRouteList AI routes.
+   * @throws ApiError
+   */
+  public static listOutboundAiRoutes(): CancelablePromise<OutboundAIRouteList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-routes',
+      errors: {
+        401: `code: unauthorized`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Create an AI fallback route over same-format managed AI integrations.
+   * Requires MFA and deploy-write scope (ADR-983). Every target must be an enabled managed AI integration of this account with the same ai_provider. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the gateway tries targets in order and moves on after a budget or availability rejection, a provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+   * @returns OutboundAIRoute Route created.
+   * @throws ApiError
+   */
+  public static createOutboundAiRoute({
+    requestBody,
+  }: {
+    requestBody: CreateOutboundAIRouteRequest,
+  }): CancelablePromise<OutboundAIRoute> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/ai-routes',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        409: `A route with this name already exists.`,
+        429: `The account has reached its AI route limit.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one AI fallback route.
+   * Requires MFA and read scope.
+   * @returns OutboundAIRoute The route.
+   * @throws ApiError
+   */
+  public static getOutboundAiRoute({
+    route,
+  }: {
+    /**
+     * UUID of the AI route.
+     */
+    route: string,
+  }): CancelablePromise<OutboundAIRoute> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-routes/{route}',
+      path: {
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an AI fallback route.
+   * Requires MFA and deploy-write scope.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOutboundAiRoute({
+    route,
+  }: {
+    /**
+     * UUID of the AI route.
+     */
+    route: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/ai-routes/{route}',
+      path: {
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an AI route's ordered targets.
+   * Requires MFA and deploy-write scope. The same ownership and same-provider rules as creation apply.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundAiRouteTargets({
+    route,
+    requestBody,
+  }: {
+    /**
+     * UUID of the AI route.
+     */
+    route: string,
+    requestBody: PutOutboundAIRouteTargetsRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/ai-routes/{route}/targets',
+      path: {
+        'route': route,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Grant or revoke use of a managed integration by stateless Runs.
    * Requires MFA and deploy-write scope. Grants are separate from app bindings and require an enabled integration with a configured managed credential and at least one allowed route. Run tool calls are available only after the Runs broker is enabled for the deployment.
    * @returns void
@@ -618,6 +835,47 @@ export class OutboundService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}/budget',
+      path: {
+        'slug': slug,
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set or clear an app's own daily AI token limit on an AI integration.
+   * Requires MFA and deploy-write scope (ADR-983). Admission stops the app's new calls once its settled input plus output tokens reach the limit; other apps are unaffected.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundBindingAiBudget({
+    slug,
+    integration,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the app's bound AI integration.
+     */
+    integration: string,
+    requestBody: PutOutboundBindingAIBudgetRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/outbound-bindings/{integration}/ai-budget',
       path: {
         'slug': slug,
         'integration': integration,

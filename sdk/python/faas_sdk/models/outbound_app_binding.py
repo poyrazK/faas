@@ -8,6 +8,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.outbound_integration_offer import OutboundIntegrationOffer
 
@@ -29,6 +31,8 @@ class OutboundAppBinding:
     daily_request_limit: int | None
     """Optional per-binding daily admitted-request limit."""
     created_at: datetime.datetime
+    ai_daily_token_limit: int | None | Unset = UNSET
+    """This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +49,12 @@ class OutboundAppBinding:
 
         created_at = self.created_at.isoformat()
 
+        ai_daily_token_limit: int | None | Unset
+        if isinstance(self.ai_daily_token_limit, Unset):
+            ai_daily_token_limit = UNSET
+        else:
+            ai_daily_token_limit = self.ai_daily_token_limit
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,6 +67,8 @@ class OutboundAppBinding:
                 "created_at": created_at,
             }
         )
+        if ai_daily_token_limit is not UNSET:
+            field_dict["ai_daily_token_limit"] = ai_daily_token_limit
 
         return field_dict
 
@@ -82,6 +94,15 @@ class OutboundAppBinding:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        def _parse_ai_daily_token_limit(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_daily_token_limit = _parse_ai_daily_token_limit(d.pop("ai_daily_token_limit", UNSET))
+
         outbound_app_binding = cls(
             integration=integration,
             app_id=app_id,
@@ -89,6 +110,7 @@ class OutboundAppBinding:
             allowed_path_prefixes=allowed_path_prefixes,
             daily_request_limit=daily_request_limit,
             created_at=created_at,
+            ai_daily_token_limit=ai_daily_token_limit,
         )
 
         outbound_app_binding.additional_properties = d

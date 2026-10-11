@@ -700,8 +700,8 @@ const (
 	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
 	OutboundAIPriceEntriesMax                 = 64
 	// AI fallback routes (ADR-983).
-	OutboundAIRouteTargetsMax      = 5
-	MaxOutboundAIRoutesPerAccount  = 25
+	OutboundAIRouteTargetsMax     = 5
+	MaxOutboundAIRoutesPerAccount = 25
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

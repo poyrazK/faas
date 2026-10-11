@@ -56,6 +56,10 @@ class OutboundIntegrationOffer:
     ai_daily_token_limit: int | None | Unset = UNSET
     """UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means
     no limit."""
+    ai_daily_cost_limit_millicents: int | None | Unset = UNSET
+    """UTC-day cost limit priced from the integration's price list (ADR-983)."""
+    ai_monthly_cost_limit_millicents: int | None | Unset = UNSET
+    """Calendar-month cost limit priced from the integration's price list (ADR-983)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +98,18 @@ class OutboundIntegrationOffer:
         else:
             ai_daily_token_limit = self.ai_daily_token_limit
 
+        ai_daily_cost_limit_millicents: int | None | Unset
+        if isinstance(self.ai_daily_cost_limit_millicents, Unset):
+            ai_daily_cost_limit_millicents = UNSET
+        else:
+            ai_daily_cost_limit_millicents = self.ai_daily_cost_limit_millicents
+
+        ai_monthly_cost_limit_millicents: int | None | Unset
+        if isinstance(self.ai_monthly_cost_limit_millicents, Unset):
+            ai_monthly_cost_limit_millicents = UNSET
+        else:
+            ai_monthly_cost_limit_millicents = self.ai_monthly_cost_limit_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -116,6 +132,10 @@ class OutboundIntegrationOffer:
             field_dict["ai_provider"] = ai_provider
         if ai_daily_token_limit is not UNSET:
             field_dict["ai_daily_token_limit"] = ai_daily_token_limit
+        if ai_daily_cost_limit_millicents is not UNSET:
+            field_dict["ai_daily_cost_limit_millicents"] = ai_daily_cost_limit_millicents
+        if ai_monthly_cost_limit_millicents is not UNSET:
+            field_dict["ai_monthly_cost_limit_millicents"] = ai_monthly_cost_limit_millicents
 
         return field_dict
 
@@ -169,6 +189,28 @@ class OutboundIntegrationOffer:
 
         ai_daily_token_limit = _parse_ai_daily_token_limit(d.pop("ai_daily_token_limit", UNSET))
 
+        def _parse_ai_daily_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_daily_cost_limit_millicents = _parse_ai_daily_cost_limit_millicents(
+            d.pop("ai_daily_cost_limit_millicents", UNSET)
+        )
+
+        def _parse_ai_monthly_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_monthly_cost_limit_millicents = _parse_ai_monthly_cost_limit_millicents(
+            d.pop("ai_monthly_cost_limit_millicents", UNSET)
+        )
+
         outbound_integration_offer = cls(
             id=id,
             name=name,
@@ -184,6 +226,8 @@ class OutboundIntegrationOffer:
             request_policy=request_policy,
             ai_provider=ai_provider,
             ai_daily_token_limit=ai_daily_token_limit,
+            ai_daily_cost_limit_millicents=ai_daily_cost_limit_millicents,
+            ai_monthly_cost_limit_millicents=ai_monthly_cost_limit_millicents,
         )
 
         outbound_integration_offer.additional_properties = d

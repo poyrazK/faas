@@ -8,5 +8,7 @@
 export type PutOutboundAIPolicyRequest = {
   ai_provider: '' | 'openai' | 'anthropic';
   daily_token_limit: number | null;
+  daily_cost_limit_millicents?: number | null;
+  monthly_cost_limit_millicents?: number | null;
 };
 

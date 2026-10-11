@@ -58,7 +58,7 @@ type Handler struct {
 	// Routes resolves AI fallback routes (ADR-983); nil disables /r/.
 	Routes               RouteResolver
 	managedAuthorization map[string]string
-	responseCache             *outboundResponseCache
+	responseCache        *outboundResponseCache
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value

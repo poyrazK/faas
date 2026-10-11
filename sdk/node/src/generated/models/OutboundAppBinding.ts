@@ -22,5 +22,9 @@ export type OutboundAppBinding = {
    */
   daily_request_limit: number | null;
   created_at: string;
+  /**
+   * This app's own UTC-day AI input plus output token limit on an AI integration (ADR-983).
+   */
+  ai_daily_token_limit?: number | null;
 };
 

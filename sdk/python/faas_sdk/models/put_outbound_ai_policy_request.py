@@ -10,6 +10,7 @@ from ..models.put_outbound_ai_policy_request_ai_provider import (
     PutOutboundAIPolicyRequestAiProvider,
     check_put_outbound_ai_policy_request_ai_provider,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="PutOutboundAIPolicyRequest")
 
@@ -23,6 +24,8 @@ class PutOutboundAIPolicyRequest:
 
     ai_provider: PutOutboundAIPolicyRequestAiProvider
     daily_token_limit: int | None
+    daily_cost_limit_millicents: int | None | Unset = UNSET
+    monthly_cost_limit_millicents: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -30,6 +33,18 @@ class PutOutboundAIPolicyRequest:
 
         daily_token_limit: int | None
         daily_token_limit = self.daily_token_limit
+
+        daily_cost_limit_millicents: int | None | Unset
+        if isinstance(self.daily_cost_limit_millicents, Unset):
+            daily_cost_limit_millicents = UNSET
+        else:
+            daily_cost_limit_millicents = self.daily_cost_limit_millicents
+
+        monthly_cost_limit_millicents: int | None | Unset
+        if isinstance(self.monthly_cost_limit_millicents, Unset):
+            monthly_cost_limit_millicents = UNSET
+        else:
+            monthly_cost_limit_millicents = self.monthly_cost_limit_millicents
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -39,6 +54,10 @@ class PutOutboundAIPolicyRequest:
                 "daily_token_limit": daily_token_limit,
             }
         )
+        if daily_cost_limit_millicents is not UNSET:
+            field_dict["daily_cost_limit_millicents"] = daily_cost_limit_millicents
+        if monthly_cost_limit_millicents is not UNSET:
+            field_dict["monthly_cost_limit_millicents"] = monthly_cost_limit_millicents
 
         return field_dict
 
@@ -54,9 +73,31 @@ class PutOutboundAIPolicyRequest:
 
         daily_token_limit = _parse_daily_token_limit(d.pop("daily_token_limit"))
 
+        def _parse_daily_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        daily_cost_limit_millicents = _parse_daily_cost_limit_millicents(d.pop("daily_cost_limit_millicents", UNSET))
+
+        def _parse_monthly_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        monthly_cost_limit_millicents = _parse_monthly_cost_limit_millicents(
+            d.pop("monthly_cost_limit_millicents", UNSET)
+        )
+
         put_outbound_ai_policy_request = cls(
             ai_provider=ai_provider,
             daily_token_limit=daily_token_limit,
+            daily_cost_limit_millicents=daily_cost_limit_millicents,
+            monthly_cost_limit_millicents=monthly_cost_limit_millicents,
         )
 
         put_outbound_ai_policy_request.additional_properties = d

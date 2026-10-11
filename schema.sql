@@ -23971,6 +23971,10 @@ CREATE TABLE public.outbound_admission_state (
     provider_cooldown_until timestamp with time zone,
     provider_cooldown_policy_revision bigint DEFAULT 0 NOT NULL,
     daily_ai_token_count bigint DEFAULT 0 NOT NULL,
+    daily_ai_cost_millicents bigint DEFAULT 0 NOT NULL,
+    monthly_usage_month date DEFAULT (date_trunc('month'::text, (now() AT TIME ZONE 'UTC'::text)))::date NOT NULL,
+    monthly_ai_cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_admission_state_ai_cost_chk CHECK (((daily_ai_cost_millicents >= 0) AND (monthly_ai_cost_millicents >= 0))),
     CONSTRAINT outbound_admission_state_circuit_failure_count_check CHECK ((circuit_failure_count >= 0)),
     CONSTRAINT outbound_admission_state_circuit_policy_chk CHECK ((((circuit_policy_failure_threshold = 0) AND (circuit_policy_open_seconds = 0)) OR (((circuit_policy_failure_threshold >= 1) AND (circuit_policy_failure_threshold <= 20)) AND ((circuit_policy_open_seconds >= 1) AND (circuit_policy_open_seconds <= 300))))),
     CONSTRAINT outbound_admission_state_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
@@ -23998,9 +24002,67 @@ CREATE TABLE public.outbound_ai_usage_daily (
     cache_write_tokens bigint DEFAULT 0 NOT NULL,
     output_tokens bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
     CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = 'runs'::text) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
     CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
     CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))
+);
+
+
+--
+-- Name: outbound_ai_price_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_price_entries (
+    price_list_id uuid NOT NULL,
+    model_prefix text NOT NULL,
+    input_millicents_per_mtok bigint NOT NULL,
+    cached_input_millicents_per_mtok bigint,
+    cache_write_millicents_per_mtok bigint,
+    output_millicents_per_mtok bigint NOT NULL,
+    CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000)))))
+);
+
+
+--
+-- Name: outbound_ai_price_lists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_price_lists (
+    id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    effective_from timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_ai_route_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_route_targets (
+    route_id uuid NOT NULL,
+    "position" smallint NOT NULL,
+    integration_id uuid NOT NULL,
+    model text,
+    CONSTRAINT outbound_ai_route_targets_model_chk CHECK (((model IS NULL) OR (((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))),
+    CONSTRAINT outbound_ai_route_targets_position_chk CHECK ((("position" >= 1) AND ("position" <= 5)))
+);
+
+
+--
+-- Name: outbound_ai_routes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_routes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
 );
 
 
@@ -24013,6 +24075,8 @@ CREATE TABLE public.outbound_app_binding_usage (
     app_id uuid NOT NULL,
     daily_usage_date date DEFAULT ((now() AT TIME ZONE 'UTC'::text))::date NOT NULL,
     daily_request_count bigint DEFAULT 0 NOT NULL,
+    daily_ai_token_count bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_app_binding_usage_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
     CONSTRAINT outbound_app_binding_usage_daily_request_count_check CHECK ((daily_request_count >= 0))
 );
 
@@ -24029,7 +24093,9 @@ CREATE TABLE public.outbound_app_bindings (
     allowed_methods text[],
     allowed_path_prefixes text[],
     daily_request_limit bigint,
+    ai_daily_token_limit bigint,
     CONSTRAINT outbound_app_binding_route_pair_chk CHECK ((((allowed_methods IS NULL) AND (allowed_path_prefixes IS NULL)) OR ((allowed_methods IS NOT NULL) AND (allowed_path_prefixes IS NOT NULL) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_app_bindings_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint)))),
     CONSTRAINT outbound_app_bindings_daily_request_limit_chk CHECK (((daily_request_limit IS NULL) OR ((daily_request_limit >= 1) AND (daily_request_limit <= 100000000))))
 );
 
@@ -24105,7 +24171,10 @@ CREATE TABLE public.outbound_integrations (
     runs_enabled boolean DEFAULT false NOT NULL,
     ai_provider text,
     ai_daily_token_limit bigint,
+    ai_daily_cost_limit_millicents bigint,
+    ai_monthly_cost_limit_millicents bigint,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_integrations_ai_cost_limits_chk CHECK ((((ai_daily_cost_limit_millicents IS NULL) AND (ai_monthly_cost_limit_millicents IS NULL)) OR ((ai_provider IS NOT NULL) AND ((ai_daily_cost_limit_millicents IS NULL) OR ((ai_daily_cost_limit_millicents >= 1) AND (ai_daily_cost_limit_millicents <= '1000000000000'::bigint))) AND ((ai_monthly_cost_limit_millicents IS NULL) OR ((ai_monthly_cost_limit_millicents >= 1) AND (ai_monthly_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint))))),
     CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text])))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
@@ -32943,6 +33012,46 @@ ALTER TABLE ONLY public.outbound_ai_usage_daily
 
 
 --
+-- Name: outbound_ai_price_entries outbound_ai_price_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_entries
+    ADD CONSTRAINT outbound_ai_price_entries_pkey PRIMARY KEY (price_list_id, model_prefix);
+
+
+--
+-- Name: outbound_ai_price_lists outbound_ai_price_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_lists
+    ADD CONSTRAINT outbound_ai_price_lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_pkey PRIMARY KEY (route_id, "position");
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_account_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_account_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: outbound_app_binding_usage outbound_app_binding_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39934,6 +40043,20 @@ CREATE INDEX outbound_admission_leases_expiry_idx ON public.outbound_admission_l
 --
 
 CREATE INDEX outbound_ai_usage_daily_usage_date_idx ON public.outbound_ai_usage_daily USING btree (usage_date);
+
+
+--
+-- Name: outbound_ai_price_lists_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_route_targets_integration_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_route_targets USING btree (integration_id);
 
 
 --
@@ -50701,6 +50824,46 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 ALTER TABLE ONLY public.outbound_ai_usage_daily
     ADD CONSTRAINT outbound_ai_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_price_entries outbound_ai_price_entries_price_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_entries
+    ADD CONSTRAINT outbound_ai_price_entries_price_list_id_fkey FOREIGN KEY (price_list_id) REFERENCES public.outbound_ai_price_lists(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_price_lists outbound_ai_price_lists_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_lists
+    ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_route_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_route_id_fkey FOREIGN KEY (route_id) REFERENCES public.outbound_ai_routes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

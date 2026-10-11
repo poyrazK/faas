@@ -492,3 +492,89 @@ The control-plane firewall opens TCP 8096 to compute CIDRs. When the relay is
 off, apps get an immediate connection error from `GREGALE_OUTBOUND_URL`.
 `outbound_relay_connections_total` counts accepted, rejected and overload
 connections. Qualification candidates never get the relay.
+
+## AI gateway budgets, prices and cost
+
+See [ADR-983](../adr/983-ai-gateway-budgets-fallback-cost.md). All settings
+below require MFA and deploy-write scope. The `gregale ai` command wraps
+them.
+
+**Per-app token limit.**
+`PUT /v1/apps/{slug}/outbound-bindings/{id}/ai-budget` with
+`{"daily_token_limit": 500000}` sets one app's own UTC-day input plus output
+token limit. Other apps on the integration are unaffected; send `null` to
+clear it.
+
+**Price list.** `PUT /v1/outbound/integrations/{id}/ai-prices` replaces the
+list:
+
+```json
+{"entries": [
+  {"model_prefix": "gpt-4o-mini", "input_millicents_per_mtok": 15000,
+   "cached_input_millicents_per_mtok": 7500, "output_millicents_per_mtok": 60000},
+  {"model_prefix": "*", "input_millicents_per_mtok": 250000, "output_millicents_per_mtok": 1000000}
+]}
+```
+
+- Prices are millicents per million tokens; EUR 0.15 is 15,000.
+- The longest matching model prefix wins, and `*` matches any model.
+- An absent cached-input or cache-write price uses the input price.
+- A new list applies to calls settled from then on. Earlier lists stay, so
+  recorded costs never change.
+- Each call's cost is rounded up to a whole millicent.
+
+**Cost limits.** `PUT /v1/outbound/integrations/{id}/ai` also takes
+`daily_cost_limit_millicents` and `monthly_cost_limit_millicents` (UTC day
+and calendar month). Once settled cost reaches a limit, new calls get `429`
+with `X-Gregale-Outbound-Rejection: daily_cost_limit` or
+`monthly_cost_limit`. As with token limits, calls already running finish.
+
+**Usage report.** `ai-usage` reports each item's `cost_millicents`, the day's
+and month-to-date settled cost, and both limits.
+
+## AI retries, cache and OpenAI stream usage
+
+For AI integrations, a `POST` body of up to 4 MiB is kept in memory for the
+call:
+
+- **Retries:** `max_retries` and the retry budget also apply to these calls,
+  on the usual transient failures. Every retry happens before any response
+  byte reaches the caller.
+- **Cache:** with `response_cache_ttl_seconds` set, an identical
+  non-streaming JSON request (same body, caller and headers) is served from
+  the cache when the provider returned `200`. A cache hit costs no tokens.
+- **OpenAI stream usage:** the gateway turns on
+  `stream_options.include_usage` for OpenAI streaming completions. It records
+  the extra usage chunk, then removes it from the stream the caller sees, so
+  these calls no longer count as unknown usage.
+
+Larger bodies stream exactly as before, without these features.
+
+## AI fallback routes
+
+A route is an ordered list of one to five managed AI integrations of one
+`ai_provider`. Each target can optionally override `model`.
+
+- Create one with `POST /v1/outbound/ai-routes` or
+  `gregale ai routes create --name chat --target <primary-id> --target <backup-id>:gpt-4o-mini`.
+- Call it through the relay at `$GREGALE_OUTBOUND_URL/r/<route-id>/<provider path>`.
+- The gateway tries each target through its normal integration path, so the
+  app must be bound to every target.
+- It moves to the next target after a budget or availability rejection
+  (`429`, or `503` from an open circuit or provider cooldown), a provider
+  `408`, `429` or `5xx`, or a transport error, always before any response
+  byte is sent.
+- A `400`, `403` or `404` returns as is.
+- `X-Gregale-AI-Route-Target` names the integration that answered, and
+  `outbound_ai_route_fallbacks_total` counts the hops.
+
+## Runs
+
+When vmmd serves the relay, an outbound-enabled Run gets
+`GREGALE_OUTBOUND_URL` pointing at guest-init's relay instead of the buffered
+broker helper. Runs therefore stream and use routes like apps.
+
+- The relay connection carries the Run's granted integrations, and
+  `outboundd` checks the Run grant and lease on every request.
+- Older vmmd or guest images keep the broker helper, so a mixed rollout keeps
+  working.
