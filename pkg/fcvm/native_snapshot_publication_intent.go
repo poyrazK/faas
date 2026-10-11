@@ -42,6 +42,12 @@ type nativeSnapshotPublicationIntent struct {
 	Keys      nativeSnapshotPublicationObjectKeys `json:"keys"`
 }
 
+func (r nativeSnapshotPublicationIntent) Equal(other nativeSnapshotPublicationIntent) bool {
+	return r.Version == other.Version && r.Directory == other.Directory && r.File == other.File &&
+		r.JailBase == other.JailBase && r.Incoming == other.Incoming && r.Capture.Equal(other.Capture) &&
+		r.Physical == other.Physical && r.Keys == other.Keys
+}
+
 func (r *nativeSnapshotPublicationIntent) UnmarshalJSON(data []byte) error {
 	fields, err := nativeJournalObjectFields(data, []string{"version", "directory", "file", "jail_base", "incoming", "capture", "physical", "keys"})
 	if err != nil {

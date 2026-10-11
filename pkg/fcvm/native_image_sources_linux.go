@@ -15,8 +15,6 @@ import (
 
 type linuxNativeImageSources struct{ base, diskStagingRoot string }
 
-const nativeImageRootMarker = ".gregale-image-owner.json"
-
 func newNativeImageSourceBackend(base string) nativeImageSourceBackend {
 	return linuxNativeImageSources{base: base}
 }
