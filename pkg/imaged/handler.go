@@ -1587,7 +1587,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+	if err := h.deleteJobArtifactKey(ctx, be, sched.JobLayerKey(jobID)); err != nil {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1599,12 +1599,32 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 			if foundJobID, valid := jobArtifactJobID(key); !valid || foundJobID != jobID {
 				continue
 			}
-			if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			if err := h.deleteJobArtifactKey(ctx, be, key); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Handler) deleteJobArtifactKey(ctx context.Context, be storage.StorageBackend, key string) error {
+	if retention, ok := h.store.(state.OperationJobImageRetentionStore); ok {
+		retained, err := retention.OperationJobImageRetained(ctx, key)
+		if err != nil {
+			return fmt.Errorf("check operation retention for %s: %w", key, err)
+		}
+		if retained {
+			return nil
+		}
+	}
+	if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+func imageManifestHealthcheckRequired(check *api.AppManifestHealthcheck) bool {
+	return check != nil && len(check.Test) > 0 && check.Test[0] != "NONE"
 }
 
 // cleanupSupersededJobArtifacts removes build attempts other than the key
@@ -1630,7 +1650,7 @@ func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keep
 		if !valid || foundJobID != jobID || key == keepKey {
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteJobArtifactKey(ctx, be, key); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s: %w", key, err))
 		}
 	}
@@ -1678,7 +1698,7 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteJobArtifactKey(ctx, be, key); err != nil {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s artifact delete: %w", jobID, err))
 		}
 	}
@@ -2301,22 +2321,34 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
+	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "unknown"}
+	if len(dep.InferredProfile) != 0 {
+		if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+			return fmt.Errorf("imaged: decode image runtime profile: %w", err)
+		}
+	}
+	if profile.Version == "" {
+		profile.Version = frameworkprofile.Version
+	}
+	if profile.Framework == "" {
+		profile.Framework = "unknown"
+	}
 	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
 		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
 		// Without this handoff, the guest can listen successfully while every
 		// first-boot readiness probe targets the wrong guest port.
-		profile, marshalErr := json.Marshal(frameworkprofile.Profile{
-			Version: frameworkprofile.Version, Framework: "unknown", Port: manifest.Port,
-		})
-		if marshalErr != nil {
-			return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
-		}
-		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, profile); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime port")
-			return fmt.Errorf("imaged: persist OCI runtime port: %w", err)
-		}
+		profile.Port = manifest.Port
+	}
+	profile.ImageHealthcheckRequired = imageManifestHealthcheckRequired(manifest.Healthcheck)
+	runtimeProfile, marshalErr := json.Marshal(profile)
+	if marshalErr != nil {
+		return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
+	}
+	if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, runtimeProfile); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist image runtime profile")
+		return fmt.Errorf("imaged: persist image runtime profile: %w", err)
 	}
 
 	// M6 wired-up build path: when the puller implements oci.ManifestPuller
@@ -3369,8 +3401,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// so validate again at the sole snapshot-row writer rather than relying
 		// only on schedd's pre-capture check. Zero is retained for legacy writers
 		// that did not report mem_bytes.
-		expectedMemBytes := int64(app.RAMMB) << 20
-		if snapshot.MemBytes > 0 && app.RAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
+		sidecarRAMs, ramErr := h.store.DeploymentSidecarRAMs(ctx, dep.ID)
+		if ramErr != nil {
+			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationPolicyError)
+			return fmt.Errorf("imaged: load companion RAM for deployment %s: %w", dep.ID, ramErr)
+		}
+		expectedRAMMB := api.BillableRAMMBWithSidecars(app.RAMMB, sidecarRAMs) - api.PerVMOverheadMB
+		expectedMemBytes := int64(expectedRAMMB) << 20
+		if snapshot.MemBytes > 0 && expectedRAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
 			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationRejectedRAM)
 			if state.IsSnapshotCaptureKey(snapshot.StorageKey) {
 				h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: snapshot.StorageKey})
@@ -3622,8 +3660,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview) {
-		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
+	if !checkedRollback {
+		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}

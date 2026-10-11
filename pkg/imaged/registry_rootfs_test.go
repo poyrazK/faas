@@ -85,7 +85,8 @@ func TestSignedMainConversionRetainsExactRegistryRootfs(t *testing.T) {
 				t.Fatalf("main lost exact conversion identity: %+v %v", root, err)
 			}
 			dep, err := th.store.DeploymentByID(t.Context(), th.dep.ID)
-			if err != nil || dep.ImageDigest != th.dep.ImageDigest || dep.RootfsKey != root.Input.StorageKey {
+			wantImage := "registry.example/team/app@" + source
+			if err != nil || dep.ImageDigest != wantImage || dep.RootfsKey != root.Input.StorageKey {
 				t.Fatalf("rootfs publication changed customer intent: %+v %v", dep, err)
 			}
 		})

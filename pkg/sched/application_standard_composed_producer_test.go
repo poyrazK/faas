@@ -88,7 +88,7 @@ func composedWaveReport(image, artifact string) *api.ScanResult {
 
 func (f *composedWaveFixture) publishBase(t *testing.T) {
 	t.Helper()
-	base, err := f.s.PublishBaseImageProducer(t.Context(), composedWaveChain(t, baseKey(""), "parent"))
+	base, err := f.s.PublishBaseImageProducer(t.Context(), composedWaveChain(t, "base/test-"+uuid.NewString()+".ext4", "parent"))
 	if err != nil {
 		t.Fatal(err)
 	}

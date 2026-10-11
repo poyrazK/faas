@@ -300,7 +300,7 @@ func TestApprovedSourceExportStillRequiresValidOCI(t *testing.T) {
 	if approval, err := f.h.approvedSourceExport(t.Context(), f.app, f.dep); err != nil || approval == nil {
 		t.Fatal("fixture lacks authentic current approval", approval, err)
 	}
-	if err := f.h.consumeSourceBuild(t.Context(), f.app, f.dep, f.acct); err == nil || !strings.Contains(err.Error(), "read OCI index") {
+	if err := f.h.consumeSourceBuild(t.Context(), f.app, f.dep, f.acct); err == nil || !strings.Contains(err.Error(), "invalid tar header") {
 		t.Fatal("signature bypassed OCI validation", err)
 	}
 	if len(f.builder.calls) != 0 {

@@ -26,8 +26,8 @@ type preparedContainerWorkload struct {
 	BaseProducer state.BaseImageProducer `json:"-"`
 }
 
-// A signed source may be an index. Every executable read must use its resolved
-// child, while the persisted deployment keeps the customer's original intent.
+// A signed source may be an index. Executable reads use its resolved child,
+// while the deployment is pinned to the immutable source index for retries.
 func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep state.Deployment, auth *oci.BasicAuth) (string, string, error) {
 	selected, err := h.prepareContainerWorkloadImage(ctx, app, dep, "", dep.ImageDigest, auth)
 	return selected.Reference, selected.Digest, err

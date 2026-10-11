@@ -18,7 +18,7 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 	if err != nil {
 		return Instance{}, err
 	}
-	if _, managed := m.instanceApplicationStandardAdmissions[p.InstanceID]; managed && p.AdmissionReceipt == nil && p.PromotionReceipt == nil {
+	if capture, found := m.instanceApplicationStandardAdmissions[p.InstanceID]; found && capture.Managed && p.AdmissionReceipt == nil && p.PromotionReceipt == nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	acceptance, err := m.prepareRuntimeUpgradeAcceptanceLocked(p)
