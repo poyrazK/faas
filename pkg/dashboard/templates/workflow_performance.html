@@ -49,6 +49,17 @@
     </form>
     {{if .Data.CohortChanged}}<section class="card"><h2>Workflow performance changed</h2><p>The retained cohort or its evidence changed since this summary was evaluated.</p><p><a href="{{.Data.RefreshURL}}">Refresh the performance summary →</a></p></section>{{end}}
     {{with .Data.Drilldown}}<section class="card"><h2>{{$.Data.GroupLabel}}</h2>
+{{if eq .Group.Dimension "condition_gap_queue"}}
+<form method="get" action="{{$.Data.SummaryURL}}">
+<input type="hidden" name="scope" value="{{$.Data.Scope}}"><input type="hidden" name="workflow" value="{{$.Data.Workflow}}">{{if $.Data.TenantID}}<input type="hidden" name="tenant_id" value="{{$.Data.TenantID}}">{{end}}
+<input type="hidden" name="dimension" value="condition_gap_queue"><input type="hidden" name="cohort" value="ongoing"><input type="hidden" name="cohort_token" value="{{.CohortToken}}"><input type="hidden" name="baseline_token" value="{{$.Data.BaselineToken}}">
+<label>Gap category <select name="gap_status"><option value="">All categories</option><option value="report_lost" {{if eq .Group.GapStatus "report_lost"}}selected{{end}}>Lost reports</option><option value="new_expectation" {{if eq .Group.GapStatus "new_expectation"}}selected{{end}}>New expectations</option><option value="still_missing" {{if eq .Group.GapStatus "still_missing"}}selected{{end}}>Existing gaps</option><option value="expectation_changed" {{if eq .Group.GapStatus "expectation_changed"}}selected{{end}}>Changed declarations</option><option value="contract_changed" {{if eq .Group.GapStatus "contract_changed"}}selected{{end}}>Contract changes</option></select></label>
+<label>Refresh owner <input name="owner" value="{{.Group.Owner}}"></label><label><input type="checkbox" name="unassigned" value="true" {{if .Group.Unassigned}}checked{{end}}> Unassigned only (leave owner blank)</label><button type="submit">Filter queue</button>
+</form>
+<p>Filters select workflows with matching gaps. All category counts, owners and guidance remain visible; evidence previews match the filters.</p>
+<div class="table-scroll"><table><thead><tr><th>Workflow / subject</th><th>Current state</th><th>Observed blocked seconds</th><th>All gaps by category</th><th>Refresh owners</th></tr></thead><tbody>
+{{range $.Data.Contributors}}<tr><td><a href="{{.HistoryURL}}">{{.Entry.State.InstanceID}}</a> · {{.Entry.Subject.Type}}:{{.Entry.Subject.ID}}</td><td>{{.Entry.State.State}}</td><td>{{.Entry.ObservedSeconds}}</td><td>{{with .Entry.GapQueuePriority}}{{.MissingConditionCount}} total · {{range .Statuses}}<code>{{.Status}}</code>: {{.ConditionCount}} {{end}}{{end}}</td><td>{{with .Entry.GapQueuePriority}}{{range .RefreshOwners}}<code>{{.}}</code> {{end}}{{.UnassignedConditionCount}} unassigned conditions{{end}}</td></tr>{{else}}<tr><td colspan="5">No eligible workflows match these filters.</td></tr>{{end}}</tbody></table></div>
+{{end}}
       <p>{{.Cohort}} cohort · evaluated at <time>{{$.Data.EvaluatedAt}}</time> · {{.Duration.WorkflowCount}} contributing workflows · {{.Duration.TotalSeconds}} total seconds · p50 {{.Duration.P50Seconds}} · p95 {{.Duration.P95Seconds}}.</p>
       <p>{{.MatchingWorkflowCount}} matching · {{.SampledWorkflowCount}} sampled · {{.CompleteHistoryWorkflowCount}} complete histories · {{.ExcludedIncompleteWorkflowCount}} excluded for incomplete history.</p>
       {{if .CohortTruncated}}<p>This is the latest retained sample, not every matching workflow.</p>{{end}}
@@ -61,8 +72,12 @@
       <p><a href="{{$.Data.RefreshURL}}">Refresh the performance summary →</a></p>
       {{range $.Data.Contributors}}<section class="card"><h3><a href="{{.HistoryURL}}">{{.Entry.State.InstanceID}}</a> · {{.Entry.ObservedSeconds}} seconds</h3>
         <p>Business subject <code>{{.Entry.Subject.Type}}:{{.Entry.Subject.ID}}</code> · customer <code>{{.Entry.PlatformTenantID}}</code> · current state <code>{{.Entry.State.State}}</code> · revision {{.Entry.State.Revision}}{{if .Entry.State.Stale}} · workflow state is stale{{end}}.</p>
-        {{with .Entry.GapProgress}}<h4>Reporting gaps for this group</h4>
-<p>{{.CurrentMissingConditionCount}} current missing expectations match this category and refresh owner.{{if .ChangesTruncated}} Showing the first 16 matching conditions; counts include all qualifying gaps.{{end}}</p>
+        {{with .Entry.GapQueuePriority}}<h4>All current reporting gaps</h4><p>{{.Explanation}}</p><p>{{.MissingConditionCount}} gaps across all categories. {{range .Statuses}}<code>{{.Status}}</code>: {{.ConditionCount}} {{end}}</p>
+<p>Refresh owners: {{range .RefreshOwners}}<code>{{.}}</code> {{else}}none assigned{{end}} · {{.UnassignedConditionCount}} conditions unassigned.</p>
+<details><summary>Pinned guidance for every current gap</summary><ul>{{range .Guidance}}<li><strong>{{.Status}}</strong> · {{with .Expectation}}step <code>{{.Step}}</code> · milestone <code>{{.Milestone}}</code> · <code>{{.Definition.ID}}</code>: {{.Definition.Description}} · owner {{if .Definition.RefreshOwner}}{{.Definition.RefreshOwner}}{{else}}unassigned{{end}} · {{if .Definition.RefreshInstructions}}{{.Definition.RefreshInstructions}}{{else}}No refresh instructions declared.{{end}}{{end}}</li>{{end}}</ul></details>{{end}}
+{{if .GapGroups}}<p>Snapshot-bound group evidence: {{range .GapGroups}}<a href="{{.ContributorsURL}}">{{.GapStatus}} · {{if .Owner}}{{.Owner}}{{else}}unassigned{{end}} →</a> {{end}}</p>{{end}}
+{{with .Entry.GapProgress}}<h4>Reporting gaps for this group</h4>
+<p>{{.CurrentMissingConditionCount}} current missing expectations match the selected filters.{{if .ChangesTruncated}} Showing the first 16 matching conditions; counts include all qualifying gaps.{{end}}</p>
 <p>Baseline state {{.BaselineReport.State}} → current state {{.State.State}}{{if .StateChanged}} · state changed{{end}}{{if .BaselineTerminal}} · baseline was terminal{{end}}.</p>
 <p><a href="/dashboard/apps/{{$.Data.AppSlug}}/customer-operations/{{.BaselineReport.OperationID}}?scope={{$.Data.Scope}}">Baseline reporting Operation and pinned definition →</a> · report <code>{{.BaselineReport.ID}}</code> · revision {{.BaselineReport.Revision}} · published <time>{{.BaselineReport.PublishedAt}}</time>.</p>
 <ul>{{range .Changes}}<li><strong>{{.Status}}</strong> · step <code>{{.After.Step}}</code> · condition <code>{{.After.Definition.ID}}</code><p>{{.Explanation}}</p>
@@ -119,6 +134,7 @@
 <p>Baseline <time>{{.BaselineAt}}</time> · evaluated <time>{{.EvaluatedAt}}</time>. {{range .Statuses}}<code>{{.Status}}</code>: {{.ConditionCount}} {{end}}</p>
 <p>{{.SampledWorkflowCount}} currently sampled · {{.ComparedWorkflowCount}} compared workflows with current gaps · {{.NoBaselineWorkflowCount}} without retained baseline · {{.NoCurrentMissingWorkflowCount}} with no current active gaps after comparison · {{.ExcludedIncompleteWorkflowCount}} incomplete histories · {{.ExcludedAmbiguousWorkflowCount}} conflicting results · {{.ExcludedConditionEvidenceWorkflowCount}} evidence limits · {{.ExcludedDefinitionWorkflowCount}} unavailable historical pinned definitions.</p>
 <p>Lost reports had evidence for the identical baseline expectation. New or changed expectations are separate; still missing denotes an existing gap. Report age expiry does not remove evidence. Missing reports are not failed verification, and workflows outside today's sample are not classified as resolved.</p>
+<h3>Workflow reporting-gap queue</h3><p><a href="{{$.Data.GapQueueURL}}">Review workflows with reporting gaps →</a></p><p>One workflow per row, ranked by observed blocked duration, with category and refresh-owner filters.</p>
 <h3>Reporting gaps by category, state and refresh owner</h3>
 {{if .GroupsTruncated}}<p>Showing the first 64 groups; category totals include omitted groups.</p>{{end}}
 {{if .Groups}}<div class="table-scroll"><table><thead><tr><th>Gap category</th><th>Current state / contract</th><th>Refresh owner</th><th>Workflows</th><th>Missing conditions</th><th>Blocked p50 / p95 (s)</th></tr></thead><tbody>

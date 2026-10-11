@@ -321,4 +321,4 @@ export type { OperationWorkflowMissingConditionGroup } from './customer-operatio
 
 export type { OperationWorkflowMissingConditionProgress, OperationWorkflowMissingConditionProgressCount, OperationWorkflowMissingConditionProgressInstance, OperationWorkflowMissingConditionProgressChange } from './customer-operations.js';
 
-export type { OperationWorkflowGapProgressGroup, OperationWorkflowNewMissingConditionProgress, OperationWorkflowNewMissingConditionProgressCount, OperationWorkflowNewMissingConditionProgressInstance, OperationWorkflowNewMissingConditionProgressChange } from './customer-operations.js';
+export type { OperationWorkflowGapQueuePriority, OperationWorkflowGapQueueGuidance, OperationWorkflowGapProgressGroup, OperationWorkflowNewMissingConditionProgress, OperationWorkflowNewMissingConditionProgressCount, OperationWorkflowNewMissingConditionProgressInstance, OperationWorkflowNewMissingConditionProgressChange } from './customer-operations.js';

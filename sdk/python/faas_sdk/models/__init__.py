@@ -2133,6 +2133,9 @@ from .operation_workflow_effect_requirement import OperationWorkflowEffectRequir
 from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
 from .operation_workflow_gap_progress_group import OperationWorkflowGapProgressGroup
 from .operation_workflow_gap_progress_group_gap_status import OperationWorkflowGapProgressGroupGapStatus
+from .operation_workflow_gap_queue_guidance import OperationWorkflowGapQueueGuidance
+from .operation_workflow_gap_queue_guidance_status import OperationWorkflowGapQueueGuidanceStatus
+from .operation_workflow_gap_queue_priority import OperationWorkflowGapQueuePriority
 from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
 from .operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
 from .operation_workflow_instance_step import OperationWorkflowInstanceStep
@@ -5653,6 +5656,9 @@ __all__ = (
     "OperationWorkflowEvidenceMilestone",
     "OperationWorkflowGapProgressGroup",
     "OperationWorkflowGapProgressGroupGapStatus",
+    "OperationWorkflowGapQueueGuidance",
+    "OperationWorkflowGapQueueGuidanceStatus",
+    "OperationWorkflowGapQueuePriority",
     "OperationWorkflowInstanceMilestoneRef",
     "OperationWorkflowInstanceSnapshot",
     "OperationWorkflowInstanceStep",

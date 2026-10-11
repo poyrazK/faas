@@ -53,6 +53,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 			return
 		}
 		data.Summary = &summary
+		data.GapQueueURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_gap_queue"})
 		data.GapProgressGroups = workflowGapProgressLinks(data.SummaryURL, opts, summary)
 		data.NewMissingProgressInstances = workflowNewMissingProgressLinks(data.ListURL, opts, summary.NewMissingProgress)
 		data.MissingProgressInstances = workflowMissingProgressLinks(data.ListURL, opts, summary.MissingProgress)

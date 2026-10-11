@@ -285,13 +285,22 @@ def sync_detailed(
     dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
     baseline must not be later than the current token evaluation. Select an exact returned
     new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
-    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
-    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
-    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
-    report comparisons permit contract boundaries while baseline history must be continuous within its
-    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
-    existing duration groups. Generic duration coverage remains separate from new_missing_progress
-    coverage.
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         app_id (UUID):
@@ -454,13 +463,22 @@ def sync(
     dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
     baseline must not be later than the current token evaluation. Select an exact returned
     new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
-    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
-    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
-    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
-    report comparisons permit contract boundaries while baseline history must be continuous within its
-    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
-    existing duration groups. Generic duration coverage remains separate from new_missing_progress
-    coverage.
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         app_id (UUID):
@@ -618,13 +636,22 @@ async def asyncio_detailed(
     dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
     baseline must not be later than the current token evaluation. Select an exact returned
     new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
-    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
-    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
-    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
-    report comparisons permit contract boundaries while baseline history must be continuous within its
-    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
-    existing duration groups. Generic duration coverage remains separate from new_missing_progress
-    coverage.
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         app_id (UUID):
@@ -785,13 +812,22 @@ async def asyncio(
     dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
     baseline must not be later than the current token evaluation. Select an exact returned
     new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
-    owner or unassigned=true. All other selectors are rejected, and other dimensions reject
-    baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to
-    16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current
-    report comparisons permit contract boundaries while baseline history must be continuous within its
-    contract; ranking uses full observed report-only blocked intervals without changing eligibility for
-    existing duration groups. Generic duration coverage remains separate from new_missing_progress
-    coverage.
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         app_id (UUID):

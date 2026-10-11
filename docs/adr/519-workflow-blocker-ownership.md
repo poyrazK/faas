@@ -1185,3 +1185,33 @@ must be continuous within its contract. Generic duration coverage retains its
 stricter eligibility; new_missing_progress reports comparison coverage separately
 so contract-change contributors remain accessible. No persistence, migrations,
 new limits, execution, notifications or VM lifecycle changes are introduced.
+
+### Workflow reporting-gap queue
+
+`condition_gap_queue` uses the existing contributor routes with ongoing cohort,
+current comparison cohort_token and saved baseline_token. Scope, baseline time,
+comparison eligibility, definition lookup and current fingerprint checks match
+condition_gap_owner. Optional gap_status and owner or unassigned=true filters
+select matching gaps; both may be absent. Other group selectors are rejected.
+Every eligible workflow appears once, independent of the 64-group display cap;
+empty filter results are valid. Membership and coverage use the current retained
+sample, not original saved cohort membership.
+
+Each contributor exposes gap_queue_priority with full current gap/category
+counts, sorted complete assigned owner list, unassigned count and all pinned
+missing expectation guidance before filtering or previews, bounded by the
+existing 256-condition comparison limit. Guidance includes category and current
+expectation without prior facts. gap_progress instead contains exact filtered
+counts and the canonical first-16 matching changes, including prior evidence.
+Customer responses omit tenant identifiers as before. Ranking uses observed
+report-only blocked duration with stable workflow identity ties and an explicit
+explanation; intervals spanning contract boundaries are omitted. Neither gap
+age, causation nor business severity is inferred. Comparison coverage remains
+separate from stricter generic duration coverage.
+
+The dashboard offers a snapshot-bound queue, category/owner filters, one row per
+workflow, full guidance and links to existing returned category/owner groups,
+reporting Operations and workflow history. Group links retain both tokens;
+undisplayed groups lack links but their guidance and counts remain available.
+SDKs and OpenAPI expose the queue dimension and priority payload. No new SQL,
+persistence, migration, limits, notifications or execution are introduced.

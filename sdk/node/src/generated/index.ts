@@ -1121,6 +1121,8 @@ export type { OperationWorkflowDurationDistribution } from './models/OperationWo
 export type { OperationWorkflowEffectRequirement } from './models/OperationWorkflowEffectRequirement.js';
 export type { OperationWorkflowEvidenceMilestone } from './models/OperationWorkflowEvidenceMilestone.js';
 export type { OperationWorkflowGapProgressGroup } from './models/OperationWorkflowGapProgressGroup.js';
+export type { OperationWorkflowGapQueueGuidance } from './models/OperationWorkflowGapQueueGuidance.js';
+export type { OperationWorkflowGapQueuePriority } from './models/OperationWorkflowGapQueuePriority.js';
 export type { OperationWorkflowInstanceMilestoneRef } from './models/OperationWorkflowInstanceMilestoneRef.js';
 export type { OperationWorkflowInstanceSnapshot } from './models/OperationWorkflowInstanceSnapshot.js';
 export type { OperationWorkflowInstanceStep } from './models/OperationWorkflowInstanceStep.js';

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_condition_coverage_entry import OperationWorkflowConditionCoverageEntry
     from ..models.operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
     from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
+    from ..models.operation_workflow_gap_queue_priority import OperationWorkflowGapQueuePriority
     from ..models.operation_workflow_new_missing_condition_progress_instance import (
         OperationWorkflowNewMissingConditionProgressInstance,
     )
@@ -40,6 +41,10 @@ class OperationWorkflowPerformanceInstance:
     resolution_verifications: list[OperationWorkflowResolutionVerification]
     awaiting_verification_count: int
     resolution_verification_count: int
+    gap_queue_priority: OperationWorkflowGapQueuePriority | Unset = UNSET
+    """All current reporting gaps before queue filters and evidence previews. Guidance contains every eligible
+    pinned missing expectation, including owners beyond the evidence preview; it carries no prior report facts.
+    Blocked intervals spanning contracts are omitted."""
     gap_progress: OperationWorkflowNewMissingConditionProgressInstance | Unset = UNSET
     """One current ongoing workflow with missing reports and a comparable retained baseline, ordered by stable
     workflow identity. Baseline_report identifies the pinned baseline definition source. A terminal baseline has no
@@ -90,6 +95,10 @@ class OperationWorkflowPerformanceInstance:
         awaiting_verification_count = self.awaiting_verification_count
 
         resolution_verification_count = self.resolution_verification_count
+
+        gap_queue_priority: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.gap_queue_priority, Unset):
+            gap_queue_priority = self.gap_queue_priority.to_dict()
 
         gap_progress: dict[str, Any] | Unset = UNSET
         if not isinstance(self.gap_progress, Unset):
@@ -142,6 +151,8 @@ class OperationWorkflowPerformanceInstance:
                 "resolution_verification_count": resolution_verification_count,
             }
         )
+        if gap_queue_priority is not UNSET:
+            field_dict["gap_queue_priority"] = gap_queue_priority
         if gap_progress is not UNSET:
             field_dict["gap_progress"] = gap_progress
         if missing_condition_count is not UNSET:
@@ -171,6 +182,7 @@ class OperationWorkflowPerformanceInstance:
         from ..models.operation_workflow_condition_coverage_entry import OperationWorkflowConditionCoverageEntry
         from ..models.operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
         from ..models.operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
+        from ..models.operation_workflow_gap_queue_priority import OperationWorkflowGapQueuePriority
         from ..models.operation_workflow_new_missing_condition_progress_instance import (
             OperationWorkflowNewMissingConditionProgressInstance,
         )
@@ -198,6 +210,13 @@ class OperationWorkflowPerformanceInstance:
         awaiting_verification_count = d.pop("awaiting_verification_count")
 
         resolution_verification_count = d.pop("resolution_verification_count")
+
+        _gap_queue_priority = d.pop("gap_queue_priority", UNSET)
+        gap_queue_priority: OperationWorkflowGapQueuePriority | Unset
+        if isinstance(_gap_queue_priority, Unset):
+            gap_queue_priority = UNSET
+        else:
+            gap_queue_priority = OperationWorkflowGapQueuePriority.from_dict(_gap_queue_priority)
 
         _gap_progress = d.pop("gap_progress", UNSET)
         gap_progress: OperationWorkflowNewMissingConditionProgressInstance | Unset
@@ -263,6 +282,7 @@ class OperationWorkflowPerformanceInstance:
             resolution_verifications=resolution_verifications,
             awaiting_verification_count=awaiting_verification_count,
             resolution_verification_count=resolution_verification_count,
+            gap_queue_priority=gap_queue_priority,
             gap_progress=gap_progress,
             missing_condition_count=missing_condition_count,
             missing_conditions_truncated=missing_conditions_truncated,

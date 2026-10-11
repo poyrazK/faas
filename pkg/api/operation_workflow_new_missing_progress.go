@@ -51,3 +51,20 @@ type OperationWorkflowGapProgressGroup struct {
 	MissingConditionCount int64                                 `json:"missing_condition_count"`
 	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
 }
+
+// OperationWorkflowGapQueuePriority describes all current gaps before queue filters or previews.
+type OperationWorkflowGapQueuePriority struct {
+	MissingConditionCount    int64                                               `json:"missing_condition_count"`
+	Statuses                 []OperationWorkflowNewMissingConditionProgressCount `json:"statuses"`
+	RefreshOwners            []string                                            `json:"refresh_owners"`
+	UnassignedConditionCount int64                                               `json:"unassigned_condition_count"`
+	Guidance                 []OperationWorkflowGapQueueGuidance                 `json:"guidance"`
+	BlockedSeconds           int64                                               `json:"blocked_seconds"`
+	Explanation              string                                              `json:"explanation"`
+}
+
+// OperationWorkflowGapQueueGuidance carries a pinned expectation and category without prior facts.
+type OperationWorkflowGapQueueGuidance struct {
+	Status      string                                  `json:"status"`
+	Expectation OperationWorkflowConditionCoverageEntry `json:"expectation"`
+}

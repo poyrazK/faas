@@ -94,7 +94,7 @@ func parseWorkflowPerformanceToken(raw string, query string, now time.Time) (wor
 	return token, nil
 }
 func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) error {
-	if g.Dimension != "condition_gap_owner" && g.GapStatus != "" {
+	if !conditionGapProgressDimension(g.Dimension) && g.GapStatus != "" {
 		return ErrInvalidArgument
 	}
 	if activeConditionDimension(g.Dimension) {
@@ -120,6 +120,10 @@ func validateWorkflowPerformanceGroup(g api.OperationWorkflowPerformanceGroup) e
 		return s != "" && len(s) <= api.OperationNameMaxBytes && operationHistoryName.MatchString(s)
 	}
 	switch g.Dimension {
+	case "condition_gap_queue":
+		if g.GapStatus != "" && !validWorkflowGapStatus(g.GapStatus) || g.ContractVersion != 0 || g.State != "" || g.Operation != "" || g.Code != "" || strings.TrimSpace(g.Owner) != g.Owner {
+			return ErrInvalidArgument
+		}
 	case "condition_gap_owner":
 		if !validWorkflowGapStatus(g.GapStatus) || g.ContractVersion < 1 || g.ContractVersion > api.OperationWorkflowContractVersionMax || api.ValidateOperationWorkflowStateName(g.State) != nil || g.Operation != "" || g.Code != "" || !ownerSelected || strings.TrimSpace(g.Owner) != g.Owner {
 			return ErrInvalidArgument
@@ -184,16 +188,16 @@ func workflowPerformanceContribution(b *api.OperationWorkflowBottlenecks, g api.
 }
 func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerformanceReader, account, tenant string, opts api.OperationWorkflowPerformanceInstanceOptions, operator bool) (api.OperationWorkflowPerformanceInstancesResponse, error) {
 	base, at, err := prepareWorkflowPerformance(account, tenant, opts.OperationWorkflowPerformanceOptions, operator)
-	if err != nil || opts.BaselineToken != "" && opts.Dimension != "condition_gap_owner" || opts.Cohort != "completed" && opts.Cohort != "ongoing" || validateWorkflowPerformanceGroup(opts.OperationWorkflowPerformanceGroup) != nil {
+	if err != nil || opts.BaselineToken != "" && !conditionGapProgressDimension(opts.Dimension) || opts.Cohort != "completed" && opts.Cohort != "ongoing" || validateWorkflowPerformanceGroup(opts.OperationWorkflowPerformanceGroup) != nil {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
 	if businessOutcomeDimension(opts.Dimension) && (opts.Cohort != "completed" || opts.CohortToken == "") {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
-	if (activeConditionDimension(opts.Dimension) || opts.Dimension == "condition_gap_owner" || opts.Dimension == "condition_missing_owner" || opts.Dimension == "condition_refresh_owner" || conditionRefreshPriorityDimension(opts.Dimension)) && (opts.Cohort != "ongoing" || opts.CohortToken == "") {
+	if (activeConditionDimension(opts.Dimension) || conditionGapProgressDimension(opts.Dimension) || opts.Dimension == "condition_missing_owner" || opts.Dimension == "condition_refresh_owner" || conditionRefreshPriorityDimension(opts.Dimension)) && (opts.Cohort != "ongoing" || opts.CohortToken == "") {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
-	if opts.Dimension == "condition_gap_owner" && opts.BaselineToken == "" {
+	if conditionGapProgressDimension(opts.Dimension) && opts.BaselineToken == "" {
 		return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 	}
 	opts.OperationWorkflowPerformanceOptions = base
@@ -214,7 +218,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	}
 	var gapBaseline time.Time
 	var gapDefinitions map[string][]api.OperationWorkflowSpec
-	if opts.Dimension == "condition_gap_owner" {
+	if conditionGapProgressDimension(opts.Dimension) {
 		baseline, err := workflowRefreshProgressBaseline(account, tenant, base, operator, at)
 		if err != nil {
 			return api.OperationWorkflowPerformanceInstancesResponse{}, err
@@ -286,20 +290,22 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
 		}
 	}
-	if opts.Dimension == "condition_gap_owner" {
+	if conditionGapProgressDimension(opts.Dimension) {
 		out.NewMissingProgress = workflowNewMissingConditionProgress(instances, gapDefinitions, gapBaseline, at)
 		if !operator {
 			hideNewMissingProgressTenants(out.NewMissingProgress)
 		}
-		found := false
-		for _, group := range out.NewMissingProgress.Groups {
-			if workflowGapProgressGroupMatches(group, opts.OperationWorkflowPerformanceGroup) {
-				found = true
-				break
+		if opts.Dimension == "condition_gap_owner" {
+			found := false
+			for _, group := range out.NewMissingProgress.Groups {
+				if workflowGapProgressGroupMatches(group, opts.OperationWorkflowPerformanceGroup) {
+					found = true
+					break
+				}
 			}
-		}
-		if !found {
-			return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+			if !found {
+				return api.OperationWorkflowPerformanceInstancesResponse{}, ErrInvalidArgument
+			}
 		}
 	}
 	if opts.Dimension == "condition_missing_owner" {
@@ -341,7 +347,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 	keys := map[identity]string{}
 	var values []int64
 	for _, i := range cohort {
-		if !i.Bottlenecks.HistoryComplete && opts.Dimension != "condition_gap_owner" {
+		if !i.Bottlenecks.HistoryComplete && !conditionGapProgressDimension(opts.Dimension) {
 			continue
 		}
 		seconds, matched := workflowPerformanceContribution(i.Bottlenecks, opts.OperationWorkflowPerformanceGroup)
@@ -358,9 +364,14 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 			seconds, decisionEvidence = workflowActiveConditionContribution(i, opts.OperationWorkflowPerformanceGroup, at)
 			matched = decisionEvidence != nil
 		}
+		var gapPriority *api.OperationWorkflowGapQueuePriority
 		var gapProgress *api.OperationWorkflowNewMissingConditionProgressInstance
-		if opts.Dimension == "condition_gap_owner" {
-			gapProgress = workflowGapProgressContribution(i, gapDefinitions, gapBaseline, at, opts.OperationWorkflowPerformanceGroup)
+		if conditionGapProgressDimension(opts.Dimension) {
+			if opts.Dimension == "condition_gap_queue" {
+				gapProgress, gapPriority = workflowGapQueueContribution(i, gapDefinitions, gapBaseline, at, opts.OperationWorkflowPerformanceGroup)
+			} else {
+				gapProgress = workflowGapProgressContribution(i, gapDefinitions, gapBaseline, at, opts.OperationWorkflowPerformanceGroup)
+			}
 			matched = gapProgress != nil
 			seconds = workflowGapProgressBlockedSeconds(i, at)
 			if !operator && gapProgress != nil {
@@ -397,7 +408,7 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 		if decisionEvidence != nil {
 			decisionEvidence.ConditionComparison = workflowContributorConditionComparison(i, *decisionEvidence)
 		}
-		entry := api.OperationWorkflowPerformanceInstance{GapProgress: gapProgress, MissingConditions: missingConditions, MissingConditionCount: missingCount, MissingConditionsTruncated: missingCount > int64(len(missingConditions)), RefreshPriority: priority, RefreshEvidence: refreshEvidence, RefreshEvidenceCount: refreshCount, RefreshEvidenceTruncated: refreshCount > int64(len(refreshEvidence)), DecisionEvidence: decisionEvidence, PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
+		entry := api.OperationWorkflowPerformanceInstance{GapQueuePriority: gapPriority, GapProgress: gapProgress, MissingConditions: missingConditions, MissingConditionCount: missingCount, MissingConditionsTruncated: missingCount > int64(len(missingConditions)), RefreshPriority: priority, RefreshEvidence: refreshEvidence, RefreshEvidenceCount: refreshCount, RefreshEvidenceTruncated: refreshCount > int64(len(refreshEvidence)), DecisionEvidence: decisionEvidence, PlatformTenantID: i.Tenant, Subject: i.Subject, OperationID: i.Current.OperationID, State: i.Current, ObservedSeconds: seconds, ResolutionVerifications: preview, AwaitingVerificationCount: pending, ResolutionVerificationCount: int64(len(i.Verifications))}
 		if !operator {
 			entry.PlatformTenantID = ""
 			entry.State.PlatformTenantID = ""

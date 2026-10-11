@@ -16,7 +16,7 @@ import (
 
 func workflowPerformanceContributorURL(path string, opts api.OperationWorkflowPerformanceOptions, cohort, token string, group api.OperationWorkflowPerformanceGroup) string {
 	q := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}, "cohort": {cohort}, "dimension": {group.Dimension}, "cohort_token": {token}}
-	if group.Dimension == "condition_gap_owner" {
+	if group.Dimension == "condition_gap_owner" || group.Dimension == "condition_gap_queue" {
 		q.Set("baseline_token", opts.BaselineToken)
 	}
 	if opts.TenantID != "" {
@@ -57,6 +57,8 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		return "Refresh priority · oldest overdue report age"
 	case "condition_refresh_blocked":
 		return "Refresh priority · full workflow blocked duration"
+	case "condition_gap_queue":
+		return "Workflow reporting-gap queue"
 	case "condition_gap_owner":
 		return fmt.Sprintf("Reporting gaps · %s · state %s · contract %d · refresh owner %s", group.GapStatus, group.State, group.ContractVersion, owner)
 	case "condition_missing_owner":
@@ -79,12 +81,13 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("workflow performance unavailable"))
 		return
 	}
+	r = normalizeWorkflowGapQueueForm(r)
 	opts, err := operationWorkflowPerformanceInstanceOptions(r, true, app.ID)
 	if err != nil {
 		writeOperationError(w, err)
 		return
 	}
-	data := dashboard.WorkflowPerformanceData{AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, ListURL: dashboardCustomerOperationsURL(app.Slug), SummaryURL: dashboardCustomerOperationsURL(app.Slug) + "/performance", GroupLabel: workflowPerformanceGroupLabel(opts.OperationWorkflowPerformanceGroup)}
+	data := dashboard.WorkflowPerformanceData{BaselineToken: opts.BaselineToken, AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, ListURL: dashboardCustomerOperationsURL(app.Slug), SummaryURL: dashboardCustomerOperationsURL(app.Slug) + "/performance", GroupLabel: workflowPerformanceGroupLabel(opts.OperationWorkflowPerformanceGroup)}
 	refresh := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}}
 	if opts.TenantID != "" {
 		refresh.Set("tenant_id", opts.TenantID)
@@ -99,14 +102,7 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 	} else {
 		data.Drilldown = &result
 		data.EvaluatedAt = dashboardJobsTime(result.EvaluatedAt)
-		for _, entry := range result.Items {
-			history := url.Values{"scope": {opts.Scope}, "tenant_id": {entry.PlatformTenantID}, "subject_type": {entry.Subject.Type}, "subject_id": {entry.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {entry.State.InstanceID}}
-			contributor := dashboard.WorkflowPerformanceContributor{Entry: entry, HistoryURL: data.ListURL + "?" + history.Encode() + "#workflows", OperationURL: data.ListURL + "/" + url.PathEscape(entry.OperationID)}
-			if entry.DecisionEvidence != nil {
-				contributor.DecisionOperationURL = data.ListURL + "/" + url.PathEscape(entry.DecisionEvidence.OperationID)
-			}
-			data.Contributors = append(data.Contributors, contributor)
-		}
+		data.Contributors = workflowPerformanceContributorViews(data, opts, result)
 	}
 	count, err := s.store.CountDeployedApps(r.Context(), acct.ID)
 	if err != nil {
@@ -146,4 +142,60 @@ func workflowConditionFreshnessLabel(status string) string {
 		return ""
 	}
 	return " · evidence " + status
+}
+
+// Empty optional HTML form controls are omitted; API parsing stays strict.
+func normalizeWorkflowGapQueueForm(r *http.Request) *http.Request {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || q.Get("dimension") != "condition_gap_queue" {
+		return r
+	}
+	for _, key := range []string{"gap_status", "owner"} {
+		if values := q[key]; len(values) == 1 && values[0] == "" {
+			q.Del(key)
+		}
+	}
+	clone := r.Clone(r.Context())
+	u := *r.URL
+	clone.URL = &u
+	clone.URL.RawQuery = q.Encode()
+	return clone
+}
+func workflowGapQueueGroupLinks(path string, opts api.OperationWorkflowPerformanceOptions, result api.OperationWorkflowPerformanceInstancesResponse, entry api.OperationWorkflowPerformanceInstance) []dashboard.WorkflowGapProgressGroupLink {
+	links := []dashboard.WorkflowGapProgressGroupLink{}
+	if entry.GapQueuePriority == nil || result.NewMissingProgress == nil {
+		return links
+	}
+	version := entry.State.ContractVersion
+	if version == 0 {
+		version = 1
+	}
+	for _, group := range result.NewMissingProgress.Groups {
+		if group.ContractVersion != version || group.State != entry.State.State {
+			continue
+		}
+		for _, guidance := range entry.GapQueuePriority.Guidance {
+			if guidance.Status != group.GapStatus || guidance.Expectation.Definition.RefreshOwner != group.Owner {
+				continue
+			}
+			selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_gap_owner", ContractVersion: group.ContractVersion, State: group.State, Owner: group.Owner, Unassigned: group.Unassigned, GapStatus: group.GapStatus}
+			links = append(links, dashboard.WorkflowGapProgressGroupLink{OperationWorkflowGapProgressGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", result.CohortToken, selector)})
+			break
+		}
+	}
+	return links
+}
+
+func workflowPerformanceContributorViews(data dashboard.WorkflowPerformanceData, opts api.OperationWorkflowPerformanceInstanceOptions, result api.OperationWorkflowPerformanceInstancesResponse) []dashboard.WorkflowPerformanceContributor {
+	views := []dashboard.WorkflowPerformanceContributor{}
+	for _, entry := range result.Items {
+		history := url.Values{"scope": {opts.Scope}, "tenant_id": {entry.PlatformTenantID}, "subject_type": {entry.Subject.Type}, "subject_id": {entry.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {entry.State.InstanceID}}
+		contributor := dashboard.WorkflowPerformanceContributor{Entry: entry, HistoryURL: data.ListURL + "?" + history.Encode() + "#workflows", OperationURL: data.ListURL + "/" + url.PathEscape(entry.OperationID)}
+		if entry.DecisionEvidence != nil {
+			contributor.DecisionOperationURL = data.ListURL + "/" + url.PathEscape(entry.DecisionEvidence.OperationID)
+		}
+		contributor.GapGroups = workflowGapQueueGroupLinks(data.SummaryURL, opts.OperationWorkflowPerformanceOptions, result, entry)
+		views = append(views, contributor)
+	}
+	return views
 }

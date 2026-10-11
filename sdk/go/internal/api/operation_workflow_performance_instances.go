@@ -33,6 +33,7 @@ type OperationWorkflowPerformanceInstanceOptions struct {
 
 // OperationWorkflowPerformanceInstance is a complete-history contributor.
 type OperationWorkflowPerformanceInstance struct {
+	GapQueuePriority            *OperationWorkflowGapQueuePriority                    `json:"gap_queue_priority,omitempty"`
 	GapProgress                 *OperationWorkflowNewMissingConditionProgressInstance `json:"gap_progress,omitempty"`
 	MissingConditions           []OperationWorkflowConditionCoverageEntry             `json:"missing_conditions,omitempty"`
 	MissingConditionCount       int64                                                 `json:"missing_condition_count,omitempty"`
