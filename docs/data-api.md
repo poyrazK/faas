@@ -1710,7 +1710,8 @@ Extend the existing sync JSON with `coordination`:
 ```
 
 Set an unpredictable private `GREGALE_DATA_API_REFRESH_TOKEN` (64 lowercase
-hexadecimal characters, generated from 32 random bytes), keep it for recovery,
+hexadecimal characters, generated from 32 random bytes), use a fresh token for
+each new refresh, keep that token for recovery,
 and configure the application JWT in `GREGALE_DATA_API_ACCESS_TOKEN` as before.
 Do not commit either token or put it in a URL. An optional `token_env` selects
 another local environment variable. Commands receive the private token under
@@ -1737,8 +1738,9 @@ an exact reviewed approval file in the existing `data-api diff` format. Existing
 accepted-client deployment policies must also match the new runtime; stale
 policies fail startup. The workflow then runs client and authorization checks
 before releasing the barrier. Release re-inspects the live schema as the binding
-role and rejects drift. The database records the verified fingerprint, so older
-coordinated runtimes receive 409 before executing application SQL.
+role and rejects drift. The database records the verified fingerprint, so runtimes whose serving fingerprint differs receive 409 before executing
+application SQL. This fences structural contract drift; it does not identify
+every old runtime version when the structural fingerprint is unchanged.
 
 Pause waits for transactions admitted by the PostgREST pre-request hook,
 including read-only GET transactions. Ordinary requests receive 503 while
