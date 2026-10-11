@@ -153,6 +153,7 @@ func BuildCriticalPath(spans []api.DebugTelemetrySpan) *api.DebugRequestCritical
 			Kind:           span.span.Kind,
 			DependencyType: span.span.DependencyType,
 			DependencyKind: span.span.DependencyKind,
+			DependencyName: span.span.DependencyName,
 			Status:         span.span.Status,
 			StartTime:      span.span.StartTime,
 			EndTime:        span.span.EndTime,

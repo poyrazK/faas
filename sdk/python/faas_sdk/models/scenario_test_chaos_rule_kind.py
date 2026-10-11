@@ -1,10 +1,25 @@
 from typing import Literal
 
-ScenarioTestChaosRuleKind = Literal["http_status", "latency"]
+ScenarioTestChaosRuleKind = Literal[
+    "http_status",
+    "latency",
+    "tcp_bandwidth",
+    "tcp_connect_refused",
+    "tcp_connect_timeout",
+    "tcp_latency",
+    "tcp_reset",
+    "tcp_timeout",
+]
 
 SCENARIO_TEST_CHAOS_RULE_KIND_VALUES: set[ScenarioTestChaosRuleKind] = {
     "http_status",
     "latency",
+    "tcp_bandwidth",
+    "tcp_connect_refused",
+    "tcp_connect_timeout",
+    "tcp_latency",
+    "tcp_reset",
+    "tcp_timeout",
 }
 
 

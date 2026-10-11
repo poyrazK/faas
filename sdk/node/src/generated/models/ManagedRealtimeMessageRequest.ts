@@ -6,7 +6,9 @@
  * Binary-safe message payload encoded as standard base64.
  */
 export type ManagedRealtimeMessageRequest = {
-  /** Retained delivery lifetime from first commit; zero disables expiry. */
+  /**
+   * Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the original deadline.
+   */
   ttl_seconds?: number;
   /**
    * Optional current channel sequence precondition; zero requires an empty channel. Retained channel writes only.

@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type RealtimePublisherCredential = {
-  /** Immutable message TTL cap; zero is uncapped. Rotation preserves this policy. */
+  /**
+   * Immutable message TTL cap; zero is uncapped. Rotation preserves this policy.
+   */
   max_message_ttl_seconds?: number;
   name: string;
   channels: Array<string>;

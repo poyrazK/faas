@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type RealtimePublisherMessageRequest = {
-  /** Message lifetime from retained publication; zero disables expiry. Positive credential caps forbid zero or omitted TTL. */
+  /**
+   * Message lifetime from retained publication; zero disables expiry. Positive credential caps forbid zero or omitted TTL.
+   */
   ttl_seconds?: number;
   event_type: string;
   data_base64: string;

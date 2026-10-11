@@ -1,12 +1,29 @@
 from typing import Literal
 
-SummarizeAccountWorkflowAttentionReason = Literal["blocked", "dependency", "overdue", "stale"]
-
-SUMMARIZE_ACCOUNT_WORKFLOW_ATTENTION_REASON_VALUES: set[SummarizeAccountWorkflowAttentionReason] = {
+SummarizeAccountWorkflowAttentionReason = Literal[
+    "awaiting_verification",
     "blocked",
     "dependency",
+    "escalated",
+    "follow_up_overdue",
     "overdue",
+    "sla_at_risk",
+    "sla_breached",
     "stale",
+    "unacknowledged",
+]
+
+SUMMARIZE_ACCOUNT_WORKFLOW_ATTENTION_REASON_VALUES: set[SummarizeAccountWorkflowAttentionReason] = {
+    "awaiting_verification",
+    "blocked",
+    "dependency",
+    "escalated",
+    "follow_up_overdue",
+    "overdue",
+    "sla_at_risk",
+    "sla_breached",
+    "stale",
+    "unacknowledged",
 }
 
 

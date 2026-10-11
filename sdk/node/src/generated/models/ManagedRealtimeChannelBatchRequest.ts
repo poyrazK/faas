@@ -6,7 +6,9 @@
  * Atomic batch of retained channel messages with an optional sequence precondition.
  */
 export type ManagedRealtimeChannelBatchRequest = {
-  /** Default lifetime in seconds; zero disables expiry. */
+  /**
+   * Default delivery lifetime for all batch messages; zero disables expiry.
+   */
   ttl_seconds?: number;
   /**
    * Precondition for the channel head before the whole batch.
@@ -14,7 +16,9 @@ export type ManagedRealtimeChannelBatchRequest = {
   expected_sequence?: number | null;
   batch_id: string;
   messages: Array<{
-    /** Omitted/null inherits the default; zero disables expiry. */
+    /**
+     * Override the batch TTL; omitted or null inherits the default and zero disables expiry for this message.
+     */
     ttl_seconds?: number | null;
     data_base64: string;
     metadata?: Record<string, string>;

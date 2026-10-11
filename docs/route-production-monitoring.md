@@ -2,8 +2,13 @@
 
 Production route monitoring continues after a release is promoted. It checks
 absolute error and latency budgets against stored observations on the sole fully
-serving production deployment. Monitoring is advisory and independent of the
-canary guard and saved contract/policy checks.
+serving production deployment. Monitoring is advisory by default and independent
+of the canary guard and saved contract/policy checks; it can opt into an
+[automatic rollback](#automatic-rollback) for early error-budget incidents.
+
+To see every route's canary, production and contract coverage together, run
+[`gregale routes status`](route-status.md).
+
 
 Create a JSON file using exact gateway-normalized method/path labels:
 
@@ -17,6 +22,13 @@ Create a JSON file using exact gateway-normalized method/path labels:
 100 basis points means a 1% 5xx budget. Omission disables error monitoring for a
 route; zero selects a zero-error budget. A positive `max_p95_ms` selects latency.
 Each route requires at least one budget. Values exactly at a budget are allowed.
+
+Budgets need at least 20 requests per window. A route that is unknown only
+because its one-minute windows are too sparse is also judged over the newest 30
+minutes since the release or configuration change, split into two halves, with
+the same budgets. Such findings report `evidence_window: pooled` and their
+`pooled_windows`, and can open incidents and trigger an
+[automatic rollback](#automatic-rollback).
 Select at most 20 distinct labels, with no wildcards, expanded URLs or queries.
 
 ```sh
@@ -209,6 +221,39 @@ split the previous incident remains open. Recurrence after recovery creates a ne
 incident. History retains the active incident plus up to 100 newest closed
 incidents within 8 MiB; entries are capped at 512 KiB. Pruned IDs/cursors return
 not found.
+
+## Automatic rollback
+
+Monitoring only reports by default. To revert a release that breaks a selected
+route soon after it reaches full traffic, opt in with `--on-violation rollback`:
+
+```sh
+gregale routes monitor set my-api --mode enabled --routes production-routes.json \
+  --on-violation rollback --expected-revision CURRENT_REVISION
+```
+
+Rollback mode requires at least one route with `max_5xx_rate_bps`; latency
+budgets keep reporting but never trigger a rollback. Gregale decides once per
+incident, using its saved opening evidence:
+
+- **Requested** when an error budget is violated and the incident opens within
+  30 minutes of the deployment's last traffic change (rollout completion or
+  promotion). Gregale requests a checked rollback to the incident's saved
+  healthy baseline, the same operation as `gregale rollback --to ... --expected-current ...`, so the
+  artifact check, production contract gate and binding checks still apply.
+- **Skipped** when only latency was violated (`latency_only_violation`), the
+  incident opened later than 30 minutes after release
+  (`outside_rollback_window`), no healthy baseline was saved
+  (`no_healthy_baseline`), or the checked rollback could not be requested
+  (`rollback_target_ineligible`).
+- **Not decided** while a rollout, another rollback or a traffic split owns the
+  deployment.
+
+`gregale routes monitor explain my-api --incident INCIDENT_UUID` prints the
+decision and the rollback operation ID. Follow it with
+`gregale rollback status my-api --operation OPERATION_UUID`.
+The audit log records `route_monitor.rollback_requested`. Switching back to
+`--on-violation report` stops new decisions.
 
 ## Transition notifications
 

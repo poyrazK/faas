@@ -73,6 +73,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"project_environment_clone_object_grant_revocations": CloneSchemaOperational,
 
 		"customer_operation_code_pins":              CloneSchemaOperational,
+		"entity_outbox_acceptances":                 CloneSchemaOperational,
 		"event_delivery_capacity":                   CloneSchemaOperational,
 		"event_delivery_slots":                      CloneSchemaOperational,
 		"event_fanout_history_summaries":            CloneSchemaOperational,

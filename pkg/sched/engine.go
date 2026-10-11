@@ -412,14 +412,17 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
-	store  state.Store
-	ledger *NodeLedger
-	vmm    RoutedVMM
-	notif  Notifier
-	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log    *slog.Logger
+	validatorArtifactCheck func(context.Context, string, string) error
+	store                  state.Store
+	ledger                 *NodeLedger
+	vmm                    RoutedVMM
+	notif                  Notifier
+	fcVer                  string // running Firecracker version — snapshots load only on a match (ADR-005)
+	log                    *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
-	serviceReconcileSubmit func(context.Context, string)
+	serviceReconcileSubmit                         func(context.Context, string)
+	environmentQualificationServiceURL             func(context.Context, string) (string, error)
+	environmentQualificationServiceURLForTransport func(context.Context, string, api.ServiceBindingTransport) (string, error)
 	// ops is the per-daemon Prometheus registry (issue #1059 /
 	// ADR-127). e.ops.WakeFailure is the schedd-side emitter for
 	// the wake-failure observability surface (cluster A commit 3
@@ -757,6 +760,15 @@ type Engine struct {
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 
+	// workerScaleIn holds each worker pool's recent demand recommendations
+	// for the scale-in stabilization window. It is per schedd and in
+	// memory: a restart forgets it, and the pool then holds its size for
+	// one window before shrinking.
+	workerScaleIn *workerScaleInStabilizer
+	// workerStops tracks worker stops the pool reconciler runs in the
+	// background (see worker_stop.go).
+	workerStops *workerStopTracker
+
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
 	// the report's node_signature (ADR-053). Populated by the
@@ -901,6 +913,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
+		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
@@ -942,6 +956,14 @@ func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
 // counter. Returns the engine for builder-style wiring.
 func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
 	e.ops = ops
+	return e
+}
+
+// WithWorkerScaleInStabilization replaces the worker-pool scale-in window.
+// Zero or negative disables stabilization so computed demand shrinks a pool
+// on the tick that observes it.
+func (e *Engine) WithWorkerScaleInStabilization(window time.Duration) *Engine {
+	e.workerScaleIn = newWorkerScaleInStabilizer(window)
 	return e
 }
 
@@ -3079,7 +3101,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if secretPolicyBlocksSnapshots {
 		choice.coldReason = secretPolicyColdReason
 	} else {
-		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), e.guestRAMMB(ctx, dep.ID, app.RAMMB), app.AppProtocol)
 	}
 	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
@@ -3447,6 +3469,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load primary workload dependencies: %w", err)
 	}
+	runtimeValues.APIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, sealedEnv.Entries, dep)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_gitops_service_bindings_invalid")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: load GitOps service bindings: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
@@ -3552,7 +3580,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// CreateSnapshot guarantees non-empty; an empty value here
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
-		snapKey: snap.StorageKey,
+		snapKey:      snap.StorageKey,
+		snapMemBytes: snap.MemBytes,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -3794,6 +3823,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			StorageKey:        bootInput.snapKey,
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
+			MemBytes:          bootInput.snapMemBytes,
 		})
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
@@ -3916,9 +3946,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
+	var postRPC events.PostRPCTimings
+	tPreCommit := time.Now()
 	joinScaleOutStamp()
+	tStampJoined := time.Now()
 	release2 := e.lockApp(bootInput.appID)
 	defer release2()
+	tLocked := time.Now()
 
 	// Publish the runtime identity and RUNNING state in one conditional write.
 	// The old success path paid for InstanceByID, SetInstanceRuntime, another
@@ -3935,6 +3969,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
+	tPublished := time.Now()
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -4054,6 +4089,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// this is idempotent for deployments that never had a backoff row and does
 	// not need to delay the newly routable target.
 	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
+	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -4146,6 +4182,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			TriggerClass:          inboundCorr.TriggerClass,
 			QueuedCount:           bootInput.queuedCount,
 			ConcurrencyAtAdmit:    bootInput.concurrencyAtAdmit,
+			PostRPC:               postRPC,
 		})
 	}
 
@@ -4212,6 +4249,9 @@ type bootInput struct {
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
 	snapKey string
+	// snapMemBytes is the snap row's guest memory length; vmmd matches it
+	// against the requested guest memory before restoring a companion.
+	snapMemBytes int64
 	// nodeID is the chosen compute_node for this wake (issue #97 /
 	// ADR-025 axis 3). Captured under the Phase 2 lock alongside
 	// the rest of bootInput so the unlocked Phase 3 vmmd call can
@@ -5310,6 +5350,10 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: primary workload dependencies: %w", err)
 	}
+	runtimeValues.APIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, sealedEnv.Entries, dep)
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
@@ -5943,8 +5987,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
+	if e.validatorArtifactCheck != nil {
+		if err := e.validatorArtifactCheck(ctx, appID, deploymentID); err != nil {
+			return fmt.Errorf("sched: prime: validator artifact preflight: %w", err)
+		}
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return nil
+	}
+	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
+		return err
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
@@ -7972,6 +8024,14 @@ func (e *Engine) resolveSealedEnvDeliveryFor(ctx context.Context, accountID, app
 }
 
 func (e *Engine) resolveSealedEnvDeliveryForRole(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent, release bool) (sealedEnvDelivery, error) {
+	return e.resolveSealedEnvDeliveryForRoleWithEmptyAll(ctx, accountID, appID, scope, overrideEnvSecrets, environmentIntent, release, true)
+}
+
+// resolveSealedEnvDeliveryForRoleWithEmptyAll distinguishes legacy "deliver
+// every scoped secret" requests from an explicit empty reference set. Managed
+// scheduled Jobs use the latter: an empty Git definition must never inherit
+// secrets merely because the legacy deployment representation was empty.
+func (e *Engine) resolveSealedEnvDeliveryForRoleWithEmptyAll(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent, release, emptyMeansAll bool) (sealedEnvDelivery, error) {
 	// Defensive collapse: a deployment pre-PR-B may have dep.Scope
 	// empty (NULL column). The store surface uses scope='default'
 	// everywhere else, so this keeps wake-time behaviour identical
@@ -7991,7 +8051,7 @@ func (e *Engine) resolveSealedEnvDeliveryForRole(ctx context.Context, accountID,
 			return sealedEnvDelivery{}, fmt.Errorf("load scoped secret references: %w", err)
 		}
 	}
-	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, intent)
+	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, intent, emptyMeansAll)
 }
 
 func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
@@ -7999,10 +8059,10 @@ func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope s
 }
 
 func sealedEnvDeliveryFromRowsForTask(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool) (sealedEnvDelivery, error) {
-	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, state.AppEnvironmentSecretIntent{})
+	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, state.AppEnvironmentSecretIntent{}, true)
 }
 
-func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool, intent state.AppEnvironmentSecretIntent) (sealedEnvDelivery, error) {
+func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool, intent state.AppEnvironmentSecretIntent, emptyMeansAll bool) (sealedEnvDelivery, error) {
 	seen := map[string]bool{}
 	for _, row := range rows {
 		if row.AccountID != accountID || row.AppID != appID || row.Scope != scope || api.ValidateEnvKey(row.Key) != nil || seen[row.Key] {
@@ -8017,7 +8077,7 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 			return sealedEnvDelivery{}, fmt.Errorf("invalid secret reference for environment key %q", key)
 		}
 	}
-	all := len(overrideEnvSecrets) == 0
+	all := len(overrideEnvSecrets) == 0 && emptyMeansAll
 	if all {
 		for _, row := range rows {
 			refs[row.Key] = api.SecretRefPrefix + row.Key
@@ -8053,11 +8113,13 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 		sort.Strings(absent)
 		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s; set the secret first via gregale secrets set --scope %s", scope, strings.Join(absent, ", "), scope)
 	}
-	selectionRequest := requestedSources
+	var eligible []state.AppSecret
+	var err error
 	if all {
-		selectionRequest = nil
+		eligible, err = state.SelectAppSecretsForDelivery(rows, nil, release)
+	} else if len(requestedSources) > 0 {
+		eligible, err = state.SelectAppSecretsForDelivery(rows, requestedSources, release)
 	}
-	eligible, err := state.SelectAppSecretsForDelivery(rows, selectionRequest, release)
 	if err != nil {
 		return sealedEnvDelivery{}, err
 	}
@@ -8347,6 +8409,24 @@ func (e *Engine) chooseWakeSnapshot(ctx context.Context, deploymentID, plan stri
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: snap}
 	}
 	return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
+}
+
+// guestRAMMB is the memory vmmd boots a deployment's guest with: the app's RAM
+// plus explicitly allocated companion RAM (fcvm.wakeGuestMemoryMiB). Snapshot
+// RAM checks compare against it; production-us rc.251 rejected every companion
+// deployment's snapshot against the app RAM alone. An unknown companion shape
+// returns 0, which skips the check and leaves vmmd's restore gate in charge.
+func (e *Engine) guestRAMMB(ctx context.Context, deploymentID string, appRAMMB int) int {
+	if appRAMMB <= 0 {
+		return appRAMMB
+	}
+	sidecarMBs, err := e.store.DeploymentSidecarRAMs(ctx, deploymentID)
+	if err != nil {
+		e.log.Warn("wake: companion RAM unknown; deferring snapshot RAM check to vmmd",
+			"deployment_id", deploymentID, "err", err)
+		return 0
+	}
+	return api.BillableRAMMBWithSidecars(appRAMMB, sidecarMBs) - api.PerVMOverheadMB
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different
@@ -9926,4 +10006,11 @@ func (e *Engine) streamWarmHints(ctx context.Context, sink WarmHintSink, heartbe
 			// no need for a duplicated ctx.Err() check here.
 		}
 	}
+}
+
+// WithValidatorArtifactCheck installs a shared artifact preflight for deployment
+// priming. Ordinary wakes of an existing serving deployment do not depend on it.
+func (e *Engine) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Engine {
+	e.validatorArtifactCheck = check
+	return e
 }

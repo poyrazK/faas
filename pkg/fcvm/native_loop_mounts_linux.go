@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -200,7 +201,19 @@ func checkNativeLoopNamespace(record nativeLoopMountRecord) error {
 	return nil
 }
 
-func (linuxNativeLoopMounts) Retire(ctx context.Context, record nativeLoopMountRecord, point string) (err error) {
+func (linuxNativeLoopMounts) Retire(ctx context.Context, record nativeLoopMountRecord, point string) error {
+	if err := retireNativeLoopMount(ctx, record, point); err != nil {
+		return err
+	}
+	// LOOP_CLR_FD may only set AUTOCLEAR when a transient opener (for example
+	// udev) still holds the block device. Close our retirement FD first, then
+	// observe the original token's disappearance without replaying detach.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return waitNativeLoopDetached(ctx, func() (bool, error) { return nativeLoopStillAttached(record) })
+}
+
+func retireNativeLoopMount(ctx context.Context, record nativeLoopMountRecord, point string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -265,26 +278,54 @@ func (linuxNativeLoopMounts) Removed(record nativeLoopMountRecord, point string)
 	if _, err := os.Lstat(point); !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(err, errors.New("native loop mount: original mountpoint remains"))
 	}
-	loop, rdev, err := openNativeLoopDevice(record.Device.Number)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
+	attached, err := nativeLoopStillAttached(record)
+	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, loop.Close()) }()
-	if rdev != record.Device.Rdev {
-		return errors.New("native loop mount: original block device changed")
-	}
-	info, err := unix.IoctlLoopGetStatus64(int(loop.Fd()))
-	if errors.Is(err, unix.ENXIO) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if strings.TrimRight(string(info.File_name[:]), "\x00") == nativeLoopMarker+record.ID {
+	if attached {
 		return errors.New("native loop mount: original loop attachment remains")
 	}
 	return nil
+}
+
+// Every observation closes its descriptor before waiting, allowing the last
+// transient opener to trigger AUTOCLEAR. A reused loop number is only inspected.
+func nativeLoopStillAttached(record nativeLoopMountRecord) (attached bool, err error) {
+	loop, rdev, err := openNativeLoopDevice(record.Device.Number)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, loop.Close()) }()
+	if rdev != record.Device.Rdev {
+		return false, errors.New("native loop mount: original block device changed")
+	}
+	info, err := unix.IoctlLoopGetStatus64(int(loop.Fd()))
+	if errors.Is(err, unix.ENXIO) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return strings.TrimRight(string(info.File_name[:]), "\x00") == nativeLoopMarker+record.ID, nil
+}
+
+func waitNativeLoopDetached(ctx context.Context, inspect func() (bool, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, errors.New("native loop mount: original attachment retirement was not confirmed"))
+		}
+		attached, err := inspect()
+		if err != nil || !attached {
+			return errors.Join(err, ctx.Err())
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
 }
 
 func (linuxNativeLoopMounts) Inventory(records []nativeLoopMountRecord) error {

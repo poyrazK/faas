@@ -43,7 +43,7 @@ func captureAutomationStdout(t *testing.T) *bytes.Buffer {
 
 func TestCmdAutomationsDispatchUsage(t *testing.T) {
 	code, output := runWithStderr(t, func() int { return cmdAutomations(nil) })
-	if code != 1 || !strings.Contains(output, "automations <list|get|health|pause|resume|revisions|restore|delete|validate|simulate|apply|publish>") {
+	if code != 1 || !strings.Contains(output, "automations <init|check|diff|list|get|health|runs|diagnose|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume>") {
 		t.Fatalf("exit=%d stderr=%q", code, output)
 	}
 	code, output = runWithStderr(t, func() int { return cmdAutomations([]string{"unknown"}) })
@@ -63,7 +63,7 @@ func writeAutomationJSONFixture(t *testing.T, name, contents string) string {
 
 func TestCmdAutomationsSimulateUsesSampleInputAndMocks(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"definition_valid":true,"complete":true,"issues":[],"warnings":[],"step_order":["lookup"],"trace":[{"step_name":"lookup","kind":"run","state":"mocked","input":{"id":"inv-1"},"output":{"paid":true},"run":"/lookup_invoice"}]}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"definition_valid":true,"complete":true,"issues":[],"warnings":[],"step_order":["lookup"],"trace":[{"step_name":"lookup","kind":"run","state":"mocked","input":{"id":"inv-1"},"output":{"paid":true},"run":"/lookup_invoice"},{"step_name":"send","kind":"outbound","state":"would_execute","integration_id":"00000000-0000-0000-0000-000000000001","method":"GET","path":"/contacts/contact%2042","raw_query":"email=a%2Bb%40example.com"}]}`, http.StatusOK)
 	output := captureAutomationStdout(t)
 	definition := writeAutomationFixture(t, automationDefinitionYAML)
 	input := writeAutomationJSONFixture(t, "input.json", `{"invoice_id":"inv-1"}`)
@@ -84,7 +84,7 @@ func TestCmdAutomationsSimulateUsesSampleInputAndMocks(t *testing.T) {
 	if string(request.Input) != `{"invoice_id":"inv-1"}` || string(request.MockOutputs["lookup"]) != `{"paid":true}` || len(request.MockItemOutputs["batch"]) != 2 || len(request.MockAttempts["record"]) != 2 || request.MockAttempts["record"][0].HTTPStatus == nil || *request.MockAttempts["record"][0].HTTPStatus != 503 {
 		t.Fatalf("simulation request did not preserve samples: %+v", request)
 	}
-	for _, want := range []string{"mocked", `{"id":"inv-1"}`, `{"paid":true}`} {
+	for _, want := range []string{"mocked", `{"id":"inv-1"}`, `{"paid":true}`, "GET /contacts/contact%2042?email=a%2Bb%40example.com"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("human trace %q missing %q", output.String(), want)
 		}

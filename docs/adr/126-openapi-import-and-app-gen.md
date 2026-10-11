@@ -224,3 +224,41 @@ regardless of tier.
    customers with large microservice farms (one import per
    service × 100 services = 100 imports, just at the Free
    cap).
+
+## Amendment 1 (validate suggestions use the real request contract, 2026-10-08)
+
+D3 originally emitted one `kind=validate` suggestion per uncovered operation
+with a placeholder schema (`{"type":"object"}`) and the OpenAPI path template as
+the match path. Both were wrong in practice:
+
+- Edge-rule paths are `path.Match` globs, so `/users/{id}` only matched the
+  literal path `/users/{id}` and the applied rule never ran.
+- Operations without a request body (GET, DELETE) received a body schema. An
+  empty body does not satisfy `{"type":"object"}`, so enforcing such a rule
+  would reject every request to the route.
+
+Suggestions are now emitted only for operations with a JSON request body
+(`application/json` or `+json`). The rule's schema is that body schema made
+self-contained for the gateway validator: `#/components/schemas/<name>` refs
+move under `$defs` (recursive schemas included), `#/components/requestBodies`
+refs are resolved, and OpenAPI 3.0 `nullable` and boolean
+`exclusiveMinimum`/`exclusiveMaximum` are rewritten to their Draft 2020-12
+forms. A body that cannot be made self-contained within
+`MaxEdgeRuleValidateSchemaBytes` gets no suggestion. Each `{param}` becomes `?*`
+(one or more characters within a segment) in the match path, and literal glob
+metacharacters are escaped (`api.OpenAPIPathGlob`). A bare `*` is not used:
+`MatchEdgeRulePath` treats a trailing `/*` as the whole subtree, so
+`/users/{id}` would also have matched `/users/7/avatar` and applied the wrong
+body schema there. Coverage is keyed on that glob, so an earlier rule stored
+with the literal template path no longer counts as covering its operation.
+Suggestions still default to `validate_mode=observe`.
+
+To stop new dead rules, `POST /v1/apps/{slug}/edge-rules` and
+`PATCH /v1/edge-rules/{id}` reject a `match_path` with a `{param}` placeholder
+and name the glob to use (`api.EdgeRuleTemplatedPath`), as does
+`PUT .../environments/{environment}/workloads/{workload}/policies` (GitOps
+sync writes environment policies through the store and is unaffected).
+Manifest-owned async routes are not rejected yet, so a redeploy of an existing
+manifest keeps working; `gregale deploy` instead prints a warning with the
+glob for each templated `async_routes` path (`Manifest.TemplatedPathWarnings`). `gregale edge-rules list` prints a warning
+and the fix command for each existing rule with a templated path.

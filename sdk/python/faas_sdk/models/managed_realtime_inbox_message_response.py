@@ -25,10 +25,13 @@ class ManagedRealtimeInboxMessageResponse:
     binary: bool
     created_at: str
     expires_at: str
-    target_message_id: str | Unset = UNSET
-    ttl_seconds: int | Unset = 0
-    delivery_expires_at: datetime.datetime | Unset = UNSET
     expired: bool | Unset = False
+    """Delivery deadline passed; payload is suppressed but sequence remains ACKable."""
+    delivery_expires_at: datetime.datetime | Unset = UNSET
+    """Delivery deadline; expires_at remains the retention deadline."""
+    ttl_seconds: int | Unset = 0
+    """Delivery lifetime; zero disables expiry."""
+    target_message_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +53,14 @@ class ManagedRealtimeInboxMessageResponse:
 
         expires_at = self.expires_at
 
+        expired = self.expired
+
+        delivery_expires_at: str | Unset = UNSET
+        if not isinstance(self.delivery_expires_at, Unset):
+            delivery_expires_at = self.delivery_expires_at.isoformat()
+
+        ttl_seconds = self.ttl_seconds
+
         target_message_id = self.target_message_id
 
         field_dict: dict[str, Any] = {}
@@ -67,28 +78,20 @@ class ManagedRealtimeInboxMessageResponse:
                 "expires_at": expires_at,
             }
         )
+        if expired is not UNSET:
+            field_dict["expired"] = expired
+        if delivery_expires_at is not UNSET:
+            field_dict["delivery_expires_at"] = delivery_expires_at
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if target_message_id is not UNSET:
             field_dict["target_message_id"] = target_message_id
 
-        if not isinstance(self.ttl_seconds, Unset):
-            field_dict["ttl_seconds"] = self.ttl_seconds
-        if not isinstance(self.delivery_expires_at, Unset):
-            field_dict["delivery_expires_at"] = self.delivery_expires_at.isoformat()
-        if not isinstance(self.expired, Unset):
-            field_dict["expired"] = self.expired
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        expired = d.pop("expired", UNSET)
-
-        delivery_expires_at = d.pop("delivery_expires_at", UNSET)
-        if not isinstance(delivery_expires_at, Unset):
-            delivery_expires_at = datetime.datetime.fromisoformat(delivery_expires_at)
-
-        ttl_seconds = d.pop("ttl_seconds", UNSET)
-
         version = d.pop("version")
 
         event = d.pop("event")
@@ -107,12 +110,20 @@ class ManagedRealtimeInboxMessageResponse:
 
         expires_at = d.pop("expires_at")
 
+        expired = d.pop("expired", UNSET)
+
+        _delivery_expires_at = d.pop("delivery_expires_at", UNSET)
+        delivery_expires_at: datetime.datetime | Unset
+        if isinstance(_delivery_expires_at, Unset):
+            delivery_expires_at = UNSET
+        else:
+            delivery_expires_at = datetime.datetime.fromisoformat(_delivery_expires_at)
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
+
         target_message_id = d.pop("target_message_id", UNSET)
 
         managed_realtime_inbox_message_response = cls(
-            expired=expired,
-            delivery_expires_at=delivery_expires_at,
-            ttl_seconds=ttl_seconds,
             version=version,
             event=event,
             deleted=deleted,
@@ -122,6 +133,9 @@ class ManagedRealtimeInboxMessageResponse:
             binary=binary,
             created_at=created_at,
             expires_at=expires_at,
+            expired=expired,
+            delivery_expires_at=delivery_expires_at,
+            ttl_seconds=ttl_seconds,
             target_message_id=target_message_id,
         )
 

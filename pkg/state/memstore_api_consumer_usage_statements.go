@@ -9,8 +9,35 @@ import (
 	"github.com/google/uuid"
 )
 
-func usageStatementNaturalKey(appID, consumerID string, start, end time.Time) string {
-	return appID + "\x00" + consumerID + "\x00" + start.UTC().Format(time.RFC3339) + "\x00" + end.UTC().Format(time.RFC3339)
+// apiConsumerUsageStatementRevisionsLocked returns one exact period's
+// revisions, oldest first. Callers hold m.mu.
+func (m *MemStore) apiConsumerUsageStatementRevisionsLocked(accountID, appID, consumerID string, start, end time.Time) []APIConsumerUsageStatement {
+	var out []APIConsumerUsageStatement
+	for _, statement := range m.apiConsumerUsageStatements {
+		if statement.AccountID == accountID && statement.AppID == appID && statement.ConsumerID == consumerID &&
+			statement.PeriodStart.Equal(start) && statement.PeriodEnd.Equal(end) {
+			out = append(out, statement)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Revision < out[j].Revision })
+	return out
+}
+
+func (m *MemStore) ListAPIConsumerUsageStatementRevisions(_ context.Context, accountID, appID, consumerID string, start, end time.Time) ([]APIConsumerUsageStatement, error) {
+	if accountID == "" || appID == "" || consumerID == "" {
+		return nil, ErrNotFound
+	}
+	if !end.After(start) {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	revisions := m.apiConsumerUsageStatementRevisionsLocked(accountID, appID, consumerID, start.UTC(), end.UTC())
+	out := make([]APIConsumerUsageStatement, 0, len(revisions))
+	for _, statement := range revisions {
+		out = append(out, cloneAPIConsumerUsageStatement(statement))
+	}
+	return out, nil
 }
 
 func (m *MemStore) CreateAPIConsumerUsageStatement(_ context.Context, input APIConsumerUsageStatementInput) (APIConsumerUsageStatement, bool, error) {
@@ -23,16 +50,31 @@ func (m *MemStore) CreateAPIConsumerUsageStatement(_ context.Context, input APIC
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := usageStatementNaturalKey(input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd)
-	for _, existing := range m.apiConsumerUsageStatements {
-		if usageStatementNaturalKey(existing.AppID, existing.ConsumerID, existing.PeriodStart, existing.PeriodEnd) == key {
-			return cloneAPIConsumerUsageStatement(existing), false, nil
+	revisions := m.apiConsumerUsageStatementRevisionsLocked(input.AccountID, input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd)
+	if input.Revision <= len(revisions) {
+		// A retry of an already-persisted plan replays that exact revision.
+		return cloneAPIConsumerUsageStatement(revisions[input.Revision-1]), false, nil
+	}
+	if input.Revision != len(revisions)+1 {
+		return APIConsumerUsageStatement{}, false, ErrConflict
+	}
+	if len(revisions) > 0 {
+		latest := revisions[len(revisions)-1]
+		if latest.Status != input.PriorStatus {
+			return APIConsumerUsageStatement{}, false, ErrConflict
+		}
+		if latest.Status == APIConsumerUsageStatementDraft {
+			if sameAPIConsumerUsageStatementSnapshot(latest, input) {
+				return cloneAPIConsumerUsageStatement(latest), false, nil
+			}
+			latest.Status = APIConsumerUsageStatementSuperseded
+			m.apiConsumerUsageStatements[latest.ID] = latest
 		}
 	}
 	now := time.Now().UTC()
 	statement := APIConsumerUsageStatement{
 		ID: uuid.NewString(), AccountID: input.AccountID, AppID: input.AppID, ConsumerID: input.ConsumerID,
-		PeriodStart: input.PeriodStart, PeriodEnd: input.PeriodEnd, Status: APIConsumerUsageStatementDraft,
+		PeriodStart: input.PeriodStart, PeriodEnd: input.PeriodEnd, Revision: input.Revision, Status: APIConsumerUsageStatementDraft,
 		Currency: input.Currency, BillableUnits: input.BillableUnits, UnpricedUnits: input.UnpricedUnits,
 		AmountMillicents: input.AmountMillicents, Priced: input.Priced,
 		Buckets: append([]APIConsumerUsageStatementBucket(nil), input.Buckets...), AsOf: input.AsOf, CreatedAt: now,
@@ -68,6 +110,9 @@ func (m *MemStore) ListAPIConsumerUsageStatements(_ context.Context, accountID, 
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].PeriodStart.Equal(out[j].PeriodStart) {
+			if out[i].Revision != out[j].Revision {
+				return out[i].Revision > out[j].Revision
+			}
 			return out[i].CreatedAt.After(out[j].CreatedAt)
 		}
 		return out[i].PeriodStart.After(out[j].PeriodStart)
@@ -88,7 +133,7 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 	if statement.Status == APIConsumerUsageStatementFinalized {
 		return cloneAPIConsumerUsageStatement(statement), false, nil
 	}
-	if statement.UnpricedUnits > 0 {
+	if statement.Status != APIConsumerUsageStatementDraft || statement.UnpricedUnits > 0 {
 		return APIConsumerUsageStatement{}, false, ErrConflict
 	}
 	now := time.Now().UTC()
@@ -144,7 +189,8 @@ func (m *MemStore) CreateAPIConsumerUsageStatementHandoff(_ context.Context, inp
 			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
 		}
 		other := m.apiConsumerUsageStatements[existing.StatementID]
-		if other.AppID == statement.AppID && other.ConsumerID == statement.ConsumerID &&
+		samePeriod := other.PeriodStart.Equal(statement.PeriodStart) && other.PeriodEnd.Equal(statement.PeriodEnd)
+		if other.AppID == statement.AppID && other.ConsumerID == statement.ConsumerID && !samePeriod &&
 			windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
 			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
 		}

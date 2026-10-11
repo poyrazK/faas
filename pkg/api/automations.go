@@ -10,6 +10,7 @@ import (
 )
 
 type AutomationResponse struct {
+	FailurePaused    bool          `json:"failure_paused"`
 	Name             string        `json:"name"`
 	Version          int64         `json:"version"`
 	Source           string        `json:"source"`
@@ -31,13 +32,14 @@ type ListAutomationsResponse struct {
 // AutomationRevisionResponse is an immutable published automation snapshot.
 // DefinitionHash is SHA-256 over the canonical JSON encoding of Definition.
 type AutomationRevisionResponse struct {
-	Version              int64        `json:"version"`
-	Definition           WorkflowSpec `json:"definition"`
-	DefinitionHash       string       `json:"definition_hash"`
-	RecordedAt           time.Time    `json:"recorded_at"`
-	LegacySnapshot       bool         `json:"legacy_snapshot"`
-	PublishedByAccountID string       `json:"published_by_account_id"`
-	PublishedByAPIKeyID  string       `json:"published_by_api_key_id,omitempty"`
+	CheckEvidence        *AutomationCheckEvidence `json:"check_evidence,omitempty"`
+	Version              int64                    `json:"version"`
+	Definition           WorkflowSpec             `json:"definition"`
+	DefinitionHash       string                   `json:"definition_hash"`
+	RecordedAt           time.Time                `json:"recorded_at"`
+	LegacySnapshot       bool                     `json:"legacy_snapshot"`
+	PublishedByAccountID string                   `json:"published_by_account_id"`
+	PublishedByAPIKeyID  string                   `json:"published_by_api_key_id,omitempty"`
 }
 
 type ListAutomationRevisionsResponse struct {
@@ -126,8 +128,10 @@ type SaveAutomationDraftRequest struct {
 }
 
 type PublishAutomationRequest struct {
-	ExpectedVersion  int64 `json:"expected_version"`
-	TakeOverManifest bool  `json:"take_over_manifest,omitempty"`
+	CheckReceipt     string                   `json:"check_receipt,omitempty"`
+	CheckEvidence    *AutomationCheckEvidence `json:"check_evidence,omitempty"`
+	ExpectedVersion  int64                    `json:"expected_version"`
+	TakeOverManifest bool                     `json:"take_over_manifest,omitempty"`
 }
 
 type SetAutomationEnabledRequest struct {

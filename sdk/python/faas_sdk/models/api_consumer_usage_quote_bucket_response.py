@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -19,16 +19,22 @@ class APIConsumerUsageQuoteBucketResponse:
 
     window_start: datetime.datetime
     billable_units: int
+    charged_units: int
+    """Units billed at the price; the rest are covered by the rate card's monthly allowance."""
     amount_millicents: int
     rate_card_id: UUID | Unset = UNSET
     currency: str | Unset = UNSET
     price_millicents_per_unit: int | Unset = UNSET
+    tier_units: list[int] | Unset = UNSET
+    """Units per step of a tiered rate card's ladder."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         window_start = self.window_start.isoformat()
 
         billable_units = self.billable_units
+
+        charged_units = self.charged_units
 
         amount_millicents = self.amount_millicents
 
@@ -40,12 +46,17 @@ class APIConsumerUsageQuoteBucketResponse:
 
         price_millicents_per_unit = self.price_millicents_per_unit
 
+        tier_units: list[int] | Unset = UNSET
+        if not isinstance(self.tier_units, Unset):
+            tier_units = self.tier_units
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "window_start": window_start,
                 "billable_units": billable_units,
+                "charged_units": charged_units,
                 "amount_millicents": amount_millicents,
             }
         )
@@ -55,6 +66,8 @@ class APIConsumerUsageQuoteBucketResponse:
             field_dict["currency"] = currency
         if price_millicents_per_unit is not UNSET:
             field_dict["price_millicents_per_unit"] = price_millicents_per_unit
+        if tier_units is not UNSET:
+            field_dict["tier_units"] = tier_units
 
         return field_dict
 
@@ -64,6 +77,8 @@ class APIConsumerUsageQuoteBucketResponse:
         window_start = datetime.datetime.fromisoformat(d.pop("window_start"))
 
         billable_units = d.pop("billable_units")
+
+        charged_units = d.pop("charged_units")
 
         amount_millicents = d.pop("amount_millicents")
 
@@ -78,13 +93,17 @@ class APIConsumerUsageQuoteBucketResponse:
 
         price_millicents_per_unit = d.pop("price_millicents_per_unit", UNSET)
 
+        tier_units = cast(list[int], d.pop("tier_units", UNSET))
+
         api_consumer_usage_quote_bucket_response = cls(
             window_start=window_start,
             billable_units=billable_units,
+            charged_units=charged_units,
             amount_millicents=amount_millicents,
             rate_card_id=rate_card_id,
             currency=currency,
             price_millicents_per_unit=price_millicents_per_unit,
+            tier_units=tier_units,
         )
 
         api_consumer_usage_quote_bucket_response.additional_properties = d

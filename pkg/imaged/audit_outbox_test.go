@@ -14,7 +14,7 @@ func TestEmitSignatureAuditUsesDurableOutbox(t *testing.T) {
 	h := newTestHandler(t)
 	notif := &fakeNotifier{}
 	h.notif = notif
-	app := state.App{ID: "app-1", Slug: "demo"}
+	app := state.App{ID: "app-1", AccountID: "acct-1", Slug: "demo"}
 	dep := state.Deployment{ID: "dep-1"}
 
 	h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, "registry/app@sha256:1", "")
@@ -33,6 +33,11 @@ func TestEmitSignatureAuditUsesDurableOutbox(t *testing.T) {
 	}
 	if item.Actor != "apid" {
 		t.Fatalf("outbox actor = %q, want apid audit attribution", item.Actor)
+	}
+	// H9-53: the audit log is queried by account, so an app-ID subject
+	// hid every signature verdict from the app's owner.
+	if item.Subject == nil || *item.Subject != "acct-1" {
+		t.Fatalf("outbox subject = %v, want the owning account acct-1", item.Subject)
 	}
 	if len(notif.calls) != 2 {
 		t.Fatalf("notifications = %d, want one per producer call", len(notif.calls))

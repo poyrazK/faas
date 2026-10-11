@@ -73,7 +73,7 @@ func (m *MemStore) GetAutomationRevision(_ context.Context, appID, name string, 
 func (m *MemStore) EffectiveWorkflowDefinitions(_ context.Context, appID string, manifest json.RawMessage) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return mergeAutomationDefinitions(manifest, m.automationRecordsLocked(appID))
+	return m.mergeRuntimeAutomationDefinitionsLocked(appID, manifest)
 }
 func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutation AutomationMutation) (Automation, error) {
 	m.mu.Lock()
@@ -93,6 +93,17 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	var previous *Automation
 	if record, ok := m.automations[key]; ok {
 		previous = &record
+	}
+	if mutation.ActorAccountID == "" {
+		mutation.ActorAccountID = app.AccountID
+	}
+	policy, exists := m.automationPublishPolicies[appID]
+	if !exists {
+		policy = defaultAutomationPolicy()
+	}
+	receipt := m.automationPublishReceipts[automationReceiptHash(mutation.CheckReceipt)]
+	if err := validatePublicationReceipt(policy, receipt, appID, name, &mutation, previous); err != nil {
+		return Automation{}, err
 	}
 	dep := m.automationDeploymentLocked(appID)
 	next, err := mutateAutomation(appID, name, mutation, previous, dep.Workflows, m.automationRecordsLocked(appID), account.Plan, dep.ID != "")
@@ -121,7 +132,8 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 		}
 		m.automationRevisions[key] = append(m.automationRevisions[key], AutomationRevision{
 			AppID: appID, Name: name, Version: next.PublishedVersion,
-			Definition: cloneWorkflowJSON(next.Published), RecordedAt: next.UpdatedAt,
+			CheckEvidence: automationCheckEvidenceJSON(mutation.CheckEvidence),
+			Definition:    cloneWorkflowJSON(next.Published), RecordedAt: next.UpdatedAt,
 			PublishedByAccountID: actorAccountID, PublishedByAPIKeyID: mutation.ActorAPIKeyID,
 		})
 	}
@@ -161,7 +173,8 @@ func automationFromSQL(row sqlc.WorkflowAutomationDefinition) Automation {
 func automationRevisionFromSQL(row sqlc.WorkflowAutomationRevision) AutomationRevision {
 	revision := AutomationRevision{
 		AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version,
-		Definition: row.Definition, RecordedAt: row.RecordedAt.Time, LegacySnapshot: row.LegacySnapshot,
+		CheckEvidence: cloneWorkflowJSON(row.CheckEvidence),
+		Definition:    row.Definition, RecordedAt: row.RecordedAt.Time, LegacySnapshot: row.LegacySnapshot,
 		PublishedByAccountID: uuidFromPgtype(row.PublishedByAccountID).String(),
 	}
 	if row.PublishedByApiKeyID.Valid {
@@ -263,6 +276,9 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 			previous = &record
 		}
 	}
+	if err := enforcePublicationReceiptTx(ctx, tx, appID, name, &mutation, previous); err != nil {
+		return Automation{}, err
+	}
 	dep, err := q.AutomationManifest(ctx, tx, mustPgUUID(appID))
 	hasDeployment := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -303,7 +319,8 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 		}
 		if err := q.InsertWorkflowAutomationRevision(ctx, tx, sqlc.InsertWorkflowAutomationRevisionParams{
 			AppID: mustPgUUID(appID), Name: name, Version: next.PublishedVersion,
-			Definition: next.Published, RecordedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true},
+			CheckEvidence: automationCheckEvidenceJSON(mutation.CheckEvidence),
+			Definition:    next.Published, RecordedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true},
 			PublishedByAccountID: mustPgUUID(mutation.ActorAccountID), PublishedByApiKeyID: apiKeyID,
 		}); err != nil {
 			return Automation{}, err
@@ -371,4 +388,12 @@ func (m *MemStore) checkDeploymentAutomationsLocked(dep Deployment) error {
 	app := m.apps[dep.AppID]
 	account := m.accounts[app.AccountID]
 	return automationDeploymentQuota(dep.Workflows, m.automationRecordsLocked(dep.AppID), account.Plan)
+}
+
+func automationCheckEvidenceJSON(e *api.AutomationCheckEvidence) json.RawMessage {
+	if e == nil {
+		return nil
+	}
+	raw, _ := json.Marshal(e)
+	return raw
 }

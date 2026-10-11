@@ -262,6 +262,41 @@ type ApiConsumer struct {
 	PlatformTenantManaged bool
 }
 
+// Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).
+type ApiConsumerPlan struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Name                 string
+	MaxRequestsPerMinute int64
+	MaxUnitsPerMonth     int64
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	// Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.
+	AlertThresholdsPercent []int32
+}
+
+// Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.
+type ApiConsumerPlanAdmission struct {
+	ConsumerID  pgtype.UUID
+	AccountID   pgtype.UUID
+	MinuteStart pgtype.Timestamptz
+	MinuteUsed  int64
+	MonthStart  pgtype.Timestamptz
+	MonthUsed   int64
+}
+
+// Append-only, minute-effective plan assignments; a NULL plan_id returns the consumer to the default plan.
+type ApiConsumerPlanAssignment struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ConsumerID    pgtype.UUID
+	PlanID        pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ApiConsumerRateCard struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -271,6 +306,39 @@ type ApiConsumerRateCard struct {
 	PriceMillicentsPerUnit int64
 	EffectiveFrom          pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
+	// Free request units per consumer per UTC calendar month, consumed in minute order while this card is effective.
+	IncludedUnitsPerMonth int64
+	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.
+	Tiers []byte
+	// Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.
+	RouteWeights []byte
+	// Plan whose price history this card belongs to; NULL is the app default plan.
+	PlanID pgtype.UUID
+}
+
+// Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
+type ApiConsumerRouteUsageMinute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ConsumerKey   string
+	Route         string
+	WindowStart   pgtype.Timestamptz
+	BillableUnits int64
+	UpdatedAt     pgtype.Timestamptz
+}
+
+// One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.
+type ApiConsumerUsageAlert struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	ConsumerID       pgtype.UUID
+	PlanID           pgtype.UUID
+	MonthStart       pgtype.Timestamptz
+	ThresholdPercent int32
+	LimitUnits       int64
+	UsedUnits        int64
+	CrossedAt        pgtype.Timestamptz
 }
 
 type ApiConsumerUsageEvent struct {
@@ -317,6 +385,8 @@ type ApiConsumerUsageStatement struct {
 	AsOf             pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
 	FinalizedAt      pgtype.Timestamptz
+	// Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.
+	Revision int32
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -543,14 +613,18 @@ type AppEnvironmentSecretRefSuppression struct {
 }
 
 type AppEnvironmentWorkloadIntent struct {
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	EnvironmentID  pgtype.UUID
-	Source         []byte
-	Runtime        []byte
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	SourceRevision pgtype.Text
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Source          []byte
+	Runtime         []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	SourceRevision  pgtype.Text
+	ServiceBindings []byte
+	Schedule        []byte
+	Variables       []byte
+	JobID           pgtype.UUID
 }
 
 type AppError struct {
@@ -769,6 +843,13 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppRoutePriority struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Routes    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppRouteRemovalPolicy struct {
 	AppID                 pgtype.UUID
 	AccountID             pgtype.UUID
@@ -884,6 +965,13 @@ type AppSecretRuntimeReloadObservation struct {
 type AppServiceAddressCursor struct {
 	AccountID pgtype.UUID
 	LastIndex int32
+}
+
+type AppServiceWakeAhead struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
 }
 
 type AppTask struct {
@@ -1497,11 +1585,11 @@ type CustomerOperation struct {
 	Record              []byte
 	ExpiresAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
-	WorkflowRunID       pgtype.UUID
-	JobRunID            pgtype.UUID
 	CurrentExecutionID  pgtype.UUID
 	ExecutionKind       string
 	ExecutionGeneration int32
+	WorkflowRunID       pgtype.UUID
+	JobRunID            pgtype.UUID
 }
 
 type CustomerOperationCodePin struct {
@@ -1687,11 +1775,6 @@ type CustomerOperationWorkflowState struct {
 }
 
 type CustomerOperationWorkflowStateReport struct {
-	ContractVersion    int32
-	EvidenceMilestones []byte
-	Blockers           []byte
-	BlockersOnly       bool
-	BlockerResolutions []byte
 	OperationID        pgtype.UUID
 	ID                 pgtype.UUID
 	Workflow           string
@@ -1702,6 +1785,11 @@ type CustomerOperationWorkflowStateReport struct {
 	CreatedAt          pgtype.Timestamptz
 	Fingerprint        string
 	FromState          string
+	ContractVersion    int32
+	EvidenceMilestones []byte
+	Blockers           []byte
+	BlockersOnly       bool
+	BlockerResolutions []byte
 	DeadlineAt         string
 	DeadlineOnly       bool
 	OutcomeCode        string
@@ -1778,19 +1866,20 @@ type DeadLetterEvent struct {
 }
 
 type DebugRegressionObservation struct {
-	AppID            pgtype.UUID
-	DeploymentID     pgtype.UUID
-	Route            string
-	P95Ms            int32
-	P95BaseMs        int32
-	AffectedCount    int32
-	RegressionFactor pgtype.Numeric
-	FirstDetectedAt  pgtype.Timestamptz
-	LastDetectedAt   pgtype.Timestamptz
-	State            string
-	AcknowledgedAt   pgtype.Timestamptz
-	DismissedUntil   pgtype.Timestamptz
-	ResolvedAt       pgtype.Timestamptz
+	AppID               pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	P95Ms               int32
+	P95BaseMs           int32
+	AffectedCount       int32
+	RegressionFactor    pgtype.Numeric
+	FirstDetectedAt     pgtype.Timestamptz
+	LastDetectedAt      pgtype.Timestamptz
+	State               string
+	AcknowledgedAt      pgtype.Timestamptz
+	DismissedUntil      pgtype.Timestamptz
+	ResolvedAt          pgtype.Timestamptz
+	SuspectedDependency []byte
 }
 
 type DeployToken struct {
@@ -1907,6 +1996,7 @@ type Deployment struct {
 	EnvironmentWorkloadRuntime []byte
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
+	EnvironmentWorkloadHeld    bool
 }
 
 type DeploymentAlias struct {
@@ -2198,6 +2288,11 @@ type EdgeRule struct {
 	CorsPresetID pgtype.UUID
 	MatchHeaders []byte
 	ManifestKey  pgtype.Text
+	Name         pgtype.Text
+	Description  pgtype.Text
+	ExpiresAt    pgtype.Timestamptz
+	MatchExpr    []byte
+	Mode         string
 }
 
 type EdgeRuleChangeLog struct {
@@ -2207,6 +2302,50 @@ type EdgeRuleChangeLog struct {
 	Operation  string
 	MatchHosts []string
 	CreatedAt  pgtype.Timestamptz
+}
+
+type EdgeRuleEvent struct {
+	ID         int64
+	RuleID     pgtype.UUID
+	AppID      pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	Outcome    string
+	RequestID  string
+	Method     string
+	Host       string
+	Path       string
+	ClientIp   *netip.Addr
+	Country    string
+	UserAgent  string
+}
+
+type EdgeRuleHitCount struct {
+	RuleID      pgtype.UUID
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+	Outcome     string
+	Hits        int64
+}
+
+type EdgeRuleList struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	Name        string
+	Kind        string
+	Description string
+	Items       []string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type EdgeRuleSetVersion struct {
+	ID          int64
+	AppID       pgtype.UUID
+	Version     int32
+	Rules       []byte
+	RulesSha256 string
+	RuleCount   int32
+	CreatedAt   pgtype.Timestamptz
 }
 
 type EgressFlowLog struct {
@@ -2235,6 +2374,14 @@ type EmailVerificationToken struct {
 	ExpiresAt  pgtype.Timestamptz
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+}
+
+type EntityOutboxAcceptance struct {
+	MessageID   pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Fingerprint string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type EnvironmentDesiredRevision struct {
@@ -2416,15 +2563,89 @@ type EnvironmentManagementOverride struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type EnvironmentQualificationConfigReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	ApiEnvSha256      string
+	RecordedAt        pgtype.Timestamptz
+}
+
 type EnvironmentQualificationExecution struct {
-	InstanceID      pgtype.UUID
-	RequestID       pgtype.UUID
-	Frame           []byte
-	CleanupToken    pgtype.UUID
-	DispatchStarted bool
-	Retirement      []byte
-	CreatedAt       pgtype.Timestamptz
-	RetiredAt       pgtype.Timestamptz
+	InstanceID        pgtype.UUID
+	RequestID         pgtype.UUID
+	Frame             []byte
+	CleanupToken      pgtype.UUID
+	DispatchStarted   bool
+	Retirement        []byte
+	CreatedAt         pgtype.Timestamptz
+	RetiredAt         pgtype.Timestamptz
+	CaptureInstanceID pgtype.UUID
+}
+
+type EnvironmentQualificationFrameworkReadyReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Runtime           string
+	WarmupMs          int64
+	RecordedAt        pgtype.Timestamptz
+}
+
+type EnvironmentQualificationJobSmokeReceipt struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	GraphID      pgtype.UUID
+	InstanceID   pgtype.UUID
+	Resource     string
+	PolicyID     string
+	PolicySha256 string
+	ResultSha256 string
+	ExitCode     int32
+	ErrorClass   string
+	Signal       int32
+	RecordedAt   pgtype.Timestamptz
+}
+
+type EnvironmentQualificationRestoreReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	RuntimeInputs     []byte
+	RecordedAt        pgtype.Timestamptz
+}
+
+type EnvironmentQualificationRestoreReservation struct {
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	RequestID         pgtype.UUID
+	Attempt           int64
+	CreatedAt         pgtype.Timestamptz
+}
+
+type EnvironmentQualificationSmokeReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Resource          string
+	PolicyID          string
+	PolicySha256      string
+	ResultSha256      string
+	RecordedAt        pgtype.Timestamptz
+}
+
+type EnvironmentQualificationSnapshotReceipt struct {
+	InstanceID pgtype.UUID
+	Snapshot   []byte
+	Inputs     []byte
+	RecordedAt pgtype.Timestamptz
 }
 
 type EnvironmentWorkloadGraph struct {
@@ -2460,6 +2681,47 @@ type EnvironmentWorkloadQualificationRequest struct {
 	LeaseUntil         pgtype.Timestamptz
 	Attempt            int64
 	ReservedInstanceID pgtype.UUID
+}
+
+type EnvironmentWorkloadServingQueueAck struct {
+	GraphID        pgtype.UUID
+	BindingID      pgtype.UUID
+	Mode           string
+	TriggerID      pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	InvocationID   pgtype.UUID
+	AcknowledgedAt pgtype.Timestamptz
+}
+
+type EnvironmentWorkloadServingReceipt struct {
+	GraphID          pgtype.UUID
+	SourceID         pgtype.UUID
+	ReleaseSetID     pgtype.UUID
+	SourceGeneration int64
+	IntentVersion    int64
+	RevisionID       pgtype.UUID
+	PlanHash         string
+	ExpectedGateways []string
+	Phase            string
+	StartedAt        pgtype.Timestamptz
+	ServedAt         pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type EnvironmentWorkloadServingRoute struct {
+	GraphID         pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	CutoverRequired bool
+	RouteGeneration int64
+}
+
+type EnvironmentWorkloadServingRouteAck struct {
+	GraphID         pgtype.UUID
+	RouteGeneration int64
+	NodeName        string
+	AcknowledgedAt  pgtype.Timestamptz
 }
 
 type Event struct {
@@ -4035,14 +4297,18 @@ type ManagedRealtimeChannelHead struct {
 }
 
 type ManagedRealtimeChannelMessage struct {
-	EndpointID     pgtype.UUID
-	Channel        string
-	Sequence       int64
-	Data           []byte
-	IsBinary       bool
-	IdempotencyKey pgtype.Text
-	CreatedAt      pgtype.Timestamptz
-	Metadata       []byte
+	EndpointID      pgtype.UUID
+	Channel         string
+	Sequence        int64
+	Data            []byte
+	IsBinary        bool
+	IdempotencyKey  pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	TargetMessageID string
+	Version         int64
+	MessageEvent    string
+	Deleted         bool
+	Metadata        []byte
 }
 
 type ManagedRealtimeChannelReducer struct {
@@ -4391,6 +4657,10 @@ type ManagedRealtimeInboxMessage struct {
 	IdempotencyKey          pgtype.Text
 	CreatedAt               pgtype.Timestamptz
 	FallbackAfterSeconds    int32
+	TargetMessageID         string
+	Version                 int64
+	MessageEvent            string
+	Deleted                 bool
 	NotificationCategory    string
 	NotificationGroupKey    string
 	NotificationGroupLabel  string
@@ -5689,6 +5959,10 @@ type PlatformTenantRateCard struct {
 	PriceMillicentsPerUnit int64
 	EffectiveFrom          pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
+	// Free request units per tenant per UTC calendar month across all attributed apps, consumed in minute order while this card is effective.
+	IncludedUnitsPerMonth int64
+	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.
+	Tiers []byte
 }
 
 type PlatformTenantReconciliationReceipt struct {
@@ -7133,6 +7407,7 @@ type RouteMonitor struct {
 	CustomerGroupBy       string
 	CustomerRecoveryState []byte
 	LastHealthyDeployment []byte
+	OnViolation           string
 }
 
 type RouteMonitorIncident struct {
@@ -7156,6 +7431,24 @@ type RoutePolicyReceipt struct {
 	RequestSha256  string
 	Receipt        []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type RouteProbeObservation struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+type RouteProbeRound struct {
+	AppID       pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	ClaimedAt   pgtype.Timestamptz
 }
 
 type RouteRemovalApproval struct {
@@ -7526,13 +7819,24 @@ type SavedRouteRequirement struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ScenarioTestChaosMatch struct {
+	AccountID   pgtype.UUID
+	RunID       string
+	CallerAppID pgtype.UUID
+	Generation  pgtype.UUID
+	RuleID      string
+	Matches     int64
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type ScenarioTestMember struct {
-	AccountID      pgtype.UUID
-	RunID          string
-	WorkloadName   string
-	AppID          pgtype.UUID
-	ChaosRules     []byte
-	ChaosExpiresAt pgtype.Timestamptz
+	AccountID       pgtype.UUID
+	RunID           string
+	WorkloadName    string
+	AppID           pgtype.UUID
+	ChaosRules      []byte
+	ChaosExpiresAt  pgtype.Timestamptz
+	ChaosGeneration pgtype.UUID
 }
 
 type ScheduleOccurrence struct {
@@ -7960,6 +8264,55 @@ type WorkflowAutomationDefinition struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type WorkflowAutomationFailureGuard struct {
+	AppID           pgtype.UUID
+	Name            string
+	Generation      int64
+	MonitoringSince pgtype.Timestamptz
+	PausedAt        pgtype.Timestamptz
+}
+
+type WorkflowAutomationFailureHistory struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	Generation     int64
+	State          string
+	Reason         string
+	RecordedAt     pgtype.Timestamptz
+	Failures       int64
+	CompletedRuns  int64
+	PolicyVersion  int64
+	ActorAccountID pgtype.UUID
+}
+
+type WorkflowAutomationFailurePolicy struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Enabled          bool
+	FailureThreshold int32
+	MinCompletedRuns int32
+	WindowSeconds    int32
+}
+
+type WorkflowAutomationPublishPolicy struct {
+	AppID   pgtype.UUID
+	Mode    string
+	Version int64
+}
+
+type WorkflowAutomationPublishReceipt struct {
+	AppID         pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	ApiKeyID      string
+	TokenHash     string
+	PolicyVersion int64
+	ExpiresAt     pgtype.Timestamptz
+	Evidence      []byte
+}
+
 type WorkflowAutomationRevision struct {
 	AppID                pgtype.UUID
 	Name                 string
@@ -7969,6 +8322,7 @@ type WorkflowAutomationRevision struct {
 	LegacySnapshot       bool
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
+	CheckEvidence        []byte
 }
 
 type WorkflowCallbackWebhookBinding struct {

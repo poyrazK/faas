@@ -37,4 +37,4 @@ accept deployment capture provenance and flag changed source/hash evidence.
 Pinned, production and canary live responses share a deployment-based metadata
 authority. Gateway-generated early responses and cached bodies omit headers.
 This supersedes ADR-841's publication timing and app-hostname-only behavior and
-ADR-829's default import source. Removal approval remains independent.
+ADR-903's default import source. Removal approval remains independent.

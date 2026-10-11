@@ -12,6 +12,7 @@ import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
@@ -19,6 +20,7 @@ import type { WorkloadPort } from './WorkloadPort.js';
  */
 export type CreateAppRequest = {
   profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
   /**
    * The tag- prefix is reserved for stable deployment-alias hostnames.
    */

@@ -6,7 +6,9 @@
  * Principal message payload with optional retained notification and push fallback settings.
  */
 export type ManagedRealtimePrincipalMessageRequest = {
-  /** Delivery lifetime in seconds; positive values require retained inbox delivery. Zero disables expiry. */
+  /**
+   * Delivery lifetime in seconds; positive values require retained inbox delivery. Zero disables expiry.
+   */
   ttl_seconds?: number;
   principal: string;
   /**

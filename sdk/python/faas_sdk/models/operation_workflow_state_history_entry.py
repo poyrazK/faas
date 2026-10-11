@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 
 
 T = TypeVar("T", bound="OperationWorkflowStateHistoryEntry")
@@ -66,6 +67,8 @@ class OperationWorkflowStateHistoryEntry:
     evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
     """Account-owner tenant identifier attached to this report in operator feeds."""
+    resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+    """Current retained-evidence status for verification obligations in this history report."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -136,6 +139,13 @@ class OperationWorkflowStateHistoryEntry:
         if not isinstance(self.platform_tenant_id, Unset):
             platform_tenant_id = str(self.platform_tenant_id)
 
+        resolution_verifications: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.resolution_verifications, Unset):
+            resolution_verifications = []
+            for resolution_verifications_item_data in self.resolution_verifications:
+                resolution_verifications_item = resolution_verifications_item_data.to_dict()
+                resolution_verifications.append(resolution_verifications_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -177,6 +187,8 @@ class OperationWorkflowStateHistoryEntry:
             field_dict["evidence_milestones"] = evidence_milestones
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
+        if resolution_verifications is not UNSET:
+            field_dict["resolution_verifications"] = resolution_verifications
 
         return field_dict
 
@@ -186,6 +198,7 @@ class OperationWorkflowStateHistoryEntry:
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -270,6 +283,17 @@ class OperationWorkflowStateHistoryEntry:
         else:
             platform_tenant_id = UUID(_platform_tenant_id)
 
+        _resolution_verifications = d.pop("resolution_verifications", UNSET)
+        resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
+        if _resolution_verifications is not UNSET:
+            resolution_verifications = []
+            for resolution_verifications_item_data in _resolution_verifications:
+                resolution_verifications_item = OperationWorkflowResolutionVerification.from_dict(
+                    resolution_verifications_item_data
+                )
+
+                resolution_verifications.append(resolution_verifications_item)
+
         operation_workflow_state_history_entry = cls(
             id=id,
             operation_id=operation_id,
@@ -293,6 +317,7 @@ class OperationWorkflowStateHistoryEntry:
             from_state=from_state,
             evidence_milestones=evidence_milestones,
             platform_tenant_id=platform_tenant_id,
+            resolution_verifications=resolution_verifications,
         )
 
         return operation_workflow_state_history_entry

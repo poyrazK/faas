@@ -151,6 +151,37 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 	if receipt.Load != nil {
 		printTestLoadSummary(osStdout, receipt.Load)
 	}
+	for _, step := range receipt.Steps {
+		if step.Load != nil {
+			_, _ = fmt.Fprintf(osStdout, "  staged step %q SLO:\n", step.Name)
+			printTestLoadSummary(osStdout, step.Load)
+		}
+		if step.Relative != nil {
+			streak := ""
+			if step.Relative.RequiredConsecutivePasses > 1 {
+				streak = fmt.Sprintf(", passing streak %d/%d", step.Relative.ConsecutivePasses, step.Relative.RequiredConsecutivePasses)
+			}
+			_, _ = fmt.Fprintf(osStdout, "  relative SLO vs %q: %s (%d attempts, %.3fs%s)\n", step.Relative.BaselineStep, step.Relative.Status, step.Relative.Attempts, float64(step.Relative.ElapsedMS)/1000, streak)
+			for _, attempt := range step.Relative.History {
+				attemptStreak := ""
+				if step.Relative.RequiredConsecutivePasses > 1 {
+					attemptStreak = fmt.Sprintf(", passing streak %d/%d", attempt.ConsecutivePasses, step.Relative.RequiredConsecutivePasses)
+				}
+				_, _ = fmt.Fprintf(osStdout, "    attempt %d: load %s, comparison %s (%.3fs%s)\n", attempt.Number, attempt.LoadStatus, attempt.ComparisonStatus, float64(attempt.DurationMS)/1000, attemptStreak)
+				for _, check := range attempt.Checks {
+					_, _ = fmt.Fprintf(osStdout, "      %s\n", formatTestStagedLoadComparisonCheck(check))
+				}
+				if attempt.Error != "" {
+					_, _ = fmt.Fprintf(osStdout, "      %s\n", attempt.Error)
+				}
+			}
+			if len(step.Relative.History) == 0 {
+				for _, check := range step.Relative.Checks {
+					_, _ = fmt.Fprintf(osStdout, "    %s\n", formatTestStagedLoadComparisonCheck(check))
+				}
+			}
+		}
+	}
 	if receipt.Baseline != nil {
 		_, _ = fmt.Fprintf(osStdout, "  baseline: %s (%d checks)\n", receipt.Baseline.Status, len(receipt.Baseline.Checks))
 	}
@@ -159,6 +190,21 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 			_, _ = fmt.Fprintln(osStderr, message)
 		}
 	}
+}
+
+func formatTestStagedLoadComparisonCheck(check testStagedLoadComparisonCheck) string {
+	label := check.Metric
+	if check.Step != "" {
+		label = fmt.Sprintf("%s (%s → %s): %s", check.Step, check.BaselineHTTPStep, check.CurrentHTTPStep, check.Metric)
+	}
+	if check.Error != "" {
+		return label + ": " + check.Error
+	}
+	status := "failed"
+	if check.Passed {
+		status = "passed"
+	}
+	return fmt.Sprintf("%s %.4g %s %.4g (baseline %.4g, delta %+.4g; %s)", label, check.Current, check.Operator, check.Limit, check.Baseline, check.Delta, status)
 }
 
 func finishTestRunReports(suite string, results []testRunReceipt, reportPath, junitPath string, htmlPaths ...string) int {

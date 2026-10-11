@@ -6,6 +6,7 @@ import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
 /**
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
@@ -62,5 +63,9 @@ export type OperationWorkflowStateHistoryEntry = {
    * Account-owner tenant identifier attached to this report in operator feeds.
    */
   platform_tenant_id?: string;
+  /**
+   * Current retained-evidence status for verification obligations in this history report.
+   */
+  resolution_verifications?: Array<OperationWorkflowResolutionVerification>;
 };
 

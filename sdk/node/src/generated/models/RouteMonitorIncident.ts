@@ -5,6 +5,7 @@
 import type { RouteMonitorDeploymentBaseline } from './RouteMonitorDeploymentBaseline.js';
 import type { RouteMonitorEvidence } from './RouteMonitorEvidence.js';
 import type { RouteMonitorIncidentEscalation } from './RouteMonitorIncidentEscalation.js';
+import type { RouteMonitorIncidentRollback } from './RouteMonitorIncidentRollback.js';
 import type { RouteMonitorIncidentTimelineEntry } from './RouteMonitorIncidentTimelineEntry.js';
 import type { RouteMonitorReport } from './RouteMonitorReport.js';
 /**
@@ -43,5 +44,6 @@ export type RouteMonitorIncident = {
    * True when older escalation records were dropped to preserve the newest transition details and incident size.
    */
   escalations_truncated?: boolean;
+  rollback?: RouteMonitorIncidentRollback;
 };
 

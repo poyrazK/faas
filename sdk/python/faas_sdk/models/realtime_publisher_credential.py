@@ -31,6 +31,7 @@ class RealtimePublisherCredential:
     publishes_per_minute: int = 60
     max_payload_bytes: int = 4096
     max_message_ttl_seconds: int | Unset = 0
+    """Immutable message TTL cap; zero is uncapped. Rotation preserves this policy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,6 +77,8 @@ class RealtimePublisherCredential:
         last_sequence: None | str
         last_sequence = self.last_sequence
 
+        max_message_ttl_seconds = self.max_message_ttl_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -98,15 +101,14 @@ class RealtimePublisherCredential:
                 "last_sequence": last_sequence,
             }
         )
+        if max_message_ttl_seconds is not UNSET:
+            field_dict["max_message_ttl_seconds"] = max_message_ttl_seconds
 
-        if self.max_message_ttl_seconds is not UNSET:
-            field_dict["max_message_ttl_seconds"] = self.max_message_ttl_seconds
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        max_message_ttl_seconds = d.pop("max_message_ttl_seconds", UNSET)
         name = d.pop("name")
 
         channels = cast(list[str], d.pop("channels"))
@@ -175,8 +177,9 @@ class RealtimePublisherCredential:
 
         last_sequence = _parse_last_sequence(d.pop("last_sequence"))
 
+        max_message_ttl_seconds = d.pop("max_message_ttl_seconds", UNSET)
+
         realtime_publisher_credential = cls(
-            max_message_ttl_seconds=max_message_ttl_seconds,
             name=name,
             channels=channels,
             event_types=event_types,
@@ -193,6 +196,7 @@ class RealtimePublisherCredential:
             last_used_at=last_used_at,
             last_channel=last_channel,
             last_sequence=last_sequence,
+            max_message_ttl_seconds=max_message_ttl_seconds,
         )
 
         realtime_publisher_credential.additional_properties = d

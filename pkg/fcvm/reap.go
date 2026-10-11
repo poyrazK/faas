@@ -233,13 +233,21 @@ func looksLikeCacheBucket(name string) bool {
 	return true
 }
 
+// reapableTempPrefixes name vmmd-owned temp files whose instance id follows
+// the prefix: writable layer clones (layerCloneTempPattern) and snapshot
+// memory / materialised artifacts (snapshotTempPattern). Names without an id
+// (older binaries) never match and are left alone.
+var reapableTempPrefixes = []string{".faas-layer-", "faas-snap-"}
+
 func layerCloneInstanceID(name string) (string, bool) {
-	const prefix = ".faas-layer-"
-	if !strings.HasPrefix(name, prefix) || len(name) <= len(prefix)+36 || name[len(prefix)+36] != '-' {
-		return "", false
+	for _, prefix := range reapableTempPrefixes {
+		if !strings.HasPrefix(name, prefix) || len(name) <= len(prefix)+36 || name[len(prefix)+36] != '-' {
+			continue
+		}
+		id := name[len(prefix) : len(prefix)+36]
+		return id, looksLikeInstanceID(id)
 	}
-	id := name[len(prefix) : len(prefix)+36]
-	return id, looksLikeInstanceID(id)
+	return "", false
 }
 
 // ReapOrphanedJails sweeps JailRoot once and tears down every

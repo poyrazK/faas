@@ -27,6 +27,7 @@ type Automation struct {
 // automation is published. LegacySnapshot rows were seeded from the latest
 // publication present when revision history was introduced.
 type AutomationRevision struct {
+	CheckEvidence        json.RawMessage
 	AppID                string
 	Name                 string
 	Version              int64
@@ -49,6 +50,8 @@ func validAutomationRevisionListOptions(opts AutomationRevisionListOptions) bool
 }
 
 type AutomationMutation struct {
+	CheckReceipt     string
+	CheckEvidence    *api.AutomationCheckEvidence
 	Action           string
 	ExpectedVersion  int64
 	Draft            json.RawMessage
@@ -91,6 +94,7 @@ func copyAutomation(a Automation) Automation {
 
 func copyAutomationRevision(revision AutomationRevision) AutomationRevision {
 	revision.Definition = cloneWorkflowJSON(revision.Definition)
+	revision.CheckEvidence = cloneWorkflowJSON(revision.CheckEvidence)
 	return revision
 }
 
@@ -178,6 +182,9 @@ func mutateAutomation(appID, name string, mutation AutomationMutation, previous 
 		}
 		current.Draft, _ = json.Marshal(definition)
 	case "publish":
+		if mutation.CheckEvidence != nil && mutation.CheckEvidence.ServerVerified && mutation.CheckReceipt == "" {
+			return Automation{}, ErrAutomationInvalid
+		}
 		if previous == nil {
 			return Automation{}, ErrNotFound
 		}
@@ -189,6 +196,9 @@ func mutateAutomation(appID, name string, mutation AutomationMutation, previous 
 		}
 		var definition api.WorkflowSpec
 		if err := json.Unmarshal(current.Draft, &definition); err != nil {
+			return Automation{}, fmt.Errorf("%w: %w", ErrAutomationInvalid, err)
+		}
+		if err := mutation.CheckEvidence.Validate(definition, current.Version, time.Now()); err != nil {
 			return Automation{}, fmt.Errorf("%w: %w", ErrAutomationInvalid, err)
 		}
 		if _, err := api.ValidateWorkflowDAG(definition, plan); err != nil {

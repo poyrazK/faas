@@ -40,26 +40,32 @@ func TestDeploymentRuntimePort(t *testing.T) {
 
 func TestDeploymentScopedRuntimePortAndHealthMatchGuestManifest(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		runtime map[string]json.RawMessage
-		port    int
-		path    string
-		grpc    bool
-		service string
+		name                string
+		runtime             map[string]json.RawMessage
+		healthcheckOverride json.RawMessage
+		port                int
+		path                string
+		grpc                bool
+		service             string
 	}{
-		{"custom HTTP", map[string]json.RawMessage{"port": json.RawMessage(`8187`), "healthz": json.RawMessage(`"/scoped-ready"`)}, 8187, "/scoped-ready", false, ""},
-		{"explicit default and empty HTTP path", map[string]json.RawMessage{"port": json.RawMessage(`0`), "healthz": json.RawMessage(`""`)}, 0, "", false, ""},
-		{"scoped gRPC", map[string]json.RawMessage{"port": json.RawMessage(`8187`), "healthcheck": json.RawMessage(`{"grpc":{"port":8187,"service":"reviewed"}}`)}, 8187, "", true, "reviewed"},
+		{name: "custom HTTP", runtime: map[string]json.RawMessage{"port": json.RawMessage(`8187`), "healthz": json.RawMessage(`"/scoped-ready"`)},
+			healthcheckOverride: json.RawMessage(`{"path":"/inherited-ready"}`), port: 8187, path: "/scoped-ready"},
+		{name: "explicit default and empty HTTP path", runtime: map[string]json.RawMessage{"port": json.RawMessage(`0`), "healthz": json.RawMessage(`""`)},
+			healthcheckOverride: json.RawMessage(`{"path":"/inherited-ready"}`), port: 0, path: ""},
+		{name: "deployment gRPC override", runtime: map[string]json.RawMessage{"port": json.RawMessage(`8187`)},
+			healthcheckOverride: json.RawMessage(`{"grpc":{"port":8187,"service":"reviewed"}}`), port: 8187, path: "", grpc: true, service: "reviewed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			image := "registry.example/runtime@sha256:" + strings.Repeat("a", 64)
 			frozen := state.EnvironmentWorkloadRuntime{AppID: "app", AppType: state.AppTypeApp, Scope: "production", SourceID: "source", EnvironmentID: "environment", RevisionID: "revision", Generation: 1,
-				PlanHash: strings.Repeat("a", 64), Runtime: tc.runtime}
+				PlanHash: strings.Repeat("a", 64), Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: image}, Runtime: tc.runtime}
 			raw, err := json.Marshal(frozen)
 			if err != nil {
 				t.Fatal(err)
 			}
-			dep := state.Deployment{AppID: "app", Scope: "production", EnvironmentWorkloadRuntime: string(raw), OverridePort: 8787,
-				OverrideHealthcheck: json.RawMessage(`{"path":"/inherited-ready"}`)}
+			dep := state.Deployment{AppID: "app", Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: image,
+				EnvironmentWorkloadRuntime: string(raw), OverridePort: 8787,
+				OverrideHealthcheck: tc.healthcheckOverride}
 			guest, err := state.ApplyDeploymentRuntime(api.AppManifest{Port: 8787, Healthz: "/inherited-ready"}, dep)
 			if err != nil {
 				t.Fatal(err)

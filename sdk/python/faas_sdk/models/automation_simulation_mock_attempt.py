@@ -23,7 +23,7 @@ class AutomationSimulationMockAttempt:
 
     outcome: AutomationSimulationMockAttemptOutcome
     output: Any | Unset = UNSET
-    """Successful result; any JSON value, including null."""
+    """Successful action result or received event/callback payload; any JSON value, including null."""
     error: str | Unset = UNSET
     """Mocked transport or action error message used as failure.message."""
     http_status: int | Unset = UNSET

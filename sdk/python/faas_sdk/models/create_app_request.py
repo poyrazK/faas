@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
+    from ..models.tracing_config import TracingConfig
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
 
@@ -65,6 +66,10 @@ class CreateAppRequest:
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    tracing: TracingConfig | Unset = UNSET
+    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
+    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
+    OTel exporter are left untouched."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
     """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
@@ -216,6 +221,10 @@ class CreateAppRequest:
         profiling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profiling, Unset):
             profiling = self.profiling.to_dict()
+
+        tracing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tracing, Unset):
+            tracing = self.tracing.to_dict()
 
         type_: str | Unset = UNSET
         if not isinstance(self.type_, Unset):
@@ -387,6 +396,8 @@ class CreateAppRequest:
         )
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
+        if tracing is not UNSET:
+            field_dict["tracing"] = tracing
         if type_ is not UNSET:
             field_dict["type"] = type_
         if visibility is not UNSET:
@@ -504,6 +515,7 @@ class CreateAppRequest:
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
+        from ..models.tracing_config import TracingConfig
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
 
@@ -516,6 +528,13 @@ class CreateAppRequest:
             profiling = UNSET
         else:
             profiling = ProfilingConfig.from_dict(_profiling)
+
+        _tracing = d.pop("tracing", UNSET)
+        tracing: TracingConfig | Unset
+        if isinstance(_tracing, Unset):
+            tracing = UNSET
+        else:
+            tracing = TracingConfig.from_dict(_tracing)
 
         _type_ = d.pop("type", UNSET)
         type_: CreateAppRequestType | Unset
@@ -745,6 +764,7 @@ class CreateAppRequest:
         create_app_request = cls(
             slug=slug,
             profiling=profiling,
+            tracing=tracing,
             type_=type_,
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,

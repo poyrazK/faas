@@ -20,7 +20,9 @@ import (
 // classifyBuildFailure resolves the failure class for a non-zero build exit.
 // It prefers BuildDone.FailureClass (guest-init's classification) when
 // /build-done.json exists in the export, then falls back to the canonical
-// exit-code table (137→OOM, 124→Timeout, else UserError). The vocabulary
+// exit-code table (137→OOM, 124→Timeout, else UserError). Without a valid
+// guest completion marker, ordinary host exit codes are infrastructure failures:
+// Firecracker can exit 1 before it has evaluated any customer source. The vocabulary
 // here matches the canonical names used by pkg/state.FailureClass:
 // "FailureUserError" / "FailureInfra" / "FailureOOM" / "FailureTimeout".
 // builderd.go's ProcessOne translates these to the column-friendly
@@ -37,15 +39,25 @@ func classifyBuildFailure(exitCode int, exportDir string) (string, string, strin
 	done := filepath.Join(exportDir, "build-done.json")
 	if data, err := os.ReadFile(done); err == nil {
 		var bd api.BuildDone
-		if json.Unmarshal(data, &bd) == nil && bd.FailureClass != "" {
-			return bd.FailureClass, bd.FailureCode, bd.FailurePkg
+		if json.Unmarshal(data, &bd) == nil && bd.SchemaVersion == 1 && bd.BuildID != "" {
+			if bd.FailureClass != "" {
+				return bd.FailureClass, bd.FailureCode, bd.FailurePkg
+			}
+			return classifyGuestBuildExit(bd.ExitCode), "", ""
 		}
 	}
+	if exitCode == 137 || exitCode == 124 {
+		return classifyGuestBuildExit(exitCode), "", ""
+	}
+	return "FailureInfra", "", ""
+}
+
+func classifyGuestBuildExit(exitCode int) string {
 	switch {
 	case exitCode == 137:
-		return "FailureOOM", "", ""
+		return "FailureOOM"
 	case exitCode == 124:
-		return "FailureTimeout", "", ""
+		return "FailureTimeout"
 	case exitCode < 0:
 		// No exit status at all: the VM never ran to completion, so nothing
 		// about the customer's source has been evaluated yet. Blaming the user
@@ -53,8 +65,8 @@ func classifyBuildFailure(exitCode int, exportDir string) (string, string, strin
 		// which is exactly what the missing-digest-sidecar bug (#2577) did,
 		// reporting failure_class=user_error for "vm exit -1" after the spawn
 		// failed on a host path builderd resolved incorrectly.
-		return "FailureInfra", "", ""
+		return "FailureInfra"
 	default:
-		return "FailureUserError", "", ""
+		return "FailureUserError"
 	}
 }

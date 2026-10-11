@@ -43,9 +43,10 @@ func accountWebhookCLISubcommand() cliSub {
 func alertPresetCLISubcommand() cliSub {
 	return cliSub{Name: "preset", Short: "Browse or enable catalog alert presets", Subcommands: []cliSub{
 		{Name: "list", Short: "List the global alert preset catalog"},
-		{Name: "enable", Short: "Create an app alert from a preset; supply a webhook secret via stdin or --webhook-secret", Positionals: []string{"<preset-name>"}, Flags: []cliFlag{
-			{Name: "app", Short: "app slug", Value: "slug", Req: true},
-			{Name: "webhook-url", Short: "HTTPS webhook receiver URL", Value: "URL", Req: true},
+		{Name: "enable", Short: "Create an app alert from a preset or choose one interactively", Examples: []string{"gregale alerts preset enable --app my-api --interactive"}, Positionals: []string{"[<preset-name>]"}, Flags: []cliFlag{
+			{Name: "interactive", Short: "choose a preset, review its rule, and enter a hidden signing secret", Bool: true},
+			{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
+			{Name: "webhook-url", Short: "HTTPS webhook receiver URL (required unless interactive)", Value: "URL"},
 			{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin"},
 			{Name: "webhook-secret", Short: "signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
 			{Name: "action", Short: "alert action (default webhook)", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},

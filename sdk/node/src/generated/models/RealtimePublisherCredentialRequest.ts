@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type RealtimePublisherCredentialRequest = {
-  /** Message TTL cap; zero is uncapped. Positive caps require a positive message TTL at or below the cap. */
+  /**
+   * Message TTL cap; zero is uncapped. Positive caps require a positive message TTL at or below the cap.
+   */
   max_message_ttl_seconds?: number;
   name: string;
   channels: Array<string>;

@@ -49,7 +49,7 @@ func mcpCLICommand() cliCommand {
 		}
 	}
 	return cliCommand{Name: "mcp", DocSlug: "mcp", Short: "Scaffold, deploy and verify stateless MCP servers", Subcommands: []cliSub{
-		{Name: "init", Short: "Create the Node MCP starter", Flags: []cliFlag{{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true}}, Examples: []string{"gregale mcp init --path ./my-mcp"}},
+		{Name: "init", Short: "Create a Node, Go, or Python MCP starter", Flags: []cliFlag{{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true}, {Name: "language", Short: "starter language (default node)", Value: "LANGUAGE", ClosedSet: []string{"node", "go", "python"}}}, Examples: []string{"gregale mcp init --path ./my-mcp", "gregale mcp init --language go --path ./my-mcp-go", "gregale mcp init --language python --path ./my-mcp-python"}},
 		{Name: "deploy", Short: "Deploy the worktree, enable streaming and verify MCP discovery", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "profile", Short: "app resource profile", Value: "NAME", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --profile small"}},
 		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
@@ -70,7 +70,12 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
-		{Name: "tasks", Short: "Configure and inspect durable task worker scaling", Subcommands: []cliSub{
+		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
+			{Name: "release", Short: "Deploy and resume a gated web and worker release", Positionals: []string{"[run|status|recover|restore|quarantine|retire]"}, Flags: []cliFlag{
+				{Name: "resume", Short: "resume a healthy failed rollout (recover only)"},
+				{Name: "plan", Short: "native deployment plan JSON", Value: "PATH", Req: true},
+				{Name: "state", Short: "persistent release journal outside source directories", Value: "PATH", Req: true},
+			}, Examples: []string{"gregale mcp tasks release --plan release.json --state ./release-state.json", "gregale mcp tasks release status --plan release.json --state ./release-state.json"}},
 			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
 				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
 				{Name: "min", Short: "minimum replicas (default 1; use 0 with an always-on observer)", Value: "N"},

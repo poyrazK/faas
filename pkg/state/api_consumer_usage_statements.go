@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +19,9 @@ type APIConsumerUsageStatementStore interface {
 	CreateAPIConsumerUsageStatement(context.Context, APIConsumerUsageStatementInput) (APIConsumerUsageStatement, bool, error)
 	GetAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, error)
 	ListAPIConsumerUsageStatements(context.Context, string, string, string) ([]APIConsumerUsageStatement, error)
+	// ListAPIConsumerUsageStatementRevisions returns every revision of one
+	// exact period, oldest first.
+	ListAPIConsumerUsageStatementRevisions(ctx context.Context, accountID, appID, consumerID string, start, end time.Time) ([]APIConsumerUsageStatement, error)
 	FinalizeAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, bool, error)
 }
 
@@ -62,6 +66,12 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 	if input.PeriodStart.IsZero() || input.PeriodEnd.IsZero() {
 		return fmt.Errorf("consumer usage statement: period_start and period_end are required")
 	}
+	if input.Revision < 1 {
+		return fmt.Errorf("consumer usage statement: revision must be positive")
+	}
+	if (input.Revision == 1) != (input.PriorStatus == "") {
+		return fmt.Errorf("consumer usage statement: only revision 1 has no prior revision")
+	}
 	if !input.PeriodStart.Equal(input.PeriodStart.UTC().Truncate(time.Minute)) ||
 		!input.PeriodEnd.Equal(input.PeriodEnd.UTC().Truncate(time.Minute)) {
 		return fmt.Errorf("consumer usage statement: period bounds must be UTC minutes")
@@ -86,11 +96,21 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 		if bucket.WindowStart.Before(input.PeriodStart) || !bucket.WindowStart.Before(input.PeriodEnd) {
 			return fmt.Errorf("consumer usage statement: bucket %d is outside the period", i)
 		}
-		if bucket.BillableUnits < 0 || bucket.PriceMillicentsPerUnit < 0 || bucket.AmountMillicents < 0 {
+		tiered := bucket.TierUnits != nil
+		if bucket.BillableUnits < 0 || bucket.PriceMillicentsPerUnit < 0 || (bucket.AmountMillicents < 0 && !tiered) {
 			return fmt.Errorf("consumer usage statement: bucket %d values must be non-negative", i)
 		}
+		if tiered {
+			if err := validateTierUnits(bucket); err != nil {
+				return fmt.Errorf("consumer usage statement: bucket %d: %w", i, err)
+			}
+		}
+		if bucket.ChargedUnits != nil && *bucket.ChargedUnits < 0 {
+			return fmt.Errorf("consumer usage statement: bucket %d charged_units must be non-negative", i)
+		}
 		if bucket.RateCardID == "" {
-			if bucket.Currency != "" || bucket.PriceMillicentsPerUnit != 0 || bucket.AmountMillicents != 0 {
+			if bucket.Currency != "" || bucket.PriceMillicentsPerUnit != 0 || bucket.AmountMillicents != 0 ||
+				(bucket.ChargedUnits != nil && *bucket.ChargedUnits != 0) {
 				return fmt.Errorf("consumer usage statement: bucket %d unpriced bucket has pricing fields", i)
 			}
 			if unpriced > maxAPIConsumerUsageStatementInt64-bucket.BillableUnits {
@@ -107,8 +127,20 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 			if input.Currency == "" || bucket.Currency != input.Currency {
 				return fmt.Errorf("consumer usage statement: bucket %d currency does not match statement currency", i)
 			}
+			charged := bucket.Charged()
+			if bucket.PriceMillicentsPerUnit != 0 && charged > maxAPIConsumerUsageStatementInt64/bucket.PriceMillicentsPerUnit {
+				return fmt.Errorf("consumer usage statement: bucket %d amount overflow", i)
+			}
+			// A tiered bucket's amount is the sum over ladder steps, which
+			// the store cannot recompute without the card; the planner
+			// derives it, and TierUnits keeps it auditable.
+			if !tiered && bucket.AmountMillicents != charged*bucket.PriceMillicentsPerUnit {
+				return fmt.Errorf("consumer usage statement: bucket %d amount must equal charged units times price", i)
+			}
 		}
-		if units > maxAPIConsumerUsageStatementInt64-bucket.BillableUnits || amount > maxAPIConsumerUsageStatementInt64-bucket.AmountMillicents {
+		if units > maxAPIConsumerUsageStatementInt64-bucket.BillableUnits ||
+			(bucket.AmountMillicents > 0 && amount > maxAPIConsumerUsageStatementInt64-bucket.AmountMillicents) ||
+			(bucket.AmountMillicents < 0 && amount < -maxAPIConsumerUsageStatementInt64-bucket.AmountMillicents) {
 			return fmt.Errorf("consumer usage statement: bucket totals overflow")
 		}
 		units += bucket.BillableUnits
@@ -122,6 +154,13 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 
 func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APIConsumerUsageStatement {
 	statement.Buckets = append([]APIConsumerUsageStatementBucket(nil), statement.Buckets...)
+	for i := range statement.Buckets {
+		statement.Buckets[i].TierUnits = slices.Clone(statement.Buckets[i].TierUnits)
+		if charged := statement.Buckets[i].ChargedUnits; charged != nil {
+			value := *charged
+			statement.Buckets[i].ChargedUnits = &value
+		}
+	}
 	if statement.FinalizedAt != nil {
 		finalizedAt := *statement.FinalizedAt
 		statement.FinalizedAt = &finalizedAt
@@ -131,6 +170,46 @@ func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APICons
 
 func cloneAPIConsumerUsageStatementHandoff(handoff APIConsumerUsageStatementHandoff) APIConsumerUsageStatementHandoff {
 	return handoff
+}
+
+// validateTierUnits checks a tiered bucket's split: priced, bounded by the
+// ladder size, and summing to the bucket's units. Entries may be negative
+// only in adjustments, where units moved between steps.
+func validateTierUnits(bucket APIConsumerUsageStatementBucket) error {
+	if bucket.RateCardID == "" || len(bucket.TierUnits) < 2 || len(bucket.TierUnits) > MaxAPIConsumerRateCardTiers {
+		return fmt.Errorf("tier_units needs a tiered rate card and 2 to %d steps", MaxAPIConsumerRateCardTiers)
+	}
+	var sum int64
+	for _, units := range bucket.TierUnits {
+		if (units > 0 && sum > maxAPIConsumerUsageStatementInt64-units) || (units < 0 && sum < -maxAPIConsumerUsageStatementInt64-units) {
+			return fmt.Errorf("tier_units overflow")
+		}
+		sum += units
+	}
+	if sum != bucket.BillableUnits {
+		return fmt.Errorf("tier_units must sum to billable_units")
+	}
+	return nil
+}
+
+// sameAPIConsumerUsageStatementSnapshot reports whether a draft already holds
+// exactly the planned quote. Replaying an unchanged plan is idempotent; only a
+// changed quote supersedes the draft.
+func sameAPIConsumerUsageStatementSnapshot(draft APIConsumerUsageStatement, input APIConsumerUsageStatementInput) bool {
+	if draft.Currency != input.Currency || draft.BillableUnits != input.BillableUnits ||
+		draft.UnpricedUnits != input.UnpricedUnits || draft.AmountMillicents != input.AmountMillicents ||
+		draft.Priced != input.Priced || len(draft.Buckets) != len(input.Buckets) {
+		return false
+	}
+	for i := range draft.Buckets {
+		a, b := draft.Buckets[i], input.Buckets[i]
+		if !a.WindowStart.Equal(b.WindowStart) || a.BillableUnits != b.BillableUnits || a.Charged() != b.Charged() || a.RateCardID != b.RateCardID ||
+			a.Currency != b.Currency || a.PriceMillicentsPerUnit != b.PriceMillicentsPerUnit || a.AmountMillicents != b.AmountMillicents ||
+			!slices.Equal(a.TierUnits, b.TierUnits) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeStatementCurrency(currency string) string {

@@ -23,6 +23,8 @@ func TestConnectionProfileShellCompletion(t *testing.T) {
 			t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
 			t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+			// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+			t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 			for _, name := range []string{"default", "staging"} {
 				path := filepath.Join(dir, name+".json")
 				data := fmt.Sprintf(`{"apps":[{"slug":%q}]}`, name+"-app")

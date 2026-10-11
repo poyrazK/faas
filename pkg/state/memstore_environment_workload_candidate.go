@@ -2,6 +2,9 @@ package state
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -25,14 +28,36 @@ func (m *MemStore) environmentCandidateInputsLocked(lease EnvironmentGitOpsLease
 		return nil, gitOpsIntentSnapshot{}, err
 	}
 	plan, err := environmentGitOpsPlan(memory.source, revision, desired, observed, false)
-	if err != nil || plan.Hash != reviewed.Hash {
-		return nil, gitOpsIntentSnapshot{}, ErrConflict
+	if err != nil {
+		return nil, gitOpsIntentSnapshot{}, err
 	}
-	inputs, err := workloadCandidateInputs(memory.source, revision, desired, snapshot, plan)
+	if plan.Hash != reviewed.Hash {
+		return nil, gitOpsIntentSnapshot{}, fmt.Errorf("%w: environment candidate plan changed after review (current=%s %s; reviewed=%s %s)",
+			ErrConflict, plan.Hash, gitOpsPlanChangeSummary(plan), reviewed.Hash, gitOpsPlanChangeSummary(reviewed))
+	}
+	var appliedSteps []EnvironmentGitOpsStep
+	for _, run := range memory.runs {
+		if run.SourceID != memory.source.ID || run.RevisionID != revision.ID || run.Generation != memory.source.Generation {
+			continue
+		}
+		var steps []EnvironmentGitOpsStep
+		if json.Unmarshal(run.Steps, &steps) == nil {
+			appliedSteps = append(appliedSteps, steps...)
+		}
+	}
+	inputs, err := workloadCandidateInputs(memory.source, revision, desired, snapshot, plan, appliedSteps)
 	if err != nil {
 		return nil, gitOpsIntentSnapshot{}, err
 	}
 	return inputs, snapshot, nil
+}
+
+func gitOpsPlanChangeSummary(plan environmentsync.Plan) string {
+	changes := make([]string, 0, len(plan.Changes))
+	for _, change := range plan.Changes {
+		changes = append(changes, change.Resource+"#"+change.Path+"="+change.Action)
+	}
+	return strings.Join(changes, ",")
 }
 
 func (m *MemStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error) {
@@ -46,10 +71,17 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 	if err != nil {
 		return nil, err
 	}
+	if len(inputs) == 0 {
+		return []EnvironmentWorkloadCandidate{}, nil
+	}
 	// Validate every missing source before publishing any in-memory row.
 	buildIDs := map[string]bool{}
 	for i, input := range inputs {
-		if m.environmentCandidateLocked(candidateFrozenInputs(input)).ID != "" {
+		candidate, err := m.environmentCandidateLocked(candidateFrozenInputs(input))
+		if err != nil {
+			return nil, err
+		}
+		if candidate.ID != "" {
 			continue
 		}
 		inputs[i], err = attachCandidateSource(input, artifacts, snapshot.Plan)
@@ -68,7 +100,10 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 	prospective := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
 	for i, input := range inputs {
 		frozen := candidateFrozenInputs(input)
-		candidate := m.environmentCandidateLocked(frozen)
+		candidate, err := m.environmentCandidateLocked(frozen)
+		if err != nil {
+			return nil, err
+		}
 		if candidate.ID == "" {
 			inputs[i].ID = newID()
 			candidate = inputs[i]
@@ -83,10 +118,14 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 	out := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
 	for _, input := range inputs {
 		frozen := candidateFrozenInputs(input)
-		candidate := m.environmentCandidateLocked(frozen)
+		candidate, err := m.environmentCandidateLocked(frozen)
+		if err != nil {
+			return nil, err
+		}
 		if candidate.ID == "" {
 			// All fallible validation was completed before writing any row.
 			input.Status, input.CreatedAt = DeployPending, time.Now().UTC()
+			input.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(true)
 			input.Revision = m.nextDeploymentRevisionLocked(input.AppID)
 			input.TrafficPercentExplicit = true
 			input.CanaryPreset, input.RolloutState = "none", "pending"
@@ -113,14 +152,18 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 	return out, nil
 }
 
-func (m *MemStore) environmentCandidateLocked(frozen EnvironmentWorkloadRuntime) Deployment {
+func (m *MemStore) environmentCandidateLocked(frozen EnvironmentWorkloadRuntime) (Deployment, error) {
 	for _, dep := range m.deployments {
-		prior, err := dep.ScopedWorkloadRuntime()
-		if err == nil && prior != nil && prior.SourceID == frozen.SourceID && prior.Generation == frozen.Generation && prior.Resource == frozen.Resource && prior.PlanHash == frozen.PlanHash {
-			return dep
+		var prior EnvironmentWorkloadRuntime
+		if json.Unmarshal([]byte(dep.EnvironmentWorkloadRuntime), &prior) != nil || prior.SourceID != frozen.SourceID || prior.Generation != frozen.Generation || prior.Resource != frozen.Resource || prior.PlanHash != frozen.PlanHash {
+			continue
 		}
+		if _, err := dep.ScopedWorkloadRuntime(); err != nil || !frozenCandidateInputsMatch([]byte(dep.EnvironmentWorkloadRuntime), frozen) {
+			return Deployment{}, ErrConflict
+		}
+		return dep, nil
 	}
-	return Deployment{}
+	return Deployment{}, nil
 }
 
 func (m *MemStore) EnvironmentGitOpsSourceRequests(_ context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadSourceRequest, error) {
@@ -132,7 +175,11 @@ func (m *MemStore) EnvironmentGitOpsSourceRequests(_ context.Context, lease Envi
 	}
 	var requests []EnvironmentWorkloadSourceRequest
 	for _, input := range inputs {
-		if input.Kind == DeploymentKindImage || m.environmentCandidateLocked(candidateFrozenInputs(input)).ID != "" {
+		candidate, err := m.environmentCandidateLocked(candidateFrozenInputs(input))
+		if err != nil {
+			return nil, err
+		}
+		if input.Kind == DeploymentKindImage || candidate.ID != "" {
 			continue
 		}
 		request, err := sourceRequest(input)

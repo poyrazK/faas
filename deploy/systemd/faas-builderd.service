@@ -17,6 +17,7 @@ WatchdogSec=300s
 Slice=faas-cp.slice
 MemoryMax=512M
 EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/secrets/builderd/builderd.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/runtime-bases.env
 EnvironmentFile=-/etc/faas/otel.env

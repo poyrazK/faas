@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ManagedRealtimePrincipalSendResponse")
 class ManagedRealtimePrincipalSendResponse:
     """Principal send outcome including fleet queueing and retained notification acceptance."""
 
+    delivery_expires_at: datetime.datetime | Unset = UNSET
+    """Delivery deadline; independent of notification fallback and retention."""
     message_id: str | Unset = UNSET
     sequence: int | Unset = UNSET
     durable: bool | Unset = UNSET
@@ -33,10 +35,13 @@ class ManagedRealtimePrincipalSendResponse:
     acknowledged: int | Unset = UNSET
     pending: int | Unset = UNSET
     timed_out: int | Unset = UNSET
-    delivery_expires_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        delivery_expires_at: str | Unset = UNSET
+        if not isinstance(self.delivery_expires_at, Unset):
+            delivery_expires_at = self.delivery_expires_at.isoformat()
+
         message_id = self.message_id
 
         sequence = self.sequence
@@ -76,6 +81,8 @@ class ManagedRealtimePrincipalSendResponse:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if delivery_expires_at is not UNSET:
+            field_dict["delivery_expires_at"] = delivery_expires_at
         if message_id is not UNSET:
             field_dict["message_id"] = message_id
         if sequence is not UNSET:
@@ -111,16 +118,17 @@ class ManagedRealtimePrincipalSendResponse:
         if timed_out is not UNSET:
             field_dict["timed_out"] = timed_out
 
-        if not isinstance(self.delivery_expires_at, Unset):
-            field_dict["delivery_expires_at"] = self.delivery_expires_at.isoformat()
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        delivery_expires_at = d.pop("delivery_expires_at", UNSET)
-        if not isinstance(delivery_expires_at, Unset):
-            delivery_expires_at = datetime.datetime.fromisoformat(delivery_expires_at)
+        _delivery_expires_at = d.pop("delivery_expires_at", UNSET)
+        delivery_expires_at: datetime.datetime | Unset
+        if isinstance(_delivery_expires_at, Unset):
+            delivery_expires_at = UNSET
+        else:
+            delivery_expires_at = datetime.datetime.fromisoformat(_delivery_expires_at)
 
         message_id = d.pop("message_id", UNSET)
 

@@ -1,0 +1,1707 @@
+package apidserver
+
+// G6 handler tests for the four account self-service endpoints
+// (spec §17 G6, ADR-021). Uses the package-level `setup(t, plan)`
+// helper from server_test.go so each subtest gets a fresh MemStore +
+// bearer key + ephemeral session manager.
+//
+// Coverage:
+//
+//   - GET  /v1/account/export     full bundle, ?include_secrets toggles
+//   - GET  /v1/account/export     redaction invariant (plaintext never
+//                                 appears in the bundle)
+//   - DELETE /v1/account          happy path + idempotency
+//   - POST /v1/account/restore    happy path + 409 past grace
+//   - POST /v1/account/restore    409 when not pending
+//   - GET  /v1/account/dpa        public, no auth, returns text/markdown
+//   - /v1/account/* carve-out     reachable in deleted_pending
+//   - non-/v1/account/*           still 402 in deleted_pending
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"filippo.io/age"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/grace"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+// withAccountTestRecipient wires a fresh X25519 recipient into
+// setSecretRecipient so PUT /v1/apps/{slug}/secrets/* can seal during
+// the G6 export tests. Named to avoid clashing with the equivalent
+// helper in handlers_secrets_test.go (different filename, but same
+// package main).
+//
+// ADR-089 PR-A appended a nullable kid column to app_secrets; PR-C's
+// sealAndPersist path now stamps that kid alongside the ciphertext,
+// so the matching identity must also be installed via mfaIdentities —
+// otherwise the PUT 503s "host age identities not loaded". The
+// recipient + identity pair is internally consistent (same age key).
+//
+// ADR-117 PR-C widens sealAndPersist with a value_hash HMAC over the
+// plaintext, keyed by hostHMACKey(). Without an installed HMAC key,
+// the PUT refuses to seal ("host hmac key not loaded — refusing to
+// seal") which trips the G6 export tests' PUT-rotate arm. Install a
+// fresh 32-byte random key alongside the recipient — mirrors
+// withTestRecipient in handlers_secrets_test.go.
+func withAccountTestRecipient(t *testing.T) {
+	t.Helper()
+	prevRcp := setSecretRecipient
+	prevIdent := mfaIdentities
+	prevHMAC := hostHMACKey
+	t.Cleanup(func() {
+		setSecretRecipient = prevRcp
+		mfaIdentities = prevIdent
+		hostHMACKey = prevHMAC
+	})
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("GenerateX25519Identity: %v", err)
+	}
+	setSecretRecipient = func() *age.X25519Recipient { return id.Recipient() }
+	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{id} }
+	hmacKey := make([]byte, 32)
+	if _, err := rand.Read(hmacKey); err != nil {
+		t.Fatalf("rand.Read for host HMAC key: %v", err)
+	}
+	hostHMACKey = func() []byte { return hmacKey }
+}
+
+// seedOneApp creates a single app the handler tests can hang
+// deployments + secrets + crons off.
+func seedOneApp(t *testing.T, e testEnv, slug string) state.App {
+	t.Helper()
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("seed app: %d %s", rec.Code, rec.Body)
+	}
+	var out state.App
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode app: %v", err)
+	}
+	return out
+}
+
+// TestExportAccount_FullBundle creates an app + a secret, then asks
+// for the export bundle and asserts every slice is present.
+func TestExportAccount_FullBundle(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "exp-app")
+
+	// Upsert a secret so the ciphertext slice has one row.
+	rec := e.do(t, "PUT", "/v1/apps/exp-app/secrets/STRIPE_KEY",
+		api.PutAppSecretRequest{Value: "sk_test_export"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT secret: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, `attachment; filename="faas-account-`) {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bundle.Account.Email != "hobby@example.com" {
+		t.Errorf("account.email = %q", bundle.Account.Email)
+	}
+	if len(bundle.Apps) != 1 || bundle.Apps[0].Slug != "exp-app" {
+		t.Errorf("apps = %+v", bundle.Apps)
+	}
+	if len(bundle.APIKeys) != 1 {
+		t.Errorf("api_keys = %+v", bundle.APIKeys)
+	}
+	if len(bundle.AppSecrets) != 1 {
+		t.Errorf("app_secrets = %+v", bundle.AppSecrets)
+	}
+	if bundle.AppSecrets[0].Key != "STRIPE_KEY" {
+		t.Errorf("app_secrets[0].key = %q", bundle.AppSecrets[0].Key)
+	}
+}
+
+func TestExportAccount_IncludesModernOrgResources(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	org := seedSharedOrgWithOwner(t, e, "export-org", "Export Org", api.PlanScale)
+	ownerID := e.acct.ID
+	if _, err := e.store.CreateOrgInvitation(context.Background(), state.OrgInvitation{
+		OrgID: org.ID, Email: "invitee@example.com", Role: state.OrgRoleDeveloper,
+		TokenHash: []byte("export-invitation-token-hash"), ExpiresAt: time.Now().Add(time.Hour),
+		InvitedByAccountID: &ownerID,
+	}); err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	if _, err := e.store.CreateOrgAPIKey(context.Background(), org.ID, e.acct.ID,
+		[]byte("export-org-key-hash"), "export key", []string{"apps:read"}, nil); err != nil {
+		t.Fatalf("create org key: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export?include_secrets=false", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body.String())
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.SchemaVersion != 2 {
+		t.Errorf("schema_version = %d, want 2", bundle.SchemaVersion)
+	}
+	if len(bundle.Organizations) != 1 || bundle.Organizations[0].ID != org.ID {
+		t.Errorf("organizations = %+v", bundle.Organizations)
+	}
+	if len(bundle.OrgMemberships) != 1 || bundle.OrgMemberships[0].OrgID != org.ID {
+		t.Errorf("org_memberships = %+v", bundle.OrgMemberships)
+	}
+	if len(bundle.OrgInvitations) != 1 || bundle.OrgInvitations[0].Email != "invitee@example.com" {
+		t.Errorf("org_invitations = %+v", bundle.OrgInvitations)
+	}
+	if len(bundle.OrgAPIKeys) != 1 || bundle.OrgAPIKeys[0].OrgID != org.ID || bundle.OrgAPIKeys[0].Plaintext != "" {
+		t.Errorf("org_api_keys = %+v", bundle.OrgAPIKeys)
+	}
+}
+
+// TestExportAccount_RedactionInvariant verifies that plaintext never
+// appears in the bundle — the ciphertext row contains a base64 blob
+// that does NOT decode to the original VALUE. (The plaintext itself
+// is never stored per ADR-020, so the round-trip is provably absent.)
+func TestExportAccount_RedactionInvariant(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "redact-app")
+	plaintext := "sk_live_DO_NOT_LEAK_12345"
+	e.do(t, "PUT", "/v1/apps/redact-app/secrets/STRIPE_KEY",
+		api.PutAppSecretRequest{Value: plaintext}, nil)
+
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), plaintext) {
+		t.Fatalf("PLAIN LEAK: plaintext in export body:\n%s", rec.Body.String())
+	}
+}
+
+// TestExportAccount_NoSecretsToggle drops the ciphertext slice when
+// the caller passes ?include_secrets=false.
+func TestExportAccount_NoSecretsToggle(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "no-secrets-app")
+	e.do(t, "PUT", "/v1/apps/no-secrets-app/secrets/STRIPE_KEY",
+		api.PutAppSecretRequest{Value: "x"}, nil)
+
+	rec := e.do(t, "GET", "/v1/account/export?include_secrets=false", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &bundle)
+	if len(bundle.AppSecrets) != 0 {
+		t.Errorf("app_secrets = %+v, want empty (include_secrets=false)", bundle.AppSecrets)
+	}
+}
+
+// TestDeleteAccount_HappyPath schedules the account and asserts the
+// envelope: status=deleted_pending, scheduled_at + restore_until are
+// RFC 3339, restore_until = scheduled_at + 30d.
+func TestDeleteAccount_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "DELETE", "/v1/account", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	var env api.AccountDeletionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Status != string(state.AccountDeletedPending) {
+		t.Errorf("status = %q", env.Status)
+	}
+	scheduled, err := time.Parse(time.RFC3339, env.ScheduledAt)
+	if err != nil {
+		t.Fatalf("scheduled_at: %v", err)
+	}
+	restore, err := time.Parse(time.RFC3339, env.RestoreUntil)
+	if err != nil {
+		t.Fatalf("restore_until: %v", err)
+	}
+	if delta := restore.Sub(scheduled); delta != 30*24*time.Hour {
+		t.Errorf("restore_until - scheduled_at = %v, want 30d", delta)
+	}
+}
+
+// TestDeleteAccount_Idempotent confirms a second DELETE while already
+// pending returns the same envelope without re-stamping the timestamp.
+func TestDeleteAccount_Idempotent(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	first := e.do(t, "DELETE", "/v1/account", nil, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first delete: %d %s", first.Code, first.Body)
+	}
+	var firstEnv api.AccountDeletionResponse
+	_ = json.Unmarshal(first.Body.Bytes(), &firstEnv)
+	// Sleep briefly so any re-stamp would be detectable.
+	time.Sleep(20 * time.Millisecond)
+	second := e.do(t, "DELETE", "/v1/account", nil, nil)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second delete: %d %s", second.Code, second.Body)
+	}
+	var secondEnv api.AccountDeletionResponse
+	_ = json.Unmarshal(second.Body.Bytes(), &secondEnv)
+	if firstEnv.ScheduledAt != secondEnv.ScheduledAt {
+		t.Errorf("idempotent re-DELETE changed scheduled_at: %v -> %v",
+			firstEnv.ScheduledAt, secondEnv.ScheduledAt)
+	}
+}
+
+// TestRestoreAccount_HappyPath schedules then restores inside the
+// grace window.
+func TestRestoreAccount_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	if rec := e.do(t, "DELETE", "/v1/account", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	rec := e.do(t, "POST", "/v1/account/restore", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore: %d %s", rec.Code, rec.Body)
+	}
+	var acct api.AccountResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &acct); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if acct.Status != string(state.AccountActive) {
+		t.Errorf("status = %q, want active", acct.Status)
+	}
+}
+
+// TestRestoreAccount_NotPending409 restores an account that's NOT in
+// pending — should be 409 account_not_restorable (per D3).
+func TestRestoreAccount_NotPending409(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "POST", "/v1/account/restore", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeAccountNotRestorable)
+}
+
+// TestDPATemplate_PublicNoAuth — handler returns 503 when the DPA path
+// is unset. The endpoint is mounted without s.auth, so a missing file
+// must surface as a problem document (not a 401 / silent 200).
+func TestDPATemplate_PublicNoAuth(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/account/dpa", nil)
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 with no DPA configured, got %d %s", rec.Code, rec.Body)
+	}
+}
+
+// TestDPATemplate_PublicServesFile — same shape but with the path
+// configured via newServerWithDeps. The DPA is reachable without any
+// auth header (spec §17 G6).
+func TestDPATemplate_PublicServesFile(t *testing.T) {
+	store := state.NewMemStore()
+	_, err := store.CreateAccount(context.Background(), "dpa@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	dpaPath := filepath.Join(t.TempDir(), "dpa.md")
+	if err := os.WriteFile(dpaPath, []byte("# Data Processing Addendum"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	srv := newServerWithDeps(store,
+		nil,           // log (filled by handler if nil)
+		"example.com", // domain
+		nil,           // notif
+		"",            // stripe secret
+		nil,           // mailer
+		nil,           // githubd
+		nil,           // sessions → ephemeral
+		nil,           // broadcaster
+		0,             // loginTTL → default
+		dpaPath,       // DPA path
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/account/dpa", nil)
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "Data Processing Addendum") {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+// TestAuthCarveOut_ExportDuringGrace: a customer in deleted_pending
+// must be able to take a final export. D7 — every other route still
+// 402s. Both checks in one test so the matrix is captured.
+func TestAuthCarveOut_ExportDuringGrace(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	if rec := e.do(t, "DELETE", "/v1/account", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("schedule: %d %s", rec.Code, rec.Body)
+	}
+
+	// Allowed during grace: /v1/account/export.
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Errorf("export during grace: %d %s", rec.Code, rec.Body)
+	}
+
+	// Allowed during grace: POST /v1/account/restore.
+	rec = e.do(t, "POST", "/v1/account/restore", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Errorf("restore during grace: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// TestAuthCarveOut_NonAccountPathStill402 — once the customer is back
+// in deleted_pending, /v1/apps is still gated. Catches a regression
+// where the carve-out widens by accident.
+func TestAuthCarveOut_NonAccountPathStill402(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	seedOneApp(t, e, "live-app")
+	// Park the app under deletion-pending: but first flip into deleted_pending
+	// by hand, then re-attempt to list the app. The cleanest way: delete the
+	// account into pending, then re-derive state.
+	if rec := e.do(t, "DELETE", "/v1/account", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("schedule: %d %s", rec.Code, rec.Body)
+	}
+	// Restore flips status back to active — we DON'T want that. Drive
+	// the status directly via the store so we stay in deleted_pending.
+	acct := e.acct
+	if err := e.store.UpdateAccountStatus(context.Background(), acct.ID, state.AccountDeletedPending); err != nil {
+		t.Fatalf("force pending: %v", err)
+	}
+	rec := e.do(t, "GET", "/v1/apps", nil, nil)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Errorf("non-account path during grace: %d, want 402 %s", rec.Code, rec.Body)
+	}
+}
+
+// TestExportAccount_CiphertextIsBase64 sanity-checks the wire encoding
+// for app_secrets.ciphertext so a future "let's change to hex" change
+// doesn't slip through review.
+func TestExportAccount_CiphertextIsBase64(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "b64-app")
+	e.do(t, "PUT", "/v1/apps/b64-app/secrets/STRIPE_KEY",
+		api.PutAppSecretRequest{Value: "x"}, nil)
+
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	var bundle api.AccountExportResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &bundle)
+	if len(bundle.AppSecrets) != 1 {
+		t.Fatalf("app_secrets = %+v", bundle.AppSecrets)
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(bundle.AppSecrets[0].Ciphertext); err != nil {
+		t.Errorf("ciphertext not base64 url-encoded: %q (%v)", bundle.AppSecrets[0].Ciphertext, err)
+	}
+}
+
+// spyNotifier records every Notify call. Differs from
+// recordingNotifier (handlers_events_test.go) which only feeds the
+// Subscribe channel — this one asserts the producer side, which is
+// what the G6 closure PR changed.
+type spyNotifier struct {
+	mu    sync.Mutex
+	calls []db.Notification
+}
+
+func (n *spyNotifier) Notify(_ context.Context, channel, payload string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, db.Notification{Channel: channel, Payload: payload})
+	return nil
+}
+func (n *spyNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notification, func(), error) {
+	ch := make(chan db.Notification)
+	close(ch)
+	return ch, func() {}, nil
+}
+func (n *spyNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) bool, _ time.Duration) (string, error) {
+	// spyNotifier is used by tests that don't exercise long-poll
+	// semantics; return ErrWaitTimeout so a queueReceive-style call
+	// degrades to a clean 204 instead of hanging.
+	return "", db.ErrWaitTimeout
+}
+func (n *spyNotifier) snapshot() []db.Notification {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]db.Notification, len(n.calls))
+	copy(out, n.calls)
+	return out
+}
+
+// recordingMailer captures every Message Send() so tests can assert
+// the producer side without pulling a real mail.Sender wire-up.
+// Tests across the package use the same instance; sync.Mutex makes
+// the access safe even if a goroutine elsewhere races.
+type recordingMailer struct {
+	mu      sync.Mutex
+	calls   []Message
+	sendErr error // optional: set to force the sender to return an error
+}
+
+func (m *recordingMailer) Send(_ context.Context, msg Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, msg)
+	return m.sendErr
+}
+func (m *recordingMailer) snapshot() []Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Message, len(m.calls))
+	copy(out, m.calls)
+	return out
+}
+
+// TestScheduleDeletion_EmitsAccountDeletionPending is the regression
+// test for the Bug 2 fix (PR #83 review). Before the fix, customer-
+// initiated DELETE updated the DB row + sent email but never emitted
+// pg_notify on the account_deletion_pending channel, so the schedd
+// subscriber documented at pkg/db/notify.go never received the event.
+// This test wires a spyNotifier into the server, fires DELETE
+// /v1/account, and asserts exactly one Notify call landed on the
+// channel with the documented payload shape (account_id,
+// scheduled_at, restore_until).
+func TestScheduleDeletion_EmitsAccountDeletionPending(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "sched-notif@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	notif := &spyNotifier{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServerWithDeps(store, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "")
+
+	pt, hash, _ := api.GenerateAPIKey()
+	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "test", api.ScopesAdminOnly); err != nil {
+		t.Fatalf("CreateAPIKey: %v", err)
+	}
+
+	req := httptest.NewRequest("DELETE", "/v1/account", nil)
+	req.Header.Set("Authorization", "Bearer "+pt)
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /v1/account = %d %s", rec.Code, rec.Body)
+	}
+
+	calls := notif.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("got %d Notify calls, want 1", len(calls))
+	}
+	if calls[0].Channel != db.NotifyAccountDeletionPending {
+		t.Errorf("channel = %q, want %q", calls[0].Channel, db.NotifyAccountDeletionPending)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(calls[0].Payload), &payload); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	// Payload contract per pkg/db/notify.go: account_id, scheduled_at,
+	// restore_until. assertKeysArePresent avoids being brittle if a
+	// future ADR adds a field.
+	for _, k := range []string{"account_id", "scheduled_at", "restore_until"} {
+		if _, ok := payload[k]; !ok {
+			t.Errorf("payload missing %q: %v", k, payload)
+		}
+	}
+	if payload["account_id"] != acct.ID {
+		t.Errorf("payload.account_id = %v, want %s", payload["account_id"], acct.ID)
+	}
+	scheduled, _ := payload["scheduled_at"].(string)
+	restore, _ := payload["restore_until"].(string)
+	if scheduled == "" || restore == "" {
+		t.Errorf("timestamps empty: scheduled=%q restore=%q", scheduled, restore)
+	}
+	// restore_until must be exactly 30 days after scheduled_at per
+	// spec §17 G6 — the handler computes the deadline from
+	// state.DeletionGraceDuration(), so this also pins that constant.
+	sAt, _ := time.Parse(time.RFC3339Nano, scheduled)
+	rAt, _ := time.Parse(time.RFC3339Nano, restore)
+	if got := rAt.Sub(sAt); got != state.DeletionGraceDuration() {
+		t.Errorf("restore - scheduled = %v, want %v", got, state.DeletionGraceDuration())
+	}
+}
+
+// errorStore wraps state.MemStore and forces the named method to
+// return a synthetic error. Used by the gatherExport-partial-failure
+// regression test (Bug 3 fix). Only the methods we override actually
+// fail; everything else delegates to the embedded store.
+type errorStore struct {
+	*state.MemStore
+	failOn map[string]error
+}
+
+func (s *errorStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]state.Instance, error) {
+	if err, ok := s.failOn["ListInstancesForAccount"]; ok {
+		return nil, err
+	}
+	return s.MemStore.ListInstancesForAccount(ctx, accountID)
+}
+
+// TestExportAccount_PartialFailure_Returns500 covers the Bug 3 fix.
+// Before the PR, every per-resource helper swallowed its error and
+// returned nil — a partial DB failure during an export returned 200
+// with half the slices missing. Now gatherExport errors.Join's the
+// failures and the handler emits 500 capacity so a customer retry
+// produces a coherent bundle.
+func TestExportAccount_PartialFailure_Returns500(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "partial-app")
+	wrap := &errorStore{MemStore: e.store, failOn: map[string]error{
+		"ListInstancesForAccount": errors.New("synthetic instances outage"),
+	}}
+	notif := &spyNotifier{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServerWithDeps(wrap, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
+	req := httptest.NewRequest("GET", "/v1/account/export", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("export = %d, want 503 (partial failure must NOT 200 — "+
+			"the api capacity envelope codes as 503 per pkg/api/limits.go)", rec.Code)
+	}
+	var p api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatalf("decode problem: %v body=%s", err, rec.Body)
+	}
+	// Capacity is the right code (RFC 7807 + the helpers in pkg/api);
+	// a different code (e.g. CodeInternal) would mean we wired the
+	// 500 envelope wrong.
+	if p.Code != api.CodeCapacity {
+		t.Errorf("problem.code = %q, want %q", p.Code, api.CodeCapacity)
+	}
+}
+
+// TestExportAccount_BuildAppID_Populated covers the Bug 4 fix. Before
+// the PR, BuildExportResponse.AppID was always "" because builds have
+// no AppID column of their own and the helper didn't join back through
+// the deployment. Now gatherExport builds a deploymentID→appID map
+// once and passes it to listBuildsForAccountExport.
+func TestExportAccount_BuildAppID_Populated(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedOneApp(t, e, "build-appid-app")
+
+	// PR #83 review #10: seed the deployment + build row directly via
+	// the store so the test does NOT race the async build pipeline.
+	// The previous version of this test had no reliable way to land
+	// a build row before /export (202 + builder dispatch) and so the
+	// Bug 4 assertion iterated an empty slice — the test passed even
+	// if BuildExportResponse.AppID was never populated. Going through
+	// the store pins the deterministic state the assertion needs.
+	const digest = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: digest,
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if _, err := e.store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindImage, 1<<20, ""); err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(bundle.Deployments) == 0 {
+		t.Fatal("bundle.Deployments empty after CreateDeployment")
+	}
+	wantApp := ""
+	for _, a := range bundle.Apps {
+		if a.Slug == "build-appid-app" {
+			wantApp = a.ID
+			break
+		}
+	}
+	if wantApp == "" {
+		t.Fatal("seeded app missing from bundle.Apps")
+	}
+	if bundle.Deployments[0].AppID != wantApp {
+		t.Errorf("Deployment.AppID = %q, want %q", bundle.Deployments[0].AppID, wantApp)
+	}
+	// Bug 4 regression: with a real build row now present, AppID must be
+	// populated. The PR #83 review observed that an empty bundle.Builds
+	// could mask a regressed fix; this version seeds the row before the
+	// GET so the slice is guaranteed non-empty.
+	if len(bundle.Builds) == 0 {
+		t.Fatal("bundle.Builds empty after CreateBuild (test seed is broken — fix the seed before trusting the next assertion)")
+	}
+	for i, b := range bundle.Builds {
+		if b.AppID == "" {
+			t.Errorf("BuildExportResponse[%d].AppID empty — Bug 4 fix regressed (build=%+v)", i, b)
+		}
+		if b.AppID != wantApp {
+			t.Errorf("BuildExportResponse[%d].AppID = %q, want %q", i, b.AppID, wantApp)
+		}
+	}
+}
+
+// TestExportAccount_DeploymentHistorySpansPages pins the GDPR completeness
+// guarantee beyond the old 1,000-row cap. Every row deliberately shares the
+// same timestamp so timestamp-only cursors would drop 751 rows at the first
+// page boundary; the (created_at, id) cursor must return all of them once.
+func TestExportAccount_DeploymentHistorySpansPages(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedOneApp(t, e, "export-pages-app")
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	const count = 1001
+	for i := 0; i < count; i++ {
+		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1)
+		if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+			ID: id, AppID: app.ID, CreatedAt: createdAt,
+			Kind: state.DeploymentKindImage, Status: state.DeployFailed,
+		}); err != nil {
+			t.Fatalf("CreateDeployment(%d): %v", i, err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := len(bundle.Deployments); got != count {
+		t.Fatalf("deployments = %d, want %d", got, count)
+	}
+	seen := make(map[string]struct{}, count)
+	for _, deployment := range bundle.Deployments {
+		if _, duplicate := seen[deployment.ID]; duplicate {
+			t.Fatalf("duplicate deployment %s", deployment.ID)
+		}
+		seen[deployment.ID] = struct{}{}
+	}
+}
+
+// TestExportAccount_AuditHistorySpansPages proves the audit section no longer
+// stops at 1,000 rows. Equal timestamps exercise the id tie-breaker used by
+// both the in-memory and PostgreSQL implementations.
+func TestExportAccount_AuditHistorySpansPages(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	requestedAt := time.Now().UTC().Truncate(time.Microsecond)
+	const count = 1001
+	for i := 0; i < count; i++ {
+		id := fmt.Sprintf("10000000-0000-0000-0000-%012d", i+1)
+		if err := e.store.AppendGdprRequest(context.Background(), state.GdprRequest{
+			ID: id, AccountID: e.acct.ID, AccountEmail: e.acct.Email,
+			Action: state.GdprActionDelete, RequestedAt: requestedAt,
+		}); err != nil {
+			t.Fatalf("AppendGdprRequest(%d): %v", i, err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	gdprRows := 0
+	for _, row := range bundle.AuditTrail {
+		if row.Source == "gdpr" && row.Action == string(state.GdprActionDelete) {
+			gdprRows++
+		}
+	}
+	if gdprRows != count {
+		t.Fatalf("GDPR audit rows = %d, want %d", gdprRows, count)
+	}
+}
+
+func TestExportAccount_EventHistorySpansPages(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	const count = 1001
+	for i := 0; i < count; i++ {
+		if err := e.store.AppendEventAt(context.Background(), "account-test", "export.page", &e.acct.ID,
+			[]byte(fmt.Sprintf(`{"row":%d}`, i)), at); err != nil {
+			t.Fatalf("AppendEventAt(%d): %v", i, err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	eventRows := 0
+	for _, row := range bundle.AuditTrail {
+		if row.Source == "event" && row.Kind == "export.page" {
+			eventRows++
+		}
+	}
+	if eventRows != count {
+		t.Fatalf("account event rows = %d, want %d", eventRows, count)
+	}
+}
+
+// TestDashboardAccountExport_ReturnsAttachment is the regression test
+// for the Bug 5 fix (PR #83 review). Before the fix, the dashboard
+// account page linked `<a href="/v1/account/export">` — that endpoint
+// requires Bearer API-key auth; the dashboard sends only the session
+// cookie, so clicking the link from the dashboard 401'd. The fix
+// mounts a session-authed GET /dashboard/account/export route that
+// reuses the same gatherExport helper and emits the same JSON
+// envelope + Content-Disposition attachment.
+//
+// This test goes through the full chain: a real session.Manager, a
+// real cookie issued via mgr.Issue, and the route mounted in
+// server.go behind s.sessionAuth → s.dashboardChain → dashboardExport.
+// Without the fix the handler doesn't exist and request falls through
+// to a 404 from the catch-all; with the fix it returns 200, the right
+// Content-Type, and the same JSON envelope as the bearer-authed route.
+func TestDashboardAccountExport_ReturnsAttachment(t *testing.T) {
+	srv, cookie := newAuthedDashboardServer(t)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/account/export", nil)
+	r.AddCookie(cookie)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /dashboard/account/export = %d, want 200 "+
+			"(session-auth route must be mounted; failure here usually "+
+			"means the mount in server.go regressed)\nbody = %s",
+			rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json (matches the bearer route so the dashboard can swallow it via the same Download mechanism)", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Errorf("Content-Disposition = %q, want attachment;…", cd)
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("body not JSON: %v\n%s", err, rec.Body.String())
+	}
+	// The seed account is the alice@example.com newAuthedDashboardServer
+	// creates with PlanFree and zero apps, so the bundle must still
+	// contain the envelope fields even when the slices are empty —
+	// i.e. the route returned a real bundle shape, not a 204 No Content.
+	if bundle.ExportedAt == "" {
+		t.Errorf("ExportedAt empty; bundle shape broken")
+	}
+	if bundle.Account.Email != "alice@example.com" {
+		t.Errorf("Account.Email = %q, want alice@example.com (auth must NOT claim a different account — that would mean sessionAuth is mis-wired)", bundle.Account.Email)
+	}
+	if len(bundle.Apps) != 0 || len(bundle.Deployments) != 0 {
+		t.Errorf("empty seed produced rows: apps=%d deployments=%d", len(bundle.Apps), len(bundle.Deployments))
+	}
+}
+
+// TestDashboardAccountExport_RejectsUnauthenticated is the negative
+// companion: the route is session-authed, not public. An unauthed
+// request must NOT 200 (it would mean any visitor could pull the JSON
+// envelope just by clicking a link they'd be told is "their dashboard").
+// The sessionAuth middleware's contract is "redirect to /login" for
+// dashboard routes, which is a 303 by convention in this codebase
+// (see handlers_dashboard.go's sessionAuth wiring).
+func TestDashboardAccountExport_RejectsUnauthenticated(t *testing.T) {
+	srv, _ := newAuthedDashboardServer(t)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/account/export", nil)
+	// No cookie.
+	srv.ServeHTTP(rec, r)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("unauthed GET /dashboard/account/export = 200, want "+
+			"redirect or 401 (sessionAuth must reject)\nbody = %s",
+			rec.Body.String())
+	}
+}
+
+// TestGDPRFlow_EmailsAndAuditLedger wires a recordingMailer + spyNotifier
+// + MemStore-backed grace into a server, then walks the customer
+// through DELETE → RESTORE → EXPORT → DELETE → grace-timer advance
+// and asserts:
+//
+//   - scheduleDeletion fired one AccountDeletionPending email each
+//     time it ran (the first DELETE through the customer-facing API
+//     and the second DELETE after a restore).
+//
+//   - The pg_notify on NotifyAccountDeletionPending was emitted with
+//     the documented payload shape (re-asserts Bug 2 regression).
+//
+//   - pkg/grace.RunOnce past the grace window emitted exactly one
+//     AccountDeletionComplete email per hard-delete.
+//
+//   - The audit ledger holds four rows in the requested_at desc
+//     order the customer fired them:
+//
+//     delete (second, completed by grace.RunOnce → stamps completed_at)
+//     export (completes at insert time)
+//     restore (completes at insert time — restore IS the endpoint)
+//     delete (first, RESTORED before grace ticked it; completed_at
+//     legitimately stays nil)
+//
+//     This is the end-to-end smoke for the GDPO acceptance gate (PR
+//
+// follow-up: the regulator's "show me proof" trail lives or dies on
+// this test staying green). If completed_at on the post-restore
+// delete ever flips to a timestamp, the invariant below will catch
+// it.
+//
+// This is the end-to-end smoke for the GDPO acceptance gate (PR
+// follow-up: the regulator's "show me proof" trail lives or dies on
+// this test staying green).
+func TestGDPRFlow_EmailsAndAuditLedger(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	withAccountTestRecipient(t)
+
+	mailer := &recordingMailer{}
+	notif := &spyNotifier{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServerWithDeps(e.store, log, "gregale.dev", notif, "", mailer, stubGithubdClient{}, nil, nil, 0, "")
+
+	// Customer fires DELETE /v1/account. Captures the pending email +
+	// the pg_notify + the initial delete row in the ledger.
+	req := httptest.NewRequest("DELETE", "/v1/account", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec := httptest.NewRecorder()
+	srv.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE = %d %s", rec.Code, rec.Body)
+	}
+	if got := len(mailer.snapshot()); got != 1 {
+		t.Fatalf("got %d mails after DELETE, want 1 (pending email)", got)
+	}
+	pending := mailer.snapshot()[0]
+	// Loosened assertion on purpose: the body's subject wording
+	// ("will be deleted on …" / "scheduled for deletion" / "deletion
+	// scheduled") is owned by pkg/mail.AccountDeletionPendingBody and
+	// can evolve. We just pin the action identifier in the body —
+	// anything naming "account" + "delete/deletion" suffices.
+	if !strings.Contains(strings.ToLower(pending.Subject), "deleted") &&
+		!strings.Contains(strings.ToLower(pending.Subject), "deletion") {
+		t.Errorf("pending subject = %q, want wording about deletion", pending.Subject)
+	}
+
+	// Customer fires POST /v1/account/restore inside the window.
+	rec = e.do(t, "POST", "/v1/account/restore", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore = %d %s", rec.Code, rec.Body)
+	}
+
+	// Customer fires GET /v1/account/export. Captures the export row
+	// in the ledger (no email — the GDPR lean routes the bundle
+	// through the API, not via email).
+	rec = e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export = %d %s", rec.Code, rec.Body)
+	}
+
+	// Re-delete so the test can drive the hard-delete through
+	// pkg/grace.
+	rec = e.do(t, "DELETE", "/v1/account", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second DELETE = %d %s", rec.Code, rec.Body)
+	}
+
+	// Drive pkg/grace.RunOnce manually. The MemStore's
+	// DeletionRequestedAt is "now-ish" (set ~ms ago), so we can't
+	// wait 30 days; instead construct a Grace whose Now() returns
+	// 31 days in the future so every pending row crosses the cutoff.
+	// MemStore doesn't expose a "fast-forward" knob; rebuilding
+	// against the test's own store via the public surface. Simpler:
+	// rewind DeletionRequestedAt via MarkAccountDeletionPending
+	// would re-set it to now; instead walk via rawMem which we
+	// can't reach. Easiest: call pkg/grace with a synthetic Now().
+	g := grace.New(grace.Params{
+		Store:  e.store,
+		Mailer: mailAdapterBridge{mailer: mailer},
+		Log:    log,
+		Notif:  func(_ context.Context, _ string, _ string) error { return nil },
+		Now:    func() time.Time { return time.Now().Add(31 * 24 * time.Hour) },
+	})
+	if err := g.RunOnce(context.Background()); err != nil {
+		t.Fatalf("grace.RunOnce: %v", err)
+	}
+
+	// Verify mail assertions: total 3 mails (pending, complete).
+	// The restore interval happens to fire no mail; the export fires
+	// no mail; only schedule + complete.
+	calls := mailer.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("got %d total mails, want 2 (pending + complete). subjects=%v", len(calls), subjectsOf(calls))
+	}
+	complete := calls[1]
+	if !strings.Contains(strings.ToLower(complete.Subject), "deletion complete") &&
+		!strings.Contains(complete.Subject, "deleted") {
+		t.Errorf("complete subject = %q, want something about deletion-complete", complete.Subject)
+	}
+
+	// Verify audit ledger: 4 rows in requested_at desc order (the
+	// second DELETE is the latest action). Expected sequence:
+	//   delete (second, completed by grace.RunOnce → stamps completed_at)
+	//   export  (completes at insert time)
+	//   restore (completes at insert time)
+	//   delete  (first, was restored → completed_at stays NULL forever)
+	// That fourth row's completed_at-is-zero is the documented
+	// "restore wins, original delete is a no-op" surface — verify both.
+	ledger, err := e.store.ListGdprRequestsForAccount(context.Background(), e.acct.ID, 100)
+	if err != nil {
+		t.Fatalf("ListGdprRequestsForAccount: %v", err)
+	}
+	if len(ledger) != 4 {
+		t.Fatalf("audit ledger = %d rows, want 4 (got actions=%v)", len(ledger), actionsOf(ledger))
+	}
+	wantOrder := []string{"delete", "export", "restore", "delete"}
+	gotActions := actionsOf(ledger)
+	for i, want := range wantOrder {
+		if gotActions[i] != want {
+			t.Errorf("ledger[%d].action = %q, want %q (full=%v)", i, gotActions[i], want, gotActions)
+		}
+	}
+	// The FIRST delete (oldest row, ledger[3]) was restored before grace
+	// ticked it → completed_at legitimately stays zero. The other three
+	// rows (ledger[0..2]) MUST all have completed_at stamped.
+	if ledger[0].CompletedAt.IsZero() {
+		t.Errorf("ledger[0] (latest delete) completed_at is zero; " +
+			"grace.RunOnce must have stamped it")
+	}
+	for i := 1; i < 3; i++ {
+		if ledger[i].CompletedAt.IsZero() {
+			t.Errorf("ledger[%d] (%s) completed_at is zero; export/restore "+
+				"complete at insert time and MUST carry a timestamp", i, ledger[i].Action)
+		}
+	}
+	if !ledger[3].CompletedAt.IsZero() {
+		t.Errorf("ledger[3] (first/original delete, restored before grace "+
+			"could tick) completed_at = %v, want zero — restore wins, the "+
+			"original delete is a no-op and must NOT carry a stamp",
+			ledger[3].CompletedAt)
+	}
+}
+
+func subjectsOf(ms []Message) []string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.Subject
+	}
+	return out
+}
+
+func actionsOf(rs []state.GdprRequest) []string {
+	out := make([]string, len(rs))
+	for i, r := range rs {
+		out[i] = string(r.Action)
+	}
+	return out
+}
+
+// mailAdapterBridge adapts apid's recordingMailer to the
+// primitive-arg pkg/grace.Sender shape (To slice + subject + body).
+type mailAdapterBridge struct{ mailer *recordingMailer }
+
+func (m mailAdapterBridge) Send(ctx context.Context, to []string, subject, body string) error {
+	return m.mailer.Send(ctx, Message{To: to, Subject: subject, TextBody: body})
+}
+
+// --- PR-B (issue #679 / ADR-082) per-account extra cap admin endpoints ------
+//
+// Two new admin endpoints hang off the same grace-window chain
+// (admin scope + MFA + no step-up since the cost surface is
+// small — a typo reverts by setting extra=0):
+//
+//	GET  /v1/account/egress_allowlist_extra
+//	PATCH /v1/account/egress_allowlist_extra
+//
+// The tests below pin:
+//   - GET returns the live value + plan cap + max extra.
+//   - PATCH clamps to [0, MaxAccountEgressAllowlistExtra] and
+//     reports the new value.
+//   - PATCH emits a single account.egress_allowlist_extra_set
+//     audit row carrying old_extra, new_extra, plan_cap, max_extra.
+//   - PATCH outside the range reports 400 with code
+//     account_egress_allowlist_extra_out_of_range.
+//   - The endpoints reject non-admin scopes (testEnv defaults to
+//     admin-scoped keys, so the negative test strips scopes
+//     explicitly).
+//
+// TestGetAccountEgressAllowlistExtra_ReturnsPlanCap: at fresh
+// account state (extra=0), GET returns the plan cap (Pro=16)
+// and the global max extra (1024). The pair lets the dashboard
+// render the "Override: 0 / Plan cap: 16 / Max extra: 1024" trio
+// in a single round-trip.
+func TestGetAccountEgressAllowlistExtra_ReturnsPlanCap(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/account/egress_allowlist_extra", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AccountEgressAllowlistExtraResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v: %s", err, rec.Body)
+	}
+	if out.Extra != 0 {
+		t.Errorf("extra = %d, want 0 (default)", out.Extra)
+	}
+	if out.PlanCap != api.PlanPro.EgressAllowlistMaxSize() {
+		t.Errorf("plan_cap = %d, want %d", out.PlanCap, api.PlanPro.EgressAllowlistMaxSize())
+	}
+	if out.MaxExtra != api.MaxAccountEgressAllowlistExtra {
+		t.Errorf("max_extra = %d, want %d", out.MaxExtra, api.MaxAccountEgressAllowlistExtra)
+	}
+}
+
+// TestSetAccountEgressAllowlistExtra_RoundTrip: PATCH extra=8
+// then GET reads back 8. The audit row is the only place the
+// OLD value is observable — once the PATCH lands, the next
+// read is the new value.
+func TestSetAccountEgressAllowlistExtra_RoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: 8}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("PATCH status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AccountEgressAllowlistExtraResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode PATCH: %v: %s", err, rec.Body)
+	}
+	if out.Extra != 8 || out.PlanCap != api.PlanPro.EgressAllowlistMaxSize() {
+		t.Errorf("PATCH body = %+v, want extra=8 plan_cap=%d", out, api.PlanPro.EgressAllowlistMaxSize())
+	}
+	rec = e.do(t, "GET", "/v1/account/egress_allowlist_extra", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("GET status %d: %s", rec.Code, rec.Body)
+	}
+	var get api.AccountEgressAllowlistExtraResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &get); err != nil {
+		t.Fatalf("decode GET: %v: %s", err, rec.Body)
+	}
+	if get.Extra != 8 {
+		t.Errorf("GET extra = %d, want 8 (round-trip)", get.Extra)
+	}
+}
+
+// TestSetAccountEgressAllowlistExtra_AtMaxAccepted: PATCH
+// extra=MaxAccountEgressAllowlistExtra — the boundary is closed
+// and the value is allowed.
+func TestSetAccountEgressAllowlistExtra_AtMaxAccepted(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: api.MaxAccountEgressAllowlistExtra}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AccountEgressAllowlistExtraResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v: %s", err, rec.Body)
+	}
+	if out.Extra != api.MaxAccountEgressAllowlistExtra {
+		t.Errorf("extra = %d, want %d", out.Extra, api.MaxAccountEgressAllowlistExtra)
+	}
+}
+
+// TestSetAccountEgressAllowlistExtra_OverMaxRejected: PATCH
+// extra=MaxAccountEgressAllowlistExtra+1 — the boundary is
+// closed and the value is rejected with 400 + the documented
+// error code. No audit row is emitted on the rejected branch.
+func TestSetAccountEgressAllowlistExtra_OverMaxRejected(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: api.MaxAccountEgressAllowlistExtra + 1}, nil)
+	assertProblem(t, rec, 400, api.CodeAccountEgressAllowlistExtraOutOfRange)
+}
+
+// TestSetAccountEgressAllowlistExtra_NegativeRejected: PATCH
+// extra=-1 — negative values are rejected with 400 + the
+// documented error code (no audit row).
+func TestSetAccountEgressAllowlistExtra_NegativeRejected(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: -1}, nil)
+	assertProblem(t, rec, 400, api.CodeAccountEgressAllowlistExtraOutOfRange)
+}
+
+// TestSetAccountEgressAllowlistExtra_ClearByZero: PATCH extra=0
+// clears the override — the plan cap is authoritative again.
+// This is the "no auditor roll-through" path: a customer whose
+// account briefly needed extra=8 lands back on the bare plan
+// cap without leaving a permanent override.
+func TestSetAccountEgressAllowlistExtra_ClearByZero(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	if err := e.store.SetAccountEgressAllowlistExtra(context.Background(), e.acct.ID, 8); err != nil {
+		t.Fatalf("seed extra=8: %v", err)
+	}
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: 0}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	got, err := e.store.GetAccountEgressAllowlistExtra(context.Background(), e.acct.ID)
+	if err != nil {
+		t.Fatalf("GetExtra: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("after PATCH extra=0, GetExtra = %d, want 0", got)
+	}
+}
+
+// TestSetAccountEgressAllowlistExtra_EmitsAuditRow: PATCH emits
+// exactly one account.egress_allowlist_extra_set row carrying
+// old_extra, new_extra, plan_cap, and max_extra. The audit row
+// is the only place the OLD value is observable (once the PATCH
+// lands, the next read is the new value).
+func TestSetAccountEgressAllowlistExtra_EmitsAuditRow(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	// Seed a prior override so the audit row's old_extra reads
+	// from a non-zero value.
+	if err := e.store.SetAccountEgressAllowlistExtra(context.Background(), e.acct.ID, 4); err != nil {
+		t.Fatalf("seed extra=4: %v", err)
+	}
+	rec := e.do(t, "PATCH", "/v1/account/egress_allowlist_extra",
+		api.SetAccountEgressAllowlistExtraRequest{Extra: 8}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("PATCH status %d: %s", rec.Code, rec.Body)
+	}
+	// The auditor is async — wait for the row to land. The
+	// /v1/audit-events endpoint streams rows via the same
+	// reader path; poll briefly (max 500ms) before giving up.
+	// Data is a json.RawMessage, so we decode each event's
+	// payload into a typed struct before asserting.
+	type extraAudit struct {
+		OldExtra int `json:"old_extra"`
+		NewExtra int `json:"new_extra"`
+		PlanCap  int `json:"plan_cap"`
+		MaxExtra int `json:"max_extra"`
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		rec2 := e.do(t, "GET", "/v1/audit-events?kind_prefix=account.egress_allowlist_extra", nil, nil)
+		if rec2.Code == 200 {
+			var list api.ListAuditEventsResponse
+			if err := json.Unmarshal(rec2.Body.Bytes(), &list); err == nil {
+				for _, ev := range list.Events {
+					if ev.Kind != "account.egress_allowlist_extra_set" {
+						continue
+					}
+					var payload extraAudit
+					if err := json.Unmarshal(ev.Data, &payload); err != nil {
+						t.Errorf("audit row decode: %v (data=%s)", err, ev.Data)
+						return
+					}
+					if payload.OldExtra != 4 {
+						t.Errorf("audit old_extra = %d, want 4", payload.OldExtra)
+					}
+					if payload.NewExtra != 8 {
+						t.Errorf("audit new_extra = %d, want 8", payload.NewExtra)
+					}
+					if payload.PlanCap != api.PlanPro.EgressAllowlistMaxSize() {
+						t.Errorf("audit plan_cap = %d, want %d", payload.PlanCap, api.PlanPro.EgressAllowlistMaxSize())
+					}
+					if payload.MaxExtra != api.MaxAccountEgressAllowlistExtra {
+						t.Errorf("audit max_extra = %d, want %d", payload.MaxExtra, api.MaxAccountEgressAllowlistExtra)
+					}
+					return // success — leave the test on the first match.
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no audit row for account.egress_allowlist_extra_set landed within 500ms; last body=%s", rec2.Body)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestSetAccountEgressAllowlistExtra_RejectsNonAdminScope: the
+// endpoint chain must surface a 403 from requireScope when the
+// key has no admin scope. The setup helper creates a key with
+// api.ScopesAdminOnly so the negative test stands up a fresh
+// account + a single apps:read scope (no admin).
+func TestSetAccountEgressAllowlistExtra_RejectsNonAdminScope(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "non-admin@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt, hash, _ := api.GenerateAPIKey()
+	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "read-only", []string{api.ScopeAppsRead}); err != nil {
+		t.Fatal(err)
+	}
+	ops := wire.NewOpsMetrics("apid_test")
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
+	h := srv.handler()
+	body, _ := json.Marshal(api.SetAccountEgressAllowlistExtraRequest{Extra: 1})
+	req := httptest.NewRequest("PATCH", "/v1/account/egress_allowlist_extra", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+pt)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == 200 {
+		t.Fatalf("non-admin PATCH succeeded: %s", rec.Body)
+	}
+	//	requireScope may short-circuit to 403 (Preferred) or 401
+	// (unauthenticated by AuthLimit); accept either as a
+	// non-200 sentinel.
+	if rec.Code != 403 && rec.Code != 401 {
+		t.Errorf("status %d, want 401 or 403: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestExportAccount_RateLimit_AllowsFirstRequest (issue #755 /
+// PR-5.1). The first GET /v1/account/export inside the 24h window
+// must succeed with 200 — the rate-limit is a second-request
+// affordance, not a first-request block.
+func TestExportAccount_RateLimit_AllowsFirstRequest(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "rate-app")
+
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first export: %d %s", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("X-Audit-Logged") == "false" {
+		t.Errorf("X-Audit-Logged=false on first request: %s", rec.Body)
+	}
+}
+
+// TestExportAccount_RateLimit_BlocksSecondRequest (issue #755 /
+// PR-5.1). The second GET inside the 24h window must return 429 +
+// CodeExportRateLimited + Retry-After. The ledger row from the
+// first request is what the rate-limit query observes — verify the
+// second call sees the in-flight ledger (not the new one it would
+// have written), proving the check happens before the bundle.
+func TestExportAccount_RateLimit_BlocksSecondRequest(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "rate-app-2")
+
+	// First call lands inside the window.
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first export: %d %s", rec.Code, rec.Body)
+	}
+
+	// Second call must hit the rate-limit.
+	rec = e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second export: %d %s, want 429", rec.Code, rec.Body)
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("decode problem: %v: %s", err, rec.Body)
+	}
+	if prob.Code != api.CodeExportRateLimited {
+		t.Errorf("problem.code = %q, want %q", prob.Code, api.CodeExportRateLimited)
+	}
+	// Retry-After must be present + bounded (>0).
+	ra := rec.Header().Get("Retry-After")
+	if ra == "" {
+		t.Errorf("Retry-After header missing")
+	} else {
+		var secs int
+		if _, err := fmt.Sscanf(ra, "%d", &secs); err != nil {
+			t.Errorf("Retry-After %q not integer: %v", ra, err)
+		}
+		if secs <= 0 {
+			t.Errorf("Retry-After = %d, want >0", secs)
+		}
+		// Upper bound: window seconds (24h). The wire advertises the
+		// precise time-until-reset, which is bounded above by the
+		// window itself.
+		if secs > api.ExportRateLimitWindowSeconds {
+			t.Errorf("Retry-After = %d, want <= %d", secs, api.ExportRateLimitWindowSeconds)
+		}
+	}
+}
+
+// TestExportAccount_RateLimit_AllowsAfter24h verifies the window
+// rolls forward. We can't wait 24h in a test, but we can rewrite
+// the ledger row's requested_at to >24h ago and verify the second
+// call returns 200. The MemStore path is the one under test; the
+// PgStore path is exercised by e2e.
+func TestExportAccount_RateLimit_AllowsAfter24h(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "rate-app-3")
+
+	// First call lands inside the window.
+	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first export: %d %s", rec.Code, rec.Body)
+	}
+
+	// Backdate the just-written ledger row to >24h ago so the
+	// rate-limit query's lookback window no longer sees it.
+	cutoff := time.Now().UTC().Add(-2 * api.ExportRateLimitWindow)
+	e.store.BackdateGdprRequestsForTest(context.Background(), e.acct.ID, state.GdprActionExport, cutoff)
+
+	// Second call must now succeed.
+	rec = e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post-window export: %d %s, want 200", rec.Code, rec.Body)
+	}
+}
+
+// TestExportAccount_RequestIdIdempotent_RetrySucceeds (issue #755 /
+// PR-5.2). A retry with the same X-Request-Id inside the 24h window
+// must succeed (200), not 429 — the customer's second call is
+// logically the same action as the first.
+func TestExportAccount_RequestIdIdempotent_RetrySucceeds(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "idem-app")
+
+	reqID := "test-request-id-retry-001"
+	// x-faas-request-id is the canonical header that
+	// pkg/middleware/requestid.go reads (matches gatewayd-internal's wire
+	// surface). X-Request-Id is the more generic name; the middleware
+	// ignores it.
+	hdrs := map[string]string{"X-Faas-Request-Id": reqID}
+
+	// First call lands inside the window — must succeed.
+	rec := e.do(t, "GET", "/v1/account/export", nil, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first export: %d %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("X-Idempotent-Replay"); got != "" {
+		t.Errorf("first request X-Idempotent-Replay = %q, want empty", got)
+	}
+
+	// Second call with the same X-Request-Id — must succeed (not 429).
+	rec = e.do(t, "GET", "/v1/account/export", nil, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry export: %d %s, want 200 (idempotent retry)", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("X-Idempotent-Replay"); got != "true" {
+		t.Errorf("retry X-Idempotent-Replay = %q, want \"true\"", got)
+	}
+
+	// The retry must NOT have inserted a second ledger row.
+	rows, err := e.store.ListGdprRequestsForAccount(context.Background(), e.acct.ID, 100)
+	if err != nil {
+		t.Fatalf("list gdpr requests: %v", err)
+	}
+	exportRows := 0
+	for _, r := range rows {
+		if r.Action == state.GdprActionExport {
+			exportRows++
+		}
+	}
+	if exportRows != 1 {
+		t.Errorf("ledger export rows = %d, want 1 (retry must not double-insert)", exportRows)
+	}
+}
+
+func TestExportAccount_GeneratedRequestIDCorrelatesResponseLedgerAndAudit(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, http.MethodGet, "/v1/account/export?include_secrets=false", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	requestID := rec.Header().Get("X-Faas-Request-Id")
+	if requestID == "" {
+		t.Fatal("response request id is empty")
+	}
+	rows, err := e.store.ListGdprRequestsForAccount(context.Background(), e.acct.ID, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("GDPR rows = %d, err=%v", len(rows), err)
+	}
+	if rows[0].RequestID != requestID {
+		t.Fatalf("ledger request id = %q, response = %q", rows[0].RequestID, requestID)
+	}
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditID string
+	for _, event := range events {
+		if event.Kind != "account.export_requested" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		auditID, _ = data["request_id"].(string)
+		break
+	}
+	if auditID != requestID {
+		t.Fatalf("audit request id = %q, response = %q", auditID, requestID)
+	}
+
+	retry := e.do(t, http.MethodGet, "/v1/account/export?include_secrets=false", nil,
+		map[string]string{"X-Faas-Request-Id": requestID})
+	if retry.Code != http.StatusOK || retry.Header().Get("X-Idempotent-Replay") != "true" {
+		t.Fatalf("retry = %d replay=%q body=%s", retry.Code, retry.Header().Get("X-Idempotent-Replay"), retry.Body)
+	}
+	rows, _ = e.store.ListGdprRequestsForAccount(context.Background(), e.acct.ID, 10)
+	if len(rows) != 1 {
+		t.Fatalf("retry inserted %d ledger rows, want 1", len(rows))
+	}
+}
+
+// TestExportAccount_RequestIdIdempotent_DistinctIdsStillRateLimited
+// (issue #755 / PR-5.2). Distinct X-Request-Id values are
+// independent actions: the rate-limit still applies. This guards
+// against an over-eager idempotency probe that skips the rate-limit
+// for any request with a non-empty X-Request-Id.
+func TestExportAccount_RequestIdIdempotent_DistinctIdsStillRateLimited(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "idem-app-2")
+
+	// First call with id A.
+	rec := e.do(t, "GET", "/v1/account/export", nil,
+		map[string]string{"X-Faas-Request-Id": "id-A"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first export: %d %s", rec.Code, rec.Body)
+	}
+
+	// Second call with id B — distinct, so the rate-limit applies.
+	rec = e.do(t, "GET", "/v1/account/export", nil,
+		map[string]string{"X-Faas-Request-Id": "id-B"})
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("distinct-id retry: %d %s, want 429", rec.Code, rec.Body)
+	}
+}
+
+// TestExportAccount_EmitsExportRequestedAudit (issue #755 /
+// PR-5.4). A successful export must emit one account.export_requested
+// audit row carrying request_id + byte_count + replay=false. The
+// audit row is observable via store.ListEvents — same query the
+// regulator's downstream export tool consumes.
+func TestExportAccount_EmitsExportRequestedAudit(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "audit-export-app")
+
+	reqID := "audit-test-export-001"
+	rec := e.do(t, "GET", "/v1/account/export", nil,
+		map[string]string{"X-Faas-Request-Id": reqID})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	// Body length is the byte_count the audit row carries.
+	expectedBytes := rec.Body.Len()
+
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	var found *state.Event
+	for i := range events {
+		if events[i].Kind == "account.export_requested" {
+			found = &events[i]
+			break
+		}
+	}
+	if found == nil {
+		kinds := make([]string, len(events))
+		for i, ev := range events {
+			kinds[i] = ev.Kind
+		}
+		t.Fatalf("account.export_requested audit row missing. emitted kinds: %v", kinds)
+	}
+	// Subject is a *uuid.UUID; non-nil means the audit row carries
+	// the account_id the regulator can join on.
+	if found.Subject == nil {
+		t.Errorf("audit subject is nil")
+	}
+	// Decode the data JSONB payload to assert the structured fields.
+	var data map[string]any
+	if err := json.Unmarshal(found.Data, &data); err != nil {
+		t.Fatalf("decode audit data: %v: %s", err, found.Data)
+	}
+	if got := data["request_id"]; got != reqID {
+		t.Errorf("audit data.request_id = %v, want %q", got, reqID)
+	}
+	if got, ok := data["byte_count"].(float64); !ok || int(got) != expectedBytes {
+		t.Errorf("audit data.byte_count = %v (type %T), want %d", data["byte_count"], data["byte_count"], expectedBytes)
+	}
+	if got := data["replay"]; got != false {
+		t.Errorf("audit data.replay = %v, want false", got)
+	}
+}
+
+// TestExportBundleV2WireShape pins the versioned
+// top-level section list of the export bundle against the
+// cmd/apid/testdata/export-v1.json fixture. The fixture carries
+// the section names + types (object for account, array for the
+// rest); the test decodes both the fixture and the live bundle,
+// asserts the section list is identical, and asserts each
+// section's wire type is right.
+//
+// Why only the section list (not per-row keys): the per-section
+// DTOs in pkg/api/dto.go are the source of truth for field names.
+// Pinning a literal key list here would drift the moment a DTO
+// gains a field, and the drift becomes the bug (a false-positive
+// test failure for a benign addition). The section list is what
+// makes a wire-shape change breaking — if a handler drops the
+// `app_secrets` slice, or wraps `crons` as an object, the test
+// fires.
+//
+// What this catches:
+//   - a handler drops a top-level section (live is a subset of
+//     fixture)
+//   - a handler adds an unexpected top-level section (live is a
+//     superset of fixture) — useful for the v2 migration story
+//     where breaking schema changes are easy to make accidentally
+//   - a section's value flips from object to array or vice versa
+//     (json.Unmarshal into map[string]any + type assertion)
+//
+// What this does NOT catch:
+//   - field-value drift within a section — out of scope for the
+//     wire-shape pin; covered by type-assertion tests in
+//     TestExportAccount_FullBundle + TestExportAccount_RedactionInvariant
+//   - section reordering — JSON object key order is not
+//     semantically meaningful and the Go json package does not
+//     preserve it on the wire
+func TestExportBundleV2WireShape(t *testing.T) {
+	withAccountTestRecipient(t)
+	e := setup(t, api.PlanHobby)
+	seedOneApp(t, e, "wire-shape-app")
+	// Upsert a secret so the app_secrets slice is non-nil — a nil
+	// slice round-trips as JSON null, not [], which would trip the
+	// "want array" assertion below. The literal secret VALUE never
+	// appears in the export (re-encryption per ADR-020); "wire-key"
+	// is a placeholder the test never asserts on.
+	rec := e.do(t, "PUT", "/v1/apps/wire-shape-app/secrets/WIRE_KEY",
+		api.PutAppSecretRequest{Value: "wire-secret"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed secret: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = e.do(t, "GET", "/v1/account/export", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	var live map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &live); err != nil {
+		t.Fatalf("decode live bundle: %v: %s", err, rec.Body)
+	}
+
+	// Load the fixture relative to the test source so the test
+	// doesn't depend on cwd (issue #83 review #7).
+	fixturePath := filepath.Join("testdata", "export-v2.json")
+	raw, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", fixturePath, err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	fixtureSections, ok := fixture["_sections"].(map[string]any)
+	if !ok {
+		t.Fatalf("fixture _sections missing or not object: %v", fixture["_sections"])
+	}
+
+	// Top-level shape: the live bundle must contain exactly the
+	// fixture's _sections keys, no more, no less.
+	wantTop := make([]string, 0, len(fixtureSections))
+	for k := range fixtureSections {
+		wantTop = append(wantTop, k)
+	}
+	for _, k := range wantTop {
+		if _, ok := live[k]; !ok {
+			t.Errorf("live bundle missing top-level section %q", k)
+		}
+	}
+	// _sections + _underscore-prefixed keys are fixture-only
+	// metadata, not in the live.
+	for k := range live {
+		if _, isFixtureMeta := fixture[k]; isFixtureMeta {
+			t.Errorf("live bundle has fixture-only key %q", k)
+			continue
+		}
+		if _, ok := fixtureSections[k]; !ok {
+			t.Errorf("live bundle has unexpected top-level section %q (fixture does not declare it)", k)
+		}
+	}
+
+	// Per-section type check: account is an object, every other
+	// section is an array. exported_at is a string.
+	for section, wantType := range fixtureSections {
+		val := live[section]
+		switch wantType {
+		case "integer":
+			if _, ok := val.(float64); !ok {
+				t.Errorf("live %s = %T, want integer", section, val)
+			}
+		case "string":
+			if _, ok := val.(string); !ok {
+				t.Errorf("live %s = %T, want string", section, val)
+			}
+		case "object (AccountResponse, pkg/api/dto.go)":
+			if _, ok := val.(map[string]any); !ok {
+				t.Errorf("live %s = %T, want object", section, val)
+			}
+		default:
+			// Array sections.
+			if _, ok := val.([]any); !ok {
+				t.Errorf("live %s = %T, want array", section, val)
+			}
+		}
+	}
+}
+
+// The shipped DPA template opens with operator-only notes (rendering rules,
+// placeholder syntax). `gregale account dpa` printed them to customers.
+func TestCustomerDPAMarkdownDropsOperatorNotesAndKeepsTheAgreement(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "DPA.md"))
+	if err != nil {
+		t.Fatalf("read shipped DPA template: %v", err)
+	}
+	got := string(customerDPAMarkdown(template))
+	for _, gone := range []string{"<!--", "-->", "Operator-facing template notes"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("customer DPA still contains %q", gone)
+		}
+	}
+	if !strings.HasPrefix(got, "# Data Processing Addendum (DPA)\n\n") || strings.Contains(got, "\n\n\n") {
+		t.Errorf("customer DPA heading or spacing changed: %q", got[:min(len(got), 120)])
+	}
+	// Only the operator notes go; the agreement text is untouched.
+	withoutNotes := strings.Replace(string(template), string(template[strings.Index(string(template), "<!--"):strings.Index(string(template), "-->")+len("-->")]), "", 1)
+	if strings.Count(got, "{{") != strings.Count(withoutNotes, "{{") {
+		t.Errorf("agreement placeholders changed: got %d, want %d", strings.Count(got, "{{"), strings.Count(withoutNotes, "{{"))
+	}
+}

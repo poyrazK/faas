@@ -11,11 +11,27 @@ from faas_sdk.models.simulate_automation_response import SimulateAutomationRespo
 from faas_sdk.types import UNSET
 
 REQUEST = {
-    "definition": {"name": "sample", "steps": [{"name": "a", "run": "a"}, {"name": "b", "run": "b"}]},
+    "definition": {
+        "name": "sample",
+        "steps": [
+            {"name": "a", "run": "a"},
+            {"name": "b", "run": "b"},
+            {"name": "approval", "wait_for_event": "approved"},
+        ],
+    },
     "input": {"number": 9007199254740993, "active": False},
     "mock_outputs": {"a": None},
     "mock_item_outputs": {"batch": [False, None]},
-    "mock_attempts": {"b": [{"outcome": "failure", "http_status": 503}, {"outcome": "success", "output": None}]},
+    "mock_item_attempts": {
+        "retry_batch": {
+            "0": [{"outcome": "timeout"}, {"outcome": "success", "output": None}],
+            "2": [{"outcome": "failure", "http_status": 400}],
+        }
+    },
+    "mock_attempts": {
+        "approval": [{"outcome": "success", "output": {"approved_by": "reviewer-42"}}],
+        "b": [{"outcome": "failure", "http_status": 503}, {"outcome": "success", "output": None}],
+    },
 }
 RESPONSE = {
     "definition_valid": True,
@@ -29,13 +45,23 @@ RESPONSE = {
             "step_name": "b",
             "kind": "run",
             "state": "mocked",
+            "path": "/contacts/contact%2042",
+            "raw_query": "email=a%2Bb%40example.com",
             "output": None,
             "when_matched": False,
             "attempts": [
                 {"attempt": 1, "outcome": "failure", "http_status": 503},
                 {"attempt": 2, "outcome": "success"},
             ],
-        }
+        },
+        {
+            "step_name": "approval",
+            "kind": "event_wait",
+            "state": "mocked",
+            "reason": "event_received_mocked",
+            "output": {"approved_by": "reviewer-42"},
+            "attempts": [{"attempt": 1, "outcome": "success"}],
+        },
     ],
 }
 
@@ -52,10 +78,14 @@ def assert_trace(response):
     assert response.definition_valid is True
     assert response.complete is False
     assert response.trace[0].output is None
+    assert response.trace[0].path == "/contacts/contact%2042"
+    assert response.trace[0].raw_query == "email=a%2Bb%40example.com"
     assert response.trace[0].when_matched is False
     assert len(response.trace[0].attempts) == 2
     assert response.trace[0].attempts[0].http_status == 503
     assert response.trace[0].input_ is UNSET
+    assert response.trace[1].reason == "event_received_mocked"
+    assert response.trace[1].output == {"approved_by": "reviewer-42"}
     assert response.to_dict() == RESPONSE
 
 

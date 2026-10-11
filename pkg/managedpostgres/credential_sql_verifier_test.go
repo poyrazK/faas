@@ -126,6 +126,15 @@ func TestCredentialSQLVerificationNativeTLS(t *testing.T) {
 	if _, err := pool.Exec(ctx, "REVOKE CREATE ON SCHEMA public FROM "+quoted); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf("GRANT CREATE ON DATABASE %q TO %s", cfg.Database, quoted)); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialReadWrite, version); err == nil {
+		t.Fatal("runtime database CREATE accepted")
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf("REVOKE CREATE ON DATABASE %q FROM %s", cfg.Database, quoted)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, "GRANT TRUNCATE ON public.probe_existing TO "+quoted); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +164,34 @@ func TestCredentialSQLVerificationNativeTLS(t *testing.T) {
 	})
 	if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialMigration, version); err != nil {
 		t.Fatal("migration schema-owner role", err)
+	}
+	// Neon grants its stable migration owner database CREATE for custom schemas.
+	// This is scoped schema DDL, not the administrative CREATEDB role attribute.
+	if _, err := pool.Exec(ctx, fmt.Sprintf("GRANT CREATE ON DATABASE %q TO %s", cfg.Database, owner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialMigration, version); err != nil {
+		t.Fatal("migration database CREATE rejected", err)
+	}
+	migration, err := ConnectCredentialSQL(ctx, dsn.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = migration.Close(ctx) }()
+	if _, err := migration.Exec(ctx, "CREATE SCHEMA probe_custom_migration; CREATE TABLE probe_custom_migration.value(id bigint)"); err != nil {
+		t.Fatal("migration cannot create its custom schema", err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf("GRANT TEMPORARY ON DATABASE %q TO %s", cfg.Database, owner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialMigration, version); err == nil {
+		t.Fatal("migration temporary-object privilege drift accepted")
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf("REVOKE TEMPORARY ON DATABASE %q FROM %s", cfg.Database, owner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCredentialSQL(ctx, dsn.String(), CredentialMigration, version); err != nil {
+		t.Fatal("restored migration permissions rejected", err)
 	}
 	if _, err := pool.Exec(ctx, "ALTER ROLE "+owner+" BYPASSRLS"); err != nil {
 		t.Fatal(err)

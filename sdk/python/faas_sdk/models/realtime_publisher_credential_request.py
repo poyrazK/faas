@@ -16,10 +16,11 @@ class RealtimePublisherCredentialRequest:
     name: str
     channels: list[str]
     event_types: list[str]
+    max_message_ttl_seconds: int | Unset = 0
+    """Message TTL cap; zero is uncapped. Positive caps require a positive message TTL at or below the cap."""
     publishes_per_minute: int | Unset = 60
     max_payload_bytes: int | Unset = 4096
     ttl_seconds: int | Unset = 86400
-    max_message_ttl_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,6 +29,8 @@ class RealtimePublisherCredentialRequest:
         channels = self.channels
 
         event_types = self.event_types
+
+        max_message_ttl_seconds = self.max_message_ttl_seconds
 
         publishes_per_minute = self.publishes_per_minute
 
@@ -44,6 +47,8 @@ class RealtimePublisherCredentialRequest:
                 "event_types": event_types,
             }
         )
+        if max_message_ttl_seconds is not UNSET:
+            field_dict["max_message_ttl_seconds"] = max_message_ttl_seconds
         if publishes_per_minute is not UNSET:
             field_dict["publishes_per_minute"] = publishes_per_minute
         if max_payload_bytes is not UNSET:
@@ -51,19 +56,18 @@ class RealtimePublisherCredentialRequest:
         if ttl_seconds is not UNSET:
             field_dict["ttl_seconds"] = ttl_seconds
 
-        if self.max_message_ttl_seconds is not UNSET:
-            field_dict["max_message_ttl_seconds"] = self.max_message_ttl_seconds
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        max_message_ttl_seconds = d.pop("max_message_ttl_seconds", UNSET)
         name = d.pop("name")
 
         channels = cast(list[str], d.pop("channels"))
 
         event_types = cast(list[str], d.pop("event_types"))
+
+        max_message_ttl_seconds = d.pop("max_message_ttl_seconds", UNSET)
 
         publishes_per_minute = d.pop("publishes_per_minute", UNSET)
 
@@ -72,10 +76,10 @@ class RealtimePublisherCredentialRequest:
         ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         realtime_publisher_credential_request = cls(
-            max_message_ttl_seconds=max_message_ttl_seconds,
             name=name,
             channels=channels,
             event_types=event_types,
+            max_message_ttl_seconds=max_message_ttl_seconds,
             publishes_per_minute=publishes_per_minute,
             max_payload_bytes=max_payload_bytes,
             ttl_seconds=ttl_seconds,

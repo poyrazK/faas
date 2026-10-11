@@ -107,14 +107,16 @@ func testAPIKey(ch byte) string {
 }
 
 // setupHermeticTokensEnv enforces the 3-knob CLI hermeticity rule
-// (memory: cmd-gregale-requireslogin-hermeticity): HOME + XDG_CONFIG_HOME
+// (memory: cmd-gregale-requireslogin-hermeticity): HOME + USERPROFILE + XDG_CONFIG_HOME + APPDATA
 // pointed at a temp dir, FAAS_TOKEN cleared. The temp dir doubles as
 // the legacy-file fallback root.
 func setupHermeticTokensEnv(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("APPDATA", tmp)
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	t.Setenv("FAAS_TOKEN", "")
 	return tmp
 }

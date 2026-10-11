@@ -32,11 +32,12 @@ import (
 // framework_ready_recv.go is linux-only; on non-linux the
 // emitter is set but never consumed.
 type FrameworkReadyReceiver struct {
-	fd             atomic.Int32
-	log            *slog.Logger
-	mgr            *fcvm.Manager
-	emitter        SidecarEventEmitter
-	eventPublisher GuestEventPublisher
+	fd                                  atomic.Int32
+	log                                 *slog.Logger
+	mgr                                 *fcvm.Manager
+	emitter                             SidecarEventEmitter
+	eventPublisher                      GuestEventPublisher
+	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
 }
 
 // GuestEventPublisher mirrors the Linux receiver's callback type so the
@@ -52,6 +53,7 @@ func (r *FrameworkReadyReceiver) Close() {
 		_ = r.mgr
 		_ = r.emitter
 		_ = r.eventPublisher
+		_ = r.qualificationFrameworkReadyRecorder
 	}
 }
 

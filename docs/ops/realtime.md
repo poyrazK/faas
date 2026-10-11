@@ -2705,6 +2705,9 @@ revoke/disconnect a live connection to immediately remove access, or use the
 [principal access controls preview](#principal-access-controls-preview) for a
 durable deny across nodes. Application authorization runs again when it reconnects.
 
+revoke/disconnect a live connection to immediately remove access; authorization
+runs again when it reconnects. No new membership database is created.
+
 Canonical channels are `__activity.` followed by base64url-encoded UTF-8 parent,
 a dot, and base64url-encoded scope, without padding. The prefix is reserved;
 malformed, noncanonical, or nested scope channels are rejected. Parent and scope

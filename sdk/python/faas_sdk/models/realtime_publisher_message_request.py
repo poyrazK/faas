@@ -19,16 +19,20 @@ T = TypeVar("T", bound="RealtimePublisherMessageRequest")
 class RealtimePublisherMessageRequest:
     event_type: str
     data_base64: str
+    ttl_seconds: int | Unset = 0
+    """Message lifetime from retained publication; zero disables expiry. Positive credential caps forbid zero or
+    omitted TTL."""
     binary: bool | Unset = False
     metadata: RealtimePublisherMessageRequestMetadata | Unset = UNSET
     """event_type is reserved; supplied value must match the top-level event_type."""
-    ttl_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         event_type = self.event_type
 
         data_base64 = self.data_base64
+
+        ttl_seconds = self.ttl_seconds
 
         binary = self.binary
 
@@ -44,13 +48,13 @@ class RealtimePublisherMessageRequest:
                 "data_base64": data_base64,
             }
         )
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if binary is not UNSET:
             field_dict["binary"] = binary
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
 
-        if self.ttl_seconds is not UNSET:
-            field_dict["ttl_seconds"] = self.ttl_seconds
         return field_dict
 
     @classmethod
@@ -58,10 +62,11 @@ class RealtimePublisherMessageRequest:
         from ..models.realtime_publisher_message_request_metadata import RealtimePublisherMessageRequestMetadata
 
         d = dict(src_dict)
-        ttl_seconds = d.pop("ttl_seconds", UNSET)
         event_type = d.pop("event_type")
 
         data_base64 = d.pop("data_base64")
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         binary = d.pop("binary", UNSET)
 
@@ -73,9 +78,9 @@ class RealtimePublisherMessageRequest:
             metadata = RealtimePublisherMessageRequestMetadata.from_dict(_metadata)
 
         realtime_publisher_message_request = cls(
-            ttl_seconds=ttl_seconds,
             event_type=event_type,
             data_base64=data_base64,
+            ttl_seconds=ttl_seconds,
             binary=binary,
             metadata=metadata,
         )

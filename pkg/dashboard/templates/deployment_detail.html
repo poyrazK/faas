@@ -124,6 +124,10 @@
     .hosting-receipt dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 0; }
     .hosting-receipt dt { color: #6b7280; }
     .hosting-receipt dd { margin: 0; }
+    .hosting-route-check-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+    .hosting-route-check-list li { border-top: 1px solid #dbeafe; padding: 0.5rem 0; }
+    .hosting-route-check-list p { margin: 0.2rem 0; }
+    .hosting-route-check-fingerprint { overflow-wrap: anywhere; color: #6b7280; }
     .badge.smoke-verified { background: #d1fae5; color: #065f46; }
     .badge.smoke-failed   { background: #fee2e2; color: #991b1b; }
     .badge.smoke-skipped  { background: #f3f4f6; color: #6b7280; }
@@ -339,6 +343,37 @@
           {{if .SmokeErrorCode}}<dt>Error code</dt><dd><code>{{.SmokeErrorCode}}</code></dd>{{end}}
           {{if .SmokeError}}<dt>Details</dt><dd>{{.SmokeError}}</dd>{{end}}
         </dl>
+        {{if .RouteChecks}}
+          <h3>OpenAPI route checks</h3>
+          <p>
+            {{if eq .RouteCheckSetStatus "verified"}}<span class="badge smoke-verified">verified</span>
+            {{else if eq .RouteCheckSetStatus "failed"}}<span class="badge smoke-failed">failed</span>
+            {{else}}<span class="badge smoke-skipped">{{.RouteCheckSetStatus}}</span>{{end}}
+            {{len .RouteChecks}} selected routes
+          </p>
+          {{if .RouteCheckDocumentSHA256}}<p class="hosting-route-check-fingerprint">OpenAPI SHA-256: <code>{{.RouteCheckDocumentSHA256}}</code></p>{{end}}
+          <ul class="hosting-route-check-list">
+            {{range .RouteChecks}}
+              <li>
+                <p>
+                  <code>{{.Method}} {{.Path}}</code>
+                  {{if eq .Status "verified"}}<span class="badge smoke-verified">verified</span>
+                  {{else if eq .Status "failed"}}<span class="badge smoke-failed">failed</span>
+                  {{else}}<span class="badge smoke-skipped">{{.Status}}</span>{{end}}
+                </p>
+                {{if or .StatusCode .LatencyMS .VerifiedAt}}
+                  <p>
+                    {{if .StatusCode}}HTTP <code>{{.StatusCode}}</code>{{end}}
+                    {{if .LatencyMS}} · <code>{{.LatencyMS}} ms</code>{{end}}
+                    {{if .VerifiedAt}} · checked <code>{{.VerifiedAt}}</code>{{end}}
+                  </p>
+                {{end}}
+                {{if .ErrorCode}}<p>Error code: <code>{{.ErrorCode}}</code></p>{{end}}
+                {{if .Error}}<p>{{.Error}}</p>{{end}}
+              </li>
+            {{end}}
+          </ul>
+        {{end}}
         {{if eq .SmokeStatus "failed"}}
           <p><a href="/dashboard/apps/{{$.Data.App.Slug}}/logs?deployment={{$.Data.Deployment.ID}}">View deployment logs →</a></p>
         {{end}}

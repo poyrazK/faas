@@ -477,6 +477,8 @@ func TestManPages_LintWithMandoc(t *testing.T) {
 			cmd.Stdin = strings.NewReader(roff.String())
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
+			// BSD mandoc (macOS) prints lint diagnostics on stdout.
+			cmd.Stdout = &stderr
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("mandoc lint: %v\n%s\nroff:\n%s", err, stderr.String(), roff.String())
 			}
@@ -818,6 +820,8 @@ func TestCompletion_PowershellScriptIsSyntacticallyValid(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {

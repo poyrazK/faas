@@ -18,7 +18,7 @@ import (
 
 type routeMonitorCLIOptions struct {
 	action, slug, mode, routes, incident, before, out, sourceImpact string
-	customerGroupBy                                                 string
+	customerGroupBy, onViolation                                    string
 	revision                                                        int64
 	limit                                                           int
 	fail                                                            bool
@@ -39,6 +39,7 @@ func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 		fs.StringVar(&o.mode, "mode", "", "enabled or disabled")
 		fs.StringVar(&o.routes, "routes", "", "JSON array of production route budgets")
 		fs.StringVar(&o.customerGroupBy, "customer-group-by", "", "optionally evaluate budgets by tenant or consumer")
+		fs.StringVar(&o.onViolation, "on-violation", "", "report (default) or rollback to the last healthy deployment after an early error-budget incident")
 		fs.Int64Var(&o.revision, "expected-revision", -1, "current revision; 0 initially")
 	case "preview":
 		fs.StringVar(&o.routes, "routes", "", "JSON array of proposed production route budgets")
@@ -128,7 +129,7 @@ func cmdRoutesMonitor(args []string) int {
 			return printErr("Invalid route budgets", err)
 		}
 		if o.action == "set" {
-			request = api.SetRouteMonitorRequest{CustomerGroupBy: o.customerGroupBy, Enabled: o.mode == "enabled", ExpectedRevision: &o.revision, Routes: routes}
+			request = api.SetRouteMonitorRequest{CustomerGroupBy: o.customerGroupBy, OnViolation: o.onViolation, Enabled: o.mode == "enabled", ExpectedRevision: &o.revision, Routes: routes}
 			if err := routemonitor.Validate(request); err != nil {
 				return printErr("Invalid route monitor configuration", err)
 			}
@@ -171,7 +172,7 @@ func cmdRoutesMonitor(args []string) int {
 		if err := routemonitor.ValidateConfig(config); err != nil {
 			return printErr("Invalid route monitor response", err)
 		}
-		if o.action == "set" && (config.Enabled != request.Enabled || config.CustomerGroupBy != request.CustomerGroupBy || !routemonitor.RoutesEqual(config.Routes, request.Routes) || config.Revision != o.revision && config.Revision != o.revision+1) {
+		if o.action == "set" && (config.Enabled != request.Enabled || config.CustomerGroupBy != request.CustomerGroupBy || routemonitor.OnViolation(config.OnViolation) != routemonitor.OnViolation(request.OnViolation) || !routemonitor.RoutesEqual(config.Routes, request.Routes) || config.Revision != o.revision && config.Revision != o.revision+1) {
 			return printErr("Invalid route monitor response", errors.New("configuration does not match submitted budgets or revision"))
 		}
 		if jsonOutput {
@@ -180,6 +181,9 @@ func cmdRoutesMonitor(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Production route monitoring for %s: enabled=%t (revision %d)", o.slug, config.Enabled, config.Revision)
 		if config.CustomerGroupBy != "" {
 			_, _ = fmt.Fprintf(osStdout, ", grouped by %s", config.CustomerGroupBy)
+		}
+		if routemonitor.OnViolation(config.OnViolation) == "rollback" {
+			_, _ = fmt.Fprint(osStdout, ", rolls back early error-budget violations")
 		}
 		_, _ = fmt.Fprintln(osStdout)
 		for _, r := range config.Routes {
@@ -390,6 +394,16 @@ func renderRouteMonitorIncident(i api.RouteMonitorIncident, slug string) {
 			_, _ = fmt.Fprint(osStdout, ")")
 		}
 		_, _ = fmt.Fprintln(osStdout)
+	}
+	if rb := i.Rollback; rb != nil {
+		switch rb.Status {
+		case "requested":
+			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: requested to %s for %s (operation %s)\n", rb.TargetDeploymentID, rb.Route, rb.OperationID)
+		case "skipped":
+			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: skipped (%s)\n", rb.Reason)
+		default:
+			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: %s\n", rb.Status)
+		}
 	}
 	renderRouteMonitorIncidentTimeline(i)
 	renderRouteMonitorReport(i.OpeningReport)

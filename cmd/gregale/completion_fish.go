@@ -20,13 +20,16 @@ import (
 )
 
 func cmdCompletionFish() int {
-	w := osStdout
+	renderFishCompletion(osStdout)
+	return 0
+}
+
+func renderFishCompletion(w io.Writer) {
 	renderFishHeader(w)
 	for _, c := range customerCliCommands() {
 		renderFishCommand(w, c)
 	}
 	renderFishFooter(w)
-	return 0
 }
 
 func renderFishHeader(w io.Writer) {

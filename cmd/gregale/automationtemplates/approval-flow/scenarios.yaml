@@ -1,0 +1,21 @@
+definition: automation.yaml
+scenarios:
+  - name: timeout
+    input_file: sample-input.json
+    mock_outputs_file: mock-outputs.json
+    mock_attempts_file: mock-attempts.json
+    expect:
+      approval: {state: timed_out, reason: timeout_mocked, output: {timeout: true}}
+      fulfill: {state: skipped, when_matched: false}
+      expire: {state: mocked, output: {expired: true}}
+  - name: approved
+    input_file: sample-input.json
+    mock_outputs_file: mock-approval-outputs.json
+    mock_attempts_file: mock-approval-attempts.json
+    expect:
+      approval:
+        state: mocked
+        reason: event_received_mocked
+        output: {approved_by: reviewer-42}
+      fulfill: {state: mocked, when_matched: true, output: {fulfilled: true}}
+      expire: {state: skipped}

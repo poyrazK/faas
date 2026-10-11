@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 const (
@@ -20,10 +22,12 @@ const (
 func cmdMCPTasks(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr,
-			"usage: gregale mcp tasks <setup|status> --app <worker-app> [flags]", "mcp")
+			"usage: gregale mcp tasks <setup|status|release> --app <worker-app> [flags]", "mcp")
 		return 0
 	}
 	switch args[0] {
+	case "release":
+		return cmdMCPTaskRelease(args[1:])
 	case "setup":
 		return cmdMCPTasksSetup(args[1:])
 	case "status":
@@ -171,7 +175,17 @@ type mcpTasksMetricStatus struct {
 	Stale      bool       `json:"stale"`
 }
 
+type mcpTasksDiagnostic struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type mcpTasksStatusResult struct {
+	ControlPlaneChecks     []mcphosting.Check   `json:"-"`
+	WorkerHeartbeatsFresh  bool                 `json:"worker_heartbeats_fresh"`
+	ObserverHeartbeatFresh bool                 `json:"observer_heartbeat_fresh"`
+	Diagnostics            []mcpTasksDiagnostic `json:"diagnostics"`
+
 	AppSlug                string                 `json:"app_slug"`
 	Configured             bool                   `json:"configured"`
 	ScaleToZeroConfigured  bool                   `json:"scale_to_zero_configured"`
@@ -182,13 +196,21 @@ type mcpTasksStatusResult struct {
 }
 
 func cmdMCPTasksStatus(args []string) int {
+	return cmdMCPTasksReport(args, false)
+}
+
+func cmdMCPTasksReport(args []string, doctor bool) int {
 	fs := newFlagSet("mcp-tasks-status", flag.ContinueOnError)
+	preflightPath := fs.String("preflight-path", "", "generated starter directory whose Task doctor runs with local deployment bindings (hosting doctor only)")
 	appFlag := fs.String("app", "", "worker app slug (defaults to the linked project app)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
 		return printErr("Invalid MCP task status flags", errors.New("unexpected positional arguments"))
+	}
+	if !doctor && *preflightPath != "" {
+		return printErr("Invalid flags", errors.New("--preflight-path requires mcp doctor --hosting"))
 	}
 	slug, err := resolveAppFlagOrContext(*appFlag)
 	if err != nil {
@@ -228,6 +250,14 @@ func cmdMCPTasksStatus(args []string) int {
 		Metrics: []mcpTasksMetricStatus{
 			{Name: mcpTasksOutstandingMetric},
 			{Name: mcpTasksOldestAgeMetric},
+			{Name: "mcp_tasks_running"},
+			{Name: "mcp_tasks_capacity_waiting"},
+			{Name: "mcp_tasks_retry_waiting"},
+			{Name: "mcp_tasks_failed"},
+			{Name: "mcp_tasks_active_workers"},
+			{Name: "mcp_tasks_draining_workers"},
+			{Name: "mcp_tasks_unsupported_handler_tasks"},
+			{Name: "mcp_tasks_observer_heartbeat"},
 		},
 	}
 	for _, metric := range metrics.Metrics {
@@ -244,6 +274,11 @@ func cmdMCPTasksStatus(args []string) int {
 				result.OutstandingMetricFresh = !metric.Stale
 			}
 		}
+	}
+	result.diagnose()
+	if doctor {
+		result.ControlPlaneChecks = []mcphosting.Check{checkMCPConditionalParking(ctx, client)}
+		return printMCPHostingDoctor(result, *preflightPath)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
@@ -267,6 +302,9 @@ func cmdMCPTasksStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "  %-32s %.2f (%s at %s)\n", metric.Name, metric.Value, freshness, metric.ObservedAt.UTC().Format(time.RFC3339))
 	}
 	_, _ = fmt.Fprintf(osStdout, "  Freshness window: %ds\n", result.FreshnessSeconds)
+	for _, diagnostic := range result.Diagnostics {
+		_, _ = fmt.Fprintf(osStdout, "  %s: %s\n", diagnostic.Code, diagnostic.Message)
+	}
 	if result.ScaleToZeroConfigured {
 		if result.OutstandingMetricFresh {
 			_, _ = fmt.Fprintln(osStdout, "  Scale-to-zero signal: policy is enabled and the backlog metric is fresh.")
@@ -276,4 +314,58 @@ func cmdMCPTasksStatus(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "  Verify the separate always-on task observer is healthy; this status cannot confirm its deployment.")
 	}
 	return 0
+}
+
+// Diagnose only fresh observations. Missing telemetry does not imply zero work.
+func (result *mcpTasksStatusResult) diagnose() {
+	result.Diagnostics = make([]mcpTasksDiagnostic, 0)
+	values := make(map[string]float64)
+	var unavailable []string
+	for _, metric := range result.Metrics {
+		if metric.Present && !metric.Stale {
+			values[metric.Name] = metric.Value
+		} else if metric.Name != "mcp_tasks_observer_heartbeat" {
+			unavailable = append(unavailable, metric.Name)
+		}
+	}
+	add := func(code, message string) {
+		result.Diagnostics = append(result.Diagnostics, mcpTasksDiagnostic{Code: code, Message: message})
+	}
+	workers, workersKnown := values["mcp_tasks_active_workers"]
+	observer, observerKnown := values["mcp_tasks_observer_heartbeat"]
+	result.WorkerHeartbeatsFresh = workersKnown && workers > 0
+	result.ObserverHeartbeatFresh = observerKnown && observer == 1
+	if len(unavailable) > 0 {
+		add("telemetry_incomplete", "Missing or stale metrics: "+strings.Join(unavailable, ", ")+". Check the metrics publisher and database access; queue health is only partially known.")
+	}
+	if result.ScaleToZeroConfigured && !result.ObserverHeartbeatFresh {
+		add("observer_health_unknown", "Scale-to-zero is configured, but the separate observer heartbeat is missing or stale. Check the always-on observer and its metrics credentials.")
+	}
+	if values["mcp_tasks_draining_workers"] > 0 {
+		add("workers_draining", "Workers are finishing active Tasks and no longer claiming new work. Verify replacement workers are available during rollout.")
+	}
+	if values["mcp_tasks_capacity_waiting"] > 0 {
+		add("execution_capacity", "Tasks are waiting for namespace or owner execution capacity. More replicas may not help; review the configured running limits and active leases.")
+	}
+	if values["mcp_tasks_retry_waiting"] > 0 {
+		add("retry_delay", "Tasks are waiting for their persisted retry time. They remain outstanding but cannot run until the backoff expires.")
+	}
+	if values["mcp_tasks_failed"] > 0 {
+		add("failed_tasks_retained", "Terminal failed Tasks are retained within TTL. Review worker logs and handler error classification; this gauge is not a cumulative failure rate.")
+	}
+	if result.WorkerHeartbeatsFresh && values["mcp_tasks_unsupported_handler_tasks"] > 0 {
+		add("unsupported_handler", "Pending Tasks have no matching handler version in the live worker registry. Deploy a compatible worker or retain previous handler implementations.")
+	}
+	if values[mcpTasksOutstandingMetric] > 0 {
+		if workersKnown && workers == 0 {
+			add("no_active_workers", "Outstanding work has no live worker registration in the latest report. Check worker startup and autoscaling; zero workers can be intentional while idle or waiting for retries.")
+		}
+		running, runningKnown := values["mcp_tasks_running"]
+		_, capacityKnown := values["mcp_tasks_capacity_waiting"]
+		_, retriesKnown := values["mcp_tasks_retry_waiting"]
+		_, handlersKnown := values["mcp_tasks_unsupported_handler_tasks"]
+		if result.WorkerHeartbeatsFresh && runningKnown && running == 0 && capacityKnown && retriesKnown && handlersKnown && values["mcp_tasks_capacity_waiting"] == 0 && values["mcp_tasks_retry_waiting"] == 0 && values["mcp_tasks_unsupported_handler_tasks"] == 0 {
+			add("idle_queue", "Ready work has no live execution lease in this snapshot. Check worker polling and logs for claim or database errors.")
+		}
+	}
 }

@@ -19,6 +19,13 @@ func (l *Loop) runWorkflowSchedulesTick(ctx context.Context) error {
 	if !l.workflowsDispatched {
 		return nil
 	}
+	if store, ok := l.engine.Store().(state.AutomationFailurePolicyStore); ok {
+		next, err := store.EvaluateAutomationFailurePolicies(ctx, l.engine.OwnerNodeID(), l.workflowFailurePolicyAfter, api.AutomationFailurePolicyBatch, l.now())
+		if err != nil {
+			return fmt.Errorf("workflow failure policies: %w", err)
+		}
+		l.workflowFailurePolicyAfter = next
+	}
 	return errors.Join(l.runApplicationWorkflowSchedulesTick(ctx), l.runTenantWorkflowSchedulesTick(ctx))
 }
 

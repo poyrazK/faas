@@ -5,6 +5,7 @@ package fcvm
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -231,5 +232,58 @@ func TestRecordRestoreWorkingSet(t *testing.T) {
 			t.Fatal("working set was never recorded")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// adr: 225 — preserve real syscall and complete kernel argument coverage.
+func TestAdviseRangesPassesKernelArguments(t *testing.T) {
+	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
+	type adviceCall struct {
+		fd, advice int
+		off, size  int64
+	}
+	var calls []adviceCall
+	const fd = 17
+	if err := adviseRanges(fd, ranges, func(gotFD int, off, size int64, advice int) error {
+		calls = append(calls, adviceCall{fd: gotFD, advice: advice, off: off, size: size})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantCount := 0
+	for _, r := range ranges {
+		wantCount += int((r.Len + int64(adviseChunk) - 1) / int64(adviseChunk))
+	}
+	if len(calls) != wantCount {
+		t.Fatalf("made %d advice calls, want %d", len(calls), wantCount)
+	}
+	callIndex := 0
+	for _, r := range ranges {
+		for off := r.Off; off < r.Off+r.Len; off += int64(adviseChunk) {
+			wantSize := min(int64(adviseChunk), r.Off+r.Len-off)
+			got := calls[callIndex]
+			if got.fd != fd || got.off != off || got.size != wantSize || got.advice != unix.FADV_WILLNEED {
+				t.Errorf("advice call %d = %+v, want fd=%d range=%d+%d advice=FADV_WILLNEED", callIndex, got, fd, off, wantSize)
+			}
+			callIndex++
+		}
+	}
+}
+
+// adr: 225 — preserve real syscall and complete kernel argument coverage.
+func TestAdviseWillNeedKernelSyscall(t *testing.T) {
+	const size = 16 << 20
+	path := filepath.Join(t.TempDir(), "mem")
+	if err := os.WriteFile(path, bytes.Repeat([]byte{1}, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evictFromPageCache(t, path)
+	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
+	if err := adviseWillNeed(path, ranges); err != nil {
+		t.Fatal(err)
+	}
+	if err := adviseWillNeed(path+".missing", ranges); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing snapshot error = %v, want os.ErrNotExist", err)
 	}
 }

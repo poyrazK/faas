@@ -23,9 +23,10 @@ class ManagedRealtimeChannelBatchRequest:
 
     batch_id: str
     messages: list[ManagedRealtimeChannelBatchRequestMessagesItem]
+    ttl_seconds: int | Unset = 0
+    """Default delivery lifetime for all batch messages; zero disables expiry."""
     expected_sequence: int | None | Unset = UNSET
     """Precondition for the channel head before the whole batch."""
-    ttl_seconds: int | Unset = 0
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,13 +37,13 @@ class ManagedRealtimeChannelBatchRequest:
             messages_item = messages_item_data.to_dict()
             messages.append(messages_item)
 
+        ttl_seconds = self.ttl_seconds
+
         expected_sequence: int | None | Unset
         if isinstance(self.expected_sequence, Unset):
             expected_sequence = UNSET
         else:
             expected_sequence = self.expected_sequence
-
-        ttl_seconds = self.ttl_seconds
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -52,11 +53,10 @@ class ManagedRealtimeChannelBatchRequest:
                 "messages": messages,
             }
         )
-        if expected_sequence is not UNSET:
-            field_dict["expected_sequence"] = expected_sequence
-
         if ttl_seconds is not UNSET:
             field_dict["ttl_seconds"] = ttl_seconds
+        if expected_sequence is not UNSET:
+            field_dict["expected_sequence"] = expected_sequence
 
         return field_dict
 
@@ -67,7 +67,6 @@ class ManagedRealtimeChannelBatchRequest:
         )
 
         d = dict(src_dict)
-        ttl_seconds = d.pop("ttl_seconds", UNSET)
         batch_id = d.pop("batch_id")
 
         messages = []
@@ -76,6 +75,8 @@ class ManagedRealtimeChannelBatchRequest:
             messages_item = ManagedRealtimeChannelBatchRequestMessagesItem.from_dict(messages_item_data)
 
             messages.append(messages_item)
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         def _parse_expected_sequence(data: object) -> int | None | Unset:
             if data is None:
@@ -87,9 +88,9 @@ class ManagedRealtimeChannelBatchRequest:
         expected_sequence = _parse_expected_sequence(d.pop("expected_sequence", UNSET))
 
         managed_realtime_channel_batch_request = cls(
-            ttl_seconds=ttl_seconds,
             batch_id=batch_id,
             messages=messages,
+            ttl_seconds=ttl_seconds,
             expected_sequence=expected_sequence,
         )
 

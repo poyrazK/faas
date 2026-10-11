@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RouteHealthProbe } from './RouteHealthProbe.js';
 /**
  * Exact normalized telemetry operation selected for canary error checks and optional latency checks.
  */
@@ -23,5 +24,6 @@ export type RouteHealthRoute = {
    * Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero disables it. Does not enable the relative slowdown check.
    */
   max_p95_ms?: number;
+  probe?: RouteHealthProbe;
 };
 

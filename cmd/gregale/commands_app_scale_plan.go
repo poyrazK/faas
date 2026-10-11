@@ -242,7 +242,7 @@ func appScaleHasSettingFlags(explicit map[string]bool) bool {
 			continue
 		}
 		switch name {
-		case "plan", "out", "apply", "confirm", "environment":
+		case "plan", "out", "apply", "confirm", "environment", "interactive":
 			continue
 		default:
 			return true
@@ -321,6 +321,10 @@ func cmdAppScaleApplyPlan(slug, path string) int {
 	if err != nil {
 		return printErr("Could not read saved app settings plan", err)
 	}
+	return applyAppScaleSavedPlan(slug, plan)
+}
+
+func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 	if plan.SchemaVersion != 1 || plan.AppSlug != slug || plan.Preview.SchemaVersion != 1 || plan.Preview.AppSlug != slug || plan.Preview.Environment != plan.Environment {
 		return printErr("Invalid saved app settings plan", errors.New("schema, app slug, or environment does not match the plan file"))
 	}
