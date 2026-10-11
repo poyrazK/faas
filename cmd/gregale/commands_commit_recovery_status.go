@@ -18,12 +18,14 @@ func cmdCommitRecoveryStatus(args []string) int {
 	planPath := fs.String("plan", "", "reviewed recovery plan JSON")
 	resultPath := fs.String("result", "", "saved recovery apply result JSON")
 	resumePath := fs.String("resume", "", "saved recovery status; continue unread items and failed reads")
+	watch := fs.Bool("watch", false, "monitor acknowledged recovery executions until terminal or timeout")
+	interval := fs.Duration("interval", api.CommitRecoveryWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	refreshPath := fs.String("refresh", "", "saved recovery status; reread selection and track changes")
 	limit := fs.Int("limit", api.CommitRecoveryStatusMax, "subscriber observations")
 	pages := fs.Int("recipient-pages", 1, "receipt pages per item")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") {
+	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 1 || *planPath == "" || *resultPath == "" || *limit < 1 || *limit > api.CommitRecoveryStatusMax || *pages < 1 || *pages > api.CommitDeliveryReportPagesMax || *timeout <= 0 || *timeout > 24*time.Hour || (*resumePath != "" && *refreshPath != "") || *interval < api.CommitRecoveryWatchIntervalMin || *interval > api.CommitRecoveryWatchIntervalMax {
 		return 1
 	}
 	var plan api.CommitRecoveryPlan
@@ -48,6 +50,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	var out api.CommitRecoveryStatusResult
+	var saved *api.CommitRecoveryStatusResult
 	if *resumePath != "" || *refreshPath != "" {
 		statusPath := *resumePath
 		if *refreshPath != "" {
@@ -57,13 +60,37 @@ func cmdCommitRecoveryStatus(args []string) int {
 		if readErr := readCommitRecoveryStatusFile(statusPath, &previous); readErr != nil {
 			return printErr("Cannot read saved recovery status", readErr)
 		}
-		if *refreshPath != "" {
+		saved = &previous
+		if !*watch && *refreshPath != "" {
 			out, err = client.RefreshCommitRecoveryStatus(ctx, plan, result, previous, *limit, *pages)
-		} else {
+		} else if !*watch {
 			out, err = client.ResumeCommitRecoveryStatus(ctx, plan, result, previous, *limit, *pages)
 		}
-	} else {
+	} else if !*watch {
 		out, err = client.GetCommitRecoveryStatus(ctx, plan, result, *limit, *pages)
+	}
+	if *watch {
+		last := ""
+		lastRows := map[string]string{}
+		progress := func(status api.CommitRecoveryStatusResult) {
+			rows := make([]any, 0, len(status.Items))
+			for _, row := range status.Items {
+				fields := []any{row.Status, row.Reason, row.Generation, row.GenerationRelation, row.Attribution, row.ExecutionID, row.ExecutionState}
+				rows = append(rows, fields)
+				rawRow, _ := json.Marshal(fields)
+				key := row.Attempt.EventID + ":" + row.Attempt.SubscriptionID
+				if row.Status != "not_observed" && lastRows[key] != string(rawRow) {
+					_, _ = fmt.Fprintf(os.Stderr, "Recovery %s: [status, reason, generation, relation, attribution, execution, state]=%s\n", key, rawRow)
+				}
+				lastRows[key] = string(rawRow)
+			}
+			raw, _ := json.Marshal(rows)
+			if string(raw) != last {
+				last = string(raw)
+				_, _ = fmt.Fprintf(os.Stderr, "Recovery status: %d remaining; counts=%v; acknowledged executions terminal=%t\n", status.Remaining, status.Counts, api.CommitRecoveryStatusSettled(status))
+			}
+		}
+		out, err = client.WatchCommitRecoveryStatus(ctx, plan, result, saved, *refreshPath != "", *limit, *pages, *interval, progress)
 	}
 	if code := jsonOut(writeJSON(out)); code != 0 {
 		return code
@@ -75,7 +102,7 @@ func cmdCommitRecoveryStatus(args []string) int {
 		return 1
 	}
 	for _, row := range out.Items {
-		if row.Attempt.Status == "unknown" {
+		if row.Attempt.Status == "unknown" || (*watch && (row.Attempt.Status == "rejected" || row.Attempt.Status == "not_attempted")) {
 			return 1
 		}
 	}

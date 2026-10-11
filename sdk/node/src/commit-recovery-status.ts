@@ -192,3 +192,56 @@ function compareObservation(previous: CommitRecoveryStatusObservation | undefine
   }
   return changes.length ? changes : undefined;
 }
+
+/** True only when all queued attempts have matching terminal execution evidence. */
+export function commitRecoveryStatusSettled(out: CommitRecoveryStatusResult): boolean {
+  return out.complete && out.remaining === 0 && out.items.every(row => {
+    if (row.attempt.status === 'queued') return ['completed', 'failed'].includes(row.status) && row.attribution === 'matches_acknowledged_execution'
+      && ['completed', 'failed', 'cancelled', 'expired', 'superseded'].includes(row.execution_state ?? '');
+    return ['rejected', 'skipped', 'not_attempted'].includes(row.attempt.status);
+  });
+}
+
+/** Poll a fixed selection; errors retain the last/partial result. */
+export async function watchCommitRecoveryStatus(source: string, plan: CommitRecoveryPlan, applied: CommitRecoveryApplyResult, options: {
+  limit?: number; recipientPages?: number; timeoutMs?: number; intervalMs?: number; signal?: AbortSignal;
+  resume?: CommitRecoveryStatusResult; refresh?: CommitRecoveryStatusResult;
+  onProgress?: (status: CommitRecoveryStatusResult) => void;
+} = {}): Promise<CommitRecoveryStatusResult> {
+  const { limit, recipientPages, onProgress, signal } = options;
+  const intervalMs = options.intervalMs ?? 1000, timeoutMs = options.timeoutMs ?? 120000;
+  if (!Number.isFinite(intervalMs) || intervalMs < 100 || intervalMs > 60000 || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 86400000 || (options.resume && options.refresh)) throw new TypeError('invalid recovery watch options');
+  const fixedPlan = structuredClone(plan), fixedApplied = structuredClone(applied);
+  let previous = options.resume || options.refresh ? structuredClone(options.resume ?? options.refresh) : undefined;
+  let refresh = Boolean(options.refresh) || Boolean(previous && previous.items.every(row => !['not_observed', 'read_error'].includes(row.status)));
+  const controller = new AbortController(), abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  const timer = setTimeout(abort, timeoutMs), started = performance.now();
+  let out: CommitRecoveryStatusResult = { source_id: source, items: [], counts: {}, remaining: 0, complete: false };
+  try {
+    for (;;) {
+      if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
+      out = await getCommitRecoveryStatus(source, fixedPlan, fixedApplied, {
+        limit, recipientPages,
+        timeoutMs: Math.max(1, timeoutMs - (performance.now() - started)), signal: controller.signal,
+        ...(previous ? refresh ? { refresh: previous } : { resume: previous } : {}),
+      });
+      onProgress?.(structuredClone(out));
+      if (controller.signal.aborted || performance.now() - started >= timeoutMs) throw new CommitRecoveryStatusError(out, new Error('watch interrupted'));
+      if (commitRecoveryStatusSettled(out)) return out;
+      previous = out; refresh = out.remaining === 0;
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(poll); controller.signal.removeEventListener('abort', done); resolve(); };
+        const poll = setTimeout(done, intervalMs);
+        controller.signal.addEventListener('abort', done, { once: true });
+        if (controller.signal.aborted) done();
+      });
+    }
+  } catch (error) {
+    if (error instanceof CommitRecoveryStatusError) throw error;
+    throw new CommitRecoveryStatusError(out, error);
+  } finally {
+    clearTimeout(timer); signal?.removeEventListener('abort', abort);
+  }
+}

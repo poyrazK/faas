@@ -827,3 +827,6 @@ Older status files without selection snapshots require a fresh status read. Resu
 
 
 Refresh saved Commit recovery observations with `aget_commit_recovery_status(client, source, plan, applied, refresh=previous)`. Refresh clears current evidence and reports before/after changes against a compact saved baseline. Use resume to finish a bounded refresh pass; refresh and resume are mutually exclusive. Unknown apply attempts remain unknown. See [the Commit guide](../../docs/gregale-commit.md#refresh-saved-recovery-observations).
+
+
+Use `awatch_commit_recovery_status` for bounded recovery monitoring with detached progress callbacks. Partial passes resume before the next refresh. Queued attempts require matching terminal execution evidence; unknown attempts remain unknown. Timeout/read errors retain the last or partial status. See [monitoring usage](../../docs/gregale-commit.md#monitor-acknowledged-recovery-executions).

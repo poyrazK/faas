@@ -408,3 +408,8 @@ type CommitRecoveryStatusSelection = api.CommitRecoveryStatusSelection
 
 type CommitRecoveryStatusObservation = api.CommitRecoveryStatusObservation
 type CommitRecoveryStatusChange = api.CommitRecoveryStatusChange
+
+// CommitRecoveryStatusSettled reports terminal acknowledged execution coverage.
+func CommitRecoveryStatusSettled(out CommitRecoveryStatusResult) bool {
+	return api.CommitRecoveryStatusSettled(out)
+}

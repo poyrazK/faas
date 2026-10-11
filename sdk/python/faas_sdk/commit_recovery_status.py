@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import math
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -404,3 +406,87 @@ def _compare_observation(previous: dict[str, Any] | None, current: dict[str, Any
             change["observed_at"] = current["observed_at"]
         changes.append(change)
     return changes
+
+
+def commit_recovery_status_settled(out: dict[str, Any]) -> bool:
+    """Require matching terminal execution evidence for every queued attempt."""
+    if not out["complete"] or out["remaining"]:
+        return False
+    for row in out["items"]:
+        if row["attempt"]["status"] == "queued":
+            if (
+                row["status"] not in {"completed", "failed"}
+                or row["attribution"] != "matches_acknowledged_execution"
+                or row.get("execution_state")
+                not in {
+                    "completed",
+                    "failed",
+                    "cancelled",
+                    "expired",
+                    "superseded",
+                }
+            ):
+                return False
+        elif row["attempt"]["status"] not in {"rejected", "skipped", "not_attempted"}:
+            return False
+    return True
+
+
+async def awatch_commit_recovery_status(
+    client: AuthenticatedClient,
+    source: UUID | str,
+    reviewed: dict[str, Any],
+    applied: dict[str, Any],
+    *,
+    limit: int = 50,
+    recipient_pages: int = 1,
+    timeout: float = 120,
+    interval: float = 1,
+    resume: dict[str, Any] | None = None,
+    refresh: dict[str, Any] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Bounded polling; timeout/cancellation attaches the latest observations."""
+    if (
+        not math.isfinite(interval)
+        or not 0.1 <= interval <= 60
+        or not math.isfinite(timeout)
+        or not 0 < timeout <= 86400
+    ):
+        raise ValueError("invalid recovery watch options")
+    if resume is not None and refresh is not None:
+        raise ValueError("choose resume or refresh")
+    plan, result = copy.deepcopy(reviewed), copy.deepcopy(applied)
+    previous = copy.deepcopy(resume if resume is not None else refresh)
+    refreshing = refresh is not None or (
+        previous is not None and all(row["status"] not in {"not_observed", "read_error"} for row in previous["items"])
+    )
+    out: dict[str, Any] = {"source_id": str(source), "items": [], "counts": {}, "remaining": 0, "complete": False}
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    try:
+        async with asyncio.timeout(timeout):
+            while True:
+                out = await aget_commit_recovery_status(
+                    client,
+                    source,
+                    plan,
+                    result,
+                    limit=limit,
+                    recipient_pages=recipient_pages,
+                    timeout=max(0.001, deadline - loop.time()),
+                    resume=previous if not refreshing else None,
+                    refresh=previous if refreshing else None,
+                )
+                if on_progress is not None:
+                    on_progress(copy.deepcopy(out))
+                if loop.time() >= deadline:
+                    raise TimeoutError("watch deadline exceeded")
+                if commit_recovery_status_settled(out):
+                    return out
+                previous, refreshing = out, out["remaining"] == 0
+                await asyncio.sleep(interval)
+    except CommitRecoveryStatusError:
+        raise
+    except (Exception, asyncio.CancelledError) as error:
+        raise CommitRecoveryStatusError(out) from error

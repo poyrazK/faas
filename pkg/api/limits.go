@@ -9642,3 +9642,10 @@ const CommitRecoveryApplyMax = 50
 
 // CommitRecoveryStatusMax bounds subscriber observations per read-only status call.
 const CommitRecoveryStatusMax = 50
+
+// Commit recovery monitoring bounds per-pass polling without changing read budgets.
+const (
+	CommitRecoveryWatchIntervalMin     = 100 * time.Millisecond
+	CommitRecoveryWatchIntervalMax     = time.Minute
+	CommitRecoveryWatchIntervalDefault = time.Second
+)

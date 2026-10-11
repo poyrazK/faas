@@ -962,8 +962,8 @@ from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
 __all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")
 from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recovery
 __all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
-from .commit_recovery_status import CommitRecoveryStatusError, aget_commit_recovery_status
-__all__ += ("CommitRecoveryStatusError", "aget_commit_recovery_status")
+from .commit_recovery_status import CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
+__all__ += ("CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
 '''
 
 

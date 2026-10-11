@@ -1179,3 +1179,65 @@ fresh = await aget_commit_recovery_status(
 ~~~
 
 See [ADR-940](adr/940-refresh-commit-recovery-status.md).
+
+
+### Monitor acknowledged recovery executions
+
+~~~sh
+gregale commit recovery-status SOURCE --plan recovery-plan.json \
+  --result recovery-result.json --watch --interval 2s --timeout 10m \
+  --limit 50 --recipient-pages 5 > recovery-final.json
+~~~
+
+Add --resume recovery-status.json to continue a partial saved pass, or
+--refresh recovery-status.json to reread it with a comparison. An already
+covered resume starts a fresh poll. The watch resumes partial passes before
+refreshing a covered selection, with an interval between every bounded call.
+The interval accepts 100ms..1m and defaults to 1s. The overall timeout includes
+all reads and waits. Progress goes to stderr only when observed row fields or
+counts change; final JSON goes to stdout even on timeout or interruption.
+
+Monitoring stops when each queued attempt has matching acknowledged execution
+evidence in a terminal state. Failed executions are terminal and still produce
+a nonzero CLI exit. Unknown apply outcomes, unmatched queued executions and
+missing evidence wait until timeout without becoming successful. Rejected,
+skipped and not_attempted attempts have no acknowledged execution to monitor;
+they remain explicit, with rejected/not_attempted yielding a nonzero exit.
+Observation coverage alone is insufficient to settle queued attempts.
+
+Read or validation failures stop the watch with partial output; resume that
+output after resolving the failure. Samples are historical and not atomic.
+Refresh comparisons use the preceding observation pass. No replay is submitted.
+
+~~~go
+ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+defer cancel()
+final, err := client.WatchCommitRecoveryStatus(
+    ctx, plan, applied, nil, false, 50, 5, 2*time.Second,
+    func(status api.CommitRecoveryStatusResult) { /* inspect progress */ },
+)
+settled := api.CommitRecoveryStatusSettled(final)
+~~~
+
+~~~ts
+const final = await watchCommitRecoveryStatus(source, plan, applied, {
+  timeoutMs: 600000, intervalMs: 2000, limit: 50, recipientPages: 5,
+  onProgress: status => console.error(status.counts),
+});
+const settled = commitRecoveryStatusSettled(final);
+~~~
+
+~~~python
+final = await awatch_commit_recovery_status(
+    client, source, plan, applied, timeout=600, interval=2,
+    limit=50, recipient_pages=5, on_progress=lambda status: print(status["counts"]),
+)
+settled = commit_recovery_status_settled(final)
+~~~
+
+Go requires a context deadline. Node supports an AbortSignal; Node/Python
+errors attach the last or partial result. Progress callbacks receive copies
+and cannot alter polling inputs. Settled means acknowledged executions are
+terminal; it does not mean all deliveries succeeded.
+
+See [ADR-941](adr/941-watch-commit-recovery-status.md).
