@@ -5406,6 +5406,7 @@ Wait until a deployment is live (or safe rollout completes)
 Examples:
 
 ```sh
+gregale deployment wait <id|vN> --app my-api
 gregale deployment wait 00000000000000000000000000000001
 gregale deployment wait 00000000000000000000000000000001 --rollout --progress
 ```

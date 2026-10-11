@@ -1893,7 +1893,7 @@ var cliCommands = []cliCommand{
 				{Name: "interactive", Short: "choose a release from app history and show its summary", Bool: true},
 				{Name: "app", Short: "app slug (defaults to linked context or interactive picker)", Value: "SLUG"},
 			}},
-			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN|latest>"}, Flags: []cliFlag{
+			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait <id|vN> --app my-api", "gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN|latest>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug for vN or latest outside a linked project", Value: "SLUG"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},

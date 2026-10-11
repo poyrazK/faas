@@ -14,9 +14,9 @@ import (
 func printAppSettingsReceipt(slug, environment string, request api.UpdateAppRequest) {
 	fields := appSettingsFieldLabels(request)
 	if environment == "" {
-		PrintOK(osStdout, "App-level settings saved for %s", compactInspectFailureText(slug))
+		PrintOK(osStdout, "Updated app-level settings for %s", compactInspectFailureText(slug))
 	} else {
-		PrintOK(osStdout, "Settings saved for %s (environment=%s)", compactInspectFailureText(slug), compactInspectFailureText(environment))
+		PrintOK(osStdout, "Updated settings for %s (environment=%s)", compactInspectFailureText(slug), compactInspectFailureText(environment))
 	}
 	if len(fields) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  Saved settings: %s\n", strings.Join(fields, ", "))

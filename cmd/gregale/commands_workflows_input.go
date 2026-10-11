@@ -34,7 +34,7 @@ func workflowJSONInput(inline, path string, inlineSet, fileSet bool, flagName st
 		return nil, fmt.Errorf("workflow %s exceeds the %d-byte limit", flagName, maxBytes)
 	}
 	if !json.Valid([]byte(inline)) {
-		return nil, fmt.Errorf("workflow %s must contain one valid JSON value", flagName)
+		return nil, fmt.Errorf("workflow %s must be valid JSON containing exactly one value", flagName)
 	}
 	return json.RawMessage(inline), nil
 }

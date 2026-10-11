@@ -231,9 +231,15 @@ func cmdDeployments(args []string) int {
 				nextCommand = recoveryCLI() + " apps"
 			}
 		}
+		if *before == "" && next == "" {
+			_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
+		}
 		printEmptyResult(target, "starting cursor="+*before+" (blank starts at newest)", nextCommand)
 		if *before != "" {
 			_, _ = fmt.Fprintln(osStdout, "This page is empty; it does not mean deployment history is empty. The next command starts at the newest page.")
+		}
+		if page.NextBefore != "" {
+			_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 		}
 		return 0
 	}

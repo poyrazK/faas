@@ -169,6 +169,7 @@ func secretsList(args []string) int {
 
 func renderSecretListHuman(app, scope, class, olderThan, deliveryStatus string, resp *api.AppSecretListResponse, keys ...string) int {
 	if !secretListHasRows(resp) {
+		_, _ = fmt.Fprintf(osStdout, "Secret metadata count: %d/%d (quota)\n", resp.Count, resp.Quota)
 		printEmptySecretList(app, scope, class, olderThan, deliveryStatus, keys...)
 		return 0
 	}

@@ -46,7 +46,7 @@ func renderInspectRemainingRecommendations(w io.Writer, summary inspectSummary) 
 		remaining = append(remaining, recommendation)
 	}
 	if primaryAdvice != "" {
-		_, _ = fmt.Fprintf(w, "\nPrimary guidance: %s\n", compactInspectFailureText(primaryAdvice))
+		_, _ = fmt.Fprintf(w, "\nPrimary guidance:\n    next: %s\n", compactInspectFailureText(primaryAdvice))
 	}
 	if len(remaining) == 0 && len(summary.Recommendations) > 0 {
 		return // The primary recommendation is already in the overview.

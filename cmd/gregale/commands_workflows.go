@@ -213,7 +213,8 @@ func cmdWorkflowsRun(args []string) int {
 	})
 	input, inputErr := workflowRunInput(*inputStr, *inputFile, inlineSet, fileSet)
 	if inputErr != nil {
-		return printErr("Invalid workflow input", inputErr)
+		printCommandValidation(osStderr, "%s\n", inputErr)
+		return 1
 	}
 
 	client, err := authedClient()
@@ -260,7 +261,8 @@ func cmdWorkflowsStatus(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		return printErr("Invalid workflow status target", fmt.Errorf("usage: gregale workflows status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]"))
+		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflows status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]")
+		return 1
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
 	if code != 0 {
@@ -337,7 +339,8 @@ func cmdWorkflowsSteps(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		return printErr("Invalid workflow read target", fmt.Errorf("usage: gregale workflows steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]"))
+		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflows steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]")
+		return 1
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
 	if code != 0 {
@@ -693,7 +696,8 @@ func cmdWorkflowsEvents(args []string) int {
 	})
 	payload, payloadErr := workflowEventPayload(*payloadStr, *payloadFile, inlineSet, fileSet, eventName)
 	if payloadErr != nil {
-		return printErr("Invalid workflow event payload", payloadErr)
+		printCommandValidation(osStderr, "%s\n", payloadErr)
+		return 1
 	}
 
 	client, err := authedClient()

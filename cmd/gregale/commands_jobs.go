@@ -185,6 +185,9 @@ func cmdJobsList(args []string) int {
 			next = recoveryCLI() + " jobs add --help"
 		}
 		printEmptyResult("Jobs", fmt.Sprintf("selected account; starting offset=%d", *offset), next)
+		if out.NextOffset >= 0 && out.NextOffset > out.Offset {
+			_, _ = fmt.Fprintf(osStdout, "Next page (POSIX shells):\n  %s jobs list --offset %d\n", recoveryCLI(), out.NextOffset)
+		}
 		return 0
 	}
 	renderJobsTable(osStdout, out.Jobs)
@@ -502,7 +505,7 @@ func cmdJobsRun(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() > 1 {
+	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
 		return 1
 	}
@@ -810,12 +813,15 @@ func cmdJobsRuns(args []string) int {
 		return 0
 	}
 	if len(items) == 0 {
-		next := recoveryCLI() + " jobs runs " + recoveryArgument(name)
+		nextCommand := recoveryCLI() + " jobs runs " + recoveryArgument(name)
 		if *offset == 0 {
-			next = recoveryCLI() + " jobs info " + recoveryArgument(name)
+			nextCommand = recoveryCLI() + " jobs info " + recoveryArgument(name)
 		}
-		printEmptyResult("runs of Job "+name, fmt.Sprintf("starting offset=%d", *offset), next)
+		printEmptyResult("runs of Job "+name, fmt.Sprintf("starting offset=%d", *offset), nextCommand)
 		_, _ = fmt.Fprintln(osStdout, "No returned runs does not establish whether an uncertain submission was accepted.")
+		if next > *offset {
+			_, _ = fmt.Fprintf(osStdout, "Next page (POSIX shells):\n  %s jobs runs %s --offset %d\n", recoveryCLI(), recoveryArgument(name), next)
+		}
 		return 0
 	}
 	renderJobRunsTable(osStdout, items)
