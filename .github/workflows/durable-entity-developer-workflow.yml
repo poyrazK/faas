@@ -51,12 +51,12 @@ jobs:
 
   go-source-workflow:
     env:
-      GOMEMLIMIT: 2GiB
-      GOGC: '25'
+      GOMEMLIMIT: 3GiB
+      GOGC: '50'
       GOMAXPROCS: '2'
       GOFLAGS: '-p=2'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -77,4 +77,4 @@ jobs:
         run: go test -race ./cmd/gregale -run 'Test(DurableEntity|Entity|MarkdownReferenceFresh)' -count=1
 
       - name: Verify authenticated entity sockets, quotas, alarms and restore admission
-        run: go test -race ./cmd/apid -run 'Test(DurableEntitySocket|DurableEntityAlarm|ApplicationValidatedRestore|EntityExportRestore)' -count=1
+        run: go test -race ./cmd/apid -run 'Test(DurableEntitySocket|DurableEntityAlarm|ApplicationValidatedRestore|EntityExportRestore)' -count=1 -v -timeout=2m
