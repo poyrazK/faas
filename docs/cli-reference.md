@@ -9684,7 +9684,7 @@ gregale data-api install --restore
 
 Run a disposable local Data API with test identities
 
-`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
+`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--replay <FILE>] [--scenario <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9693,6 +9693,7 @@ Run a disposable local Data API with test identities
 | `--output <FILE>` | types output relative to the project |  |
 | `--port <PORT>` | loopback gateway port (default 8080; 0 selects a free port) |  |
 | `--check` | run configured client checks |  |
+| `--check-types` | compare committed types without rewriting them (requires --once) |  |
 | `--once` | verify and exit, removing disposable containers |  |
 | `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
 | `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |

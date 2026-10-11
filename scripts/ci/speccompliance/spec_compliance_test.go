@@ -184,6 +184,10 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"GET /dashboard/apps/{slug}/data-api":                        true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/data-api/types/{id}":             true, // ADR-968 session-auth type download
+	"POST /dashboard/apps/{slug}/data-api/refresh":               true, // ADR-968 session + CSRF contract refresh adapter
+	"POST /dashboard/apps/{slug}/data-api/{operation}":           true, // ADR-968 session + CSRF schema/type task adapter
 	"GET /dashboard":                                             true, // HTML dashboard
 	"GET /dashboard/":                                            true, // HTML dashboard
 	"POST /dashboard/account/delete":                             true, // HTML form
