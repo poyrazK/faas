@@ -95,6 +95,95 @@ func waitSecret[T any](t *testing.T, channel <-chan T) T {
 	}
 }
 
+func TestSecretReloadManagedLeasesSurvivePartialAdoptionAndStop(t *testing.T) {
+	var mu sync.Mutex
+	retired := make(map[string]int)
+	completed := make(chan string, 3)
+	fail := false
+	f := newSecretFixture(t, func(options *SecretReloadOptions, f *secretFixture) {
+		f.storage, _ = NewObjectStorageBinding("ASSETS", func(_ context.Context, config ObjectStorageClientConfig) (string, error) {
+			return config.SecretAccessKey, nil
+		}, ObjectStorageBindingOptions[string]{Retire: func(client string) error {
+			mu.Lock()
+			retired[client]++
+			mu.Unlock()
+			completed <- client
+			return nil
+		}})
+		options.Consumers = []SecretConsumer{f.storage.SecretConsumer(), {
+			Apply: func(context.Context, SecretSnapshot) error {
+				if fail {
+					return errors.New("private-other-consumer")
+				}
+				return nil
+			}, Invalidate: func() {},
+		}}
+	})
+	if _, err := f.runtime.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	old, err := f.storage.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Release()
+	values := runtimeStorageValues()
+	values["ASSETS_SECRET_ACCESS_KEY"] = "private-failed"
+	fail = true
+	f.publish(secretEnvelope("b", values))
+	if _, err := f.runtime.Reload(context.Background()); err == nil {
+		t.Fatal("partial adoption succeeded")
+	}
+	if _, err := f.storage.Acquire(); err == nil {
+		t.Fatal("failed adoption still acquired")
+	}
+	if got := waitSecret(t, completed); got != "private-failed" {
+		t.Fatal("wrong rejected client retired")
+	}
+	if client, _, err := old.Current(); err != nil || client != "private-secret" {
+		t.Fatal("old request invalidated")
+	}
+	acks := f.acks()
+	if len(acks) != 2 || acks[0]["status"] != "applied" || acks[1]["status"] != "failed" {
+		t.Fatal("partial adoption ACK mismatch")
+	}
+	fail = false
+	values["ASSETS_SECRET_ACCESS_KEY"] = "private-recovered"
+	f.publish(secretEnvelope("c", values))
+	if _, err := f.runtime.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current, err := f.storage.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Release()
+	f.runtime.Stop()
+	if _, err := f.storage.Acquire(); err == nil {
+		t.Fatal("stopped coordinator left acquisition enabled")
+	}
+	mu.Lock()
+	before := len(retired)
+	mu.Unlock()
+	if before != 1 {
+		t.Fatal("shutdown closed active leases")
+	}
+	old.Release()
+	current.Release()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := f.storage.WaitForRetirement(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, key := range []string{"private-secret", "private-failed", "private-recovered"} {
+		if retired[key] != 1 {
+			t.Fatal("coordinator retirement count mismatch")
+		}
+	}
+}
+
 func TestSecretReloadStartupReadinessAndAllConsumers(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	ready, reads := false, 0

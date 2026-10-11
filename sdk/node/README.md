@@ -2625,3 +2625,9 @@ succeed. Require the current guest atomic snapshot, readiness and generation
 contract; register all other secret users as well. Start serving after
 `await coordinator.start()` and pass your shutdown signal. Both runtime subpaths
 are server-only and have no added package dependencies.
+
+For automatic old-client cleanup, pass `{retire: ...}` to the storage binding.
+Use `acquire()` and release the lease in a finally block after consuming/closing
+all response streams; managed bindings reject raw `current()`. Stop admission
+and the coordinator before `waitForRetirement(shutdownSignal)`. A canceled wait
+never destroys leased clients. Without a hook, lifetime remains caller-owned.

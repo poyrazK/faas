@@ -1,9 +1,11 @@
 """Managed compute binding loader; factories supply the application's S3 library."""
 
+import math
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from threading import Lock, RLock
+from threading import Condition, Lock, RLock, Thread
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 from urllib.parse import urlsplit
 
@@ -56,22 +58,84 @@ def _configuration(prefix: str, values: Mapping[str, str]) -> ObjectStorageClien
     return ObjectStorageClientConfig(endpoint, region, bucket, access, secret)
 
 
+@dataclass(eq=False, repr=False)
+class _StorageClient(Generic[T]):
+    pair: tuple[T, str]
+    leases: int = 0
+    retired: bool = False
+    scheduled: bool = False
+
+
+@dataclass(repr=False)
+class _LeaseState(Generic[T]):
+    binding: "ObjectStorageBinding[T]"
+    entry: _StorageClient[T]
+    released: bool = False
+
+
+class ObjectStorageLease(Generic[T]):
+    """Pin a client until release, including response-body consumption/closure.
+
+    Release is idempotent even across shallow copies. Context-manager exit
+    releases the lease; close application response bodies before that exit.
+    """
+
+    def __init__(self, state: _LeaseState[T]):
+        self._state = state
+
+    def __repr__(self) -> str:
+        return "ObjectStorageLease(redacted)"
+
+    def current(self) -> tuple[T, str]:
+        with self._state.binding._lock:
+            if self._state.released:
+                raise ObjectStorageBindingError("Object-storage lease is released")
+            return self._state.entry.pair
+
+    def release(self) -> None:
+        state = self._state
+        with state.binding._lock:
+            if state.released:
+                return
+            state.released = True
+            state.entry.leases -= 1
+            state.binding._schedule_retirement(state.entry)
+
+    def __enter__(self) -> "ObjectStorageLease[T]":
+        self.current()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
 class ObjectStorageBinding(Generic[T]):
     """Reload one atomic {revision,secrets} envelope, then ACK only after success
-    and all other consumers apply. Reacquire current() for new requests; callers
-    own retired clients. Failure disables acquisition, including revocation.
+    and all other consumers apply. Acquire a lease through stream closure.
+    Without a retire callback, current() retains caller-owned behavior.
+    Failure disables new acquisition, including revocation.
     Factories must use explicit credentials and configure path-style addressing.
     """
 
-    def __init__(self, prefix: str, factory: Callable[[ObjectStorageClientConfig], T]):
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,47}", prefix) or not callable(factory):
+    def __init__(self, prefix: str, factory: Callable[[ObjectStorageClientConfig], T], *,
+                 retire: Callable[[T], None] | None = None,
+                 on_retire_error: Callable[[ObjectStorageBindingError], None] | None = None):
+        if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,47}", prefix) or not callable(factory)
+                or retire is not None and not callable(retire)
+                or on_retire_error is not None and not callable(on_retire_error)):
             raise ObjectStorageBindingError("Invalid object-storage binding")
         self._prefix = prefix
         self._factory = factory
         self._lock = RLock()
         self._reloads = Lock()
         self._epoch = 0
-        self._active: tuple[T, str] | None = None
+        self._active: _StorageClient[T] | None = None
+        self._retired: set[_StorageClient[T]] = set()
+        self._building = 0
+        self._condition = Condition(self._lock)
+        self._retire = retire
+        self._on_retire_error = on_retire_error
+        self._retirement_failed = False
 
     def reload(self, values: Mapping[str, str], cancel: _Cancellation | None = None) -> None:
         # Preserve the caller's factory thread while keeping state acquisition
@@ -84,11 +148,14 @@ class ObjectStorageBinding(Generic[T]):
                 raise ObjectStorageBindingError("Object-storage reload cancelled")
             if self._reloads.acquire(timeout=0.05):
                 break
+        admitted = False
         try:
             with self._lock:
-                if epoch != self._epoch:
+                if epoch != self._epoch or cancel is not None and cancel.is_set():
                     raise ObjectStorageBindingError("Object-storage reload cancelled")
-                self._active = None
+                self._building += 1
+                admitted = True
+                self._clear_active()
             config = _configuration(self._prefix, snapshot)
             if cancel is not None and cancel.is_set():
                 raise ObjectStorageBindingError("Object-storage reload cancelled")
@@ -99,17 +166,25 @@ class ObjectStorageBinding(Generic[T]):
             if client is None:
                 raise ObjectStorageBindingError("Object-storage client is unavailable")
             with self._lock:
+                if self._retire is not None and any(entry.pair[0] is client for entry in self._retired):
+                    raise ObjectStorageBindingError("Object-storage factory reused an owned client")
+                candidate = _StorageClient((client, config.bucket))
                 if epoch != self._epoch or cancel is not None and cancel.is_set():
+                    self._retire_client(candidate)
                     raise ObjectStorageBindingError("Object-storage reload cancelled")
-                self._active = client, config.bucket
+                self._active = candidate
         finally:
+            if admitted:
+                with self._lock:
+                    self._building -= 1
+                    self._condition.notify_all()
             self._reloads.release()
 
     def invalidate(self) -> None:
-        """Disable acquisition and fence late/queued clients without retiring them."""
+        """Fence new/queued acquisition; keep clients with outstanding leases."""
         with self._lock:
             self._epoch += 1
-            self._active = None
+            self._clear_active()
 
     def secret_consumer(self) -> "SecretConsumer":
         from .secret_reload_runtime import SecretConsumer
@@ -120,4 +195,80 @@ class ObjectStorageBinding(Generic[T]):
         with self._lock:
             if self._active is None:
                 raise ObjectStorageBindingError("Object-storage binding is not ready")
-            return self._active
+            if self._retire is not None:
+                raise ObjectStorageBindingError("Object-storage binding requires lease acquisition for managed retirement")
+            return self._active.pair
+
+    def acquire(self) -> ObjectStorageLease[T]:
+        with self._lock:
+            if self._active is None:
+                raise ObjectStorageBindingError("Object-storage binding is not ready")
+            self._active.leases += 1
+            return ObjectStorageLease(_LeaseState(self, self._active))
+
+    def wait_for_retirement(self, timeout: float | None = None, cancel: _Cancellation | None = None) -> None:
+        """Drain admitted factories and retired leases/cleanup. Ignores active.
+
+        Stop serving/reloading and invalidate first for shutdown. Timeout/cancel
+        ends only this wait. Callback failures are sticky and never retried.
+        """
+        if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
+            raise ObjectStorageBindingError("Invalid object-storage retirement timeout")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._condition:
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise ObjectStorageBindingError("Object-storage retirement wait cancelled")
+                if self._building == 0 and not self._retired:
+                    if self._retirement_failed:
+                        raise ObjectStorageBindingError("Object-storage client retirement failed")
+                    return
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise ObjectStorageBindingError("Object-storage retirement wait timed out")
+                self._condition.wait(remaining if cancel is None else min(remaining, 0.05) if remaining is not None else 0.05)
+
+    def _clear_active(self) -> None:
+        if self._active is not None:
+            entry, self._active = self._active, None
+            self._retire_client(entry)
+
+    def _retire_client(self, entry: _StorageClient[T]) -> None:
+        if entry.retired:
+            return
+        entry.retired = True
+        self._retired.add(entry)
+        self._schedule_retirement(entry)
+        self._condition.notify_all()
+
+    def _schedule_retirement(self, entry: _StorageClient[T]) -> None:
+        if not entry.retired or entry.leases or entry.scheduled:
+            return
+        entry.scheduled = True
+        if self._retire is None:
+            self._retired.remove(entry)
+            self._condition.notify_all()
+            return
+        Thread(target=self._dispose_client, args=(entry,), daemon=True).start()
+
+    def _dispose_client(self, entry: _StorageClient[T]) -> None:
+        failed = False
+        try:
+            # Run outside the lock. Factories must create exclusively owned
+            # resources; synchronous hooks must be thread-safe and bound work.
+            result = self._retire(entry.pair[0])  # type: ignore[misc]
+            if result is not None:
+                if hasattr(result, "close"):
+                    result.close()
+                failed = True
+        except BaseException:
+            failed = True
+        with self._lock:
+            self._retired.remove(entry)
+            self._retirement_failed |= failed
+            self._condition.notify_all()
+        if failed and self._on_retire_error is not None:
+            try:
+                self._on_retire_error(ObjectStorageBindingError("Object-storage client retirement failed"))
+            except BaseException:
+                pass  # Observers cannot poison cleanup.

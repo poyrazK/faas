@@ -793,3 +793,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-972: Node compute secret reload coordinator](972-node-compute-secret-reload-coordinator.md)
 - [ADR-979: Go and Python compute secret reload coordinators](979-go-python-compute-secret-reload-coordinators.md)
+- [ADR-981: Storage client leases and retirement](981-storage-client-leases-and-retirement.md)

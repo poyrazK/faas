@@ -102,6 +102,48 @@ def runtime(tmp_path):
         coordinator.stop()
 
 
+def test_managed_leases_survive_partial_adoption_and_coordinator_stop(runtime):
+    guest, create = runtime
+    retired = []
+    completed = threading.Event()
+    fail = threading.Event()
+
+    def retire(client):
+        retired.append(client["key"])
+        if client["key"] == "private-failed":
+            completed.set()
+
+    def other(_snapshot, _cancel):
+        if fail.is_set():
+            raise RuntimeError("private-other-consumer")
+
+    storage = ObjectStorageBinding("ASSETS", lambda config: {"key": config.secret_access_key}, retire=retire)
+    coordinator = create([storage.secret_consumer(), SecretConsumer(other, lambda: None)])
+    coordinator.start()
+    with storage.acquire() as old:
+        fail.set()
+        guest.snapshot("b", values("private-failed"))
+        with pytest.raises(SecretReloadError):
+            coordinator.reload()
+        with pytest.raises(ObjectStorageBindingError):
+            storage.acquire()
+        assert completed.wait(3)
+        assert retired == ["private-failed"]
+        assert old.current()[0]["key"] == "private-a"
+        assert [json.loads(ack)["status"] for ack in guest.acks] == ["applied", "failed"]
+        fail.clear()
+        guest.snapshot("c", values("private-recovered"))
+        coordinator.reload()
+        with storage.acquire() as current:
+            coordinator.stop()
+            with pytest.raises(ObjectStorageBindingError):
+                storage.acquire()
+            assert retired == ["private-failed"]
+            assert current.current()[0]["key"] == "private-recovered"
+    storage.wait_for_retirement(3)
+    assert sorted(retired) == ["private-a", "private-failed", "private-recovered"]
+
+
 def test_start_waits_for_atomic_revision_and_all_consumers(runtime):
     guest, create = runtime
     snapshots = []

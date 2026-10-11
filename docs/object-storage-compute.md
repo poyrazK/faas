@@ -235,14 +235,139 @@ Unconfirmed ACKs disable clients; a later signal/manual reload can recover from
 an ordinary refresh failure. ACKs attest only to registered callbacks and do not
 prove provider readiness or atomic publication of every application client.
 
-Acquire `current()`/`Current()` for each new request. In-flight requests may
-finish using a previously acquired client; the application owns retired-client
-lifetime and must not destroy a client still in use. Reloads are serialized.
+The examples above use caller-owned clients: reacquire `current()`/`Current()`
+for each new request and manage retired-client lifetime yourself. For automatic
+cleanup, use request leases as described below. Reloads are serialized.
 A failed candidate or missing/revoked settings disables new acquisition and
 returns a sanitized error. Do not send an `applied` ACK on failure. Constructors
 alone do not verify credentials; a factory's readiness check and the workload
 canary provide separate evidence. An ACK remains an application self-attestation.
 Never log configuration or explicitly inspect credential fields.
+
+### Request leases and automatic retirement
+
+Opt into automatic cleanup by providing a retirement callback when constructing
+the binding. Managed bindings require `acquire()`/`Acquire()`; raw
+`current()`/`Current()` acquisition fails because those borrowers cannot be
+counted. Each lease exposes its own client/bucket pair. Release is idempotent,
+including shallow copies, and a released lease cannot acquire its pair again.
+
+Keep the lease until the **entire upload or download finishes and its response
+body is consumed or closed**. Receiving response headers does not finish a
+streaming request. Forwarding a stream to another handler also transfers the
+responsibility to keep and release its lease. Release in a finally/defer block
+after closing bodies, including error and cancellation paths.
+
+The following snippets use application functions `createClient`/`create_client`
+and `retireClient`/`retire_client`, implemented for the chosen S3 library.
+Factories must return fresh, exclusively owned client resources, including any
+underlying transport or pool. A shared singleton or shared pool is unsuitable:
+the SDK cannot discover every hidden resource alias. Obvious reuse of a still
+tracked client is rejected without closing its outstanding leases.
+
+```go
+storage, err := faas.NewObjectStorageBinding("GREGALE_S3_ASSETS", createClient,
+    faas.ObjectStorageBindingOptions[*StorageClient]{Retire: retireClient})
+if err != nil { return err }
+// Start the coordinator with storage.SecretConsumer() before serving requests.
+lease, err := storage.Acquire()
+if err != nil { return err }
+defer lease.Release()
+client, bucket, err := lease.Current()
+if err != nil { return err }
+body, err := openDownload(ctx, client, bucket, key)
+if err != nil { return err }
+defer body.Close() // Runs before lease.Release().
+_, err = io.Copy(destination, body)
+return err
+```
+
+```js
+const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', createClient, {
+  retire: retireClient,
+  onRetireError: error => console.error(error.message), // Sanitized.
+});
+// Start the coordinator with storage.secretConsumer() before serving requests.
+const lease = storage.acquire();
+try {
+  const { client, bucket } = lease.current();
+  const stream = await openDownload(client, bucket, key);
+  try {
+    for await (const chunk of stream) await consumeChunk(chunk);
+  } finally {
+    stream.destroy();
+  }
+} finally {
+  lease.release();
+}
+```
+
+```python
+from contextlib import closing
+
+storage = ObjectStorageBinding("GREGALE_S3_ASSETS", create_client,
+                              retire=retire_client)
+# Start the coordinator with storage.secret_consumer() before serving requests.
+with storage.acquire() as lease:
+    client, bucket = lease.current()
+    with closing(open_download(client, bucket, key)) as body:
+        consume_body(body)
+```
+
+Rotation, revocation, failed adoption and coordinator stop disable new
+acquisition immediately. The retired client is cleaned up exactly once after its
+last lease releases. A valid factory result that arrives after cancellation or
+invalidation is also cleaned up; Go additionally cleans up a nonnil result
+returned alongside a factory error. A factory that throws or panics before
+returning an owned client must clean up its own partial allocations.
+Keeping a local client alive cannot override gateway credential revocation or
+guarantee success for a subsequent network request.
+
+Retirement callbacks run outside state mutation and never delay release,
+invalidation or new acquisition. Go and Python invoke them on background
+goroutines/threads; Node permits async callbacks. Different clients can retire
+concurrently. Hooks must be thread-safe where applicable and bound their work;
+Node hooks must avoid blocking the event loop. Python hooks are synchronous.
+Do not call the binding's retirement wait from its own retirement hook.
+The SDK cannot preempt arbitrary application cleanup. Callback failures are
+sanitized, optionally reported through `OnRetireError`/`onRetireError`/
+`on_retire_error`, and retained as a sticky failure by the drain operation.
+Cleanup is never retried after an uncertain partial failure.
+
+For graceful shutdown, first stop admitting application requests and reloads,
+then stop the coordinator (or invalidate a standalone binding), finish/close
+outstanding bodies and release their leases. Finally wait with a fresh shutdown
+budget:
+
+```go
+reload.Stop()
+drainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+err := storage.WaitForRetirement(drainCtx)
+```
+
+```js
+reload.stop();
+await storage.waitForRetirement(AbortSignal.timeout(5000));
+```
+
+```python
+reload.stop()  # Main thread restores this coordinator's SIGHUP handler.
+storage.wait_for_retirement(timeout=5)
+```
+
+The wait includes admitted factories, retired leases and scheduled cleanup. It
+ignores a still-current client, so invalidate/stop before draining shutdown.
+Canceled/timed-out waits end only the wait; they never destroy outstanding
+leases or cancel cleanup. Go returns an error; Node/Python raise a sanitized
+binding error. A forgotten lease or unbounded hook can outlive the budget; the
+application decides its exit policy. Python cleanup threads are daemon threads,
+so process exit without a successful drain can interrupt cleanup.
+
+Bindings without a retirement callback keep the existing caller-owned
+`Current()` contract. They can use leases, but the SDK does not close their
+clients. Lease logging hides ordinary client representations; explicitly
+inspecting a leased client can still expose its credentials.
 
 ## Workload canaries and promotion
 

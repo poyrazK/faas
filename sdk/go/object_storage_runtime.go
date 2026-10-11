@@ -28,24 +28,33 @@ func (ObjectStorageClientConfig) GoString() string { return "ObjectStorageClient
 
 // ObjectStorageBinding owns the current client/bucket pair. Factories permit
 // using the application's S3 library without adding one to this leaf SDK.
-// Reacquire Current for each request; existing requests may finish on an old
-// client. The application owns the lifetime of retired clients.
+// Acquire a lease for each request, retaining it until streams are consumed or
+// closed. Without a retirement callback, Current retains caller-owned behavior.
 type ObjectStorageBinding[T any] struct {
-	mu      sync.RWMutex
-	reloads chan struct{}
-	epoch   uint64
-	prefix  string
-	factory func(context.Context, ObjectStorageClientConfig) (T, error)
-	client  T
-	bucket  string
-	ready   bool
+	mu               sync.RWMutex
+	reloads          chan struct{}
+	epoch            uint64
+	prefix           string
+	factory          func(context.Context, ObjectStorageClientConfig) (T, error)
+	active           *objectStorageClient[T]
+	retired          map[*objectStorageClient[T]]struct{}
+	building         int
+	changed          chan struct{}
+	retire           func(T) error
+	onRetireError    func(error)
+	retirementFailed bool
 }
 
-func NewObjectStorageBinding[T any](prefix string, factory func(context.Context, ObjectStorageClientConfig) (T, error)) (*ObjectStorageBinding[T], error) {
-	if !objectStoragePrefix.MatchString(prefix) || factory == nil {
+func NewObjectStorageBinding[T any](prefix string, factory func(context.Context, ObjectStorageClientConfig) (T, error), options ...ObjectStorageBindingOptions[T]) (*ObjectStorageBinding[T], error) {
+	if !objectStoragePrefix.MatchString(prefix) || factory == nil || len(options) > 1 {
 		return nil, errors.New("faas: invalid object-storage binding")
 	}
-	return &ObjectStorageBinding[T]{prefix: prefix, factory: factory, reloads: make(chan struct{}, 1)}, nil
+	b := &ObjectStorageBinding[T]{prefix: prefix, factory: factory, reloads: make(chan struct{}, 1),
+		retired: make(map[*objectStorageClient[T]]struct{}), changed: make(chan struct{})}
+	if len(options) == 1 {
+		b.retire, b.onRetireError = options[0].Retire, options[0].OnRetireError
+	}
+	return b, nil
 }
 
 // Reload constructs and optionally tests a candidate in the supplied factory,
@@ -69,11 +78,26 @@ func (b *ObjectStorageBinding[T]) Reload(ctx context.Context, values map[string]
 	case <-ctx.Done():
 		return errors.New("faas: object-storage reload cancelled")
 	}
+	b.mu.Lock()
+	if b.epoch != epoch || ctx.Err() != nil {
+		b.mu.Unlock()
+		<-b.reloads
+		return errors.New("faas: object-storage reload cancelled")
+	}
+	b.building++
+	b.notifyLocked()
+	b.mu.Unlock()
 	done := make(chan error, 1)
 	go func() {
 		// Keep serialization until even an uncooperative factory finishes, while
 		// allowing the caller to cancel and Invalidate/Current to remain prompt.
-		defer func() { <-b.reloads }()
+		defer func() {
+			b.mu.Lock()
+			b.building--
+			b.notifyLocked()
+			b.mu.Unlock()
+			<-b.reloads
+		}()
 		done <- b.construct(ctx, snapshot, epoch)
 	}()
 	select {
@@ -102,9 +126,7 @@ func (b *ObjectStorageBinding[T]) construct(ctx context.Context, values map[stri
 		b.mu.Unlock()
 		return errors.New("faas: object-storage reload cancelled")
 	}
-	b.ready = false
-	var zero T
-	b.client, b.bucket = zero, ""
+	b.clearActiveLocked()
 	b.mu.Unlock()
 	config, err := loadObjectStorageConfig(b.prefix, values)
 	if err != nil {
@@ -114,24 +136,34 @@ func (b *ObjectStorageBinding[T]) construct(ctx context.Context, values map[stri
 		return errors.New("faas: object-storage reload cancelled")
 	}
 	client, err := b.factory(ctx, config)
-	if err != nil {
-		return errors.New("faas: object-storage client could not be configured")
-	}
-	v := reflect.ValueOf(client)
-	if !v.IsValid() || (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface || v.Kind() == reflect.Map || v.Kind() == reflect.Slice || v.Kind() == reflect.Func || v.Kind() == reflect.Chan) && v.IsNil() {
+	if !validObjectStorageClient(client) {
+		if err != nil {
+			return errors.New("faas: object-storage client could not be configured")
+		}
 		return errors.New("faas: object-storage client is unavailable")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// A reused tracked client still belongs to its earlier leases. Reject the
+	// alias without disposing it. Factories must supply fresh exclusive owners.
+	if b.retire != nil && b.trackedClientLocked(client) {
+		return errors.New("faas: object-storage factory reused an owned client")
+	}
+	candidate := &objectStorageClient[T]{client: client, bucket: config.Bucket}
+	if err != nil {
+		b.retireLocked(candidate)
+		return errors.New("faas: object-storage client could not be configured")
+	}
 	if ctx.Err() != nil || b.epoch != epoch {
+		b.retireLocked(candidate)
 		return errors.New("faas: object-storage reload cancelled")
 	}
-	b.client, b.bucket, b.ready = client, config.Bucket, true
+	b.active = candidate
 	return nil
 }
 
 // Invalidate disables new acquisition and fences active/queued candidates.
-// It does not wait for factories or destroy previously acquired clients.
+// It does not wait for factories or retire clients held by outstanding leases.
 func (b *ObjectStorageBinding[T]) Invalidate() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -140,9 +172,7 @@ func (b *ObjectStorageBinding[T]) Invalidate() {
 
 func (b *ObjectStorageBinding[T]) invalidateLocked() {
 	b.epoch++
-	b.ready = false
-	var zero T
-	b.client, b.bucket = zero, ""
+	b.clearActiveLocked()
 }
 
 func (b *ObjectStorageBinding[T]) SecretConsumer() SecretConsumer {
@@ -155,11 +185,20 @@ func (b *ObjectStorageBinding[T]) SecretConsumer() SecretConsumer {
 func (b *ObjectStorageBinding[T]) Current() (T, string, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if !b.ready {
+	if b.active == nil {
 		var zero T
 		return zero, "", errors.New("faas: object-storage binding is not ready")
 	}
-	return b.client, b.bucket, nil
+	if b.retire != nil {
+		var zero T
+		return zero, "", errors.New("faas: object-storage binding requires lease acquisition for managed retirement")
+	}
+	return b.active.client, b.active.bucket, nil
+}
+
+func validObjectStorageClient[T any](client T) bool {
+	v := reflect.ValueOf(client)
+	return v.IsValid() && !((v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface || v.Kind() == reflect.Map || v.Kind() == reflect.Slice || v.Kind() == reflect.Func || v.Kind() == reflect.Chan) && v.IsNil())
 }
 
 func loadObjectStorageConfig(prefix string, values map[string]string) (ObjectStorageClientConfig, error) {

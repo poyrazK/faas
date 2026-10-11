@@ -40,6 +40,37 @@ function fixture(t: TestContext, options: Partial<SecretReloadOptions> = {}) {
   return {coordinator, storage, receipts, publish: (value: string) => {raw=value;}};
 }
 
+test('managed leases survive partial adoption failure and coordinator shutdown', async t => {
+  const retired: string[]=[];
+  let fail=false;
+  const storage=new ObjectStorageBinding('ASSETS',c=>({key:c.credentials.secretAccessKey}),{retire:client=>{retired.push(client.key);}});
+  const {coordinator,receipts,publish}=fixture(t,{consumers:[storage.secretConsumer(),{
+    apply:()=>{if(fail)throw new Error('private-other-consumer');},invalidate:()=>{},
+  }]});
+  await coordinator.start();
+  const old=storage.acquire();
+  try{
+    fail=true;publish(envelope('b',values('private-failed')));
+    await assert.rejects(coordinator.reload(),SecretReloadError);
+    assert.throws(()=>storage.acquire());
+    await nextTurn();
+    assert.deepEqual(retired,['private-failed']);
+    assert.equal(old.current().client.key,'private-first');
+    assert.deepEqual(receipts.map(r=>r.status),['applied','failed']);
+    fail=false;publish(envelope('c',values('private-recovered')));
+    await coordinator.reload();
+    const current=storage.acquire();
+    try{
+      coordinator.stop();
+      assert.throws(()=>storage.acquire());
+      assert.deepEqual(retired,['private-failed']);
+      old.release();current.release();
+      await storage.waitForRetirement();
+      assert.deepEqual(retired.sort(),['private-failed','private-first','private-recovered']);
+    }finally{current.release();}
+  }finally{old.release();coordinator.stop();}
+});
+
 test('startup registers SIGHUP before readiness, waits for a version and fences exact ACKs after every consumer', async t => {
   const applied: string[] = [];
   let ready = false, reads = 0;
