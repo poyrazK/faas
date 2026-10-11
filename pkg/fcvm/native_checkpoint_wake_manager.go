@@ -9,11 +9,12 @@ import (
 )
 
 // NativeCheckpointWakeOwnership is incoming journal evidence only. It contains
-// no physical generation, launch permit, cleanup authority or closure receipt.
+// no launch permit, cleanup authority or closure receipt. NativeGeneration
+// denotes a planned binding, never proof of physical publication or exit.
 type NativeCheckpointWakeOwnership struct {
-	Dispatch                         state.ProjectEnvironmentCloneWakeDispatch
-	IncomingGeneration, KernelBootID string
-	Claimed, Revoked                 bool
+	Dispatch                                           state.ProjectEnvironmentCloneWakeDispatch
+	IncomingGeneration, KernelBootID, NativeGeneration string
+	Claimed, Revoked                                   bool
 }
 
 // The existing native qualification node configuration is the local compute
@@ -59,5 +60,20 @@ func (m *Manager) updateCheckpointWakeDispatch(ctx context.Context, frame state.
 	if err != nil {
 		return NativeCheckpointWakeOwnership{}, fmt.Errorf("native checkpoint wake: retain original ownership: %w", err)
 	}
-	return NativeCheckpointWakeOwnership{Dispatch: record.Dispatch, IncomingGeneration: record.Generation, KernelBootID: record.KernelBootID, Claimed: record.Claimed, Revoked: record.Revoked}, nil
+	return NativeCheckpointWakeOwnership{Dispatch: record.Dispatch, IncomingGeneration: record.Generation, KernelBootID: record.KernelBootID, NativeGeneration: record.NativeGeneration, Claimed: record.Claimed, Revoked: record.Revoked}, nil
+}
+
+// PrepareCheckpointWakeLaunch durably binds the original dispatch to a planned
+// physical generation before publishing its prepared record. A bound generation
+// grants no launch authority; tagged serving and producers remain gated.
+func (m *Manager) PrepareCheckpointWakeLaunch(ctx context.Context, frame state.ProjectEnvironmentCloneWakeDispatch, lease Lease) (NativeCheckpointWakeOwnership, error) {
+	j, err := m.checkpointWakeJournal(frame)
+	if err != nil {
+		return NativeCheckpointWakeOwnership{}, err
+	}
+	record, err := j.preparePhysical(ctx, frame, lease)
+	if err != nil {
+		return NativeCheckpointWakeOwnership{}, fmt.Errorf("native checkpoint wake: prepare original physical binding: %w", err)
+	}
+	return NativeCheckpointWakeOwnership{Dispatch: record.Dispatch, IncomingGeneration: record.Generation, KernelBootID: record.KernelBootID, NativeGeneration: record.NativeGeneration, Claimed: record.Claimed, Revoked: record.Revoked}, nil
 }

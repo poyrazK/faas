@@ -10223,3 +10223,29 @@ foreign claims, publication uncertainty, damaged and prior-boot records,
 concurrent claim/revoke, cancellation, physical ownership and qualification
 namespace exclusion. Dedicated native KVM acceptance remains pending; no native
 VM or live provider was exercised. Public full-stage admission remains gated.
+
+### Planned checkpoint wake physical generation binding
+
+The native manager can now bind a claimed, unrevoked original dispatch to one
+planned physical generation and validated workload lease. The incoming record is
+published first under the shared incoming lock; only then is the prepared physical
+journal published under its own lock. Qualification ownership, existing physical
+owners, changed requests, invalid workload leases and repeated binding are
+rejected. A retained binding cannot be replaced after an uncertain write, even
+when the physical publication is missing. Errors return no partial ownership.
+
+The incoming schema now stores the planned native generation and lease. Strict
+version-1 records remain readable; binding upgrades them without changing the
+original incoming generation, dispatch, boot identity or acceptance timestamp.
+Generic producers remain blocked. Incoming revocation preserves this binding and
+does not imply physical revocation, process exit or resource removal. Returned
+NativeGeneration is planned ownership, not physical publication or launch proof.
+
+Portable tests cover exact generation/lease publication, restart, duplicate
+binding, generic producer exclusion, foreign requests, revoked claims, invalid
+leases, publication uncertainty at both writes, manager preparation and legacy
+schema upgrade. Tagged serving still requires frozen request payload matching,
+native producer capability validation and durable physical revocation. Native
+KVM acceptance, producer closure and proof-backed evidence release remain pending.
+No live provider qualification was performed; public full-stage admission remains
+gated.

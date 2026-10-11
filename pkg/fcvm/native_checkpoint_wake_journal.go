@@ -18,25 +18,47 @@ import (
 	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 )
 
-// Incoming ownership is not physical launch or closure authority. This version
-// intentionally cannot authorize a producer until native binding is implemented.
+// Incoming binding records planned physical ownership, never launch or closure
+// authority. Serving and native producer adapters remain gated.
 type nativeCheckpointWakeRecord struct {
-	Version      int                                       `json:"version"`
-	Generation   string                                    `json:"generation"`
-	KernelBootID string                                    `json:"kernel_boot_id"`
-	Dispatch     state.ProjectEnvironmentCloneWakeDispatch `json:"dispatch"`
-	AcceptedAt   time.Time                                 `json:"accepted_at"`
-	Claimed      bool                                      `json:"claimed"`
-	Revoked      bool                                      `json:"revoked"`
+	Version          int                                       `json:"version"`
+	Generation       string                                    `json:"generation"`
+	KernelBootID     string                                    `json:"kernel_boot_id"`
+	Dispatch         state.ProjectEnvironmentCloneWakeDispatch `json:"dispatch"`
+	AcceptedAt       time.Time                                 `json:"accepted_at"`
+	Claimed          bool                                      `json:"claimed"`
+	NativeGeneration string                                    `json:"native_generation"`
+	NativeLease      Lease                                     `json:"native_lease"`
+	Revoked          bool                                      `json:"revoked"`
 }
 
 func (r *nativeCheckpointWakeRecord) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, nativeQualificationJSONFields(reflect.TypeOf(*r)))
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	names := nativeQualificationJSONFields(reflect.TypeOf(*r))
+	if header.Version == 1 {
+		names = names[:0]
+		for _, name := range nativeQualificationJSONFields(reflect.TypeOf(*r)) {
+			if name != "native_generation" && name != "native_lease" {
+				names = append(names, name)
+			}
+		}
+	}
+	fields, err := nativeJournalObjectFields(data, names)
 	if err != nil {
 		return err
 	}
 	if _, err = nativeJournalObjectFields(fields["dispatch"], []string{"InstanceID", "AppID", "DeploymentID", "NodeID", "WakeID", "RequestReason", "Method", "DispatchedAt"}); err != nil {
 		return err
+	}
+	if header.Version != 1 {
+		if _, err := nativeJournalObjectFields(fields["native_lease"], nativeJournalLeaseFields()); err != nil {
+			return err
+		}
 	}
 	type plain nativeCheckpointWakeRecord
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -58,8 +80,20 @@ func (r nativeCheckpointWakeRecord) validate(node string) error {
 	if err := validateCheckpointWakeFrame(r.Dispatch, node); err != nil {
 		return err
 	}
-	if r.Version != 1 || !canonicalNativeHelperID(r.Generation) || !canonicalNativeHelperID(r.KernelBootID) || r.AcceptedAt.IsZero() || (!r.Claimed && !r.Revoked) {
+	if (r.Version != 1 && r.Version != 2) || !canonicalNativeHelperID(r.Generation) || !canonicalNativeHelperID(r.KernelBootID) || r.AcceptedAt.IsZero() || (!r.Claimed && !r.Revoked) {
 		return errors.New("native checkpoint wake: invalid incoming record")
+	}
+	if r.NativeGeneration == "" {
+		if r.NativeLease != (Lease{}) {
+			return errors.New("native checkpoint wake: unbound lease is present")
+		}
+	} else {
+		if r.Version != 2 || !r.Claimed || !canonicalNativeHelperID(r.NativeGeneration) || r.NativeGeneration == r.Generation {
+			return errors.New("native checkpoint wake: invalid physical generation binding")
+		}
+		if err := validateCheckpointWakeLease(r.Dispatch, r.NativeLease); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -123,6 +157,9 @@ func (j *nativeCheckpointWakeJournal) read(instance string) (out nativeCheckpoin
 }
 
 func (j *nativeCheckpointWakeJournal) write(record nativeCheckpointWakeRecord) error {
+	if record.Version != 2 {
+		return errors.New("native checkpoint wake: legacy records must be upgraded before writing")
+	}
 	if err := record.validate(j.nodeID); err != nil {
 		return err
 	}
@@ -190,10 +227,11 @@ func (j *nativeCheckpointWakeJournal) update(ctx context.Context, frame state.Pr
 		if bootErr != nil {
 			return out, bootErr
 		}
-		out = nativeCheckpointWakeRecord{Version: 1, Generation: uuid.NewString(), KernelBootID: boot, Dispatch: frame, AcceptedAt: time.Now().UTC()}
+		out = nativeCheckpointWakeRecord{Version: 2, Generation: uuid.NewString(), KernelBootID: boot, Dispatch: frame, AcceptedAt: time.Now().UTC()}
 	} else {
 		return out, err
 	}
+	out.Version = 2
 	out.Claimed = out.Claimed || claim
 	out.Revoked = out.Revoked || !claim
 	if err = ctx.Err(); err != nil {

@@ -101,7 +101,7 @@ func TestNativeCheckpointWakeLostPublicationAndDamagedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, damage := range []string{string(raw) + " {}", strings.Replace(string(raw), `"version":1`, `"version":1,"version":1`, 1), strings.Replace(string(raw), `"claimed"`, `"unexpected"`, 1)} {
+	for _, damage := range []string{string(raw) + " {}", strings.Replace(string(raw), `"version":2`, `"version":2,"version":2`, 1), strings.Replace(string(raw), `"claimed"`, `"unexpected"`, 1)} {
 		if damage == string(raw) {
 			continue
 		}

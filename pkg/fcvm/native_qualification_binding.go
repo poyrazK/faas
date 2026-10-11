@@ -115,6 +115,11 @@ func (j *nativeQualificationJournal) requireNativeAbsent(instance string) error 
 	if err := j.owner.requireCheckpointWakeAbsent(instance); err != nil {
 		return err
 	}
+	return j.requirePhysicalNativeAbsent(instance)
+}
+
+// The caller separately validates incoming ownership under the incoming lock.
+func (j *nativeQualificationJournal) requirePhysicalNativeAbsent(instance string) error {
 	entries, err := os.ReadDir(j.owner.root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
