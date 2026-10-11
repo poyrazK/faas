@@ -277,7 +277,7 @@ func TestRetirementCannotPublishOversizedLegacyRecoverySnapshot(t *testing.T) {
 		t.Fatal("oversized recovery snapshot published", err)
 	}
 	latest, err := f.manager.PreviewRetirement(t.Context(), f.id)
-	if err != nil || latest.Retirement != nil || latest.RecoveryRevision != p.Revision {
+	if err != nil || latest.Ready || latest.Retirement != nil || latest.RecoveryRevision != p.Revision {
 		t.Fatal(latest, err)
 	}
 }

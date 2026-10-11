@@ -77,6 +77,7 @@ func (m *Manager) PreviewRetirement(ctx context.Context, id ID) (RetirementPrevi
 		return RetirementPreview{}, err
 	}
 	out := RetirementPreview{Version: base.Version, RecoveryRevision: recoveryRevision(base), LiveOwner: base.OwnerID != "" && m.now().Before(base.ExpiresAt), Alarm: state.AlarmAt != nil, PendingOutbox: len(state.Outbox)}
+	projectedFits := true
 	if base.StorageUsage != nil {
 		out.RetainedBytes, out.Receipts = base.StorageUsage.TotalBytes(), base.StorageUsage.ReceiptCount
 		out.ProjectedRecoveryBytes = out.RetainedBytes
@@ -87,9 +88,10 @@ func (m *Manager) PreviewRetirement(ctx context.Context, id ID) (RetirementPrevi
 				return RetirementPreview{}, err
 			}
 			out.ProjectedRecoveryBytes += int64(len(body)) - base.StorageUsage.SnapshotBytes
+			projectedFits = len(body) <= api.MaxDurableEntitySnapshotBytes && (base.StorageLimitBytes == 0 || out.ProjectedRecoveryBytes <= base.StorageLimitBytes)
 		}
 	}
-	out.Ready = base.Retirement == nil && !out.LiveOwner && !out.Alarm && out.PendingOutbox == 0 && base.AlarmDelivery == nil && base.OutboxDelivery == nil && base.StorageUsage != nil && out.RetainedBytes <= 64<<20
+	out.Ready = projectedFits && base.Retirement == nil && !out.LiveOwner && !out.Alarm && out.PendingOutbox == 0 && base.AlarmDelivery == nil && base.OutboxDelivery == nil && base.StorageUsage != nil && out.RetainedBytes <= 64<<20
 	if base.Retirement != nil {
 		status := base.Retirement.RetirementStatus
 		out.Retirement = &status
