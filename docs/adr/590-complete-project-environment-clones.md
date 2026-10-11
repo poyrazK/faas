@@ -9740,8 +9740,9 @@ metadata completion path before legacy fence abandonment. The admitted worker
 uses the current renewed lease to replay settings, workload, deployment and
 environment cleanup in dependency order, then invokes the dedicated terminal
 writer. Each step authenticates its original native retirement and ownership
-evidence; missing proofs still defer compensation. This path dispatches no native
-retirement and does not alter resource labels or original journals.
+evidence; missing proofs still defer compensation. With no driver installed, this
+path dispatches no native retirement. It does not alter resource labels or original
+journals.
 
 Host admission is checked before each step. A lost terminal commit response is
 retried once with the original completing token and revision, without renewal or
@@ -9751,3 +9752,22 @@ already does after publication. Failed predecessors stop subsequent steps and
 retain the ordinary lease-release/backoff behavior. Stores without this private
 protocol and workers without host admission cannot use it. Public full-stage
 admission and native/provider qualification remain gated.
+
+### Explicit workload retirement driver in the worker
+
+Private server wiring can now supply a workload retirement driver to the clone
+worker. Before metadata completion, the worker runs the existing durable
+reservation, claim, native dispatch, independent observation and proof-finish
+protocol. The renewed compensation lease returned by that protocol becomes the
+lease for every subsequent cleanup and terminal write. A failed or uncertain
+native step stops metadata cleanup; requested operations recover by observation
+without repeating dispatch. Already-retired journals revalidate saved proof
+without calling the driver again.
+
+The default driver is absent, preserving the existing proof-consumption path.
+This wiring does not qualify an adapter: there is still no built-in native owner
+adapter proving permanent closure of queued scheduler work and all original
+runtime resources. Controlled-driver tests exercise ordering, unknown outcomes,
+lease propagation and replay, not live native qualification. Source compensation,
+capture retirement, other data-owner protocols and public full-stage admission
+retain their existing gates.

@@ -28,12 +28,20 @@ func cloneCoordinatorHasCommonCheckpoint(op state.ProjectEnvironmentCloneOperati
 }
 
 // These metadata transitions consume existing native retirement proofs. The
-// worker cannot manufacture those proofs, abandon their original inventory or
-// dispatch native retirement through this completion path.
+// worker cannot manufacture those proofs or abandon their original inventory.
+// Native retirement uses the existing durable claim/observation protocol only
+// when private wiring explicitly supplies a qualified owner driver.
 func (s *server) completeProjectEnvironmentCloneCompensation(ctx context.Context, l state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, error) {
 	store, ok := s.store.(cloneTerminalCompensationWorkerStore)
 	if !ok || s.cloneWorkerAdmission == nil {
 		return l, errCloneCompensationUnavailable
+	}
+	if s.cloneWorkloadRetirementDriver != nil {
+		var err error
+		l, err = s.retireCheckpointWorkloads(ctx, l, s.cloneWorkloadRetirementDriver)
+		if err != nil {
+			return l, err
+		}
 	}
 	steps := []struct {
 		name string

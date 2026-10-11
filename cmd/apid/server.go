@@ -66,11 +66,13 @@ type server struct {
 	featureFlagsEnabled        bool
 	flagsWorkloadVerifier      *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
-	totp                             *totpGuard
-	objectStorage                    *objectstorage.Registry
-	managedPostgres                  *managedpostgres.Service
-	clonePostgresContentsReadPool    *copycontents.ReadPool
-	cloneWorkerAdmission             func(context.Context) error
+	totp                          *totpGuard
+	objectStorage                 *objectstorage.Registry
+	managedPostgres               *managedpostgres.Service
+	clonePostgresContentsReadPool *copycontents.ReadPool
+	cloneWorkerAdmission          func(context.Context) error
+	// Installed only by private wiring for an independently qualified owner.
+	cloneWorkloadRetirementDriver    cloneCheckpointWorkloadRetirementDriver
 	managedPostgresReconciler        *managedpostgres.Reconciler
 	managedPostgresBindings          *managedpostgres.BindingService
 	managedPostgresCutovers          *managedpostgres.CutoverService
