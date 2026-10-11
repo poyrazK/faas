@@ -27,6 +27,13 @@ func recoveryPool(t *testing.T) *pgxpool.Pool {
 	if os.Getenv("DATABASE_URL") == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("ledger recovery acceptance needs an explicit DATABASE_URL")
 	}
+	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(cfg.ConnConfig.Host, "/") || cfg.ConnConfig.TLSConfig != nil {
+		t.Skip("ledger recovery acceptance requires a local PostgreSQL Unix socket")
+	}
 	if _, err := exec.LookPath("pg_dump"); err != nil {
 		t.Skip("ledger recovery acceptance needs PostgreSQL 16 pg_dump")
 	}

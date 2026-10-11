@@ -60,7 +60,9 @@ exec docker exec \
 SCRIPT
 chmod 0755 "$bin_dir/pg_dump"
 
-DATABASE_URL="postgres:///faas?host=$socket_dir&user=faas" \
-	FAAS_REPLAY_PG_CONTAINER="$container" \
-	PATH="$bin_dir:$PATH" \
-	go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+export DATABASE_URL="postgres:///faas?host=$socket_dir&user=faas"
+export FAAS_REPLAY_PG_CONTAINER="$container"
+export PATH="$bin_dir:$PATH"
+
+go test -race -count=1 -v -run '^(TestApplicationStandardLedgerRecovery|TestMigrationRecovery)' ./pkg/db
+go test -race -count=1 -v -run '^TestNewMigrationsAreReplaySafe$' ./migrations/...
