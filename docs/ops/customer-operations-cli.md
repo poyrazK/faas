@@ -609,3 +609,40 @@ which decision outcome groups survive the separate 64-group limit.
 
 Go, Node and Python expose the additive DTOs. Existing cohort tokens and
 contributor refresh behavior remain in force. No endpoint or migration is added.
+
+### Separate observed rule version overlap
+
+Rule comparisons now count distinct sampled workflows reporting multiple versions
+for the same contract/decision code/rule identity. The observed overlap count
+includes incomplete histories; the eligible overlap count requires complete
+history and a latest reported outcome. Version membership is collected before
+comparison/version display limits, so an omitted version cannot create a false
+single-version classification. Repeated facts through change reasons and selected
+paths still count once per workflow/version. Decisions after the first retained
+terminal report remain outside classification.
+
+Each returned version has a `single_version` cohort: complete completed histories
+with a reported outcome and exactly one observed version for this identity.
+It includes counts, full-workflow completion and blocked-time distributions,
+outcome counts/proportions, and outcome truncation. `single_version_status`
+requires eligible single-version workflows in at least two returned version
+columns to report compared. Empty subsets provide zero counts, empty outcomes,
+and the existing zero-duration convention. Incomplete histories never qualify;
+absence of another version in partial history is not sufficient. This restriction
+refers to reported decision reasons and selected-path facts, not every rule that
+might have executed in the application. It does not establish causality.
+
+The dashboard offers a separate single-version comparison and a bounded list of
+overlapping runs. Up to eight examples per comparison appear in stable workflow
+identity order, with up to 16 earliest-per-version decision reports in revision
+order and explicit truncation flags. Counts include omitted examples/evidence.
+Examples carry subject, instance, latest Operation, history/eligibility flags, and
+public decision report/fact snapshots. Account views link to the scoped retained
+workflow history and reporting Operations; customer responses omit tenant IDs.
+Tied revisions and lexical version names do not imply a policy replacement or
+an ordering between decisions. History links show their current retained view.
+
+Go, Node and Python expose these additive fields and DTOs through the existing
+summary and contributor APIs. Existing owner boundaries, cohort tokens, refresh
+behavior, sample limits, and version/outcome truncation rules remain in force.
+No endpoint or migration is added.

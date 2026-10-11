@@ -198,3 +198,6 @@ type OperationWorkflowRuleComparisonSummary = api.OperationWorkflowRuleCompariso
 type OperationWorkflowRuleComparison = api.OperationWorkflowRuleComparison
 type OperationWorkflowRuleVersionStatistics = api.OperationWorkflowRuleVersionStatistics
 type OperationWorkflowRuleVersionOutcome = api.OperationWorkflowRuleVersionOutcome
+
+type OperationWorkflowRuleVersionCohort = api.OperationWorkflowRuleVersionCohort
+type OperationWorkflowRuleVersionOverlap = api.OperationWorkflowRuleVersionOverlap

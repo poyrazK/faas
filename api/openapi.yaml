@@ -39147,8 +39147,13 @@ components:
       type: object
       additionalProperties: false
       description: "One pinned contract, decision code and rule ID with side-by-side version columns. Compared status means at least two returned versions have eligible observations; it is not a significance test or a claim of improvement. At most 16 canonical identities and 16 lexical versions per identity are retained."
-      required: [contract_version, decision_code, rule_id, status, versions_truncated, versions]
+      required: [single_version_status, multi_version_workflow_count, eligible_multi_version_workflow_count, examples_truncated, multi_version_examples, contract_version, decision_code, rule_id, status, versions_truncated, versions]
       properties:
+        single_version_status: {type: string, enum: [compared, insufficient_data], description: At least two returned versions need eligible single-version workflows to compare this subset.}
+        multi_version_workflow_count: {type: integer, format: int64, minimum: 0, description: "Distinct sampled workflows reporting multiple versions for this comparison identity, including incomplete histories and versions omitted by limits."}
+        eligible_multi_version_workflow_count: {type: integer, format: int64, minimum: 0}
+        examples_truncated: {type: boolean}
+        multi_version_examples: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/OperationWorkflowRuleVersionOverlap'}}
         contract_version: {type: integer, minimum: 1, maximum: 1000000}
         decision_code: {type: string, maxLength: 64}
         rule_id: {type: string, maxLength: 64}
@@ -39161,6 +39166,7 @@ components:
       description: "Each sampled workflow counts once per observed contract/decision/rule/version identity. Observed membership uses retained reports up to the first retained terminal report; incomplete histories supply coverage counts only. Eligible workflows require complete history and a latest reported outcome. Duration distributions cover the full completed workflow. Outcome proportions use all eligible workflows for this version as denominator, including omitted outcome groups."
       required: [rule_version, observed_workflow_count, eligible_workflow_count, excluded_incomplete_workflow_count, missing_outcome_workflow_count, completion_time, blocked_time, outcomes_truncated, outcomes]
       properties:
+        single_version: {$ref: '#/components/schemas/OperationWorkflowRuleVersionCohort'}
         rule_version: {type: string, maxLength: 128}
         observed_workflow_count: {type: integer, format: int64, minimum: 0}
         eligible_workflow_count: {type: integer, format: int64, minimum: 0}
@@ -39170,6 +39176,31 @@ components:
         blocked_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
         outcomes_truncated: {type: boolean}
         outcomes: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRuleVersionOutcome'}}
+    OperationWorkflowRuleVersionCohort:
+      type: object
+      additionalProperties: false
+      description: "Complete completed workflows with a latest reported outcome and exactly one observed version for the same contract/decision/rule identity before the first terminal report. Detection occurs before version truncation. Incomplete histories never qualify. Statistics exclude overlapping workflows and are still observational rather than causal."
+      required: [eligible_workflow_count, completion_time, blocked_time, outcomes_truncated, outcomes]
+      properties:
+        eligible_workflow_count: {type: integer, format: int64, minimum: 0}
+        completion_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        blocked_time: {$ref: '#/components/schemas/OperationWorkflowDurationDistribution'}
+        outcomes_truncated: {type: boolean}
+        outcomes: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowRuleVersionOutcome'}}
+    OperationWorkflowRuleVersionOverlap:
+      type: object
+      additionalProperties: false
+      description: "Bounded observed multi-version example in stable workflow identity order. Up to 16 earliest-per-version decision reports appear in revision order; ties do not imply business ordering. Missing history may hide other versions or earlier terminal reports. Evidence links explain observed membership and do not establish that a policy was replaced."
+      required: [subject, instance_id, operation_id, history_complete, eligible, evidence_truncated, evidence]
+      properties:
+        platform_tenant_id: {type: string, format: uuid}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        instance_id: {type: string, maxLength: 256}
+        operation_id: {type: string, format: uuid}
+        history_complete: {type: boolean}
+        eligible: {type: boolean}
+        evidence_truncated: {type: boolean}
+        evidence: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowDecisionOutcomeEvidence'}}
     OperationWorkflowRuleVersionOutcome:
       type: object
       additionalProperties: false

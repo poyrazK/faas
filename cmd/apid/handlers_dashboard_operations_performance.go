@@ -56,7 +56,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 		if summary.DecisionOutcomes != nil {
 			data.DecisionGroups = workflowDecisionOutcomeLinks(data.SummaryURL, opts, summary)
 			if summary.DecisionOutcomes.RuleComparisons != nil {
-				data.RuleComparisons = workflowRuleComparisonViews(summary.DecisionOutcomes.RuleComparisons)
+				data.RuleComparisons = workflowRuleComparisonViews(summary.DecisionOutcomes.RuleComparisons, data.ListURL, opts)
 			}
 		}
 		data.EvaluatedAt = dashboardJobsTime(summary.EvaluatedAt)
@@ -103,7 +103,7 @@ func workflowDecisionOutcomeLinks(path string, opts api.OperationWorkflowPerform
 	return links
 }
 
-func workflowRuleComparisonViews(summary *api.OperationWorkflowRuleComparisonSummary) []dashboard.WorkflowRuleComparison {
+func workflowRuleComparisonViews(summary *api.OperationWorkflowRuleComparisonSummary, listURL string, opts api.OperationWorkflowPerformanceOptions) []dashboard.WorkflowRuleComparison {
 	views := make([]dashboard.WorkflowRuleComparison, 0, len(summary.Comparisons))
 	for _, comparison := range summary.Comparisons {
 		view := dashboard.WorkflowRuleComparison{OperationWorkflowRuleComparison: comparison}
@@ -112,7 +112,23 @@ func workflowRuleComparisonViews(summary *api.OperationWorkflowRuleComparisonSum
 			for _, outcome := range version.Outcomes {
 				item.Outcomes = append(item.Outcomes, dashboard.WorkflowRuleOutcome{OperationWorkflowRuleVersionOutcome: outcome, Percent: fmt.Sprintf("%d.%02d%%", outcome.ProportionBasisPoints/100, outcome.ProportionBasisPoints%100)})
 			}
+
+			if version.SingleVersion != nil {
+				item.SingleVersion = &dashboard.WorkflowRuleCohort{OperationWorkflowRuleVersionCohort: *version.SingleVersion}
+				for _, outcome := range version.SingleVersion.Outcomes {
+					item.SingleVersion.Outcomes = append(item.SingleVersion.Outcomes, dashboard.WorkflowRuleOutcome{OperationWorkflowRuleVersionOutcome: outcome, Percent: fmt.Sprintf("%d.%02d%%", outcome.ProportionBasisPoints/100, outcome.ProportionBasisPoints%100)})
+				}
+			}
 			view.Versions = append(view.Versions, item)
+		}
+
+		for _, example := range comparison.MultiVersionExamples {
+			query := url.Values{"scope": {opts.Scope}, "tenant_id": {example.PlatformTenantID}, "subject_type": {example.Subject.Type}, "subject_id": {example.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {example.InstanceID}}
+			overlap := dashboard.WorkflowRuleOverlap{OperationWorkflowRuleVersionOverlap: example, HistoryURL: listURL + "?" + query.Encode() + "#workflows"}
+			for _, fact := range example.Evidence {
+				overlap.Evidence = append(overlap.Evidence, dashboard.WorkflowRuleEvidence{OperationWorkflowDecisionOutcomeEvidence: fact, OperationURL: listURL + "/" + url.PathEscape(fact.OperationID)})
+			}
+			view.MultiVersionExamples = append(view.MultiVersionExamples, overlap)
 		}
 		views = append(views, view)
 	}

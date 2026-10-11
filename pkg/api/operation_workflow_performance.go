@@ -110,14 +110,20 @@ type OperationWorkflowRuleComparisonSummary struct {
 	Comparisons               []OperationWorkflowRuleComparison `json:"comparisons"`
 }
 type OperationWorkflowRuleComparison struct {
-	ContractVersion   int                                      `json:"contract_version"`
-	DecisionCode      string                                   `json:"decision_code"`
-	RuleID            string                                   `json:"rule_id"`
-	Status            string                                   `json:"status"`
-	VersionsTruncated bool                                     `json:"versions_truncated"`
-	Versions          []OperationWorkflowRuleVersionStatistics `json:"versions"`
+	SingleVersionStatus               string                                   `json:"single_version_status"`
+	MultiVersionWorkflowCount         int64                                    `json:"multi_version_workflow_count"`
+	EligibleMultiVersionWorkflowCount int64                                    `json:"eligible_multi_version_workflow_count"`
+	ExamplesTruncated                 bool                                     `json:"examples_truncated"`
+	MultiVersionExamples              []OperationWorkflowRuleVersionOverlap    `json:"multi_version_examples"`
+	ContractVersion                   int                                      `json:"contract_version"`
+	DecisionCode                      string                                   `json:"decision_code"`
+	RuleID                            string                                   `json:"rule_id"`
+	Status                            string                                   `json:"status"`
+	VersionsTruncated                 bool                                     `json:"versions_truncated"`
+	Versions                          []OperationWorkflowRuleVersionStatistics `json:"versions"`
 }
 type OperationWorkflowRuleVersionStatistics struct {
+	SingleVersion                   *OperationWorkflowRuleVersionCohort   `json:"single_version,omitempty"`
 	RuleVersion                     string                                `json:"rule_version"`
 	ObservedWorkflowCount           int64                                 `json:"observed_workflow_count"`
 	EligibleWorkflowCount           int64                                 `json:"eligible_workflow_count"`
@@ -132,4 +138,25 @@ type OperationWorkflowRuleVersionOutcome struct {
 	OutcomeCode           string `json:"outcome_code"`
 	WorkflowCount         int64  `json:"workflow_count"`
 	ProportionBasisPoints int64  `json:"proportion_basis_points"`
+}
+
+// OperationWorkflowRuleVersionCohort restricts outcomes to complete workflows reporting exactly one version for the comparison identity.
+type OperationWorkflowRuleVersionCohort struct {
+	EligibleWorkflowCount int64                                 `json:"eligible_workflow_count"`
+	CompletionTime        OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
+	OutcomesTruncated     bool                                  `json:"outcomes_truncated"`
+	Outcomes              []OperationWorkflowRuleVersionOutcome `json:"outcomes"`
+}
+
+// OperationWorkflowRuleVersionOverlap is a bounded example of observed version overlap, not proof of a policy replacement.
+type OperationWorkflowRuleVersionOverlap struct {
+	PlatformTenantID  string                                     `json:"platform_tenant_id,omitempty"`
+	Subject           OperationSubject                           `json:"subject"`
+	InstanceID        string                                     `json:"instance_id"`
+	OperationID       string                                     `json:"operation_id"`
+	HistoryComplete   bool                                       `json:"history_complete"`
+	Eligible          bool                                       `json:"eligible"`
+	EvidenceTruncated bool                                       `json:"evidence_truncated"`
+	Evidence          []OperationWorkflowDecisionOutcomeEvidence `json:"evidence"`
 }

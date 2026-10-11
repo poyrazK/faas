@@ -23,14 +23,30 @@ type WorkflowPerformanceCohort struct {
 }
 
 type WorkflowRuleComparison struct {
+	MultiVersionExamples []WorkflowRuleOverlap
 	api.OperationWorkflowRuleComparison
 	Versions []WorkflowRuleVersion
 }
 type WorkflowRuleVersion struct {
+	SingleVersion *WorkflowRuleCohort
 	api.OperationWorkflowRuleVersionStatistics
 	Outcomes []WorkflowRuleOutcome
 }
 type WorkflowRuleOutcome struct {
 	api.OperationWorkflowRuleVersionOutcome
 	Percent string
+}
+
+type WorkflowRuleCohort struct {
+	api.OperationWorkflowRuleVersionCohort
+	Outcomes []WorkflowRuleOutcome
+}
+type WorkflowRuleOverlap struct {
+	api.OperationWorkflowRuleVersionOverlap
+	HistoryURL string
+	Evidence   []WorkflowRuleEvidence
+}
+type WorkflowRuleEvidence struct {
+	api.OperationWorkflowDecisionOutcomeEvidence
+	OperationURL string
 }

@@ -2137,9 +2137,12 @@ from .operation_workflow_revision_comparison_status import OperationWorkflowRevi
 from .operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
 from .operation_workflow_revision_evidence_kind import OperationWorkflowRevisionEvidenceKind
 from .operation_workflow_rule_comparison import OperationWorkflowRuleComparison
+from .operation_workflow_rule_comparison_single_version_status import OperationWorkflowRuleComparisonSingleVersionStatus
 from .operation_workflow_rule_comparison_status import OperationWorkflowRuleComparisonStatus
 from .operation_workflow_rule_comparison_summary import OperationWorkflowRuleComparisonSummary
+from .operation_workflow_rule_version_cohort import OperationWorkflowRuleVersionCohort
 from .operation_workflow_rule_version_outcome import OperationWorkflowRuleVersionOutcome
+from .operation_workflow_rule_version_overlap import OperationWorkflowRuleVersionOverlap
 from .operation_workflow_rule_version_statistics import OperationWorkflowRuleVersionStatistics
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_duration import OperationWorkflowStateDuration
@@ -5586,9 +5589,12 @@ __all__ = (
     "OperationWorkflowRevisionEvidence",
     "OperationWorkflowRevisionEvidenceKind",
     "OperationWorkflowRuleComparison",
+    "OperationWorkflowRuleComparisonSingleVersionStatus",
     "OperationWorkflowRuleComparisonStatus",
     "OperationWorkflowRuleComparisonSummary",
+    "OperationWorkflowRuleVersionCohort",
     "OperationWorkflowRuleVersionOutcome",
+    "OperationWorkflowRuleVersionOverlap",
     "OperationWorkflowRuleVersionStatistics",
     "OperationWorkflowState",
     "OperationWorkflowStateDuration",

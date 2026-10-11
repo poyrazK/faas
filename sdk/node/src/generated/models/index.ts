@@ -1140,7 +1140,9 @@ export type { OperationWorkflowRevisionComparison } from './OperationWorkflowRev
 export type { OperationWorkflowRevisionEvidence } from './OperationWorkflowRevisionEvidence.js';
 export type { OperationWorkflowRuleComparison } from './OperationWorkflowRuleComparison.js';
 export type { OperationWorkflowRuleComparisonSummary } from './OperationWorkflowRuleComparisonSummary.js';
+export type { OperationWorkflowRuleVersionCohort } from './OperationWorkflowRuleVersionCohort.js';
 export type { OperationWorkflowRuleVersionOutcome } from './OperationWorkflowRuleVersionOutcome.js';
+export type { OperationWorkflowRuleVersionOverlap } from './OperationWorkflowRuleVersionOverlap.js';
 export type { OperationWorkflowRuleVersionStatistics } from './OperationWorkflowRuleVersionStatistics.js';
 export type { OperationWorkflowStaleOnly } from './OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './OperationWorkflowState.js';

@@ -196,6 +196,9 @@ func listWorkflowPerformanceInstances(ctx context.Context, reader workflowPerfor
 
 	if decisionOutcomeDimension(opts.Dimension) {
 		out.DecisionOutcomes = workflowDecisionOutcomes(cohort)
+		if !operator {
+			hideRuleComparisonTenants(out.DecisionOutcomes.RuleComparisons)
+		}
 		found := false
 		selector := workflowDecisionOutcomeSelector(opts.OperationWorkflowPerformanceGroup)
 		for _, group := range out.DecisionOutcomes.Groups {

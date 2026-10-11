@@ -27,6 +27,9 @@ func (s *PgStore) summarizeWorkflowPerformance(ctx context.Context, account, ten
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
 	out := workflowPerformanceSummary(instances, opts, at)
+	if !operator {
+		hideRuleOverlapTenants(&out)
+	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)
 	return out, nil
 }

@@ -221,6 +221,9 @@ func (m *MemStore) summarizeWorkflowPerformance(ctx context.Context, account, te
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
 	out := workflowPerformanceSummary(instances, opts, at)
+	if !operator {
+		hideRuleOverlapTenants(&out)
+	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)
 	return out, nil
 }
