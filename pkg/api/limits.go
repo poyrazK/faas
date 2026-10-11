@@ -9710,3 +9710,6 @@ const EventDeliveryHealthAlertQueueMax = 1024
 
 // EventDeliveryHealthAlertSequenceMax keeps notification identities exactly representable.
 const EventDeliveryHealthAlertSequenceMax uint64 = 9007199254740991
+
+// EventDeliveryHealthAcknowledgementHistoryMax bounds exact acknowledgement retries.
+const EventDeliveryHealthAcknowledgementHistoryMax = 1024

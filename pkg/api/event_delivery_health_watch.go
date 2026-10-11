@@ -25,6 +25,8 @@ type EventDeliveryHealthWatchOptions struct {
 	DurableAlerts          bool
 	Resume                 *EventDeliveryHealthCheckpoint
 	OnProgress             func(EventDeliveryHealthWatchResult) error
+	// PollAcknowledgements runs synchronously between observations with detached state.
+	PollAcknowledgements func(context.Context, EventDeliveryHealthCheckpoint) ([]EventDeliveryHealthAcknowledgement, error)
 }
 
 type EventDeliveryHealthAlert struct {
@@ -73,6 +75,9 @@ type deliveryHealthCondition struct {
 }
 
 func (o EventDeliveryHealthWatchOptions) validate() error {
+	if o.PollAcknowledgements != nil && (!o.DurableAlerts || o.OnProgress == nil) {
+		return ErrValidation("live acknowledgements require durable alerts and a progress callback")
+	}
 	if _, err := EventConsumerHealthWindow(o.Window); err != nil {
 		return ErrValidation(err.Error())
 	}
@@ -147,7 +152,8 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 
 // WatchEventConsumerDeliveryHealth emits one local notification per confirmed
 // transition. DurableAlerts exposes a bounded checkpoint outbox; callers must
-// persist progress before delivering notifications and acknowledge separately.
+// persist progress before delivering notifications. PollAcknowledgements can
+// remove processed alerts between observations through the same progress hook.
 func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
 	out := EventDeliveryHealthWatchResult{SubscriptionID: strings.ToLower(sub), StopReason: "validation_failure", Conditions: []EventDeliveryHealthCondition{}, Alerts: []EventDeliveryHealthAlert{}}
 	if err := o.validate(); err != nil {
@@ -172,8 +178,12 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	appID := out.AppID
+	collectDeliveryHealthConditions(&out, conditions)
 	for {
 		out.Alerts = []EventDeliveryHealthAlert{}
+		if err := pollDeliveryHealthAcknowledgements(ctx, o, &out); err != nil {
+			return out, err
+		}
 		health, err := c.GetEventConsumerDeliveryHealth(ctx, app, sub, o.Window)
 		now := time.Now()
 		if err != nil {
@@ -215,7 +225,15 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 			return out, err
 		}
 		if out.queueFull {
-			return out, deliveryHealthQueueError(out)
+			if err := pollDeliveryHealthAcknowledgements(ctx, o, &out); err != nil {
+				return out, err
+			}
+			if deliveryHealthOpeningCapacity(&out) {
+				out.queueFull = false
+				out.StopReason = "running"
+			} else {
+				return out, deliveryHealthQueueError(out)
+			}
 		}
 		timer := time.NewTimer(o.Interval)
 		select {

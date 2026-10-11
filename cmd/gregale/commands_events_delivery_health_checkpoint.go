@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -17,6 +19,18 @@ func prepareDeliveryHealthCheckpoint(f *deliveryHealthWatchFlags, options *api.E
 	checkpoint, err := newCommitRecoveryCheckpoint(*f.checkpoint)
 	if err != nil {
 		return nil, err
+	}
+	if *f.ackInbox != "" {
+		inbox, inboxErr := resolveDeliveryHealthAcknowledgementInbox(checkpoint, *f.ackInbox)
+		if inboxErr != nil {
+			return nil, inboxErr
+		}
+		options.PollAcknowledgements = func(ctx context.Context, _ api.EventDeliveryHealthCheckpoint) ([]api.EventDeliveryHealthAcknowledgement, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return readDeliveryHealthAcknowledgementInbox(checkpoint, inbox)
+		}
 	}
 	if err = checkpoint.lock(); err != nil {
 		return nil, err
@@ -107,14 +121,74 @@ func manageDeliveryHealthAlerts(checkpoint *commitRecoveryCheckpoint, ackPath st
 		}
 	}
 	summary := struct {
-		Checkpoint api.EventDeliveryHealthCheckpoint `json:"checkpoint"`
-		Pending    int                               `json:"pending_count"`
-		Reserved   int                               `json:"reserved_closing_slots"`
-		Remaining  int                               `json:"remaining_slots"`
-		Capacity   int                               `json:"capacity"`
-	}{updated, len(updated.Pending), reserved, api.EventDeliveryHealthAlertQueueMax - len(updated.Pending) - reserved, api.EventDeliveryHealthAlertQueueMax}
+		Checkpoint   api.EventDeliveryHealthCheckpoint `json:"checkpoint"`
+		Pending      int                               `json:"pending_count"`
+		Acknowledged int                               `json:"acknowledged_history_count"`
+		Reserved     int                               `json:"reserved_closing_slots"`
+		Remaining    int                               `json:"remaining_slots"`
+		Capacity     int                               `json:"capacity"`
+	}{updated, len(updated.Pending), len(updated.AcknowledgedAlerts), reserved, api.EventDeliveryHealthAlertQueueMax - len(updated.Pending) - reserved, api.EventDeliveryHealthAlertQueueMax}
 	if err = encoder.Encode(summary); err != nil {
 		return printErr("Cannot print alert queue", fmt.Errorf("encode queue: %w", err))
 	}
 	return 0
+}
+
+func resolveDeliveryHealthAcknowledgementInbox(checkpoint *commitRecoveryCheckpoint, path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if err != nil {
+		return "", err
+	}
+	inbox := filepath.Join(dir, filepath.Base(absolute))
+	if inbox == checkpoint.path || inbox == checkpoint.path+".lock" {
+		return "", errors.New("acknowledgement inbox must be separate from checkpoint and lock")
+	}
+	if err = validateDeliveryHealthAcknowledgementInbox(checkpoint, inbox); err != nil {
+		return "", err
+	}
+	return inbox, nil
+}
+
+func validateDeliveryHealthAcknowledgementInbox(checkpoint *commitRecoveryCheckpoint, path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("acknowledgement inbox must be a regular file, not a symlink")
+	}
+	for _, target := range []string{checkpoint.path, checkpoint.path + ".lock"} {
+		other, statErr := os.Lstat(target)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		if other != nil && os.SameFile(info, other) {
+			return errors.New("acknowledgement inbox must not alias checkpoint or lock")
+		}
+	}
+	return nil
+}
+
+func readDeliveryHealthAcknowledgementInbox(checkpoint *commitRecoveryCheckpoint, path string) ([]api.EventDeliveryHealthAcknowledgement, error) {
+	if err := checkpoint.validate(); err != nil {
+		return nil, err
+	}
+	if err := validateDeliveryHealthAcknowledgementInbox(checkpoint, path); err != nil {
+		return nil, err
+	}
+	var acks []api.EventDeliveryHealthAcknowledgement
+	if err := readCommitRecoveryStatusFile(path, &acks); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return acks, nil
 }

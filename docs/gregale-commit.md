@@ -1847,4 +1847,16 @@ gregale events delivery-health-alerts --checkpoint health-watch.json --replay
 gregale events delivery-health-alerts --checkpoint health-watch.json --ack-alerts processed.json
 ```
 
-Replay emits historical JSON lines and leaves the queue unchanged. Acknowledge exact pending transitions only after processing them; duplicates, unknown pairs and previously removed pairs are rejected. Deduplicate externally by session and sequence. Watches and queue operations share an exclusive private sidecar lock; keep the `.lock` file in place. See ADR-965.
+Replay emits historical JSON lines and leaves the queue unchanged. Acknowledge exact pending transitions only after processing them. Repeated exact pairs are idempotent while retained in the bounded acknowledgement history; unknown pairs and older evicted pairs are rejected. Deduplicate externally by session and sequence. Watches and queue operations share an exclusive private sidecar lock; keep the `.lock` file in place. See ADR-965.
+
+To acknowledge alerts while a watch keeps running, add a separate inbox:
+
+```sh
+gregale events subscription-delivery-health my-app SUBSCRIPTION_ID --watch \
+  --waiting-reason-count ordering_blocked=10 --checkpoint health-watch.json \
+  --ack-inbox processed-inbox.json --alerts-json
+```
+
+After processing notifications, your consumer atomically replaces `processed-inbox.json` with a JSON array of exact `incident_id`/`sequence` pairs. The watch reads the file between health observations, saves removals before adopting them, and continues polling. Use `--resume` with the same flags after a restart. A missing inbox is allowed; clear a batch by atomically replacing it with `[]`. The watch never deletes or edits the inbox.
+
+Repeated pairs are safe within the last 1,024 removed transitions, persisted in the checkpoint. Use recent bounded batches; this is not a permanent cumulative acknowledgement log. Malformed files, foreign or unknown pairs, and pairs evicted from retry history stop the watch without removing pending notifications. Inbox paths must be regular files separate from the checkpoint and its lock. Acknowledgement frees notification slots but does not clear incidents or release their reserved closing slots. See ADR-966.

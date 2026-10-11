@@ -81,6 +81,7 @@ type deliveryHealthWatchFlags struct {
 	watch, alertsJSON *bool
 	resume            *bool
 	checkpoint        *string
+	ackInbox          *string
 	options           api.EventDeliveryHealthWatchOptions
 }
 
@@ -88,6 +89,7 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f := &deliveryHealthWatchFlags{}
 	f.watch = fs.Bool("watch", false, "watch configured delivery health thresholds")
 	f.checkpoint = fs.String("checkpoint", "", "persist a bounded delivery health watch checkpoint")
+	f.ackInbox = fs.String("ack-inbox", "", "atomically replaced JSON acknowledgement batch; requires checkpoint")
 	f.resume = fs.Bool("resume", false, "resume the selected checkpoint with fresh evidence")
 	f.alertsJSON = fs.Bool("alerts-json", false, "emit local lifecycle alert JSON lines on stderr")
 	fs.DurationVar(&f.options.Interval, "interval", api.EventDeliveryHealthWatchIntervalDefault, "watch polling interval (100ms-1m)")
@@ -145,6 +147,9 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 			err = fmt.Errorf("--%s requires --watch", option.Name)
 		}
 	})
+	if *f.ackInbox != "" && *f.checkpoint == "" {
+		return fmt.Errorf("--ack-inbox requires --checkpoint")
+	}
 	if *f.resume && *f.checkpoint == "" {
 		return fmt.Errorf("--resume requires --checkpoint")
 	}

@@ -4,21 +4,23 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 // EventDeliveryHealthCheckpoint stores historical evidence, not live confirmation.
 type EventDeliveryHealthCheckpoint struct {
-	Version        int                            `json:"version"`
-	App            string                         `json:"app"`
-	AppID          string                         `json:"app_id"`
-	SubscriptionID string                         `json:"subscription_id"`
-	Window         string                         `json:"window"`
-	Session        string                         `json:"session"`
-	Sequence       uint64                         `json:"sequence"`
-	Conditions     []EventDeliveryHealthCondition `json:"conditions"`
-	Pending        []EventDeliveryHealthAlert     `json:"pending"`
+	Version            int                            `json:"version"`
+	App                string                         `json:"app"`
+	AppID              string                         `json:"app_id"`
+	SubscriptionID     string                         `json:"subscription_id"`
+	Window             string                         `json:"window"`
+	Session            string                         `json:"session"`
+	Sequence           uint64                         `json:"sequence"`
+	Conditions         []EventDeliveryHealthCondition `json:"conditions"`
+	Pending            []EventDeliveryHealthAlert     `json:"pending"`
+	AcknowledgedAlerts []EventDeliveryHealthAlert     `json:"acknowledged_alerts,omitempty"`
 }
 
 type EventDeliveryHealthAcknowledgement struct {
@@ -60,7 +62,7 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 
 // ValidateEventDeliveryHealthCheckpoint validates bounded historical alert state.
 func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) error {
-	if saved.Version != 1 || saved.App == "" || saved.SubscriptionID == "" || (saved.AppID == "" && len(saved.Pending) > 0) || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(saved.Session) || saved.Sequence > EventDeliveryHealthAlertSequenceMax || len(saved.Pending) > EventDeliveryHealthAlertQueueMax {
+	if saved.Version != 1 || saved.App == "" || saved.SubscriptionID == "" || (saved.AppID == "" && (len(saved.Pending) > 0 || len(saved.AcknowledgedAlerts) > 0)) || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(saved.Session) || saved.Sequence > EventDeliveryHealthAlertSequenceMax || len(saved.Pending) > EventDeliveryHealthAlertQueueMax || len(saved.AcknowledgedAlerts) > EventDeliveryHealthAcknowledgementHistoryMax {
 		return ErrValidation("invalid delivery health checkpoint bounds")
 	}
 	if _, err := EventConsumerHealthWindow(saved.Window); err != nil {
@@ -92,11 +94,21 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 	if len(metrics) == 0 || len(saved.Pending)+len(active) > EventDeliveryHealthAlertQueueMax || uint64(len(active)) > EventDeliveryHealthAlertSequenceMax-saved.Sequence {
 		return ErrValidation("invalid checkpoint reservations")
 	}
+	var lastPending uint64
+	for _, a := range saved.Pending {
+		if a.Sequence <= lastPending {
+			return ErrValidation("unordered checkpoint pending alerts")
+		}
+		lastPending = a.Sequence
+	}
+	history := append([]EventDeliveryHealthAlert{}, saved.Pending...)
+	history = append(history, saved.AcknowledgedAlerts...)
+	sort.Slice(history, func(i, j int) bool { return history[i].Sequence < history[j].Sequence })
 	claims := map[uint64]string{}
 	lineage := map[string]string{}
 	closed := map[string]bool{}
 	var last uint64
-	for _, a := range saved.Pending {
+	for _, a := range history {
 		c, known := metrics[a.Metric]
 		n, ok := deliveryHealthIncidentSequence(a.IncidentID, saved.Session)
 		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
@@ -124,7 +136,7 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		lineage[a.IncidentID] = a.Metric
 		last = a.Sequence
 	}
-	for _, a := range saved.Pending {
+	for _, a := range history {
 		n, _ := deliveryHealthIncidentSequence(a.IncidentID, saved.Session)
 		if claims[n] != "" && claims[n] != a.IncidentID {
 			return ErrValidation("checkpoint pending opening sequence collision")
@@ -143,7 +155,8 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 }
 
 // AcknowledgeEventDeliveryHealthAlerts removes exact pending transitions atomically.
-// Unknown or duplicate acknowledgements fail without changing the input.
+// Repeated exact pairs are idempotent within the bounded acknowledgement history.
+// Unknown pairs fail without changing the input.
 func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, acks []EventDeliveryHealthAcknowledgement) (EventDeliveryHealthCheckpoint, error) {
 	if err := ValidateEventDeliveryHealthCheckpoint(saved); err != nil {
 		return saved, err
@@ -152,22 +165,29 @@ func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, a
 		return saved, ErrValidation("too many alert acknowledgements")
 	}
 	known := map[EventDeliveryHealthAcknowledgement]bool{}
-	for _, a := range saved.Pending {
+	for _, a := range append(append([]EventDeliveryHealthAlert{}, saved.Pending...), saved.AcknowledgedAlerts...) {
 		known[EventDeliveryHealthAcknowledgement{a.IncidentID, a.Sequence}] = true
 	}
 	selected := map[EventDeliveryHealthAcknowledgement]bool{}
 	for _, a := range acks {
-		if !known[a] || selected[a] {
-			return saved, ErrValidation("acknowledgement must match one pending transition")
+		if !known[a] {
+			return saved, ErrValidation("acknowledgement must match a pending or recently acknowledged transition")
 		}
 		selected[a] = true
 	}
+	acknowledged := append([]EventDeliveryHealthAlert{}, saved.AcknowledgedAlerts...)
 	pending := make([]EventDeliveryHealthAlert, 0, len(saved.Pending))
 	for _, a := range saved.Pending {
 		if !selected[EventDeliveryHealthAcknowledgement{a.IncidentID, a.Sequence}] {
 			pending = append(pending, a)
+		} else {
+			acknowledged = append(acknowledged, a)
 		}
 	}
+	if len(acknowledged) > EventDeliveryHealthAcknowledgementHistoryMax {
+		acknowledged = acknowledged[len(acknowledged)-EventDeliveryHealthAcknowledgementHistoryMax:]
+	}
+	saved.AcknowledgedAlerts = acknowledged
 	saved.Pending = pending
 	return saved, nil
 }
@@ -206,6 +226,7 @@ func restoreDeliveryHealthCheckpoint(out *EventDeliveryHealthWatchResult, condit
 	out.Session = saved.Session
 	out.Sequence = saved.Sequence
 	out.Checkpoint.Pending = append([]EventDeliveryHealthAlert{}, saved.Pending...)
+	out.Checkpoint.AcknowledgedAlerts = append([]EventDeliveryHealthAlert{}, saved.AcknowledgedAlerts...)
 	return nil
 }
 
@@ -216,7 +237,7 @@ func deliveryHealthCanOpen(out *EventDeliveryHealthWatchResult) bool {
 	if out.queueFull {
 		return false
 	}
-	if len(out.Checkpoint.Pending)+out.reserved+2 > EventDeliveryHealthAlertQueueMax || out.Sequence+uint64(out.reserved)+2 > EventDeliveryHealthAlertSequenceMax {
+	if !deliveryHealthOpeningCapacity(out) {
 		out.queueFull = true
 		return false
 	}
@@ -225,4 +246,8 @@ func deliveryHealthCanOpen(out *EventDeliveryHealthWatchResult) bool {
 
 func deliveryHealthQueueError(out EventDeliveryHealthWatchResult) error {
 	return fmt.Errorf("delivery health alert outbox full at sequence %d; acknowledge pending notifications before resuming", out.Sequence)
+}
+
+func deliveryHealthOpeningCapacity(out *EventDeliveryHealthWatchResult) bool {
+	return out.Checkpoint == nil || (len(out.Checkpoint.Pending)+out.reserved+2 <= EventDeliveryHealthAlertQueueMax && out.Sequence+uint64(out.reserved)+2 <= EventDeliveryHealthAlertSequenceMax)
 }
