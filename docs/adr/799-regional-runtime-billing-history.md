@@ -48,8 +48,10 @@ lock. Reads of this journal alone do not establish complete minute coverage.
 ## Integration boundary
 
 App-task VMs use a separate durable task/lease identity and do not enter the
-ordinary instance journal. Their retained interval capture remains required;
-matching a capacity kind alone does not establish task history or coverage.
+ordinary instance journal. Matching a capacity kind alone does not establish
+task history or coverage. ADR-800 adds their separate retained journal. Complete
+minute production still requires both evidence sources and native issuance
+reconciliation.
 
 This is the retained evidence source for the producer, not permission to sign
 complete compute receipts. Minute sealing, retained delivery, min-instance

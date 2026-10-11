@@ -1207,6 +1207,62 @@ $$;
 
 
 --
+-- Name: capture_regional_app_task_billing_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_regional_app_task_billing_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ old_billable boolean := false;
+ new_billable boolean := false;
+ same_identity boolean := false;
+ same_run boolean := false;
+ changed_at timestamptz;
+ closed_at timestamptz;
+ old_app uuid;
+ new_app uuid;
+BEGIN
+ IF TG_OP <> 'INSERT' THEN old_billable := OLD.status IN ('restoring','running'); END IF;
+ IF TG_OP <> 'DELETE' THEN new_billable := NEW.status IN ('restoring','running'); END IF;
+ IF TG_OP='UPDATE' THEN
+  same_identity := (NEW.app_id,NEW.id,NEW.deployment_id) IS NOT DISTINCT FROM (OLD.app_id,OLD.id,OLD.deployment_id);
+  same_run := same_identity AND (NEW.lease_token,NEW.lease_owner) IS NOT DISTINCT FROM (OLD.lease_token,OLD.lease_owner);
+ END IF;
+ IF old_billable=new_billable AND (NOT old_billable OR same_run) THEN RETURN NULL; END IF;
+ IF old_billable THEN old_app:=OLD.app_id; END IF;
+ IF new_billable THEN new_app:=NEW.app_id; END IF;
+ IF LEAST(old_app,new_app) IS NOT NULL THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||LEAST(old_app,new_app)::text,0));
+ END IF;
+ IF GREATEST(old_app,new_app) IS DISTINCT FROM LEAST(old_app,new_app) THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||GREATEST(old_app,new_app)::text,0));
+ END IF;
+ changed_at:=clock_timestamp();
+ IF old_billable THEN
+  -- A normal terminal CAS retains a reported finish before lease expiry.
+  -- Sweeps, replacement, deletion and bare requeue cannot prove closure.
+  IF TG_OP='UPDATE' AND same_identity AND NEW.status IN ('succeeded','failed','timed_out','cancelled')
+   AND NEW.finished_at IS NOT NULL AND NEW.finished_at < OLD.lease_expires_at
+   AND COALESCE(NEW.failure_code,'') <> 'lease_expired' THEN
+   closed_at:=NEW.finished_at;
+  END IF;
+  UPDATE regional_app_task_billing_intervals
+   SET ended_at=CASE WHEN closed_at >= started_at THEN closed_at ELSE NULL END,
+       unknown_since=CASE WHEN closed_at >= started_at THEN NULL ELSE GREATEST(started_at,changed_at) END
+   WHERE task_id=OLD.id AND ended_at IS NULL AND unknown_since IS NULL;
+ END IF;
+ IF new_billable THEN
+  INSERT INTO regional_app_task_billing_intervals
+   (app_id,task_id,deployment_id,run_id,lease_owner,started_at,recorded_at,complete_start)
+  VALUES (NEW.app_id,NEW.id,NEW.deployment_id,NEW.lease_token,NEW.lease_owner,NEW.updated_at,changed_at,true);
+ END IF;
+ RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: capture_regional_runtime_billing_history(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7551,6 +7607,31 @@ END; $$;
 
 
 --
+-- Name: guard_regional_app_task_billing_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_app_task_billing_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR pg_trigger_depth() < 2 THEN
+  RAISE EXCEPTION 'regional app task billing history is lifecycle owned' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (
+  (NEW.id,NEW.app_id,NEW.task_id,NEW.deployment_id,NEW.run_id,NEW.lease_owner,
+   NEW.started_at,NEW.recorded_at,NEW.complete_start) IS DISTINCT FROM
+  (OLD.id,OLD.app_id,OLD.task_id,OLD.deployment_id,OLD.run_id,OLD.lease_owner,
+   OLD.started_at,OLD.recorded_at,OLD.complete_start)
+  OR OLD.ended_at IS NOT NULL OR OLD.unknown_since IS NOT NULL
+  OR (NEW.ended_at IS NULL AND NEW.unknown_since IS NULL)) THEN
+  RAISE EXCEPTION 'regional app task billing interval cannot be rewritten' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: guard_regional_runtime_billing_history(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11289,6 +11370,19 @@ WITH candidates AS MATERIALIZED (
 DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
     AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
     AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
+$$;
+
+
+--
+-- Name: refuse_regional_app_task_billing_history_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_regional_app_task_billing_history_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'regional app task billing history is retained' USING ERRCODE='23514';
+END
 $$;
 
 
@@ -23823,6 +23917,62 @@ CREATE TABLE public.regional_app_provision_receipts (
 
 
 --
+-- Name: regional_app_task_billing_history_start; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_app_task_billing_history_start (
+    singleton boolean DEFAULT true NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT regional_app_task_billing_history_start_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: regional_app_task_billing_intervals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_app_task_billing_intervals (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    lease_owner text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    complete_start boolean NOT NULL,
+    ended_at timestamp with time zone,
+    unknown_since timestamp with time zone,
+    CONSTRAINT regional_app_task_billing_intervals_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_task_billing_intervals_check CHECK (((ended_at IS NULL) OR (ended_at >= started_at))),
+    CONSTRAINT regional_app_task_billing_intervals_check1 CHECK (((unknown_since IS NULL) OR (unknown_since >= started_at))),
+    CONSTRAINT regional_app_task_billing_intervals_check2 CHECK (((ended_at IS NULL) OR (unknown_since IS NULL))),
+    CONSTRAINT regional_app_task_billing_intervals_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_task_billing_intervals_run_id_check CHECK ((run_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_app_task_billing_intervals_task_id_check CHECK ((task_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: regional_app_task_billing_intervals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.regional_app_task_billing_intervals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: regional_app_task_billing_intervals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.regional_app_task_billing_intervals_id_seq OWNED BY public.regional_app_task_billing_intervals.id;
+
+
+--
 -- Name: regional_image_release_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26130,6 +26280,13 @@ ALTER TABLE ONLY public.execution_events ALTER COLUMN id SET DEFAULT nextval('pu
 --
 
 ALTER TABLE ONLY public.instance_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.instance_billing_intervals_id_seq'::regclass);
+
+
+--
+-- Name: regional_app_task_billing_intervals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_app_task_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.regional_app_task_billing_intervals_id_seq'::regclass);
 
 
 --
@@ -30998,6 +31155,22 @@ ALTER TABLE ONLY public.regional_app_provision_receipts
 
 ALTER TABLE ONLY public.regional_app_provision_receipts
     ADD CONSTRAINT regional_app_provision_receipts_pkey PRIMARY KEY (provision_id);
+
+
+--
+-- Name: regional_app_task_billing_history_start regional_app_task_billing_history_start_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_app_task_billing_history_start
+    ADD CONSTRAINT regional_app_task_billing_history_start_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: regional_app_task_billing_intervals regional_app_task_billing_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_app_task_billing_intervals
+    ADD CONSTRAINT regional_app_task_billing_intervals_pkey PRIMARY KEY (id);
 
 
 --
@@ -36643,6 +36816,20 @@ CREATE INDEX recent_build_claims_org_id_idx ON public.recent_build_claims USING 
 
 
 --
+-- Name: regional_app_task_billing_app_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_app_task_billing_app_page_idx ON public.regional_app_task_billing_intervals USING btree (app_id, id);
+
+
+--
+-- Name: regional_app_task_billing_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX regional_app_task_billing_open_idx ON public.regional_app_task_billing_intervals USING btree (task_id) WHERE ((ended_at IS NULL) AND (unknown_since IS NULL));
+
+
+--
 -- Name: regional_image_release_generation_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41151,6 +41338,34 @@ CREATE TRIGGER regional_app_provision_truncate_guard BEFORE TRUNCATE ON public.r
 
 
 --
+-- Name: regional_app_task_billing_intervals regional_app_task_billing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_app_task_billing_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_app_task_billing_intervals FOR EACH ROW EXECUTE FUNCTION public.guard_regional_app_task_billing_history();
+
+
+--
+-- Name: regional_app_task_billing_history_start regional_app_task_billing_start_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_app_task_billing_start_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_app_task_billing_history_start FOR EACH ROW EXECUTE FUNCTION public.refuse_regional_app_task_billing_history_truncate();
+
+
+--
+-- Name: regional_app_task_billing_history_start regional_app_task_billing_start_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_app_task_billing_start_truncate_guard BEFORE TRUNCATE ON public.regional_app_task_billing_history_start FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_app_task_billing_history_truncate();
+
+
+--
+-- Name: regional_app_task_billing_intervals regional_app_task_billing_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_app_task_billing_truncate_guard BEFORE TRUNCATE ON public.regional_app_task_billing_intervals FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_app_task_billing_history_truncate();
+
+
+--
 -- Name: regional_runtime_capacity_receipts regional_capacity_close_seats; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -41848,6 +42063,13 @@ CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF stat
 --
 
 CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
+
+
+--
+-- Name: app_tasks zz_app_tasks_regional_billing_history; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_app_tasks_regional_billing_history AFTER INSERT OR DELETE OR UPDATE ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.capture_regional_app_task_billing_history();
 
 
 --

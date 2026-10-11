@@ -93,7 +93,7 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	return cloneAppTask(task), nil
 }
 
@@ -166,7 +166,7 @@ func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, 
 		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
 		CreatedAt: firedAt, UpdatedAt: firedAt,
 	}
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	return cloneAppTask(task), true, nil
 }
 
@@ -300,7 +300,7 @@ func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronI
 	}
 	occurrence.AppTaskID = task.ID
 	m.scheduleOccurrences[occurrence.ID] = occurrence
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	return cloneAppTask(task), cloneScheduleOccurrence(occurrence), true, nil
 }
 
@@ -410,7 +410,7 @@ func (m *MemStore) CreateExclusiveCommandCronAppTask(_ context.Context, accountI
 		occurrence.UpdatedAt = createdAt
 		m.scheduleOccurrences[occurrence.ID] = *occurrence
 	}
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	for id, request := range m.fireNowRequests {
 		if request.OperationID != nil && *request.OperationID == operationID {
 			request.TaskID = &task.ID
@@ -559,7 +559,7 @@ func (m *MemStore) CreateManualCronAppTaskForFireNow(_ context.Context, requestI
 		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
 		CreatedAt: firedAt, UpdatedAt: firedAt,
 	}
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	request.Status = FireNowStatusSucceeded
 	request.TaskID = &task.ID
 	finishedAt := time.Now().UTC()
@@ -692,7 +692,7 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			candidate.FinishedAt = appTaskTimePtr(claimedAt)
 			candidate.RetryAt = nil
 			candidate.UpdatedAt = claimedAt
-			m.appTasks[id] = candidate
+			m.putAppTaskLocked(id, candidate)
 			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
 			continue
 		}
@@ -730,7 +730,7 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	selected.FailureCode = nil
 	selected.FailureMessage = nil
 	selected.UpdatedAt = claimedAt
-	m.appTasks[selected.ID] = *selected
+	m.putAppTaskLocked(selected.ID, *selected)
 	m.syncAppTaskOccurrenceLocked(*selected, claimedAt)
 	return cloneAppTask(*selected), nil
 }
@@ -759,7 +759,7 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 		task.LeaseOwner = nil
 		task.LeaseExpiresAt = nil
 		task.UpdatedAt = startedAt
-		m.appTasks[task.ID] = task
+		m.putAppTaskLocked(task.ID, task)
 		m.syncAppTaskOccurrenceLocked(task, startedAt)
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
@@ -777,7 +777,7 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	task.FailureCode = nil
 	task.FailureMessage = nil
 	task.UpdatedAt = startedAt
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	m.syncAppTaskOccurrenceLocked(task, startedAt)
 	return cloneAppTask(task), nil
 }
@@ -799,7 +799,7 @@ func (m *MemStore) RenewAppTaskLease(_ context.Context, taskID, leaseToken strin
 	expiresAt := renewedAt.Add(leaseDuration).UTC()
 	task.LeaseExpiresAt = &expiresAt
 	task.UpdatedAt = renewedAt
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	return nil
 }
 
@@ -831,7 +831,7 @@ func (m *MemStore) RequestAppTaskCancellation(_ context.Context, accountID, appI
 		task.CancelRequested = appTaskTimePtr(requestedAt)
 	}
 	task.UpdatedAt = requestedAt
-	m.appTasks[task.ID] = task
+	m.putAppTaskLocked(task.ID, task)
 	m.syncAppTaskOccurrenceLocked(task, requestedAt)
 	return cloneAppTask(task), nil
 }
@@ -868,6 +868,7 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	if finishedAt.Before(task.CreatedAt) {
 		return AppTask{}, ErrAppTaskInvalid
 	}
+	originalStartedAt := task.StartedAt
 	task.WorkDecision, task.OutcomeCode = &decision, params.OutcomeCode
 	retryAt := cronAppTaskRetryAt(task, task.Status, params.Status, finishedAt)
 	task.Status = params.Status
@@ -893,7 +894,15 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	task.LeaseToken = nil
 	task.LeaseOwner = nil
 	task.LeaseExpiresAt = nil
-	m.appTasks[task.ID] = task
+	if retryAt != nil {
+		// Retain the completed attempt before clearing its timestamps for retry,
+		// matching PostgreSQL's terminal intermediate write in this transaction.
+		terminal := task
+		terminal.Status, terminal.RetryAt = params.Status, nil
+		terminal.StartedAt, terminal.FinishedAt = originalStartedAt, appTaskTimePtr(finishedAt)
+		m.putAppTaskLocked(task.ID, terminal)
+	}
+	m.putAppTaskLocked(task.ID, task)
 	m.syncAppTaskOccurrenceLocked(task, finishedAt)
 	return cloneAppTask(task), nil
 }
@@ -959,7 +968,7 @@ func (m *MemStore) SweepExpiredAppTasks(_ context.Context, at time.Time) (AppTas
 		task.LeaseOwner = nil
 		task.LeaseExpiresAt = nil
 		task.UpdatedAt = at
-		m.appTasks[id] = task
+		m.putAppTaskLocked(id, task)
 		m.syncAppTaskOccurrenceLocked(task, at)
 	}
 	return result, nil
@@ -980,7 +989,7 @@ func (m *MemStore) cancelAppTasksForAppLocked(appID string, at time.Time) {
 			task.CancelRequested = appTaskTimePtr(at)
 		}
 		task.UpdatedAt = at
-		m.appTasks[id] = task
+		m.putAppTaskLocked(id, task)
 		m.syncAppTaskOccurrenceLocked(task, at)
 	}
 }

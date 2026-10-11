@@ -68,6 +68,10 @@ qualification and positive ingress eligibility remain required for end-to-end
 activation. Existing execution fences stay in place until those requirements
 are implemented and the dedicated native KVM acceptance gates pass.
 
+ADR-800 also retains restoring/running task lease intervals across retry and
+collection. Original task resource reads are separate from ordinary instances;
+neither journal alone establishes complete regional minute coverage.
+
 ## Validation
 
 Protocol tests cover strict canonical encoding, role and purpose separation,

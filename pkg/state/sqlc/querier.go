@@ -426,6 +426,8 @@ type Querier interface {
 	// 100 rows/fingerprint cap evicts oldest request rows first).
 	DeleteAppErrorRequestsOlderThan(ctx context.Context, db DBTX, arg DeleteAppErrorRequestsOlderThanParams) error
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
+	// adr: 800
+	DeleteAppTasksForPurge(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
 	DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, arg DeleteAutomationScheduleCursorParams) error
 	DeleteCollectedRuntimeLogArchive(ctx context.Context, db DBTX, arg DeleteCollectedRuntimeLogArchiveParams) (int64, error)
@@ -1589,6 +1591,7 @@ type Querier interface {
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
 	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
+	ListRegionalAppTaskBillingIntervals(ctx context.Context, db DBTX, arg ListRegionalAppTaskBillingIntervalsParams) ([]ListRegionalAppTaskBillingIntervalsRow, error)
 	ListRegionalRuntimeBillingIntervals(ctx context.Context, db DBTX, arg ListRegionalRuntimeBillingIntervalsParams) ([]ListRegionalRuntimeBillingIntervalsRow, error)
 	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
 	// ADR-763: issued capacity survives app/instance collection and grant replacement.
@@ -2639,6 +2642,7 @@ type Querier interface {
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RegionalAppProvisionReceipt(ctx context.Context, db DBTX, provisionID pgtype.UUID) (RegionalAppProvisionReceiptRow, error)
 	RegionalAppProvisioned(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
+	RegionalAppTaskBillingHistoryStart(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	// adr: 799

@@ -264,6 +264,9 @@ type MemStore struct {
 	regionalRuntimeBillingStart   time.Time
 	regionalRuntimeBillingNext    int64
 	regionalRuntimeBillingRows    map[int64]RegionalRuntimeBillingInterval
+	regionalAppTaskBillingStart   time.Time
+	regionalAppTaskBillingNext    int64
+	regionalAppTaskBillingRows    map[int64]RegionalAppTaskBillingInterval
 	regionalRuntimeServingSeats   map[string]RegionalRuntimeServingSeatReceipt
 	regionalRuntimeServingResumes map[string]RegionalRuntimeServingResumeReceipt
 	globalRuntimeUsageAuthority   GlobalRuntimeUsageAuthority
@@ -1205,6 +1208,8 @@ func NewMemStore() *MemStore {
 		regionalRuntimeLaunchSources:  map[string]RegionalRuntimeLaunchSource{},
 		regionalRuntimeBillingStart:   time.Now().UTC(),
 		regionalRuntimeBillingRows:    map[int64]RegionalRuntimeBillingInterval{},
+		regionalAppTaskBillingStart:   time.Now().UTC(),
+		regionalAppTaskBillingRows:    map[int64]RegionalAppTaskBillingInterval{},
 		regionalRuntimeServingSeats:   map[string]RegionalRuntimeServingSeatReceipt{},
 		regionalRuntimeServingResumes: map[string]RegionalRuntimeServingResumeReceipt{},
 
@@ -6442,7 +6447,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for key, task := range m.appTasks {
 		if task.AppID == id {
-			delete(m.appTasks, key)
+			m.deleteAppTaskLocked(key)
 		}
 	}
 	for key, v := range m.crons {
@@ -8922,7 +8927,7 @@ func (m *MemStore) cancelDeploymentTx(_ context.Context, id, principal string, r
 			task.CancelRequested = appTaskTimePtr(now)
 		}
 		task.UpdatedAt = now
-		m.appTasks[taskID] = task
+		m.putAppTaskLocked(taskID, task)
 	}
 	// Cascade-cancel any non-terminal build rows attached to
 	// this deployment. Mirrors pgstore.CancelDeploymentTx.
@@ -21457,7 +21462,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	}
 	for taskID, task := range m.appTasks {
 		if task.AccountID == id {
-			delete(m.appTasks, taskID)
+			m.deleteAppTaskLocked(taskID)
 		}
 	}
 	// Snapshots + builds are keyed by deployment_id; resolve the

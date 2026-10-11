@@ -4691,6 +4691,11 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	if err := purgeOperationOwnerTx(ctx, tx, "", id); err != nil {
 		return fmt.Errorf("state: purge customer operation owner: %w", err)
 	}
+	// Delete task rows before their cron FK can issue SET NULL against a
+	// terminal immutable task. The retained lease journal survives this purge.
+	if err := sqlc.New().DeleteAppTasksForPurge(ctx, tx, uuidToPgtype(id)); err != nil {
+		return fmt.Errorf("state: purge app tasks for app %s: %w", id, err)
+	}
 
 	steps := []struct {
 		name string

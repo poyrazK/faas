@@ -6114,6 +6114,25 @@ type RegionalAppProvisionReceipt struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type RegionalAppTaskBillingHistoryStart struct {
+	Singleton bool
+	StartedAt pgtype.Timestamptz
+}
+
+type RegionalAppTaskBillingInterval struct {
+	ID            int64
+	AppID         pgtype.UUID
+	TaskID        pgtype.UUID
+	DeploymentID  pgtype.UUID
+	RunID         pgtype.UUID
+	LeaseOwner    string
+	StartedAt     pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+	CompleteStart bool
+	EndedAt       pgtype.Timestamptz
+	UnknownSince  pgtype.Timestamptz
+}
+
 type RegionalImageReleaseHead struct {
 	AppID       pgtype.UUID
 	CellID      pgtype.UUID

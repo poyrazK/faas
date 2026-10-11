@@ -7067,6 +7067,31 @@
     "kind": "operational"
   },
   {
+    "table": "regional_app_task_billing_history_start",
+    "columns": [
+      "singleton",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "regional_app_task_billing_intervals",
+    "columns": [
+      "app_id",
+      "complete_start",
+      "deployment_id",
+      "ended_at",
+      "id",
+      "lease_owner",
+      "recorded_at",
+      "run_id",
+      "started_at",
+      "task_id",
+      "unknown_since"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "regional_image_release_heads",
     "columns": [
       "account_id",
