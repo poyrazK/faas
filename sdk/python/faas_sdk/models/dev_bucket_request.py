@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.dev_bucket_request_permission import DevBucketRequestPermission, check_dev_bucket_request_permission
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.object_storage_compute_trigger import ObjectStorageComputeTrigger
+
 
 T = TypeVar("T", bound="DevBucketRequest")
 
@@ -25,6 +29,9 @@ class DevBucketRequest:
     permission: DevBucketRequestPermission | Unset = "read_write"
     prefix: str | Unset = UNSET
     """Defaults to GREGALE_S3_ followed by the normalized bucket name."""
+    triggers: list[ObjectStorageComputeTrigger] | Unset = UNSET
+    """Opt-in ObjectCreated triggers targeting this developer app. Omission preserves managed intent; an empty
+    array clears it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +44,13 @@ class DevBucketRequest:
             permission = self.permission
 
         prefix = self.prefix
+
+        triggers: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.triggers, Unset):
+            triggers = []
+            for triggers_item_data in self.triggers:
+                triggers_item = triggers_item_data.to_dict()
+                triggers.append(triggers_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -51,11 +65,15 @@ class DevBucketRequest:
             field_dict["permission"] = permission
         if prefix is not UNSET:
             field_dict["prefix"] = prefix
+        if triggers is not UNSET:
+            field_dict["triggers"] = triggers
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_storage_compute_trigger import ObjectStorageComputeTrigger
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -70,11 +88,21 @@ class DevBucketRequest:
 
         prefix = d.pop("prefix", UNSET)
 
+        _triggers = d.pop("triggers", UNSET)
+        triggers: list[ObjectStorageComputeTrigger] | Unset = UNSET
+        if _triggers is not UNSET:
+            triggers = []
+            for triggers_item_data in _triggers:
+                triggers_item = ObjectStorageComputeTrigger.from_dict(triggers_item_data)
+
+                triggers.append(triggers_item)
+
         dev_bucket_request = cls(
             name=name,
             region=region,
             permission=permission,
             prefix=prefix,
+            triggers=triggers,
         )
 
         dev_bucket_request.additional_properties = d

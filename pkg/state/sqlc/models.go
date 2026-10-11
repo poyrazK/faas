@@ -4867,9 +4867,10 @@ type ObjectBucketMutation struct {
 }
 
 type ObjectBucketNotification struct {
-	BucketID pgtype.UUID
-	Revision int64
-	Rules    []byte
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
 }
 
 type ObjectBucketObjectLock struct {

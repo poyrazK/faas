@@ -1668,3 +1668,23 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 		}
 	}
 }
+
+// adr: 985
+func TestValidateBucketComputeTriggers(t *testing.T) {
+	for _, decl := range []string{"", "    triggers: []\n", "    triggers:\n      - id: incoming\n        prefix: uploads/\n"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("buckets:\n  - bucket: assets\n"+decl), 0600); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = m.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if (m.Buckets[0].Triggers != nil) != (decl != "") {
+			t.Fatal("declaration intent lost", m.Buckets)
+		}
+	}
+}

@@ -98,7 +98,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Insufficient scope", "developer bucket declarations require storage:manage or admin"))
 		return
 	}
-	if err := s.validateDevBuckets(&req); err != nil {
+	if err := s.validateDevBuckets(&req, acct.Plan); err != nil {
 		bucketProblem(w, err)
 		return
 	}

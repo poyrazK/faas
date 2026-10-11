@@ -797,3 +797,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-983: Managed storage Node compute starter](983-managed-storage-node-compute-starter.md)
 - [ADR-984: Managed object storage for developer sessions](984-developer-managed-object-storage.md)
+
+- [ADR-985: Declarative bucket triggers for the owning compute app](985-managed-object-storage-compute-triggers.md)

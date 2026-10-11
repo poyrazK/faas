@@ -1932,6 +1932,8 @@ from .object_storage_charge import ObjectStorageCharge
 from .object_storage_compute_binding import ObjectStorageComputeBinding
 from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
 from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
+from .object_storage_compute_trigger import ObjectStorageComputeTrigger
+from .object_storage_compute_trigger_events_item import ObjectStorageComputeTriggerEventsItem
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
@@ -2748,6 +2750,7 @@ from .realtime_schedule_completion_webhook_payload_outcome import RealtimeSchedu
 from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
 from .rebind_environment_git_source_request_approval_policy import RebindEnvironmentGitSourceRequestApprovalPolicy
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
 from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
@@ -5417,6 +5420,8 @@ __all__ = (
     "ObjectStorageComputeBinding",
     "ObjectStorageComputeBindingList",
     "ObjectStorageComputeBindingSecretKeys",
+    "ObjectStorageComputeTrigger",
+    "ObjectStorageComputeTriggerEventsItem",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
@@ -6181,6 +6186,7 @@ __all__ = (
     "RebindEnvironmentGitSourceRequest",
     "RebindEnvironmentGitSourceRequestApprovalPolicy",
     "ReceiveInboundWebhookBody",
+    "ReconcileObjectStorageComputeTriggersRequest",
     "RecordDevSyncRequest",
     "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",

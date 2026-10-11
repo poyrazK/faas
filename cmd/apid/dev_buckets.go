@@ -18,12 +18,17 @@ func devBucketBindingID(bucket state.ObjectBucket, prefix string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale/dev-bucket/"+bucket.ID+"/"+prefix)).String()
 }
 
-func (s *server) validateDevBuckets(request *api.UpsertDevSessionRequest) error {
+func (s *server) validateDevBuckets(request *api.UpsertDevSessionRequest, plan api.Plan) error {
 	normalized, err := api.NormalizeDevBuckets(request.Buckets)
 	if err != nil {
 		return objectstorage.ErrInvalid
 	}
 	request.Buckets = normalized
+	for _, bucket := range normalized {
+		if bucket.Triggers != nil && len(*bucket.Triggers) > 0 && !api.MustLimitsFor(plan).AsyncInvokeAllowed {
+			return objectstorage.ErrInvalid
+		}
+	}
 	if len(normalized) == 0 {
 		return nil
 	}
@@ -57,6 +62,19 @@ func (s *server) ensureDevBuckets(ctx context.Context, acct state.Account, app s
 		}
 		if prob, err := s.ensureDevBucketBinding(ctx, acct, app, bucket, request); prob != nil || err != nil {
 			return prob, err
+		}
+		if request.Triggers != nil {
+			st, ok := s.store.(state.ObjectComputeTriggerStore)
+			if !ok {
+				return nil, objectstorage.ErrUnsupported
+			}
+			current, err := st.GetObjectBucketNotifications(ctx, acct.ID, app.ID, bucket.ID)
+			if err != nil {
+				return nil, err
+			}
+			if _, err = st.ReconcileObjectBucketComputeTriggers(ctx, acct.ID, app.ID, bucket.ID, api.ReconcileObjectStorageComputeTriggersRequest{ExpectedRevision: &current.Revision, Triggers: *request.Triggers}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return nil, nil
@@ -144,6 +162,8 @@ func (s *server) writeDevSession(w http.ResponseWriter, r *http.Request, acct st
 	if prob, err := s.ensureDevBuckets(r.Context(), acct, app, request.Buckets); prob != nil || err != nil {
 		if prob != nil {
 			api.WriteProblem(w, prob)
+		} else if errors.Is(err, state.ErrObjectNotificationInvalid) {
+			api.WriteProblem(w, api.ErrValidation("invalid compute triggers, filters or destination"))
 		} else {
 			bucketProblem(w, err)
 		}

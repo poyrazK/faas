@@ -1301,6 +1301,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/versioning", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.putObjectBucketVersioning))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/lifecycle", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.objectBucketLifecycle))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.objectBucketNotifications))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.reconcileObjectStorageComputeTriggers))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.objectBucketNotifications))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.objectBucketNotifications))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/lifecycle", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.objectBucketLifecycle))))

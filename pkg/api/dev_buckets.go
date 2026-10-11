@@ -9,10 +9,11 @@ import (
 // DevBucketRequest explicitly provisions private storage in the developer app.
 // Omission preserves existing resources; it never detaches or deletes a bucket.
 type DevBucketRequest struct {
-	Name       string `json:"name" yaml:"name"`
-	Region     string `json:"region,omitempty" yaml:"region,omitempty"`
-	Permission string `json:"permission,omitempty" yaml:"permission,omitempty"`
-	Prefix     string `json:"prefix,omitempty" yaml:"prefix,omitempty"`
+	Name       string                         `json:"name" yaml:"name"`
+	Region     string                         `json:"region,omitempty" yaml:"region,omitempty"`
+	Permission string                         `json:"permission,omitempty" yaml:"permission,omitempty"`
+	Prefix     string                         `json:"prefix,omitempty" yaml:"prefix,omitempty"`
+	Triggers   *[]ObjectStorageComputeTrigger `json:"triggers,omitempty" yaml:"triggers,omitempty"`
 }
 
 // DevBucketResponse contains only safe metadata for an active automatic binding.
@@ -59,6 +60,13 @@ func NormalizeDevBuckets(requests []DevBucketRequest) ([]DevBucketRequest, error
 		}
 		if request.Prefix == "" {
 			request.Prefix = DefaultObjectStorageBindingPrefix(request.Name)
+		}
+		if request.Triggers != nil {
+			triggers, err := NormalizeObjectStorageComputeTriggers(*request.Triggers)
+			if err != nil {
+				return nil, err
+			}
+			request.Triggers = &triggers
 		}
 		if !ValidObjectStorageBindingPrefix(request.Prefix) || names[request.Name] || prefixes[request.Prefix] {
 			return nil, fmt.Errorf("bucket names and binding prefixes must be valid and unique")

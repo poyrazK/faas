@@ -46349,18 +46349,19 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 }
 
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
 
 type ObjectNotificationsGetRow struct {
-	Revision  int64
-	Rules     []byte
-	Name      string
-	Region    string
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	Name         string
+	Region       string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -46369,6 +46370,7 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 	err := row.Scan(
 		&i.Revision,
 		&i.Rules,
+		&i.ManagedRules,
 		&i.Name,
 		&i.Region,
 		&i.AccountID,
@@ -46378,18 +46380,24 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
-INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
 `
 
 type ObjectNotificationsSaveParams struct {
-	BucketID pgtype.UUID
-	Revision int64
-	Rules    []byte
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
 }
 
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
-	_, err := db.Exec(ctx, objectNotificationsSave, arg.BucketID, arg.Revision, arg.Rules)
+	_, err := db.Exec(ctx, objectNotificationsSave,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
 	return err
 }
 

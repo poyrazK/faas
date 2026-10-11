@@ -2546,6 +2546,43 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/compute-triggers:
+    parameters:
+      - { name: slug, in: path, required: true, description: App owning the bucket and trigger destination., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Bucket whose managed triggers are reconciled., schema: { type: string, format: uuid } }
+    put:
+      tags: [storage]
+      operationId: reconcileObjectStorageComputeTriggers
+      summary: Reconcile managed ObjectCreated triggers for the bucket's owning app
+      description: |
+        Requires MFA, storage manage scope and bucket write access. The destination
+        is always this bucket's owning app in its region. expected_revision is
+        mandatory and stale revisions return 409, including unchanged requests.
+        Replaces only managed rules, preserving manual notification rules.
+        Explicit triggers: [] clears managed ownership. Manual ID collisions
+        return 409; overlapping filters return 400. Nonempty configuration
+        requires object storage enabled and an async-invocation eligible plan.
+        Accepted deliveries retain their original destination snapshots.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReconcileObjectStorageComputeTriggersRequest' }
+      responses:
+        '200':
+          description: Complete notification configuration including managed rule identities; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketNotifications' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default:
+          description: Missing owned bucket, storage disabled, or invalid request
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/notifications:
     parameters:
       - { name: slug, in: path, required: true, description: App whose notification policy is inspected., schema: { type: string } }
@@ -2569,7 +2606,7 @@ paths:
     put:
       operationId: putObjectBucketNotifications
       summary: Replace durable bucket notification rules
-      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Full replacement clears managed compute-trigger ownership, including identical rules. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
       tags: [storage]
       requestBody:
         required: true
@@ -43035,7 +43072,7 @@ components:
       properties:
         mode: { type: string, enum: [report, enforce] }
         on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
-        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
     RouteHealthInvestigationSelection:
       type: object
@@ -43613,7 +43650,7 @@ components:
       required: [mode, expected_revision]
       properties:
         mode: { type: string, enum: [report, enforce] }
-        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
     RouteGateDecision:
       type: object
       description: Metadata-only decision from the same transaction as a canary traffic advance. Findings remain in the route result API.
@@ -46146,10 +46183,43 @@ components:
       properties:
         bucket_id: { type: string, format: uuid }
         revision: { type: integer, format: int64, minimum: 0 }
+        managed_rule_ids:
+          type: array
+          maxItems: 1000
+          items: { type: string }
+          description: Rules owned by declarative compute reconciliation. Full manual replacement clears ownership.
         rules:
           type: array
           maxItems: 1000
           items: { $ref: '#/components/schemas/ObjectNotificationRule' }
+    ObjectStorageComputeTrigger:
+      type: object
+      description: Stable ObjectCreated filter targeting only the bucket's owning app.
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 255, description: Stable manifest identity scoped to the bucket. }
+        events:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Defaults to s3:ObjectCreated:* when omitted or empty.
+          items:
+            type: string
+            enum: ['s3:ObjectCreated:*', 's3:ObjectCreated:Put', 's3:ObjectCreated:Copy', 's3:ObjectCreated:CompleteMultipartUpload']
+        prefix: { type: string, maxLength: 1024 }
+        suffix: { type: string, maxLength: 1024 }
+    ReconcileObjectStorageComputeTriggersRequest:
+      type: object
+      description: Revision-checked replacement of only the bucket's declarative compute triggers.
+      additionalProperties: false
+      required: [expected_revision, triggers]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
+        triggers:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObjectStorageComputeTrigger' }
     ObjectNotificationRule:
       type: object
       description: Proven mutation routing to a Gregale function or existing enabled queue binding. Prefix and suffix are decoded strings; overlapping filters for the same event are rejected. IDs are generated when omitted.
@@ -50546,6 +50616,11 @@ components:
         region: { type: string, description: Omit to reuse existing placement or the current creation default. }
         permission: { type: string, enum: [read, write, read_write], default: read_write }
         prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', description: Defaults to GREGALE_S3_ followed by the normalized bucket name. }
+        triggers:
+          type: array
+          maxItems: 1000
+          description: Opt-in ObjectCreated triggers targeting this developer app. Omission preserves managed intent; an empty array clears it.
+          items: { $ref: '#/components/schemas/ObjectStorageComputeTrigger' }
 
     DevBucketResponse:
       description: Safe metadata for an active automatic developer bucket binding. No credential secret or provider placement is returned.

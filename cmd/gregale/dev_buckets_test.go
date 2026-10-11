@@ -28,7 +28,7 @@ func TestCmdDevBucketsDispatchAndSetup(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			for name, data := range map[string]string{"package.json": `{"scripts":{"start":"node server.js"}}`, "server.js": "console.log('fixture')", "gregale.yaml": "dev:\n  buckets:\n    - name: archive\n      prefix: FILES\n      permission: read\n"} {
+			for name, data := range map[string]string{"package.json": `{"scripts":{"start":"node server.js"}}`, "server.js": "console.log('fixture')", "gregale.yaml": "dev:\n  buckets:\n    - name: archive\n      prefix: FILES\n      permission: read\n      triggers:\n        - id: incoming\n          prefix: uploads/\n"} {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -61,6 +61,9 @@ func TestCmdDevBucketsDispatchAndSetup(t *testing.T) {
 			}
 			if code := cmdDev(args); code != 3 {
 				t.Fatalf("fixture dispatch exit = %d", code)
+			}
+			if len(tc.flags) == 0 && (request.Buckets[0].Triggers == nil || len(*request.Buckets[0].Triggers) != 1 || (*request.Buckets[0].Triggers)[0].ID != "incoming") {
+				t.Fatal("manifest triggers not forwarded", request.Buckets)
 			}
 			if calls != 1 || len(request.Buckets) != 1 {
 				t.Fatalf("dispatch calls=%d buckets=%+v", calls, request.Buckets)

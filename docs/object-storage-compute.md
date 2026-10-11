@@ -610,3 +610,58 @@ lockfile, app tests and actual Node/SigV4/gateway/provider-adapter memory-store
 journey. Its disposable local provider is not GCS/R2 or a native microVM
 qualification. The bundled helper drift check runs with Node SDK tests; regenerate
 using `npm run build && npm run starter:sync` in sdk/node after helper changes.
+
+
+## Upload-triggered compute
+
+A bucket dependency can also reconcile ObjectCreated triggers for the app being
+deployed. The bucket must belong to that app. The server derives its destination;
+no provider ARN or credentials belong in this declaration.
+
+```yaml
+buckets:
+  - bucket: assets
+    app: image-worker
+    scope: production
+    prefix: GREGALE_S3_ASSETS
+    triggers:
+      - id: incoming-images
+        events: ["s3:ObjectCreated:*"]
+        prefix: uploads/
+        suffix: .png
+
+dev:
+  buckets:
+    - name: assets
+      triggers:
+        - id: incoming-images
+          prefix: uploads/
+          suffix: .png
+```
+
+Omit `triggers` to preserve existing managed configuration. Set `triggers: []` to
+clear only the managed rules. Manual notifications are retained; incompatible
+filter overlap fails instead of replacing them. Declare triggers once per
+resolved bucket, even when it has multiple binding prefixes. Keep input and
+output prefixes separate to avoid invoking the same worker on its own output.
+
+`gregale deploy` and manifest-backed `gregale dev` read the notification revision
+and reconcile through the control API. A concurrent edit returns a conflict;
+inspect the current configuration before retrying. Notification responses include
+`managed_rule_ids` for inspection. Manual `notifications put`, `notifications
+clear`, or signed S3 notification replacement takes ownership of the complete
+configuration, including unchanged rules. A subsequent deploy cannot adopt those
+IDs automatically.
+
+Developer triggers target the isolated developer app and bucket, independent of
+production resources. A full bucket list omitted on a later workspace refresh
+also retains prior triggers. Explicitly empty declarations clear new routing;
+already accepted uploads retain their captured destination. Delivery uses the
+existing async invocation/retry path, requires an eligible plan and may execute
+more than once. The worker receives an HTTP POST to `/` with an S3 `Records`
+payload. Use the notification's object identity and version in an
+idempotent worker. This feature adds no live-provider dependency to configuration.
+
+Uploads must pass through Gregale's managed S3 gateway or a tracked upload route
+to produce proven mutation events. Writes made directly to the provider's bucket
+do not create Gregale compute triggers.

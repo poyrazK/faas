@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -298,4 +299,64 @@ func TestDevBucketsPartialFailureAndSecretCustody(t *testing.T) {
 		t.Fatalf("disablement = %d", response.Code)
 	}
 
+}
+
+// adr: 985
+func TestDevBucketComputeTriggersMem(t *testing.T) {
+	_, restore := withTestIdentities(t)
+	defer restore()
+	e := setupSecrets(t, api.PlanPro)
+	devBucketComputeTriggersSuite(t, devBucketsFixture{server: e.s, store: e.store, account: e.acct, do: e.do})
+}
+func devBucketComputeTriggersSuite(t *testing.T, e devBucketsFixture) {
+	t.Helper()
+	if err := e.server.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	e.server.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{objects: map[string][]byte{}}, &fakeObjectProvider{}, "external"))
+	triggers := []api.ObjectStorageComputeTrigger{{ID: "images", Prefix: "uploads/"}}
+	request := api.UpsertDevSessionRequest{WorkspaceID: strings.Repeat("c", 32), Buckets: []api.DevBucketRequest{{Name: "assets", Triggers: &triggers}}}
+	do := func(r api.UpsertDevSessionRequest) api.DevSessionResponse {
+		t.Helper()
+		response := e.do(t, http.MethodPut, "/v1/dev/sessions/image-worker", r, nil)
+		if response.Code != 200 && response.Code != 201 {
+			t.Fatal(response.Code, response.Body.String())
+		}
+		var out api.DevSessionResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	first := do(request)
+	b := first.Buckets[0].Bucket
+	s := e.store.(state.ObjectComputeTriggerStore)
+	p, err := s.GetObjectBucketNotifications(t.Context(), e.account.ID, first.App.ID, b.ID)
+	if err != nil || len(p.ManagedRuleIDs) != 1 || !strings.HasSuffix(p.Rules[0].Destination, ":function:"+uuid.MustParse(first.App.ID).String()) {
+		t.Fatal(p, err)
+	}
+	second := do(request)
+	if second.App.ID != first.App.ID {
+		t.Fatal("workspace changed")
+	}
+	omitted := request
+	omitted.Buckets = []api.DevBucketRequest{{Name: "assets"}}
+	do(omitted)
+	preserved, err := s.GetObjectBucketNotifications(t.Context(), e.account.ID, first.App.ID, b.ID)
+	if err != nil || preserved.Revision != p.Revision {
+		t.Fatal("omitted intent", preserved, err)
+	}
+	other := request
+	other.WorkspaceID = strings.Repeat("d", 32)
+	isolated := do(other)
+	separate, err := s.GetObjectBucketNotifications(t.Context(), e.account.ID, isolated.App.ID, isolated.Buckets[0].Bucket.ID)
+	if err != nil || separate.Rules[0].ID == p.Rules[0].ID || !strings.HasSuffix(separate.Rules[0].Destination, ":function:"+uuid.MustParse(isolated.App.ID).String()) {
+		t.Fatal("cross-workspace trigger", separate, err)
+	}
+	triggers = []api.ObjectStorageComputeTrigger{}
+	do(request)
+	cleared, err := s.GetObjectBucketNotifications(t.Context(), e.account.ID, first.App.ID, b.ID)
+	if err != nil || len(cleared.Rules) != 0 || cleared.Revision != p.Revision+1 {
+		t.Fatal("explicit clear", cleared, err)
+	}
 }

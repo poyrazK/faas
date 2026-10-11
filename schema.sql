@@ -10436,6 +10436,21 @@ $$;
 
 
 --
+-- Name: object_compute_trigger_ownership_valid(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_compute_trigger_ownership_valid(rules jsonb, managed jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT CASE WHEN jsonb_typeof(rules) <> 'array' OR jsonb_typeof(managed) <> 'array' THEN false ELSE
+   jsonb_array_length(managed) <= 1000
+   AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(managed) m WHERE jsonb_typeof(m) <> 'object' OR jsonb_typeof(m->'id') IS DISTINCT FROM 'string' OR length(m->>'id') = 0 OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(rules) r WHERE r = m))
+   AND (SELECT count(*) = count(DISTINCT m->>'id') FROM jsonb_array_elements(managed) m)
+ END
+$$;
+
+
+--
 -- Name: object_event_hold_retention_valid(jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -22872,8 +22887,10 @@ CREATE TABLE public.object_bucket_notifications (
     bucket_id uuid NOT NULL,
     revision bigint NOT NULL,
     rules jsonb NOT NULL,
+    managed_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT object_bucket_notifications_revision_check CHECK ((revision > 0)),
-    CONSTRAINT object_bucket_notifications_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 1000)))
+    CONSTRAINT object_bucket_notifications_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 1000))),
+    CONSTRAINT object_compute_trigger_ownership_check CHECK (public.object_compute_trigger_ownership_valid(rules, managed_rules))
 );
 
 

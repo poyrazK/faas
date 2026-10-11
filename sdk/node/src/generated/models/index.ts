@@ -994,6 +994,7 @@ export type { ObjectStorageCharge } from './ObjectStorageCharge.js';
 export type { ObjectStorageComputeBinding } from './ObjectStorageComputeBinding.js';
 export type { ObjectStorageComputeBindingList } from './ObjectStorageComputeBindingList.js';
 export type { ObjectStorageComputeBindingSecretKeys } from './ObjectStorageComputeBindingSecretKeys.js';
+export type { ObjectStorageComputeTrigger } from './ObjectStorageComputeTrigger.js';
 export type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
@@ -1475,6 +1476,7 @@ export type { RealtimeNotificationRateLimit } from './RealtimeNotificationRateLi
 export type { RealtimeQuietHours } from './RealtimeQuietHours.js';
 export type { RealtimeScheduleCompletionWebhookPayload } from './RealtimeScheduleCompletionWebhookPayload.js';
 export type { RebindEnvironmentGitSourceRequest } from './RebindEnvironmentGitSourceRequest.js';
+export type { ReconcileObjectStorageComputeTriggersRequest } from './ReconcileObjectStorageComputeTriggersRequest.js';
 export type { RecordDevSyncRequest } from './RecordDevSyncRequest.js';
 export type { RecoverRolloutRequest } from './RecoverRolloutRequest.js';
 export type { RegisterEventSchemaRequest } from './RegisterEventSchemaRequest.js';

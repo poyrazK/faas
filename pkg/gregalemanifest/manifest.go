@@ -1363,12 +1363,13 @@ func (d DatabaseDependency) EffectiveAccess() string {
 // only attaches an existing ready bucket, so adding a manifest entry cannot
 // unexpectedly create billable storage during CI.
 type BucketDependency struct {
-	Bucket     string `yaml:"bucket"`
-	App        string `yaml:"app,omitempty"`
-	Scope      string `yaml:"scope,omitempty"`
-	Permission string `yaml:"permission,omitempty"`
-	Label      string `yaml:"label,omitempty"`
-	Prefix     string `yaml:"prefix,omitempty"`
+	Triggers   *[]api.ObjectStorageComputeTrigger `yaml:"triggers,omitempty"`
+	Bucket     string                             `yaml:"bucket"`
+	App        string                             `yaml:"app,omitempty"`
+	Scope      string                             `yaml:"scope,omitempty"`
+	Permission string                             `yaml:"permission,omitempty"`
+	Label      string                             `yaml:"label,omitempty"`
+	Prefix     string                             `yaml:"prefix,omitempty"`
 }
 
 // EffectiveScope returns the scope used by the binding API when the manifest
@@ -2362,6 +2363,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 
 	seenBuckets := make(map[string]struct{}, len(m.Buckets))
 	for i, dependency := range m.Buckets {
+		if dependency.Triggers != nil {
+			if _, err := api.NormalizeObjectStorageComputeTriggers(*dependency.Triggers); err != nil {
+				return fmt.Errorf("bucket[%d]: triggers: %w", i, err)
+			}
+		}
 		if strings.TrimSpace(dependency.Bucket) == "" {
 			return fmt.Errorf("bucket[%d]: bucket is required", i)
 		}

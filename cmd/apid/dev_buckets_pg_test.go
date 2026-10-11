@@ -21,3 +21,21 @@ func TestDevBucketsPG(t *testing.T) {
 		}
 	}})
 }
+
+func TestDevBucketComputeTriggersPG(t *testing.T) {
+	_, restore := withTestIdentities(t)
+	defer restore()
+	teardown := withTestRecipient(t)
+	defer teardown()
+	e := setupPGHandler(t, api.PlanPro)
+	devBucketComputeTriggersSuite(t, devBucketsFixture{server: e.s, store: e.store, account: e.acct, do: e.do})
+}
+
+func TestObjectComputeTriggerAPIPG(t *testing.T) {
+	_, restore := withTestIdentities(t)
+	defer restore()
+	teardown := withTestRecipient(t)
+	defer teardown()
+	e := setupPGHandler(t, api.PlanPro)
+	objectComputeTriggerAPISuite(t, devBucketsFixture{server: e.s, store: e.store, account: e.acct, do: e.do})
+}
