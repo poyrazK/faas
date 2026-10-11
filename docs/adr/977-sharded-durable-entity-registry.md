@@ -27,5 +27,5 @@ hash-distribution and byte bounds; up to 16 additional object reads on cold hydr
 retained historical metadata and a central CAS bottleneck. Production rollout
 requires schema-aware fleet deployment and native provider acceptance. A bounded
 node-local cache now reuses authenticated immutable shards while every
-quota root remains fresh. Future work can add reachability-safe metadata
-collection; caching confers no independent quota or ownership authority.
+quota root remains fresh. ADR 978 adds epoch-fenced metadata collection under an explicit scope hold;
+caching confers no independent quota or ownership authority.

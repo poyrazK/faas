@@ -68,7 +68,9 @@ Unchanged shards are reused;
 changed shards use content-addressed conditional creates. The quota root is read fresh on every operation and remains a contention point.
 Cold reads and evictions still require provider reads. Superseded and
 unpublished shard versions are retained conservatively, are control-plane storage
-outside the customer reservation budget, and have no automatic garbage collector.
+outside the customer reservation budget. The opt-in
+[epoch-fenced cleanup workflow](durable-entity-registry-cleanup.md) can collect
+strictly older epochs under a scope hold; there is no automatic collector.
 Never delete them based on one root scan: readers and concurrent writers may
 still reference an older snapshot. Native acceptance must measure read latency,
 metadata growth and the control-plane storage cost before release.
@@ -132,7 +134,8 @@ immutable object's provider version, deletion or corruption: the previously
 verified body remains valid for the hash asserted by the fresh root. Metadata
 retention and provider-health checks must not assume warm caches detect provider
 faults. Restart/cold-cache acceptance must verify missing/corrupt references fail
-closed. Provider metadata garbage collection is still not implemented.
+closed. Provider metadata collection is available through the separate opt-in
+epoch-fenced cleanup workflow, which includes the epoch in cache keys.
 
 Remote regression coverage exercises read counts, fresh-root failure, changed
 hashes, isolated caller mutations, warm admission racing retirement, byte/entry
