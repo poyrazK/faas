@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
+    from ..models.operation_workflow_readiness_snapshot import OperationWorkflowReadinessSnapshot
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessQueueResponse")
@@ -18,6 +19,9 @@ T = TypeVar("T", bound="OperationWorkflowReadinessQueueResponse")
 class OperationWorkflowReadinessQueueResponse:
     """Bounded live readiness queue; counts describe the evaluated sample and filters."""
 
+    snapshot: OperationWorkflowReadinessSnapshot
+    """Caller-held compact readiness observations for at most 100 returned transitions. No historical
+    authentication or execution authority is implied."""
     items: list[OperationWorkflowReadinessQueueEntry]
     """Matching transitions with unmet rows first."""
     sampled_at: datetime.datetime
@@ -51,6 +55,8 @@ class OperationWorkflowReadinessQueueResponse:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        snapshot = self.snapshot.to_dict()
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
@@ -88,6 +94,7 @@ class OperationWorkflowReadinessQueueResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "snapshot": snapshot,
                 "items": items,
                 "sampled_at": sampled_at,
                 "evaluated_at": evaluated_at,
@@ -111,8 +118,11 @@ class OperationWorkflowReadinessQueueResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
+        from ..models.operation_workflow_readiness_snapshot import OperationWorkflowReadinessSnapshot
 
         d = dict(src_dict)
+        snapshot = OperationWorkflowReadinessSnapshot.from_dict(d.pop("snapshot"))
+
         items = []
         _items = d.pop("items")
         for items_item_data in _items:
@@ -149,6 +159,7 @@ class OperationWorkflowReadinessQueueResponse:
         has_more = d.pop("has_more")
 
         operation_workflow_readiness_queue_response = cls(
+            snapshot=snapshot,
             items=items,
             sampled_at=sampled_at,
             evaluated_at=evaluated_at,

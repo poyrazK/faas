@@ -20,7 +20,7 @@ type readinessQueueStore interface {
 
 func prepareReadinessQueue(account, tenant string, opts api.OperationWorkflowReadinessQueueOptions, operator bool) (api.OperationWorkflowAttentionOptions, time.Time, error) {
 	base, clock, err := prepareOperationAttention(account, tenant, api.OperationWorkflowAttentionOptions{AppID: opts.AppID, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, TargetOperation: opts.TargetOperation, Owner: opts.Owner, Unassigned: opts.Unassigned, Limit: opts.Limit}, operator, "workflow-readiness-queue")
-	if err != nil || opts.Requirement != "" && !slices.Contains([]string{"state_unknown", "terminal", "transition_undeclared", "from_state_mismatch", "revision_mismatch", "contract_version_mismatch", "application_blocked", "dependency_unmet", "milestone_required", "policy_evidence_required", "dependency_required", "invariant_evidence_required", "effect_evidence_required", "retained_milestone_required", "retained_milestone_invalidated", "retained_milestone_expired", "retained_milestone_group_unmet", "path_selection_invalid"}, opts.Requirement) {
+	if err != nil || opts.Requirement != "" && !slices.Contains(readinessRequirementCodes(), opts.Requirement) {
 		return base, clock.EvaluatedAt, ErrInvalidArgument
 	}
 	return base, clock.EvaluatedAt, nil
@@ -31,6 +31,7 @@ func listReadinessQueue(ctx context.Context, store readinessQueueStore, account,
 	if err != nil {
 		return out, err
 	}
+	out.Snapshot = newReadinessSnapshot(account, tenant, base, operator)
 	instances, err := store.readReadinessQueueCandidates(ctx, account, tenant, base, operator, at)
 	if err != nil {
 		return out, err
@@ -63,6 +64,7 @@ func listReadinessQueue(ctx context.Context, store readinessQueueStore, account,
 		out.Items = out.Items[:base.Limit]
 	}
 	out.EvaluatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	finalizeReadinessQueueSnapshot(&out)
 	return out, nil
 }
 func appendReadinessQueueWorkflow(out *api.OperationWorkflowReadinessQueueResponse, candidate workflowPerformanceInstance, instance *api.OperationWorkflowInstanceSnapshot, opts api.OperationWorkflowAttentionOptions, requirement string, operator bool) {
@@ -116,6 +118,7 @@ func appendReadinessQueueWorkflow(out *api.OperationWorkflowReadinessQueueRespon
 		// Retain only enough of each readiness class to produce the final limited queue.
 		if row.Ready && out.ReadyTransitionCount <= int64(opts.Limit) || !row.Ready && out.UnmetTransitionCount <= int64(opts.Limit) {
 			out.Items = append(out.Items, row)
+			out.Snapshot.Items = append(out.Snapshot.Items, readinessSnapshotEntry(row, instance, r))
 		}
 	}
 	if count == 0 {

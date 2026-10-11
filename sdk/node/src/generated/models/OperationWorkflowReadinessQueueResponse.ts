@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessQueueEntry } from './OperationWorkflowReadinessQueueEntry.js';
+import type { OperationWorkflowReadinessSnapshot } from './OperationWorkflowReadinessSnapshot.js';
 /**
  * Bounded live readiness queue; counts describe the evaluated sample and filters.
  */
 export type OperationWorkflowReadinessQueueResponse = {
+  snapshot: OperationWorkflowReadinessSnapshot;
   /**
    * Matching transitions with unmet rows first.
    */

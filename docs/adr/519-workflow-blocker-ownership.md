@@ -1295,3 +1295,54 @@ candidate selection and projection are excluded and counted. Refresh before
 acting; application authorization and execution remain application-owned. No
 new persistence, migrations, limits, business evaluator or VM lifecycle changes
 are introduced. Go, Node and Python SDKs expose the scoped queue contract.
+
+
+### Saved transition readiness comparisons
+
+The readiness queue now returns a versioned caller-held `snapshot` of its returned
+rows. `POST /v1/apps/{slug}/workflow-readiness/compare` and
+`POST /v1/platform-tenant-self/workflow-readiness/compare` compare that snapshot
+with fresh scoped readiness-only projections of the same workflow instances.
+Account routes require read scope and MFA; customer routes derive tenant ownership
+from authentication and reject overrides. The scope fingerprint binds account,
+app, environment, tenant selector and role. It is a query binding, not a signature
+or authenticated historical proof. Caller-provided baselines remain advisory and
+cannot authorize execution. Every current fact is read under current caller scope.
+
+At most `OperationHistoryPageMax` (100) saved edges are accepted. The new centralized
+`OperationWorkflowReadinessComparisonBodyMaxBytes` bounds the JSON body at 1 MiB;
+strict decoding rejects unknown fields and duplicate JSON keys. Baselines validate
+format, ownership selectors, identity names, unique edges, reason/advisory codes,
+ready/reason consistency, digest shapes, revisions and capture/evaluation times.
+Each distinct saved workflow is projected once, independent of the recent-workflow
+sample and original owner/requirement filters. This means a blocker clearing is
+still compared when the row disappears from an owner-filtered queue.
+
+Only an exact target Operation/from/to edge that remains applicable to the current
+state with unchanged pinned version and declared requirement fingerprint can be
+`newly_ready` or `newly_blocked`. Other comparable rows are `changed` or `unchanged`.
+Contract/requirement changes, terminal state, missing retained state, unavailable
+current-state edges, and older retained revisions (`baseline_ahead`) count as
+unavailable comparisons and never imply resolved requirements. Added/resolved
+reason codes explain guard changes; full canonical blocker, prerequisite, pending
+verification and reporting summaries identify evidence categories that changed.
+Retained freshness evaluation clocks and elapsed-age counters are excluded from
+fingerprints, while evidence identity, invalidation and expiry status are included.
+All pending verification obligations contribute before previews. Verification and
+reporting advisories cannot independently change Ready. Each row links to the
+saved/current reporting Operations and detailed evidence.
+
+`change` filters (`newly_ready`, `newly_blocked`, `changed`, `unchanged`, `unavailable`)
+and row limits apply after comparing all saved edges. Counts cover the full saved
+view. The response supplies the next available-edge snapshot before filtering;
+unavailable edges are omitted. New edges outside the saved view are not enumerated.
+Reads remain live rather than atomic, and per-workflow evaluation clocks remain
+visible. There is no historical reconstruction or durable snapshot store.
+
+The dashboard saves snapshots explicitly in browser-tab session storage, supports
+clearing or replacing them, and compares through the scoped read-only API. Account
+or scope changes clear incompatible saved views. Dynamic findings use DOM text
+nodes and encoded same-origin links under the existing CSP nonce. Go, Node and
+Python clients expose comparison requests and results. Application authorization,
+business decisions and execution remain unchanged; no migrations or VM lifecycle
+changes are introduced.

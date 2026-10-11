@@ -54,6 +54,19 @@
 {{if .Data.Result.ExcludedChangedWorkflowCount}}<p>{{.Data.Result.ExcludedChangedWorkflowCount}} workflows changed during evaluation and were excluded. Refresh to reevaluate.</p>{{end}}
 {{if .Data.Result.NoTransitionWorkflowCount}}<p>{{.Data.Result.NoTransitionWorkflowCount}} sampled workflows have no matching declared current-state transition.</p>{{end}}
 <p>Live evaluation: {{.Data.Result.SampledAt}} – {{.Data.Result.EvaluatedAt}}. Counts cover the evaluated sample; refresh before acting.</p>
+
+<section class="card" id="readiness-comparison" data-compare-url="{{.Data.CompareURL}}" data-list-url="{{.Data.ListURL}}" data-scope="{{.Data.Options.Scope}}" data-tenant="{{.Data.Options.TenantID}}">
+<h2>Readiness changes</h2>
+<p>Save the returned transitions in this browser tab, then compare them with fresh evidence. Changed contracts, completed workflows and unavailable transitions are reported separately. Saved data is advisory; the application authorizes execution.</p>
+<textarea id="readiness-snapshot" hidden>{{.Data.SnapshotJSON}}</textarea>
+<button type="button" id="readiness-save">Save this view</button>
+<button type="button" id="readiness-clear">Clear saved view</button>
+<label>Show changes <select id="readiness-change"><option value="">All</option><option value="newly_ready">Newly ready</option><option value="newly_blocked">Newly blocked</option><option value="changed">Evidence changed</option><option value="unchanged">Unchanged</option><option value="unavailable">Not comparable</option></select></label>
+<button type="button" id="readiness-compare">Compare saved view</button>
+<p id="readiness-comparison-message" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table hidden id="readiness-changes"><thead><tr><th>Workflow / transition</th><th>Readiness change</th><th>Evidence</th></tr></thead><tbody></tbody></table></div>
+<noscript><p>Enable JavaScript to save and compare views. The API and SDKs also accept saved queue snapshots.</p></noscript>
+</section>
 <table><thead><tr><th>Workflow</th><th>Transition</th><th>Readiness requirements</th><th>Owners and blockers</th><th>Reporting advisories</th><th>Evidence</th></tr></thead><tbody>
 {{range .Data.Items}}<tr>
 <td>{{.Entry.Workflow}} / {{.Entry.InstanceID}}<br>{{.Entry.Subject.Type}}: {{.Entry.Subject.ID}}<br>{{.Entry.PlatformTenantID}}</td>
@@ -63,4 +76,93 @@
 <td>{{range .Entry.Advisories}}<p>{{.}}</p>{{end}}<p>Reporting: {{.Entry.ReportingStatus}}; {{.Entry.MissingReportCount}} missing, {{.Entry.OverdueReportCount}} overdue</p><p>{{.Entry.PendingVerificationCount}} pending verification obligations</p>{{if .Entry.PendingVerificationsTruncated}}<p>Showing the first 16 obligations; owner filters include all retained pending obligations.</p>{{end}}{{range .Entry.PendingVerifications}}<p>{{.Resolution.Code}}: {{.Resolution.Description}}<br>Verification owner: {{if .Resolution.VerificationOwner}}{{.Resolution.VerificationOwner}}{{else}}unassigned{{end}}<br>Expected milestone: {{.Resolution.VerificationMilestoneName}} {{.Resolution.VerificationMilestoneID}}<br><a href="{{$.Data.ListURL}}/{{if .Resolution.VerificationOperationID}}{{.Resolution.VerificationOperationID}}{{else}}{{.ResolutionOperationID}}{{end}}?scope={{$.Data.Options.Scope}}">Verification Operation</a> · <a href="{{$.Data.ListURL}}/{{.ResolutionOperationID}}?scope={{$.Data.Options.Scope}}">Resolution report</a></p>{{end}}</td>
 <td><a href="{{.HistoryURL}}">Detailed readiness and supporting Operations</a><br><a href="{{.OperationURL}}">Current reporting Operation</a><br>Revision {{.Entry.StateRevision}}, contract {{.Entry.ContractVersion}}</td>
 </tr>{{else}}<tr><td colspan="6">No matching transitions in the evaluated sample.</td></tr>{{end}}
-</tbody></table></main></body></html>
+</tbody></table></main>
+<script nonce="{{.Nonce}}">
+(() => {
+ const panel = document.getElementById('readiness-comparison');
+ const message = document.getElementById('readiness-comparison-message');
+ const table = document.getElementById('readiness-changes');
+ const compare = document.getElementById('readiness-compare');
+ const storageKey = 'gregale:readiness:' + panel.dataset.listUrl + ':' + panel.dataset.scope + ':' + panel.dataset.tenant;
+ let snapshot;
+ try { snapshot = JSON.parse(document.getElementById('readiness-snapshot').value); }
+ catch { message.textContent = 'This view cannot be saved. Refresh to retry.'; return; }
+ const describeSaved = () => {
+  try {
+   const raw = sessionStorage.getItem(storageKey);
+   const saved = raw ? JSON.parse(raw) : null;
+   if (saved && saved.query !== snapshot.query) { sessionStorage.removeItem(storageKey); message.textContent = 'The saved view belonged to another account or scope and was cleared.'; compare.disabled = true; return; }
+   compare.disabled = !saved;
+   message.textContent = saved ? 'Saved ' + saved.items.length + ' transitions at ' + saved.captured_at + '. Comparing keeps this baseline until you save a new view.' : 'No view saved in this tab. Save this view to start tracking changes.';
+  } catch { compare.disabled = true; message.textContent = 'Browser storage is unavailable. Use the API or SDK to compare snapshots.'; }
+ };
+ document.getElementById('readiness-save').addEventListener('click', () => {
+  try { sessionStorage.setItem(storageKey, JSON.stringify(snapshot)); table.hidden = true; describeSaved(); }
+  catch { message.textContent = 'The browser could not save this view.'; }
+ });
+ document.getElementById('readiness-clear').addEventListener('click', () => {
+  try { sessionStorage.removeItem(storageKey); table.hidden = true; describeSaved(); }
+  catch { message.textContent = 'The browser could not clear the saved view.'; }
+ });
+ const text = (parent, value) => { const p = document.createElement('p'); p.textContent = value; parent.append(p); };
+ const operationLink = (parent, id, label) => {
+  if (!id) return;
+  const link = document.createElement('a'); link.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); link.textContent = label; parent.append(link, document.createElement('br'));
+ };
+ const names = {newly_ready:'Newly ready', newly_blocked:'Newly blocked', changed:'Evidence changed', unchanged:'Unchanged', state_unknown:'State unavailable', terminal:'Workflow completed', transition_unavailable:'Transition unavailable', contract_changed:'Declared requirements changed', baseline_ahead:'Retained revision is older'};
+ const categories = {blockers:'Blockers changed', prerequisites:'Prerequisite evidence changed', verification:'Pending verification obligations changed', reporting:'Reporting or timing advisories changed'};
+ compare.addEventListener('click', async () => {
+  compare.disabled = true; message.textContent = 'Comparing saved transitions with current evidence…'; table.hidden = true;
+  try {
+   const raw = sessionStorage.getItem(storageKey); if (!raw) throw new Error('Save a view before comparing.');
+   const baseline = JSON.parse(raw);
+   if (baseline.query !== snapshot.query) throw new Error('The saved view has a different account or scope. Save this view to replace it.');
+   const body = {scope:panel.dataset.scope, baseline, limit:100};
+   if (panel.dataset.tenant) body.tenant_id = panel.dataset.tenant;
+   const filter = document.getElementById('readiness-change').value; if (filter) body.change = filter;
+   const response = await fetch(panel.dataset.compareUrl, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), redirect:'error'});
+   const result = await response.json();
+   if (!response.ok) throw new Error(result.detail || 'The comparison could not be completed.');
+   const tbody = table.querySelector('tbody'); tbody.replaceChildren();
+   for (const item of result.items) {
+    const tr = document.createElement('tr'); const workflow = document.createElement('td'); const change = document.createElement('td'); const evidence = document.createElement('td');
+    text(workflow, item.baseline.workflow + ' / ' + item.baseline.instance_id);
+    text(workflow, item.baseline.subject.type + ': ' + item.baseline.subject.id);
+    text(workflow, item.baseline.operation + ': ' + item.baseline.from_state + ' → ' + item.baseline.to_state);
+    if (item.current_state) text(workflow, 'Current state: ' + item.current_state);
+    text(change, names[item.status] || item.status); text(change, item.explanation);
+    for (const reason of item.added_reasons) text(change, 'Now unmet: ' + reason);
+    for (const reason of item.resolved_reasons) text(change, 'No longer unmet: ' + reason);
+    for (const category of item.changed_categories) text(evidence, categories[category] || category);
+    if (item.current) {
+     for (const blocker of item.current.blockers) text(evidence, 'Current blocker: ' + blocker.code + ' · ' + (blocker.owner || 'unassigned') + (blocker.next_action ? ' · ' + blocker.next_action : ''));
+     text(evidence, 'Pending verification: ' + item.baseline.pending_verification_count + ' → ' + item.current.pending_verification_count);
+     for (const code of item.current.blockers.map(b => b.code).filter(code => !item.baseline.blocker_codes.includes(code))) text(evidence, 'Added blocker: ' + code);
+     for (const code of item.baseline.blocker_codes.filter(code => !item.current.blockers.some(b => b.code === code))) text(evidence, 'Removed blocker: ' + code);
+     for (const name of item.current.missing_milestones.filter(name => !item.baseline.missing_milestones.includes(name))) text(evidence, 'Now required milestone: ' + name);
+     for (const name of item.baseline.missing_milestones.filter(name => !item.current.missing_milestones.includes(name))) text(evidence, 'Milestone no longer missing: ' + name);
+     for (const name of item.current.missing_dependency_workflows.filter(name => !item.baseline.missing_dependency_workflows.includes(name))) text(evidence, 'Now missing prerequisite reference: ' + name);
+     for (const name of item.baseline.missing_dependency_workflows.filter(name => !item.current.missing_dependency_workflows.includes(name))) text(evidence, 'Prerequisite reference no longer missing: ' + name);
+     for (const proof of item.current.pending_verifications || []) {
+      text(evidence, 'Awaiting verification: ' + proof.resolution.code + ' · ' + (proof.resolution.verification_owner || 'unassigned'));
+      operationLink(evidence, proof.resolution.verification_operation_id || proof.resolution_operation_id, 'Verification Operation');
+     }
+    }
+    const q = new URLSearchParams({scope:panel.dataset.scope, subject_type:item.baseline.subject.type, subject_id:item.baseline.subject.id, workflow:item.baseline.workflow, workflow_instance_id:item.baseline.instance_id});
+    if (item.baseline.platform_tenant_id) q.set('tenant_id', item.baseline.platform_tenant_id);
+    const detail = document.createElement('a'); detail.href = panel.dataset.listUrl + '?' + q + '#workflows'; detail.textContent = 'Detailed readiness and evidence'; evidence.append(detail, document.createElement('br'));
+    operationLink(evidence, item.baseline.operation_id, 'Saved reporting Operation'); operationLink(evidence, item.current_operation_id, 'Current reporting Operation');
+    tr.append(workflow, change, evidence); tbody.append(tr);
+   }
+   if (!result.items.length) { const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 3; td.textContent = 'No saved transitions match this change filter.'; tr.append(td); tbody.append(tr); }
+   table.hidden = false;
+   snapshot = result.snapshot;
+   document.getElementById('readiness-save').textContent = 'Save comparison as baseline';
+   message.textContent = result.newly_ready_count + ' newly ready; ' + result.newly_blocked_count + ' newly blocked; ' + result.changed_count + ' evidence changed; ' + result.unchanged_count + ' unchanged; ' + result.unavailable_count + ' not comparable. Baseline: ' + result.baseline_at + '. Evaluated: ' + result.evaluated_at + '.' + (result.has_more ? ' More matching changes exist than are displayed.' : '') + ' Saving this comparison will include all ' + snapshot.items.length + ' available saved transitions, before change filtering.';
+  } catch (error) { message.textContent = error instanceof Error ? error.message : 'Comparison failed. Refresh to retry.'; }
+  finally { compare.disabled = false; }
+ });
+ describeSaved();
+})();
+</script>
+</body></html>

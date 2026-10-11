@@ -7,8 +7,9 @@ type WorkflowReadinessQueueItem struct {
 	HistoryURL, OperationURL string
 }
 type WorkflowReadinessQueueData struct {
-	Options           api.OperationWorkflowReadinessQueueOptions
-	Result            api.OperationWorkflowReadinessQueueResponse
-	Items             []WorkflowReadinessQueueItem
-	ListURL, QueueURL string
+	Options                  api.OperationWorkflowReadinessQueueOptions
+	Result                   api.OperationWorkflowReadinessQueueResponse
+	Items                    []WorkflowReadinessQueueItem
+	ListURL, QueueURL        string
+	SnapshotJSON, CompareURL string
 }

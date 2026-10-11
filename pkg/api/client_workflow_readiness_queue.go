@@ -37,3 +37,14 @@ func (c *Client) ListPlatformTenantSelfWorkflowReadinessQueue(ctx context.Contex
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/queue"+operationWorkflowReadinessQueueQuery(opts, true), nil, &out)
 	return out, err
 }
+
+func (c *Client) CompareAccountWorkflowReadiness(ctx context.Context, slug string, req OperationWorkflowReadinessComparisonRequest) (OperationWorkflowReadinessComparisonResponse, error) {
+	var out OperationWorkflowReadinessComparisonResponse
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/compare", req, &out)
+	return out, err
+}
+func (c *Client) ComparePlatformTenantSelfWorkflowReadiness(ctx context.Context, req OperationWorkflowReadinessComparisonRequest) (OperationWorkflowReadinessComparisonResponse, error) {
+	var out OperationWorkflowReadinessComparisonResponse
+	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/compare", req, &out)
+	return out, err
+}

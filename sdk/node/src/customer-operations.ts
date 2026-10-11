@@ -281,6 +281,12 @@ export class GregaleOperationClient {
     if (options.unassigned) query.set('unassigned', 'true');
     return this.request('/v1/platform-tenant-self/workflow-readiness/queue?' + query, 'GET', undefined, undefined, signal);
   }
+
+  compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
+    if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
+    if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
+    return this.request('/v1/platform-tenant-self/workflow-readiness/compare', 'POST', body, undefined, signal);
+  }
   workflowReadiness(body: OperationWorkflowReadinessRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -606,8 +612,27 @@ export interface OperationWorkflowReadinessQueueEntry {
  reporting_status: string; missing_report_count: number; overdue_report_count: number;
 }
 export interface OperationWorkflowReadinessQueueResponse {
- items: OperationWorkflowReadinessQueueEntry[]; sampled_at: string; evaluated_at: string;
+ snapshot: OperationWorkflowReadinessSnapshot; items: OperationWorkflowReadinessQueueEntry[]; sampled_at: string; evaluated_at: string;
  matching_workflow_count: number; sampled_workflow_count: number; excluded_changed_workflow_count: number; no_transition_workflow_count: number;
  declared_transition_count: number; evaluated_transition_count: number; matching_transition_count: number; ready_transition_count: number; unmet_transition_count: number;
  workflow_sample_truncated: boolean; transition_sample_truncated: boolean; has_more: boolean;
+}
+
+export interface OperationWorkflowReadinessSnapshot { version: number; query: string; captured_at: string; items: OperationWorkflowReadinessSnapshotEntry[] }
+export interface OperationWorkflowReadinessSnapshotEntry {
+ platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; operation_id: string; state_revision: number; contract_version: number;
+ operation: string; from_state: string; to_state: string; evaluated_at: string; ready: boolean; reasons: string[]; advisories: string[];
+ blocker_codes: string[]; missing_milestones: string[]; missing_dependency_workflows: string[]; pending_verification_count: number;
+ requirements_fingerprint: string; blockers_fingerprint: string; prerequisites_fingerprint: string; verifications_fingerprint: string; reporting_fingerprint: string;
+}
+export type OperationWorkflowReadinessChangeStatus = 'newly_ready' | 'newly_blocked' | 'changed' | 'unchanged' | 'state_unknown' | 'terminal' | 'transition_unavailable' | 'contract_changed' | 'baseline_ahead';
+export interface OperationWorkflowReadinessComparisonRequest { app_id?: string; tenant_id?: string; scope: string; baseline: OperationWorkflowReadinessSnapshot; change?: 'newly_ready' | 'newly_blocked' | 'changed' | 'unchanged' | 'unavailable'; limit?: number }
+export interface OperationWorkflowReadinessChange {
+ baseline: OperationWorkflowReadinessSnapshotEntry; current?: OperationWorkflowReadinessQueueEntry; current_operation_id?: string; current_state?: string;
+ status: OperationWorkflowReadinessChangeStatus; added_reasons: string[]; resolved_reasons: string[]; changed_categories: string[]; explanation: string;
+}
+export interface OperationWorkflowReadinessComparisonResponse {
+ baseline_at: string; evaluated_at: string; baseline_transition_count: number; compared_transition_count: number;
+ newly_ready_count: number; newly_blocked_count: number; changed_count: number; unchanged_count: number; unavailable_count: number; matching_change_count: number;
+ items: OperationWorkflowReadinessChange[]; snapshot: OperationWorkflowReadinessSnapshot; has_more: boolean;
 }

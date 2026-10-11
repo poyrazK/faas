@@ -1149,11 +1149,16 @@ export type { OperationWorkflowPlannedEffect } from './OperationWorkflowPlannedE
 export type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlannedInvariant.js';
 export type { OperationWorkflowPolicyRequirement } from './OperationWorkflowPolicyRequirement.js';
 export type { OperationWorkflowPrerequisiteRecovery } from './OperationWorkflowPrerequisiteRecovery.js';
+export type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
+export type { OperationWorkflowReadinessComparisonRequest } from './OperationWorkflowReadinessComparisonRequest.js';
+export type { OperationWorkflowReadinessComparisonResponse } from './OperationWorkflowReadinessComparisonResponse.js';
 export type { OperationWorkflowReadinessOverview } from './OperationWorkflowReadinessOverview.js';
 export type { OperationWorkflowReadinessQueueEntry } from './OperationWorkflowReadinessQueueEntry.js';
 export type { OperationWorkflowReadinessQueueResponse } from './OperationWorkflowReadinessQueueResponse.js';
 export type { OperationWorkflowReadinessRequest } from './OperationWorkflowReadinessRequest.js';
 export type { OperationWorkflowReadinessResponse } from './OperationWorkflowReadinessResponse.js';
+export type { OperationWorkflowReadinessSnapshot } from './OperationWorkflowReadinessSnapshot.js';
+export type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflowReadinessSnapshotEntry.js';
 export type { OperationWorkflowReconciliation } from './OperationWorkflowReconciliation.js';
 export type { OperationWorkflowReconciliationPayload } from './OperationWorkflowReconciliationPayload.js';
 export type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';

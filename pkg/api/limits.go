@@ -454,6 +454,7 @@ const (
 	OperationWorkflowRuleVersionsMax                         = 16
 	OperationWorkflowRuleOutcomesMax                         = 16
 	OperationWorkflowDecisionOutcomeGroupsMax                = 64
+	OperationWorkflowReadinessComparisonBodyMaxBytes         = 1 << 20
 	OperationWorkflowPerformanceCohortMax                    = 100
 	OperationWorkflowBottleneckHistoryMax                    = 1024
 	OperationWorkflowBottleneckGroupsMax                     = 32

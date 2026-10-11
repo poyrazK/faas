@@ -8743,6 +8743,49 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /v1/apps/{slug}/workflow-readiness/compare:
+    post:
+      tags: [operations]
+      operationId: compareAccountWorkflowReadiness
+      summary: Compare account transition readiness with a saved queue snapshot.
+      description: |
+        Requires account read scope and MFA; customer selectors stay within account ownership.
+        This read-only comparison accepts a caller-held snapshot emitted by the queue.
+        Snapshot scope binds the account, app, environment, customer selector and role.
+        Baseline data is advisory and is not authenticated historical evidence or execution authority.
+        At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+        Each distinct saved workflow is reread once with readiness-only projections,
+        independent of recent queue sampling and current owner or requirement filters.
+        The exact Operation/from/to edge and declared requirements must remain comparable.
+        Contract changes, terminal or unavailable state, unavailable edges and older retained
+        revisions are counted separately and never classified as newly ready or newly blocked.
+        Comparisons provide added and resolved requirement codes plus changed blocker,
+        prerequisite, pending-verification and reporting evidence categories.
+        Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+        Change filters and the row limit apply after comparison; counts cover all saved transitions.
+        The returned snapshot includes available current edges before filtering and can be saved
+        as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+        Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+        not the complete sampled backlog. Applications retain authorization and execution.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationWorkflowReadinessComparisonRequest'}
+      responses:
+        '200':
+          description: Account readiness changes and comparison coverage over saved transitions.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowReadinessComparisonResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+
   /v1/platform-tenant-self/workflow-readiness:
     post:
       tags: [operations]
@@ -8767,6 +8810,50 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /v1/platform-tenant-self/workflow-readiness/compare:
+    post:
+      tags: [operations]
+      operationId: comparePlatformTenantSelfWorkflowReadiness
+      summary: Compare customer transition readiness with a saved queue snapshot.
+      description: |
+        Requires platform-tenant Operations read scope; ownership comes from authentication and overrides are rejected.
+        This read-only comparison accepts a caller-held snapshot emitted by the queue.
+        Snapshot scope binds the account, app, environment, customer selector and role.
+        Baseline data is advisory and is not authenticated historical evidence or execution authority.
+        At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+        Each distinct saved workflow is reread once with readiness-only projections,
+        independent of recent queue sampling and current owner or requirement filters.
+        The exact Operation/from/to edge and declared requirements must remain comparable.
+        Contract changes, terminal or unavailable state, unavailable edges and older retained
+        revisions are counted separately and never classified as newly ready or newly blocked.
+        Comparisons provide added and resolved requirement codes plus changed blocker,
+        prerequisite, pending-verification and reporting evidence categories.
+        Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+        Change filters and the row limit apply after comparison; counts cover all saved transitions.
+        The returned snapshot includes available current edges before filtering and can be saved
+        as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+        Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+        not the complete sampled backlog. Applications retain authorization and execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/OperationWorkflowReadinessComparisonRequest'
+              - required: [app_id]
+      responses:
+        '200':
+          description: Customer readiness changes and comparison coverage over saved transitions.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowReadinessComparisonResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+
   /v1/apps/{slug}/workflow-attention:
     get:
       tags: [operations]
@@ -73220,8 +73307,9 @@ components:
     OperationWorkflowReadinessQueueResponse:
       type: object
       description: Bounded live readiness queue; counts describe the evaluated sample and filters.
-      required: [items, sampled_at, evaluated_at, matching_workflow_count, sampled_workflow_count, excluded_changed_workflow_count, no_transition_workflow_count, declared_transition_count, evaluated_transition_count, matching_transition_count, ready_transition_count, unmet_transition_count, workflow_sample_truncated, transition_sample_truncated, has_more]
+      required: [snapshot, items, sampled_at, evaluated_at, matching_workflow_count, sampled_workflow_count, excluded_changed_workflow_count, no_transition_workflow_count, declared_transition_count, evaluated_transition_count, matching_transition_count, ready_transition_count, unmet_transition_count, workflow_sample_truncated, transition_sample_truncated, has_more]
       properties:
+        snapshot: {$ref: '#/components/schemas/OperationWorkflowReadinessSnapshot'}
         items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowReadinessQueueEntry'}, description: Matching transitions with unmet rows first.}
         sampled_at: {type: string, format: date-time, description: Time used to select recently updated ongoing workflows.}
         evaluated_at: {type: string, format: date-time, description: Time evaluation completed; reads are live rather than atomic.}
@@ -73237,6 +73325,399 @@ components:
         workflow_sample_truncated: {type: boolean, description: More matching ongoing workflows exist than were sampled.}
         transition_sample_truncated: {type: boolean, description: At least one workflow has more matching edges than the per-workflow cap.}
         has_more: {type: boolean, description: More matching evaluated rows exist than the response row limit.}
+
+    OperationWorkflowReadinessSnapshot:
+      description: Caller-held compact readiness observations for at most 100 returned transitions. No historical authentication or execution authority is implied.
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - query
+      - captured_at
+      - items
+      properties:
+        version:
+          type: integer
+          description: ReadinessSnapshot. Snapshot format version; currently 1.
+          enum:
+          - 1
+        query:
+          type: string
+          description: ReadinessSnapshot. Account app environment customer-selector and role fingerprint; preserve unchanged when saving.
+          minLength: 64
+          maxLength: 64
+          pattern: ^[a-f0-9]{64}$
+        captured_at:
+          type: string
+          format: date-time
+          description: ReadinessSnapshot. Time the live snapshot capture completed.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessSnapshotEntry'
+          description: ReadinessSnapshot. Saved transition observations.
+          maxItems: 100
+    OperationWorkflowReadinessSnapshotEntry:
+      description: One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
+      type: object
+      additionalProperties: false
+      required:
+      - subject
+      - workflow
+      - instance_id
+      - operation_id
+      - state_revision
+      - contract_version
+      - operation
+      - from_state
+      - to_state
+      - evaluated_at
+      - ready
+      - reasons
+      - advisories
+      - blocker_codes
+      - missing_milestones
+      - missing_dependency_workflows
+      - pending_verification_count
+      - requirements_fingerprint
+      - blockers_fingerprint
+      - prerequisites_fingerprint
+      - verifications_fingerprint
+      - reporting_fingerprint
+      properties:
+        platform_tenant_id:
+          type: string
+          description: ReadinessSnapshotEntry. Customer UUID present only in account snapshots.
+          format: uuid
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+        workflow:
+          type: string
+          description: ReadinessSnapshotEntry. Declared workflow name.
+          minLength: 1
+          maxLength: 63
+          pattern: ^[a-z][a-z0-9-]*$
+        instance_id:
+          type: string
+          description: ReadinessSnapshotEntry. Application workflow instance identifier.
+          minLength: 1
+          maxLength: 256
+        operation_id:
+          type: string
+          description: ReadinessSnapshotEntry. Operation that reported the saved workflow state.
+          format: uuid
+        state_revision:
+          type: integer
+          format: int64
+          description: ReadinessSnapshotEntry. Application state revision observed at capture.
+          minimum: 1
+          maximum: 9007199254740991
+        contract_version:
+          type: integer
+          description: ReadinessSnapshotEntry. Pinned workflow contract version at capture.
+          minimum: 1
+          maximum: 1000000
+        operation:
+          type: string
+          description: ReadinessSnapshotEntry. Target Operation of the saved transition.
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9-]*$
+        from_state:
+          type: string
+          description: ReadinessSnapshotEntry. Declared source state of the saved transition.
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9-]*$
+        to_state:
+          type: string
+          description: ReadinessSnapshotEntry. Declared destination state of the saved transition.
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9-]*$
+        evaluated_at:
+          type: string
+          format: date-time
+          description: ReadinessSnapshotEntry. Time of the shared per-workflow evidence evaluation or comparison completion.
+        ready:
+          type: boolean
+          description: ReadinessSnapshotEntry. Declared requirements were met without planned evidence at capture.
+        reasons:
+          type: array
+          items:
+            type: string
+            enum: &readiness_compare_001
+            - state_unknown
+            - terminal
+            - transition_undeclared
+            - from_state_mismatch
+            - revision_mismatch
+            - contract_version_mismatch
+            - application_blocked
+            - dependency_unmet
+            - milestone_required
+            - policy_evidence_required
+            - dependency_required
+            - invariant_evidence_required
+            - effect_evidence_required
+            - retained_milestone_required
+            - retained_milestone_invalidated
+            - retained_milestone_expired
+            - retained_milestone_group_unmet
+            - path_selection_invalid
+          description: ReadinessSnapshotEntry. Saved unmet declared requirement codes.
+          maxItems: 18
+          uniqueItems: true
+        advisories:
+          type: array
+          items:
+            type: string
+            enum:
+            - state_stale
+            - deadline_overdue
+            - condition_reports_missing
+            - condition_reports_overdue
+            - condition_reporting_unknown
+            - verification_pending
+          description: ReadinessSnapshotEntry. Saved reporting and verification context; advisories never determine readiness.
+          maxItems: 6
+          uniqueItems: true
+        blocker_codes:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^[a-z][a-z0-9-]*$
+          description: ReadinessSnapshotEntry. Sorted unique saved blocker codes for this target Operation.
+          maxItems: 16
+          uniqueItems: true
+        missing_milestones:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^[a-z][a-z0-9-]*$
+          description: ReadinessSnapshotEntry. Saved missing planned milestone names.
+          maxItems: 16
+          uniqueItems: true
+        missing_dependency_workflows:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^[a-z][a-z0-9-]*$
+          description: ReadinessSnapshotEntry. Saved prerequisite workflows without reported references.
+          maxItems: 16
+          uniqueItems: true
+        pending_verification_count:
+          type: integer
+          format: int64
+          description: ReadinessSnapshotEntry. Exact saved pending verification obligation count before previews.
+          minimum: 0
+        requirements_fingerprint:
+          type: string
+          description: ReadinessSnapshotEntry. Digest of pinned contract version and declared edge requirements.
+          minLength: 64
+          maxLength: 64
+          pattern: ^[a-f0-9]{64}$
+        blockers_fingerprint:
+          type: string
+          description: ReadinessSnapshotEntry. Order-independent digest of all target blocker details.
+          minLength: 64
+          maxLength: 64
+          pattern: ^[a-f0-9]{64}$
+        prerequisites_fingerprint:
+          type: string
+          description: ReadinessSnapshotEntry. Digest of prerequisite statuses and evidence identities excluding moving ages and evaluation clocks.
+          minLength: 64
+          maxLength: 64
+          pattern: ^[a-f0-9]{64}$
+        verifications_fingerprint:
+          type: string
+          description: ReadinessSnapshotEntry. Order-independent digest of all retained pending target obligations before previews.
+          minLength: 64
+          maxLength: 64
+          pattern: ^[a-f0-9]{64}$
+        reporting_fingerprint:
+          type: string
+          description: ReadinessSnapshotEntry. Digest of reporting coverage counts and timing advisories excluding pending verification.
+          minLength: 64
+          maxLength: 64
+          pattern: ^[a-f0-9]{64}$
+    OperationWorkflowReadinessComparisonRequest:
+      description: Scoped request to reread and compare saved transitions. The baseline is caller-supplied advisory data.
+      type: object
+      additionalProperties: false
+      required:
+      - scope
+      - baseline
+      properties:
+        app_id:
+          type: string
+          description: ReadinessComparisonRequest. Required explicit app UUID for customer-self requests; reject on account routes.
+          format: uuid
+        tenant_id:
+          type: string
+          description: ReadinessComparisonRequest. Optional account-owned customer selector; reject on customer-self routes.
+          format: uuid
+        scope:
+          type: string
+          description: ReadinessComparisonRequest. Explicit application environment for this comparison.
+        baseline:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSnapshot'
+        change:
+          type: string
+          description: ReadinessComparisonRequest. Filter after all baseline transitions have been classified; unavailable includes contract and state boundaries.
+          enum:
+          - newly_ready
+          - newly_blocked
+          - changed
+          - unchanged
+          - unavailable
+        limit:
+          type: integer
+          description: ReadinessComparisonRequest. Maximum matching rows returned after comparison; defaults to 20 and is capped at 100.
+          minimum: 1
+          maximum: 100
+          default: 20
+    OperationWorkflowReadinessChange:
+      description: Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are explicit.
+      type: object
+      additionalProperties: false
+      required:
+      - baseline
+      - status
+      - added_reasons
+      - resolved_reasons
+      - changed_categories
+      - explanation
+      properties:
+        current_operation_id:
+          type: string
+          description: ReadinessChange. Latest retained reporting Operation when current state is available.
+          format: uuid
+        current_state:
+          type: string
+          description: ReadinessChange. Current retained workflow state even when the saved edge is no longer applicable.
+        baseline:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSnapshotEntry'
+        current:
+          $ref: '#/components/schemas/OperationWorkflowReadinessQueueEntry'
+        status:
+          type: string
+          description: ReadinessChange. Classification; only comparable unchanged requirements can become newly ready or newly blocked.
+          enum:
+          - newly_ready
+          - newly_blocked
+          - changed
+          - unchanged
+          - state_unknown
+          - terminal
+          - transition_unavailable
+          - contract_changed
+          - baseline_ahead
+        added_reasons:
+          type: array
+          items:
+            type: string
+            enum: *readiness_compare_001
+          description: ReadinessChange. Declared requirement codes now unmet that were absent from the saved reasons.
+          maxItems: 18
+          uniqueItems: true
+        resolved_reasons:
+          type: array
+          items:
+            type: string
+            enum: *readiness_compare_001
+          description: ReadinessChange. Saved requirement codes that are no longer unmet; this does not prove application authorization.
+          maxItems: 18
+          uniqueItems: true
+        changed_categories:
+          type: array
+          items:
+            type: string
+            enum:
+            - blockers
+            - prerequisites
+            - verification
+            - reporting
+          description: ReadinessChange. Evidence categories whose complete stable summaries changed.
+        explanation:
+          type: string
+          description: ReadinessChange. Human-readable meaning and comparison boundary.
+    OperationWorkflowReadinessComparisonResponse:
+      description: Live comparison counts before filtering with bounded matching changes and the next available-edge snapshot.
+      type: object
+      additionalProperties: false
+      required:
+      - baseline_at
+      - evaluated_at
+      - baseline_transition_count
+      - compared_transition_count
+      - newly_ready_count
+      - newly_blocked_count
+      - changed_count
+      - unchanged_count
+      - unavailable_count
+      - matching_change_count
+      - items
+      - snapshot
+      - has_more
+      properties:
+        baseline_at:
+          type: string
+          format: date-time
+          description: ReadinessComparisonResponse. Saved snapshot capture time.
+        evaluated_at:
+          type: string
+          format: date-time
+          description: ReadinessComparisonResponse. Time of the shared per-workflow evidence evaluation or comparison completion.
+        baseline_transition_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. All transitions in the supplied snapshot before filters.
+        compared_transition_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Transitions with comparable current edges and declared requirements.
+        newly_ready_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Comparable transitions that changed from unmet to ready.
+        newly_blocked_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Comparable transitions that changed from ready to unmet.
+        changed_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Comparable transitions with evidence or reason changes and unchanged readiness result.
+        unchanged_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Comparable transitions with unchanged result and evidence summaries.
+        unavailable_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Transitions excluded from readiness comparison due to contract state edge or retained-revision boundaries.
+        matching_change_count:
+          type: integer
+          format: int64
+          description: ReadinessComparisonResponse. Changes matching the selected filter before row limit.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessChange'
+          description: ReadinessComparisonResponse. Matching transition comparison rows.
+          maxItems: 100
+        snapshot:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSnapshot'
+        has_more:
+          type: boolean
+          description: ReadinessComparisonResponse. More matching changes exist than the returned row limit.
 
   responses:
     OperationConflict:

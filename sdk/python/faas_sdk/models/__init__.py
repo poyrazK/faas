@@ -491,6 +491,7 @@ from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
+from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -2201,11 +2202,30 @@ from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequir
 from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
 from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
 from .operation_workflow_prerequisite_recovery_steps_item import OperationWorkflowPrerequisiteRecoveryStepsItem
+from .operation_workflow_readiness_change import OperationWorkflowReadinessChange
+from .operation_workflow_readiness_change_added_reasons_item import OperationWorkflowReadinessChangeAddedReasonsItem
+from .operation_workflow_readiness_change_changed_categories_item import (
+    OperationWorkflowReadinessChangeChangedCategoriesItem,
+)
+from .operation_workflow_readiness_change_resolved_reasons_item import (
+    OperationWorkflowReadinessChangeResolvedReasonsItem,
+)
+from .operation_workflow_readiness_change_status import OperationWorkflowReadinessChangeStatus
+from .operation_workflow_readiness_comparison_request import OperationWorkflowReadinessComparisonRequest
+from .operation_workflow_readiness_comparison_request_change import OperationWorkflowReadinessComparisonRequestChange
+from .operation_workflow_readiness_comparison_response import OperationWorkflowReadinessComparisonResponse
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
 from .operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
 from .operation_workflow_readiness_queue_response import OperationWorkflowReadinessQueueResponse
 from .operation_workflow_readiness_request import OperationWorkflowReadinessRequest
 from .operation_workflow_readiness_response import OperationWorkflowReadinessResponse
+from .operation_workflow_readiness_snapshot import OperationWorkflowReadinessSnapshot
+from .operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
+from .operation_workflow_readiness_snapshot_entry_advisories_item import (
+    OperationWorkflowReadinessSnapshotEntryAdvisoriesItem,
+)
+from .operation_workflow_readiness_snapshot_entry_reasons_item import OperationWorkflowReadinessSnapshotEntryReasonsItem
+from .operation_workflow_readiness_snapshot_version import OperationWorkflowReadinessSnapshotVersion
 from .operation_workflow_reconciliation import OperationWorkflowReconciliation
 from .operation_workflow_reconciliation_payload import OperationWorkflowReconciliationPayload
 from .operation_workflow_reconciliation_payload_kind import OperationWorkflowReconciliationPayloadKind
@@ -4102,6 +4122,7 @@ __all__ = (
     "CommitRoutingVersion",
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
+    "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -5716,11 +5737,24 @@ __all__ = (
     "OperationWorkflowPrerequisiteRecovery",
     "OperationWorkflowPrerequisiteRecoveryReason",
     "OperationWorkflowPrerequisiteRecoveryStepsItem",
+    "OperationWorkflowReadinessChange",
+    "OperationWorkflowReadinessChangeAddedReasonsItem",
+    "OperationWorkflowReadinessChangeChangedCategoriesItem",
+    "OperationWorkflowReadinessChangeResolvedReasonsItem",
+    "OperationWorkflowReadinessChangeStatus",
+    "OperationWorkflowReadinessComparisonRequest",
+    "OperationWorkflowReadinessComparisonRequestChange",
+    "OperationWorkflowReadinessComparisonResponse",
     "OperationWorkflowReadinessOverview",
     "OperationWorkflowReadinessQueueEntry",
     "OperationWorkflowReadinessQueueResponse",
     "OperationWorkflowReadinessRequest",
     "OperationWorkflowReadinessResponse",
+    "OperationWorkflowReadinessSnapshot",
+    "OperationWorkflowReadinessSnapshotEntry",
+    "OperationWorkflowReadinessSnapshotEntryAdvisoriesItem",
+    "OperationWorkflowReadinessSnapshotEntryReasonsItem",
+    "OperationWorkflowReadinessSnapshotVersion",
     "OperationWorkflowReconciliation",
     "OperationWorkflowReconciliationPayload",
     "OperationWorkflowReconciliationPayloadKind",

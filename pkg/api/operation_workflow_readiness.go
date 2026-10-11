@@ -112,6 +112,7 @@ type OperationWorkflowReadinessQueueEntry struct {
 
 // Counts describe the evaluated sample; this is not an account-wide backlog or execution grant.
 type OperationWorkflowReadinessQueueResponse struct {
+	Snapshot                     OperationWorkflowReadinessSnapshot     `json:"snapshot"`
 	Items                        []OperationWorkflowReadinessQueueEntry `json:"items"`
 	SampledAt                    time.Time                              `json:"sampled_at"`
 	EvaluatedAt                  time.Time                              `json:"evaluated_at"`
@@ -127,4 +128,75 @@ type OperationWorkflowReadinessQueueResponse struct {
 	WorkflowSampleTruncated      bool                                   `json:"workflow_sample_truncated"`
 	TransitionSampleTruncated    bool                                   `json:"transition_sample_truncated"`
 	HasMore                      bool                                   `json:"has_more"`
+}
+
+// Snapshot is caller-held comparison evidence, never execution authority.
+type OperationWorkflowReadinessSnapshot struct {
+	Version    int                                       `json:"version"`
+	Query      string                                    `json:"query"`
+	CapturedAt time.Time                                 `json:"captured_at"`
+	Items      []OperationWorkflowReadinessSnapshotEntry `json:"items"`
+}
+
+// Compact summaries cover returned rows, not every transition in the queue sample.
+type OperationWorkflowReadinessSnapshotEntry struct {
+	PlatformTenantID           string           `json:"platform_tenant_id,omitempty"`
+	Subject                    OperationSubject `json:"subject"`
+	Workflow                   string           `json:"workflow"`
+	InstanceID                 string           `json:"instance_id"`
+	OperationID                string           `json:"operation_id"`
+	StateRevision              int64            `json:"state_revision"`
+	ContractVersion            int              `json:"contract_version"`
+	Operation                  string           `json:"operation"`
+	FromState                  string           `json:"from_state"`
+	ToState                    string           `json:"to_state"`
+	EvaluatedAt                time.Time        `json:"evaluated_at"`
+	Ready                      bool             `json:"ready"`
+	Reasons                    []string         `json:"reasons"`
+	Advisories                 []string         `json:"advisories"`
+	BlockerCodes               []string         `json:"blocker_codes"`
+	MissingMilestones          []string         `json:"missing_milestones"`
+	MissingDependencyWorkflows []string         `json:"missing_dependency_workflows"`
+	PendingVerificationCount   int64            `json:"pending_verification_count"`
+	RequirementsFingerprint    string           `json:"requirements_fingerprint"`
+	BlockersFingerprint        string           `json:"blockers_fingerprint"`
+	PrerequisitesFingerprint   string           `json:"prerequisites_fingerprint"`
+	VerificationsFingerprint   string           `json:"verifications_fingerprint"`
+	ReportingFingerprint       string           `json:"reporting_fingerprint"`
+}
+
+// Comparison rereads only the distinct workflows represented in the saved snapshot.
+type OperationWorkflowReadinessComparisonRequest struct {
+	AppID    string                             `json:"app_id,omitempty"`
+	TenantID string                             `json:"tenant_id,omitempty"`
+	Scope    string                             `json:"scope"`
+	Baseline OperationWorkflowReadinessSnapshot `json:"baseline"`
+	Change   string                             `json:"change,omitempty"`
+	Limit    int                                `json:"limit,omitempty"`
+}
+type OperationWorkflowReadinessChange struct {
+	CurrentOperationID string                                  `json:"current_operation_id,omitempty"`
+	CurrentState       string                                  `json:"current_state,omitempty"`
+	Baseline           OperationWorkflowReadinessSnapshotEntry `json:"baseline"`
+	Current            *OperationWorkflowReadinessQueueEntry   `json:"current,omitempty"`
+	Status             string                                  `json:"status"`
+	AddedReasons       []string                                `json:"added_reasons"`
+	ResolvedReasons    []string                                `json:"resolved_reasons"`
+	ChangedCategories  []string                                `json:"changed_categories"`
+	Explanation        string                                  `json:"explanation"`
+}
+type OperationWorkflowReadinessComparisonResponse struct {
+	BaselineAt              time.Time                          `json:"baseline_at"`
+	EvaluatedAt             time.Time                          `json:"evaluated_at"`
+	BaselineTransitionCount int64                              `json:"baseline_transition_count"`
+	ComparedTransitionCount int64                              `json:"compared_transition_count"`
+	NewlyReadyCount         int64                              `json:"newly_ready_count"`
+	NewlyBlockedCount       int64                              `json:"newly_blocked_count"`
+	ChangedCount            int64                              `json:"changed_count"`
+	UnchangedCount          int64                              `json:"unchanged_count"`
+	UnavailableCount        int64                              `json:"unavailable_count"`
+	MatchingChangeCount     int64                              `json:"matching_change_count"`
+	Items                   []OperationWorkflowReadinessChange `json:"items"`
+	Snapshot                OperationWorkflowReadinessSnapshot `json:"snapshot"`
+	HasMore                 bool                               `json:"has_more"`
 }

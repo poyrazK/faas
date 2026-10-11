@@ -48,6 +48,8 @@ import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkf
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
+import type { OperationWorkflowReadinessComparisonRequest } from '../models/OperationWorkflowReadinessComparisonRequest.js';
+import type { OperationWorkflowReadinessComparisonResponse } from '../models/OperationWorkflowReadinessComparisonResponse.js';
 import type { OperationWorkflowReadinessQueueResponse } from '../models/OperationWorkflowReadinessQueueResponse.js';
 import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
 import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
@@ -1501,6 +1503,57 @@ export class OperationsService {
     });
   }
   /**
+   * Compare account transition readiness with a saved queue snapshot.
+   * Requires account read scope and MFA; customer selectors stay within account ownership.
+   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
+   * Snapshot scope binds the account, app, environment, customer selector and role.
+   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
+   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+   * Each distinct saved workflow is reread once with readiness-only projections,
+   * independent of recent queue sampling and current owner or requirement filters.
+   * The exact Operation/from/to edge and declared requirements must remain comparable.
+   * Contract changes, terminal or unavailable state, unavailable edges and older retained
+   * revisions are counted separately and never classified as newly ready or newly blocked.
+   * Comparisons provide added and resolved requirement codes plus changed blocker,
+   * prerequisite, pending-verification and reporting evidence categories.
+   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
+   * The returned snapshot includes available current edges before filtering and can be saved
+   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+   * not the complete sampled backlog. Applications retain authorization and execution.
+   *
+   * @returns OperationWorkflowReadinessComparisonResponse Account readiness changes and comparison coverage over saved transitions.
+   * @throws ApiError
+   */
+  public static compareAccountWorkflowReadiness({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OperationWorkflowReadinessComparisonRequest,
+  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/compare',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+      },
+    });
+  }
+  /**
    * Customer transition readiness — Check reported requirements for a proposed workflow transition.
    * Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted; ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
    * @returns OperationWorkflowReadinessResponse Customer transition readiness — Observed transition readiness including reasons and advisories.
@@ -1521,6 +1574,49 @@ export class OperationsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Compare customer transition readiness with a saved queue snapshot.
+   * Requires platform-tenant Operations read scope; ownership comes from authentication and overrides are rejected.
+   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
+   * Snapshot scope binds the account, app, environment, customer selector and role.
+   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
+   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+   * Each distinct saved workflow is reread once with readiness-only projections,
+   * independent of recent queue sampling and current owner or requirement filters.
+   * The exact Operation/from/to edge and declared requirements must remain comparable.
+   * Contract changes, terminal or unavailable state, unavailable edges and older retained
+   * revisions are counted separately and never classified as newly ready or newly blocked.
+   * Comparisons provide added and resolved requirement codes plus changed blocker,
+   * prerequisite, pending-verification and reporting evidence categories.
+   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
+   * The returned snapshot includes available current edges before filtering and can be saved
+   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+   * not the complete sampled backlog. Applications retain authorization and execution.
+   *
+   * @returns OperationWorkflowReadinessComparisonResponse Customer readiness changes and comparison coverage over saved transitions.
+   * @throws ApiError
+   */
+  public static comparePlatformTenantSelfWorkflowReadiness({
+    requestBody,
+  }: {
+    requestBody: OperationWorkflowReadinessComparisonRequest,
+  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/compare',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
       },
     });
   }
