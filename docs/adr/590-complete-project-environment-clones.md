@@ -9624,3 +9624,18 @@ extending deletion authority. Operational borrower retirement, deployment metada
 retirement, published release withdrawal and whole-stage terminal compensation
 remain separate work. Public full-stage admission remains gated and live provider
 qualification remains deferred.
+
+### Authenticated deployment borrower inventory
+
+The private PostgreSQL store now inventories all 44 direct deployment foreign-key
+constraints for the original clone target deployments after authenticated native
+retirement. It verifies the original configuration ownership and current cleanup
+proof chain, rejects legacy ownership and stale leases, and retains counts for
+inactive records, cascades, and SET NULL references. Constraint names distinguish
+multiple references from the same table. A database schema coverage test requires
+new deployment foreign keys to enter the explicit SQLC inventory.
+
+This report does not authorize deployment deletion. Soft and scope-only references,
+owner-specific retirement of operational records, and an authenticated artifact
+removal transition that preserves original native replay are still required.
+Full-stage admission and live provider qualification remain gated.

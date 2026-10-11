@@ -2317,6 +2317,7 @@ type Querier interface {
 	ReadCloneConfigurationCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCleanup, error)
 	ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error)
 	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
+	ReadCloneDeploymentBorrowers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneEnvironmentCleanup, error)
 	// Counts retained rows regardless of runtime status, TTL or tenant metadata.
 	// Scope-only invocation/scaling rows are included even without the target UUID.

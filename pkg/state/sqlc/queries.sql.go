@@ -49871,6 +49871,62 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 	return manifest, err
 }
 
+const readCloneDeploymentBorrowers = `-- name: ReadCloneDeploymentBorrowers :one
+SELECT jsonb_build_object(
+    'alert_historical_rollback_claims_deployment_id_fkey', (SELECT count(*) FROM alert_historical_rollback_claims WHERE deployment_id = $1::uuid),
+    'app_error_requests_deployment_id_fkey', (SELECT count(*) FROM app_error_requests WHERE deployment_id = $1::uuid),
+    'app_errors_deployment_id_fkey', (SELECT count(*) FROM app_errors WHERE deployment_id = $1::uuid),
+    'app_tasks_deployment_id_fkey', (SELECT count(*) FROM app_tasks WHERE deployment_id = $1::uuid),
+    'automatic_route_checks_deployment_id_fkey', (SELECT count(*) FROM automatic_route_checks WHERE deployment_id = $1::uuid),
+    'builds_deployment_id_fkey', (SELECT count(*) FROM builds WHERE deployment_id = $1::uuid),
+    'customer_operation_code_pins_owner_fk', (SELECT count(*) FROM customer_operation_code_pins WHERE deployment_id = $1::uuid),
+    'customer_operation_definitions_deployment_id_fkey', (SELECT count(*) FROM customer_operation_definitions WHERE deployment_id = $1::uuid),
+    'deployment_aliases_deployment_id_fkey', (SELECT count(*) FROM deployment_aliases WHERE deployment_id = $1::uuid),
+    'deployment_image_preparations_deployment_id_fkey', (SELECT count(*) FROM deployment_image_preparations WHERE deployment_id = $1::uuid),
+    'deployment_logs_deployment_id_fkey', (SELECT count(*) FROM deployment_logs WHERE deployment_id = $1::uuid),
+    'deployment_openapi_docs_deployment_id_fkey', (SELECT count(*) FROM deployment_openapi_docs WHERE deployment_id = $1::uuid),
+    'deployment_openapi_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_openapi_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_recovery_lineage_deployment_id_fkey', (SELECT count(*) FROM deployment_recovery_lineage WHERE deployment_id = $1::uuid),
+    'deployment_recovery_lineage_predecessor_deployment_id_fkey', (SELECT count(*) FROM deployment_recovery_lineage WHERE predecessor_deployment_id = $1::uuid),
+    'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = $1::uuid),
+    'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = $1::uuid),
+    'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = $1::uuid),
+    'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = $1::uuid),
+    'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = $1::uuid),
+    'deployment_sidecar_secret_reload_signals_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_secret_reload_signals WHERE deployment_id = $1::uuid),
+    'developer_sync_history_deployment_id_fkey', (SELECT count(*) FROM developer_sync_history WHERE deployment_id = $1::uuid),
+    'environment_workload_qualification_requests_deployment_id_fkey', (SELECT count(*) FROM environment_workload_qualification_requests WHERE deployment_id = $1::uuid),
+    'github_check_updates_deployment_id_fkey', (SELECT count(*) FROM github_check_updates WHERE deployment_id = $1::uuid),
+    'github_deployments_deployment_id_fkey', (SELECT count(*) FROM github_deployments WHERE deployment_id = $1::uuid),
+    'instances_deployment_id_fkey', (SELECT count(*) FROM instances WHERE deployment_id = $1::uuid),
+    'invocation_environment_queue_admissions_deployment_id_fkey', (SELECT count(*) FROM invocation_environment_queue_admissions WHERE deployment_id = $1::uuid),
+    'issue_ingest_tokens_deployment_id_fkey', (SELECT count(*) FROM issue_ingest_tokens WHERE deployment_id = $1::uuid),
+    'mirror_rules_mirror_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE mirror_deployment_id = $1::uuid),
+    'mirror_rules_source_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE source_deployment_id = $1::uuid),
+    'project_environment_promotion_workload_specs_deployment_id_fkey', (SELECT count(*) FROM project_environment_promotion_workload_specs WHERE deployment_id = $1::uuid),
+    'project_environment_queue_runtime_sets_deployment_id_fkey', (SELECT count(*) FROM project_environment_queue_runtime_sets WHERE deployment_id = $1::uuid),
+    'project_environment_workload_deployment_spec_deployment_id_fkey', (SELECT count(*) FROM project_environment_workload_deployment_specs WHERE deployment_id = $1::uuid),
+    'project_release_members_deployment_id_fkey', (SELECT count(*) FROM project_release_members WHERE deployment_id = $1::uuid),
+    'route_check_history_deployment_id_fkey', (SELECT count(*) FROM route_check_history WHERE deployment_id = $1::uuid),
+    'route_health_history_deployment_id_fkey', (SELECT count(*) FROM route_health_history WHERE deployment_id = $1::uuid),
+    'route_health_notification_state_deployment_id_fkey', (SELECT count(*) FROM route_health_notification_state WHERE deployment_id = $1::uuid),
+    'route_monitor_incidents_deployment_id_fkey', (SELECT count(*) FROM route_monitor_incidents WHERE deployment_id = $1::uuid),
+    'route_monitors_last_deployment_id_fkey', (SELECT count(*) FROM route_monitors WHERE last_deployment_id = $1::uuid),
+    'runtime_instance_config_proofs_deployment_id_fkey', (SELECT count(*) FROM runtime_instance_config_proofs WHERE deployment_id = $1::uuid),
+    'snapshots_deployment_id_fkey', (SELECT count(*) FROM snapshots WHERE deployment_id = $1::uuid),
+    'platform_tenant_workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM platform_tenant_workflow_schedule_cursors WHERE deployment_id = $1::uuid),
+    'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = $1::uuid)
+)::jsonb AS borrowers
+`
+
+func (q *Queries) ReadCloneDeploymentBorrowers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readCloneDeploymentBorrowers, deploymentID)
+	var borrowers []byte
+	err := row.Scan(&borrowers)
+	return borrowers, err
+}
+
 const readCloneEnvironmentCleanup = `-- name: ReadCloneEnvironmentCleanup :one
 SELECT operation_id, environment_id, workload_cleanup_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_environment_cleanups WHERE operation_id=$1 FOR UPDATE
 `
