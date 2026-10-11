@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +12,8 @@ import (
 	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type entitySocketScopeFence struct{}
 
 func (s *server) connectDurableEntity(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.durableEntitySockets == nil {
@@ -72,7 +75,7 @@ func (s *server) connectDurableEntity(w http.ResponseWriter, r *http.Request, ac
 		if err != nil {
 			return entitysocket.Reply{Status: http.StatusBadRequest}
 		}
-		sub := r.Clone(r.Context())
+		sub := r.Clone(context.WithValue(r.Context(), entitySocketScopeFence{}, id))
 		sub.Method = http.MethodPost
 		sub.Body = io.NopCloser(bytes.NewReader(body))
 		sub.ContentLength = int64(len(body))

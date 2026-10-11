@@ -39,6 +39,12 @@ func (s *server) invokeDurableEntity(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, problem)
 		return
 	}
+	// A socket remains attached to its original immutable entity scope even if
+	// an environment name or app slug is deleted and recreated during its life.
+	if expected, ok := r.Context().Value(entitySocketScopeFence{}).(durableentity.ID); ok && expected != id {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Entity scope changed", "reconnect after reviewing the selected scope"))
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
 	started := time.Now()
