@@ -88,3 +88,24 @@ This does not provide broadcast, presence, automatic reconnect, transparent
 hibernation, or authentication for arbitrary HTTP entity invocation. Native
 multi-node revocation, GCS failure, browser Origin, takeover, and restart acceptance
 remain part of the independent host/bucket acceptance gate.
+
+## Source qualification and native handoff
+
+[CI run 38130306595](https://github.com/poyrazK/faas/actions/runs/38130306595)
+passed for source `c62def181211bf05cb817695d383cccea13fcf41`.
+The Node build, 16 focused SDK tests, packed starter acceptance, four Go
+race-tested durable packages, focused CLI checks and nine authenticated
+socket/API tests passed. Browser coverage includes safe URL/protocol construction;
+API tests cover actual WebSocket upgrades, session/generation/control-command
+fencing, Origin rejection, grant revocation, issuer deletion, expiry and private
+record credential hashing. This is source/HTTP-fixture evidence, not native
+GCS/KVM or real-browser acceptance. No local tests/builds were run.
+
+The independent acceptance host should verify HTTPS/WSS from a real browser,
+reconnect with a renewed grant and exact saved frame, and simultaneous sockets
+on two nodes followed by grant/issuer revocation. It should also check tenant
+suspension and environment recreation, provider read failures, uncertain mint
+and revocation writes, header redaction, prefix-restricted cleanup, and the
+existing takeover/restart scenarios. Keep the production preview flags off until
+that evidence is available. Authenticate users and authorize entity access in
+the application backend before minting grants.

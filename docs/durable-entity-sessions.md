@@ -111,3 +111,7 @@ state and safe committed versions. A failed acknowledgement cannot authorize a
 cursor advance. Decoder failures may follow successful commits; retain the saved
 frame. Open/close results have null value, so decoders must accept it when those
 commands are pending.
+
+For end users, use the separate opt-in [scoped browser session contract](durable-entity-browser-sessions.md).
+A trusted application backend authorizes the user and issues a short-lived grant;
+owner API credentials remain server-side. Lifecycle expiry/reclamation stays service-only.
