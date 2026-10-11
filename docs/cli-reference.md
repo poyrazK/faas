@@ -1244,7 +1244,7 @@ gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expec
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--object-storage-require <PREFIX=read|write|read_write>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1255,9 +1255,10 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
 | `--allow-unsupported` | waive connectivity coverage for active queue and outbound bindings |  |
 | `--require-application-ack` | require current PostgreSQL/object-storage application acknowledgements |  |
+| `--release-policy` | apply stored scope requirements and confirm the policy after every inventory evaluation (read-only) |  |
 | `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
-| `--timeout <DURATION>` | maximum preflight wait (default 5m) |  |
+| `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
 
 Examples:
@@ -1266,6 +1267,7 @@ Examples:
 gregale bindings check --app my-api --interactive
 gregale bindings check my-api --max-verification-age 10m --json
 gregale bindings check my-api --scope production
+gregale bindings check my-api --deployment v12 --release-policy --wait --json
 gregale bindings check my-api --deployment v12 --max-verification-age 10m --json
 ```
 

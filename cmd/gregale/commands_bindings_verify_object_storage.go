@@ -13,10 +13,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func runObjectStorageBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, prefix string, pollInterval, waitTimeout time.Duration) int {
-	return runObjectStorageBindingProbeWithWrite(ctx, client, slug, prefix, false, pollInterval, waitTimeout)
-}
-
 func runObjectStorageBindingProbeWithWrite(ctx context.Context, client bindingInventoryProbeClient, slug, prefix string, write bool, pollInterval, waitTimeout time.Duration) int {
 	inventory, err := client.GetAppBindingInventory(ctx, slug, "")
 	if err != nil {

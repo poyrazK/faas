@@ -3,7 +3,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -55,7 +54,7 @@ func TestCLIObjectStorageWriteCanaryJourney(t *testing.T) {
 						t.Fatal("wrong permission in CLI admission")
 					}
 					env := map[string]string{"ASSETS_ENDPOINT": storage.URL, "ASSETS_REGION": "auto", "ASSETS_BUCKET": "assets", "ASSETS_ACCESS_KEY_ID": "private-access", "ASSETS_SECRET_ACCESS_KEY": "private-secret", "ASSETS_ADDRESSING_STYLE": "path"}
-					report := bindingprobe.ObjectStorageWrite(context.Background(), request.Command[1], request.Command[2], func(k string) string { return env[k] })
+					report := bindingprobe.ObjectStorageWrite(r.Context(), request.Command[1], request.Command[2], func(k string) string { return env[k] })
 					if legacy {
 						report = passedObjectStorageCLIReport("ASSETS")
 					}

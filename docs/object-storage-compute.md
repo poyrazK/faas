@@ -167,19 +167,38 @@ any of these requirements. Write-only cleanup acknowledges deletion; it cannot
 independently read back absence. Existing cleanup and Object Lock limits still
 apply. Neither setting policy nor increasing traffic schedules a canary.
 
-Collect write evidence explicitly against the exact live candidate, then inspect
-it with the same requirements:
+Collect write evidence explicitly against the exact live candidate, then check
+it against the stored scope policy:
 
 ```sh
 gregale bindings verify my-api --deployment v12 \
   --object-storage GREGALE_S3_ASSETS --object-storage-write
 gregale bindings check my-api --deployment v12 --scope production \
-  --object-storage-require GREGALE_S3_ASSETS=read_write \
-  --require-application-ack --json
+  --release-policy --wait --json
 ```
 
-`bindings check` evaluates the flags supplied to that read-only check; use
-`bindings release-policy get` to inspect the stored policy. Server-side promotion,
+`--release-policy` resolves and pins the live deployment and its scope, verifies
+the app identity, and reads the stored policy. An enforced policy supplies storage
+operation requirements and application ACK requirements, disallows unsupported
+binding waivers, and limits verification age. Local flags can make these checks
+stricter: the shorter verification age applies (the CLI default is 10 minutes),
+ACK requirements are combined, and different storage modes for the same prefix
+combine into `read_write`. Additional local prefixes remain required. A policy
+with mode `off` applies only the local flags and is reported as disabled.
+
+The CLI confirms the same policy after every inventory evaluation, including
+blocked iterations with `--wait`. A changed revision or policy content, failed
+confirmation, invalid app/scope, or an unavailable policy API blocks the check;
+an older server cannot silently fall back to local flags. JSON includes the
+`release_policy` snapshot and `release_policy_confirmed`; the normal report fields
+show the effective requirements. A blocked check can still have a confirmed
+policy. `--timeout` bounds the entire policy-aware check, even without `--wait`.
+Waiting observes already scheduled probes and ACKs; it never schedules writes.
+
+Without `--release-policy`, `bindings check` retains its local flag behavior.
+Use `bindings release-policy get` to inspect the stored policy separately.
+Confirmation describes the last read and does not authorize a later traffic
+change. Server-side promotion,
 traffic redistribution, and existing checked rollout/recovery paths consume the
 stored requirements for each deployment gaining traffic. A missing/ambiguous
 prefix, insufficient permission, incomplete or failed stages, stale binding or
