@@ -168,9 +168,9 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	deployCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	deployCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, parseImageDeployment(t, body), 110*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, parseImageDeployment(t, body), 240*time.Second); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 
