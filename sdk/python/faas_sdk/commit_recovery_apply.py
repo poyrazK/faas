@@ -104,23 +104,49 @@ async def aapply_commit_recovery(
                                 result["reason"] = fresh.get("reason", "no_recovery_action")
                             elif item.get("action") != fresh.get("action"):
                                 result["reason"] = "action_changed"
-                            elif fresh["action"]["kind"] == "routing_replay":
+                            elif fresh["action"]["kind"] == "routing_replay" and not fresh["action"].get(
+                                "body", {}
+                            ).get("expected_accepted_at"):
                                 result["reason"] = "acceptance_guard_unavailable"
                             else:
                                 try:
-                                    key = (
-                                        "commit-recovery-"
-                                        + hashlib.sha256(
-                                            (fresh["action"]["kind"] + "\n" + fresh["action"]["url"]).encode()
-                                        ).hexdigest()
-                                    )
+                                    routing = fresh["action"]["kind"] == "routing_replay"
+                                    publication = original["acceptance"]["publication"]
+                                    identity = fresh["action"]["kind"] + "\n" + fresh["action"]["url"]
+                                    if routing:
+                                        identity += (
+                                            "\n"
+                                            + publication["source"]
+                                            + "\n"
+                                            + publication["id"]
+                                            + "\n"
+                                            + item["subscription_id"].lower()
+                                            + "\n"
+                                            + fresh["action"]["body"]["expected_accepted_at"]
+                                            + "\n"
+                                            + original.get("observed_at", "")
+                                        )
+                                    key = "commit-recovery-" + hashlib.sha256(identity.encode()).hexdigest()
                                     response = await client.get_async_httpx_client().post(
-                                        fresh["action"]["url"], headers={"Idempotency-Key": key}, follow_redirects=False
+                                        fresh["action"]["url"],
+                                        json=fresh["action"]["body"] if routing else None,
+                                        headers={"Idempotency-Key": key},
+                                        follow_redirects=False,
                                     )
                                     status = response.status_code
                                     if 200 <= status < 300:
                                         receipt = response.json()
-                                        if (
+                                        if routing:
+                                            if (
+                                                not isinstance(receipt, dict)
+                                                or receipt.get("event_source") != publication["source"]
+                                                or receipt.get("event_id") != publication["id"]
+                                                or str(receipt.get("subscription_id", "")).lower()
+                                                != item["subscription_id"].lower()
+                                                or receipt.get("state") != "pending"
+                                            ):
+                                                raise RuntimeError("routing recovery acknowledgement unavailable")
+                                        elif (
                                             not isinstance(receipt, dict)
                                             or not isinstance(receipt.get("id"), str)
                                             or not receipt["id"]

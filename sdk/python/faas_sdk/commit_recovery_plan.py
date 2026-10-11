@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import re
 from typing import Any
 from uuid import UUID
@@ -16,6 +17,19 @@ class CommitRecoveryPlanError(Exception):
     def __init__(self, plan: dict[str, Any]):
         self.plan = plan
         super().__init__("Commit recovery plan read failed; partial evidence is attached")
+
+
+def _same_acceptance(left: str, right: str) -> bool:
+    pattern = r"(.+?)(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})"
+    a, b = re.fullmatch(pattern, left), re.fullmatch(pattern, right)
+    if not a or not b:
+        return False
+    try:
+        return datetime.datetime.fromisoformat(a[1] + a[3]) == datetime.datetime.fromisoformat(b[1] + b[3]) and (
+            a[2] or ""
+        ).ljust(9, "0") == (b[2] or "").ljust(9, "0")
+    except ValueError:
+        return False
 
 
 def _eligibility(row: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +74,8 @@ def _eligibility(row: dict[str, Any]) -> dict[str, Any]:
             or body.get("event_id") != p["id"]
             or str(body.get("subscription_id", "")).lower() != row["subscription_id"].lower()
         ):
+            return skip("action_identity_mismatch")
+        if body.get("expected_accepted_at") and not _same_acceptance(body["expected_accepted_at"], p["accepted_at"]):
             return skip("action_identity_mismatch")
     elif kind in {"handler_replay", "keyed_handler_replay"}:
         suffix = "/replay" if kind == "handler_replay" else "/replay-keyed"

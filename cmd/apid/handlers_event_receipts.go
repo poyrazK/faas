@@ -153,6 +153,10 @@ func eventReceiptActions(receipt state.EventReceipt, entry state.EventReceiptRec
 		actions = append(actions, api.EventReceiptRecoveryAction{Kind: "routing_replay", Method: http.MethodPost,
 			URL:  "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/event-deliveries:replay-fanout-failure",
 			Body: &api.ReplayEventFanoutFailureRequest{EventSource: receipt.EventSource, EventID: receipt.EventID, SubscriptionID: entry.SubscriptionID}})
+		if entry.Origin == "" || entry.Origin == "acceptance" {
+			accepted := receipt.AcceptedAt
+			actions[len(actions)-1].Body.ExpectedAcceptedAt = &accepted
+		}
 	}
 	if entry.HandlerReplayMode != "" {
 		id := entry.HandlerReplayInvocationID

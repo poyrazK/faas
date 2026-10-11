@@ -919,10 +919,10 @@ bounded one-page refresh of the whole saved selection before any write; Go
 validates source ownership and saved identities without that extra refresh.
 Partial recipient coverage never proves an unseen subscriber is eligible.
 
-Only freshly validated handler, keyed-handler and dead-letter replay endpoints
-are submitted. Routing replay is skipped with `acceptance_guard_unavailable`:
-its existing write endpoint cannot atomically guard the original acceptance.
-Adding that server-side guard is required before routing apply can be enabled.
+Freshly validated handler, keyed-handler, dead-letter and acceptance-guarded
+routing replay endpoints are submitted. Routing replay requires the current
+server offer to include `expected_accepted_at` matching the original publication.
+Older servers without that offer are skipped with `acceptance_guard_unavailable`.
 The fresh check and write are separate requests, not an atomic snapshot;
 server endpoint authorization/eligibility checks still apply, and state may
 change between the requests. Do not treat client checks as a race-free lock.
@@ -939,9 +939,10 @@ Results retain the event/subscriber identities and per-item statuses:
 - `not_attempted`: the apply budget or a stopped batch left the item untouched.
 
 An unknown result stops further writes and requires inspection before retrying.
-There are no automatic retries. The helpers send the same idempotency key for
-a given replay kind and execution URL, derived as `commit-recovery-` plus the
-SHA-256 of `kind + "\n" + url`. Server idempotency retention is finite; keys do
+There are no automatic retries. Execution replay keys remain `commit-recovery-` plus SHA-256 of
+`kind + "\n" + url`. Routing keys additionally include the event source/ID,
+subscriber, acceptance timestamp and reviewed observation time so sibling
+consumers, events, and newly reviewed replay generations do not collide. Server idempotency retention is finite; keys do
 not authorize unattended retries or guarantee deduplication after expiry.
 Inspect original and recovery evidence before deciding what to do next.
 
@@ -969,3 +970,32 @@ result = await aapply_commit_recovery(
     client, source, reviewed_plan, limit=50, recipient_pages=5, timeout=120,
 )
 ```
+
+
+### Atomic acceptance guard on routing replay
+
+Selective routing replay accepts optional `expected_accepted_at`. The server
+locks the authorized receipt row and compares its exact acceptance instant in
+the same transaction that requeues the selected recipient. A replacement yields
+409 without replay history or delivery mutation; missing evidence yields 404.
+The memory store performs comparison and mutation under its mutex. This guard
+protects original acceptance snapshots; historical backfill replay continues
+through the existing unguarded path. Omitted guards preserve prior behavior.
+
+```sh
+gregale events replay CONSUMER --event-source SOURCE --event-id EVENT \
+  --subscription-id SUBSCRIPTION --expected-accepted-at ORIGINAL_ACCEPTED_AT
+```
+
+Original-recipient routing recovery offers carry the guard, and Commit apply
+requires it to match the saved publication. A plan made before guarded offers
+were available must be refreshed and reviewed again: its action body changed.
+Routing acknowledgements must match the submitted event/subscriber and report
+`pending`; missing or unreadable evidence remains `unknown`, stopping apply.
+Explicit delivery-age overrides remain outside automatic Commit recovery apply.
+
+Node requests expose `expected_accepted_at` as RFC3339 text. The Python request
+model also preserves the exact text instead of truncating nanoseconds through
+`datetime`; Go uses `*time.Time`. Python regeneration reapplies this precision
+rule. Full database and production failure qualification remains pending; static
+checks and builds do not establish transactional runtime qualification.

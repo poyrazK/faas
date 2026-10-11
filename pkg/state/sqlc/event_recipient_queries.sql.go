@@ -673,6 +673,55 @@ func (q *Queries) EventRecipientFinish(ctx context.Context, db DBTX, arg EventRe
 	return result.RowsAffected(), nil
 }
 
+const eventRecipientGuardedReplayReceipt = `-- name: EventRecipientGuardedReplayReceipt :one
+SELECT o.id, o.created_at, o.state, o.recipient_claims,
+       (o.recipient_progress -> $1::text)::jsonb AS progress,
+       EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) r(recipient)
+         WHERE r.recipient->>'app_id' = $2::text
+           AND r.recipient->>'id' = $1::text) AS recipient_found
+FROM event_fanout_outbox o
+WHERE o.account_id = $3::uuid AND o.source = $4::text
+  AND o.event_id = $5::text
+FOR UPDATE OF o
+`
+
+type EventRecipientGuardedReplayReceiptParams struct {
+	SubscriptionID string
+	AppID          string
+	AccountID      pgtype.UUID
+	EventSource    string
+	EventID        string
+}
+
+type EventRecipientGuardedReplayReceiptRow struct {
+	ID              int64
+	CreatedAt       pgtype.Timestamptz
+	State           string
+	RecipientClaims bool
+	Progress        []byte
+	RecipientFound  bool
+}
+
+func (q *Queries) EventRecipientGuardedReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientGuardedReplayReceiptParams) (EventRecipientGuardedReplayReceiptRow, error) {
+	row := db.QueryRow(ctx, eventRecipientGuardedReplayReceipt,
+		arg.SubscriptionID,
+		arg.AppID,
+		arg.AccountID,
+		arg.EventSource,
+		arg.EventID,
+	)
+	var i EventRecipientGuardedReplayReceiptRow
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.State,
+		&i.RecipientClaims,
+		&i.Progress,
+		&i.RecipientFound,
+	)
+	return i, err
+}
+
 const eventRecipientInitializeReceipt = `-- name: EventRecipientInitializeReceipt :execrows
 UPDATE event_fanout_outbox
 SET recipient_claims = true, claim_token = NULL, lease_until = NULL

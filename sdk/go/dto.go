@@ -396,3 +396,6 @@ type CommitRecoveryPlanAction = api.CommitRecoveryPlanAction
 
 type CommitRecoveryApplyResult = api.CommitRecoveryApplyResult
 type CommitRecoveryApplyItem = api.CommitRecoveryApplyItem
+
+type ReplayEventFanoutFailureRequest = api.ReplayEventFanoutFailureRequest
+type ReplayEventFanoutFailureResponse = api.ReplayEventFanoutFailureResponse

@@ -16,6 +16,13 @@ export class CommitRecoveryPlanError extends Error {
   }
 }
 
+function sameAcceptance(left: string, right: string): boolean {
+  const pattern = /^(.+?)(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})$/;
+  const a = pattern.exec(left), b = pattern.exec(right);
+  if (!a || !b) return false;
+  const instant = Date.parse(a[1]! + a[3]!);
+  return Number.isFinite(instant) && instant === Date.parse(b[1]! + b[3]!) && (a[2] ?? '').padEnd(9, '0') === (b[2] ?? '').padEnd(9, '0');
+}
 function eligibility(row: CommitDeliveryReportSubscriber): Pick<CommitRecoveryPlanItem, 'status' | 'reason' | 'action'> {
   const skip = (reason: string): Pick<CommitRecoveryPlanItem, 'status' | 'reason'> => ({ status: 'skipped', reason });
   if (row.status === 'not_targeted') return skip('not_targeted');
@@ -40,6 +47,7 @@ function eligibility(row: CommitDeliveryReportSubscriber): Pick<CommitRecoveryPl
       const b = action.body;
       if (!slug || action.url !== `/v1/apps/${r.app_slug}/event-deliveries:replay-fanout-failure` || !b || b.allow_expired
         || b.event_source !== row.publication.source || b.event_id !== row.publication.id || (typeof b.subscription_id === 'string' ? b.subscription_id.toLowerCase() : '') !== row.subscription_id.toLowerCase()) return skip('action_identity_mismatch');
+      if (b.expected_accepted_at && !sameAcceptance(b.expected_accepted_at, row.publication.accepted_at)) return skip('action_identity_mismatch');
       break;
     }
     case 'handler_replay': case 'keyed_handler_replay': {

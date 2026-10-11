@@ -313,6 +313,7 @@ def regen(overwrite: bool = True) -> None:
 
         _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
         _patch_generator_bugs(OUT / "faas_sdk")
+        _preserve_routing_replay_guard_precision(OUT / "faas_sdk")
 
         # Preserve the previous inline request model import after naming the schema.
         models = OUT / "faas_sdk" / "models"
@@ -1134,6 +1135,17 @@ def _canonicalise_to_head(
         )
     return reconciled
 
+
+
+def _preserve_routing_replay_guard_precision(package: Path) -> None:
+    """Keep a receipt guard's RFC3339 text intact, including nanosecond precision."""
+    path = package / "models" / "replay_event_fanout_failure_request.py"
+    text = path.read_text()
+    text = text.replace("import datetime\n", "")
+    text = text.replace("datetime.datetime | Unset", "str | Unset")
+    text = text.replace("self.expected_accepted_at.isoformat()", "self.expected_accepted_at")
+    text = text.replace("datetime.datetime.fromisoformat(_expected_accepted_at)", "_expected_accepted_at")
+    path.write_text(text)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])

@@ -1034,12 +1034,22 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context
 	return m.ReplayFailedPublishedEventRecipientWithAgeOverride(ctx, accountID, appID, eventSource, eventID, subscriptionID, false)
 }
 func (m *MemStore) ReplayFailedPublishedEventRecipientWithAgeOverride(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool) error {
+	return m.replayFailedPublishedEventRecipient(ctx, accountID, appID, eventSource, eventID, subscriptionID, allowExpired, nil)
+}
+
+func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expected *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, work := range m.eventFanout {
+	for key, work := range m.eventFanout {
+		if expected != nil && key != canonicalMemUUID(accountID)+"\x00"+eventSource+"\x00"+eventID {
+			continue
+		}
 		var event publishedEventIdentity
 		if json.Unmarshal(work.Payload, &event) != nil || event.ID != eventID || event.Source != eventSource {
 			continue
+		}
+		if expected != nil && !work.CreatedAt.Equal(*expected) {
+			return ErrEventReplayAcceptanceChanged
 		}
 		var replayRecipient PublishedEventRecipient
 		var recipientFound bool
@@ -1053,6 +1063,7 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientWithAgeOverride(ctx contex
 		if !recipientFound {
 			continue
 		}
+
 		progress, failed := work.RecipientProgress[subscriptionID]
 		if !failed || progress.State != PublishedEventRecipientFailed {
 			return ErrNotFound

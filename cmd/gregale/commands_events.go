@@ -191,6 +191,7 @@ func cmdEventsReplayRetryableFanoutFailures(args []string) int {
 func cmdEventsReplayFanoutFailure(args []string) int {
 	flags, positional := splitArgsForFlags(args, "allow-expired")
 	fs := newFlagSet("events replay", flag.ContinueOnError)
+	expected := fs.String("expected-accepted-at", "", "pin the original receipt acceptance timestamp")
 	allowExpired := fs.Bool("allow-expired", false, "explicitly bypass delivery age for this replay generation")
 	eventID := fs.String("event-id", "", "published event id from events deliveries")
 	eventSource := fs.String("event-source", "", "published event source from events deliveries")
@@ -207,8 +208,12 @@ func cmdEventsReplayFanoutFailure(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	guard, err := api.ParseAppEventAcceptanceGuard(*expected)
+	if err != nil {
+		return printErr("Invalid acceptance guard", err)
+	}
 	resp, err := client.ReplayEventFanoutFailure(context.Background(), positional[0], api.ReplayEventFanoutFailureRequest{
-		AllowExpired: *allowExpired, EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
+		ExpectedAcceptedAt: guard.ExpectedAcceptedAt, AllowExpired: *allowExpired, EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
 		SubscriptionID: strings.TrimSpace(*subscriptionID),
 	})
 	if err != nil {

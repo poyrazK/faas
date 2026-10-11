@@ -364,3 +364,14 @@ JOIN apps a ON a.id=s.app_id AND a.account_id=o.account_id
 WHERE s.app_id=sqlc.arg(app_id)::uuid AND (sqlc.arg(event_source)::text='' OR o.source=sqlc.arg(event_source)::text) AND (sqlc.arg(event_id)::text='' OR o.event_id=sqlc.arg(event_id)::text)
  AND (sqlc.arg(subscription_id)::text='' OR s.subscription_id=sqlc.arg(subscription_id)::text)
 ORDER BY s.subscription_id;
+
+-- name: EventRecipientGuardedReplayReceipt :one
+SELECT o.id, o.created_at, o.state, o.recipient_claims,
+       (o.recipient_progress -> sqlc.arg(subscription_id)::text)::jsonb AS progress,
+       EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) r(recipient)
+         WHERE r.recipient->>'app_id' = sqlc.arg(app_id)::text
+           AND r.recipient->>'id' = sqlc.arg(subscription_id)::text) AS recipient_found
+FROM event_fanout_outbox o
+WHERE o.account_id = sqlc.arg(account_id)::uuid AND o.source = sqlc.arg(event_source)::text
+  AND o.event_id = sqlc.arg(event_id)::text
+FOR UPDATE OF o;

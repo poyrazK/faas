@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // CommitRecoveryApplyResult describes attempts, never business-effect completion.
@@ -26,7 +27,7 @@ type CommitRecoveryApplyItem struct {
 }
 
 // ApplyCommitRecovery submits only reviewed, freshly revalidated execution recovery actions.
-// Routing actions lack an atomic acceptance guard and are deliberately skipped.
+// Routing actions require the precise acceptance guard in the fresh server offer.
 // Ambiguous writes stop the batch without retrying. limit bounds reviewed eligible items.
 func (c *Client) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecoveryPlan, limit, pages int) (CommitRecoveryApplyResult, error) {
 	out := CommitRecoveryApplyResult{SourceID: reviewed.Report.SourceID, Items: []CommitRecoveryApplyItem{}, Counts: map[string]int{}}
@@ -100,18 +101,37 @@ func (c *Client) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecover
 							result.Reason = fresh.Reason
 						} else if !sameCommitRecoveryAction(item.Action, fresh.Action) {
 							result.Reason = "action_changed"
-						} else if fresh.Action.Kind == "routing_replay" {
+						} else if fresh.Action.Kind == "routing_replay" && !commitRoutingGuardPresent(fresh.Action) {
 							result.Reason = "acceptance_guard_unavailable"
 						} else {
-							// Only execution-scoped paths validated by the fresh planner reach this write.
-							key := fmt.Sprintf("commit-recovery-%x", sha256.Sum256([]byte(fresh.Action.Kind+"\n"+fresh.Action.URL)))
+							// Only fresh planner-validated guarded routing or execution paths reach this write.
+							keyIdentity := fresh.Action.Kind + "\n" + fresh.Action.URL
+							var body any
+							if fresh.Action.Kind == "routing_replay" {
+								body = fresh.Action.Body
+								keyIdentity += "\n" + original.Acceptance.Publication.Source + "\n" + original.Acceptance.Publication.ID + "\n" + strings.ToLower(item.SubscriptionID) + "\n" + original.Acceptance.Publication.AcceptedAt.UTC().Format(time.RFC3339Nano)
+								if original.ObservedAt != nil {
+									keyIdentity += "\n" + original.ObservedAt.UTC().Format(time.RFC3339Nano)
+								}
+							}
+							key := fmt.Sprintf("commit-recovery-%x", sha256.Sum256([]byte(keyIdentity)))
 							var response json.RawMessage
-							writeErr := c.doWithIdempotencyKey(ctx, "POST", fresh.Action.URL, nil, &response, key)
+							writeErr := c.doWithIdempotencyKey(ctx, "POST", fresh.Action.URL, body, &response, key)
 							if writeErr == nil {
 								var receipt struct {
 									ID string `json:"id"`
 								}
-								if json.Unmarshal(response, &receipt) != nil || receipt.ID == "" {
+								if fresh.Action.Kind == "routing_replay" {
+									var routed struct {
+										EventSource    string `json:"event_source"`
+										EventID        string `json:"event_id"`
+										SubscriptionID string `json:"subscription_id"`
+										State          string `json:"state"`
+									}
+									if json.Unmarshal(response, &routed) != nil || routed.EventSource != original.Acceptance.Publication.Source || routed.EventID != original.Acceptance.Publication.ID || !strings.EqualFold(routed.SubscriptionID, item.SubscriptionID) || routed.State != "pending" {
+										writeErr = fmt.Errorf("routing recovery acknowledgement is unavailable")
+									}
+								} else if json.Unmarshal(response, &receipt) != nil || receipt.ID == "" {
 									writeErr = fmt.Errorf("recovery acknowledgement is unavailable")
 								}
 							}
@@ -159,6 +179,13 @@ func sameCommitRecoveryAction(a, b *CommitRecoveryPlanAction) bool {
 		}
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+func commitRoutingGuardPresent(action *CommitRecoveryPlanAction) bool {
+	var body struct {
+		ExpectedAcceptedAt *time.Time `json:"expected_accepted_at"`
+	}
+	return json.Unmarshal(action.Body, &body) == nil && body.ExpectedAcceptedAt != nil && !body.ExpectedAcceptedAt.IsZero()
 }
 
 const CommitRecoveryApplyMax = 50

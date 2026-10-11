@@ -1013,7 +1013,7 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max history rows (1..200)", Value: "N"},
 			}},
-			{Name: "replay", Short: "Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "allow-expired", Bool: true, Short: "explicitly bypass captured delivery age"},
+			{Name: "replay", Short: "Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "guard original acceptance in replay transaction"}, {Name: "allow-expired", Bool: true, Short: "explicitly bypass captured delivery age"},
 				{Name: "event-id", Short: "published event id", Req: true, Value: "ID"},
 				{Name: "event-source", Short: "published event source", Req: true, Value: "SOURCE"},
 				{Name: "subscription-id", Short: "failed subscription id", Req: true, Value: "ID"},

@@ -22,7 +22,7 @@ function canonical(value: unknown): string {
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
   return JSON.stringify(value ?? null);
 }
-/** Sequential recovery; no automatic retries, routing writes, or saved URL dispatch. */
+/** Sequential recovery; no automatic retries, unguarded routing writes, or saved URL dispatch. */
 export async function applyCommitRecovery(source: string, reviewed: CommitRecoveryPlan,
   options: { limit?: number; recipientPages?: number; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<CommitRecoveryApplyResult> {
   const { limit = 50, recipientPages = 1, timeoutMs = 120000, signal } = options;
@@ -63,16 +63,23 @@ export async function applyCommitRecovery(source: string, reviewed: CommitRecove
               if (!fresh) result.reason = current.report.items[0]?.evidence_status ?? 'evidence_unavailable';
               else if (fresh.status !== 'eligible') result.reason = fresh.reason;
               else if (canonical(item.action) !== canonical(fresh.action)) result.reason = 'action_changed';
-              else if (fresh.action?.kind === 'routing_replay') result.reason = 'acceptance_guard_unavailable';
+              else if (fresh.action?.kind === 'routing_replay' && !fresh.action.body?.expected_accepted_at) result.reason = 'acceptance_guard_unavailable';
               else if (fresh.action) {
                 // Only fresh planner-validated execution-scoped paths are dispatched.
-                const idempotencyKey = 'commit-recovery-' + createHash('sha256').update(fresh.action.kind + '\n' + fresh.action.url).digest('hex');
-                const post = request<unknown>(OpenAPI, { method: 'POST', url: fresh.action.url, headers: { 'Idempotency-Key': idempotencyKey } });
+                let identity = fresh.action.kind + '\n' + fresh.action.url;
+                const routing = fresh.action.kind === 'routing_replay';
+                const publication = original.acceptance.publication!;
+                if (routing) identity += '\n' + publication.source + '\n' + publication.id + '\n' + item.subscription_id.toLowerCase() + '\n' + fresh.action.body!.expected_accepted_at + '\n' + (original.observed_at ?? '');
+                const idempotencyKey = 'commit-recovery-' + createHash('sha256').update(identity).digest('hex');
+                const post = request<unknown>(OpenAPI, { method: 'POST', url: fresh.action.url, body: routing ? fresh.action.body : undefined, mediaType: routing ? 'application/json' : undefined, headers: { 'Idempotency-Key': idempotencyKey } });
                 const cancel = () => post.cancel(); controller.signal.addEventListener('abort', cancel, { once: true });
                 try {
                   if (controller.signal.aborted) { post.cancel(); throw new Error('apply interrupted'); }
                   const response = await post;
-                  if (!response || typeof response !== 'object' || typeof (response as { id?: unknown }).id !== 'string' || !(response as { id: string }).id) throw new Error('recovery acknowledgement unavailable');
+                  if (routing) {
+                    const ack = response as { event_source?: string; event_id?: string; subscription_id?: string; state?: string } | undefined;
+                    if (!ack || ack.event_source !== publication.source || ack.event_id !== publication.id || ack.subscription_id?.toLowerCase() !== item.subscription_id.toLowerCase() || ack.state !== 'pending') throw new Error('routing recovery acknowledgement unavailable');
+                  } else if (!response || typeof response !== 'object' || typeof (response as { id?: unknown }).id !== 'string' || !(response as { id: string }).id) throw new Error('recovery acknowledgement unavailable');
                   result.result = response; result.status = 'queued'; delete result.reason;
                 } catch (error) {
                   const status = (error as { status?: number }).status;

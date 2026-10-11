@@ -449,10 +449,11 @@ type EventDeliveryListResponse struct {
 // ReplayEventFanoutFailureRequest identifies one failed recipient by the
 // published event's scoped identity and its acceptance-time subscription.
 type ReplayEventFanoutFailureRequest struct {
-	AllowExpired   bool   `json:"allow_expired,omitempty"`
-	EventID        string `json:"event_id"`
-	EventSource    string `json:"event_source"`
-	SubscriptionID string `json:"subscription_id"`
+	ExpectedAcceptedAt *time.Time `json:"expected_accepted_at,omitempty"`
+	AllowExpired       bool       `json:"allow_expired,omitempty"`
+	EventID            string     `json:"event_id"`
+	EventSource        string     `json:"event_source"`
+	SubscriptionID     string     `json:"subscription_id"`
 }
 
 // ReplayEventFanoutFailureResponse confirms that one recipient was returned

@@ -362,6 +362,10 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrValidation("event_id, event_source and subscription_id are required"))
 		return
 	}
+	if err := (api.AppEventAcceptanceGuard{ExpectedAcceptedAt: req.ExpectedAcceptedAt}).Validate(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	store, ok := s.store.(state.EventFanoutReplayStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
@@ -369,6 +373,12 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 	}
 	err := s.applyEventAgeReplay(r, store, acct.ID, app.ID, req)
 	switch {
+	case errors.Is(err, state.ErrEventReplayAcceptanceChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event acceptance changed", "the guarded event acceptance was replaced; no recipient was requeued"))
+		return
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.ErrValidation("guarded replay is unavailable or the request is invalid"))
+		return
 	case errors.Is(err, state.ErrEventDeliveryExpired):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
 		return
