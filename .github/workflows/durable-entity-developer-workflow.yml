@@ -86,7 +86,7 @@ jobs:
             sleep 30
             if kill -0 "$api_check_pid" 2>/dev/null; then
               echo 'API race verification is still active'
-              ps -eo comm,rss --sort=-rss | head -6
+              ps -eo comm,rss --sort=-rss | sed -n '1,6p'
             fi
           done
           wait "$api_check_pid"
