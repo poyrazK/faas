@@ -2267,6 +2267,16 @@ from .operation_workflow_readiness_subscription_request_events_item import (
 )
 from .operation_workflow_readiness_subscription_status import OperationWorkflowReadinessSubscriptionStatus
 from .operation_workflow_readiness_subscriptions_response import OperationWorkflowReadinessSubscriptionsResponse
+from .operation_workflow_readiness_verification_change import OperationWorkflowReadinessVerificationChange
+from .operation_workflow_readiness_verification_change_before_status import (
+    OperationWorkflowReadinessVerificationChangeBeforeStatus,
+)
+from .operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
+from .operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
+from .operation_workflow_readiness_verification_watch_item import OperationWorkflowReadinessVerificationWatchItem
+from .operation_workflow_readiness_verification_watch_item_status import (
+    OperationWorkflowReadinessVerificationWatchItemStatus,
+)
 from .operation_workflow_reconciliation import OperationWorkflowReconciliation
 from .operation_workflow_reconciliation_payload import OperationWorkflowReconciliationPayload
 from .operation_workflow_reconciliation_payload_kind import OperationWorkflowReconciliationPayloadKind
@@ -5829,6 +5839,12 @@ __all__ = (
     "OperationWorkflowReadinessSubscriptionRequestEventsItem",
     "OperationWorkflowReadinessSubscriptionsResponse",
     "OperationWorkflowReadinessSubscriptionStatus",
+    "OperationWorkflowReadinessVerificationChange",
+    "OperationWorkflowReadinessVerificationChangeBeforeStatus",
+    "OperationWorkflowReadinessVerificationEvent",
+    "OperationWorkflowReadinessVerificationWatch",
+    "OperationWorkflowReadinessVerificationWatchItem",
+    "OperationWorkflowReadinessVerificationWatchItemStatus",
     "OperationWorkflowReconciliation",
     "OperationWorkflowReconciliationPayload",
     "OperationWorkflowReconciliationPayloadKind",

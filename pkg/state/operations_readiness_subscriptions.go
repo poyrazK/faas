@@ -22,15 +22,16 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
-	Subscription   api.OperationWorkflowReadinessSubscription `json:"subscription"`
-	Baseline       api.OperationWorkflowReadinessSnapshot     `json:"baseline"`
-	Seen           map[string]string                          `json:"seen"`
-	Account        string                                     `json:"-"`
-	Tenant         string                                     `json:"-"`
-	Operator       bool                                       `json:"-"`
-	Lease          string                                     `json:"-"`
-	LeaseUntil     time.Time                                  `json:"-"`
-	NextEvaluation time.Time                                  `json:"-"`
+	VerificationCursor int64                                      `json:"verification_cursor,omitempty"`
+	Subscription       api.OperationWorkflowReadinessSubscription `json:"subscription"`
+	Baseline           api.OperationWorkflowReadinessSnapshot     `json:"baseline"`
+	Seen               map[string]string                          `json:"seen"`
+	Account            string                                     `json:"-"`
+	Tenant             string                                     `json:"-"`
+	Operator           bool                                       `json:"-"`
+	Lease              string                                     `json:"-"`
+	LeaseUntil         time.Time                                  `json:"-"`
+	NextEvaluation     time.Time                                  `json:"-"`
 }
 type readinessSubscriptionBackend interface {
 	OperationByID(context.Context, string, string, string) (Operation, error)
@@ -43,7 +44,7 @@ type readinessSubscriptionBackend interface {
 	readReadinessInbox(context.Context, string, string, string, string, string, int64, int, bool) (api.OperationWorkflowReadinessInboxResponse, error)
 	deleteReadinessSubscription(context.Context, string, string, string, string, string, bool) error
 	claimReadinessSubscriptions(context.Context) ([]readinessSubscriptionRecord, error)
-	finishReadinessSubscription(context.Context, readinessSubscriptionRecord, []api.OperationWorkflowReadinessNotification) error
+	finishReadinessSubscription(context.Context, readinessSubscriptionRecord, []api.OperationWorkflowReadinessNotification, []readinessVerificationUpdate) error
 }
 
 func readinessSubscriptionOptions(s api.OperationWorkflowReadinessSubscription) api.OperationWorkflowReadinessQueueOptions {
@@ -316,6 +317,7 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 			return completed, err
 		}
 		check, cancel := context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		watchUpdates, watchErr := evaluateReadinessVerificationWatches(check, store, &record)
 		notifications, evaluationErr := evaluateReadinessSubscription(check, store, &record)
 		cancel()
 		if evaluationErr != nil {
@@ -325,9 +327,12 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 			}
 			record.Seen["evaluation"] = "unavailable"
 		}
+		if watchErr != nil {
+			record.Subscription.Status = "retrying"
+		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)
 		finish, cancel := context.WithTimeout(ctx, api.OperationStreamReleaseTimeout)
-		err = store.finishReadinessSubscription(finish, record, notifications)
+		err = store.finishReadinessSubscription(finish, record, notifications, watchUpdates)
 		cancel()
 		if err != nil {
 			return completed, err

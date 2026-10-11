@@ -1183,6 +1183,10 @@ export type { OperationWorkflowReadinessSnapshotEntry } from './models/Operation
 export type { OperationWorkflowReadinessSubscription } from './models/OperationWorkflowReadinessSubscription.js';
 export type { OperationWorkflowReadinessSubscriptionRequest } from './models/OperationWorkflowReadinessSubscriptionRequest.js';
 export type { OperationWorkflowReadinessSubscriptionsResponse } from './models/OperationWorkflowReadinessSubscriptionsResponse.js';
+export type { OperationWorkflowReadinessVerificationChange } from './models/OperationWorkflowReadinessVerificationChange.js';
+export type { OperationWorkflowReadinessVerificationEvent } from './models/OperationWorkflowReadinessVerificationEvent.js';
+export type { OperationWorkflowReadinessVerificationWatch } from './models/OperationWorkflowReadinessVerificationWatch.js';
+export type { OperationWorkflowReadinessVerificationWatchItem } from './models/OperationWorkflowReadinessVerificationWatchItem.js';
 export type { OperationWorkflowReconciliation } from './models/OperationWorkflowReconciliation.js';
 export type { OperationWorkflowReconciliationPayload } from './models/OperationWorkflowReconciliationPayload.js';
 export type { OperationWorkflowRelatedInstance } from './models/OperationWorkflowRelatedInstance.js';

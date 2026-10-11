@@ -37,14 +37,16 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
-	Reminder     *OperationWorkflowReadinessDueReminder  `json:"reminder,omitempty"`
-	Coordination *OperationWorkflowReadinessCoordination `json:"coordination,omitempty"`
-	ID           string                                  `json:"id"`
-	Sequence     int64                                   `json:"sequence"`
-	Kind         string                                  `json:"kind"`
-	CreatedAt    time.Time                               `json:"created_at"`
-	Explanation  string                                  `json:"explanation"`
-	Change       *OperationWorkflowReadinessChange       `json:"change,omitempty"`
+	VerificationWatch *OperationWorkflowReadinessVerificationWatch `json:"verification_watch,omitempty"`
+	Verification      *OperationWorkflowReadinessVerificationEvent `json:"verification,omitempty"`
+	Reminder          *OperationWorkflowReadinessDueReminder       `json:"reminder,omitempty"`
+	Coordination      *OperationWorkflowReadinessCoordination      `json:"coordination,omitempty"`
+	ID                string                                       `json:"id"`
+	Sequence          int64                                        `json:"sequence"`
+	Kind              string                                       `json:"kind"`
+	CreatedAt         time.Time                                    `json:"created_at"`
+	Explanation       string                                       `json:"explanation"`
+	Change            *OperationWorkflowReadinessChange            `json:"change,omitempty"`
 }
 type OperationWorkflowReadinessInboxResponse struct {
 	Subscription   OperationWorkflowReadinessSubscription   `json:"subscription"`
@@ -144,11 +146,13 @@ type OperationWorkflowReadinessDueReminder struct {
 
 // Completion closes coordination only; outcome is an operator/customer assertion.
 type OperationWorkflowReadinessCompletionRequest struct {
+	WatchVerification    bool     `json:"watch_verification,omitempty"`
 	Outcome              string   `json:"outcome"`
 	Note                 string   `json:"note"`
 	EvidenceOperationIDs []string `json:"evidence_operation_ids"`
 }
 type OperationWorkflowReadinessCompletion struct {
+	WatchVerification    bool                                         `json:"watch_verification,omitempty"`
 	Outcome              string                                       `json:"outcome"`
 	Note                 string                                       `json:"note"`
 	EvidenceOperationIDs []string                                     `json:"evidence_operation_ids"`
@@ -168,4 +172,38 @@ type OperationWorkflowReadinessCompletionEvidence struct {
 	RemainingReasons         []string  `json:"remaining_reasons"`
 	PendingVerificationCount int64     `json:"pending_verification_count"`
 	Warnings                 []string  `json:"warnings"`
+}
+
+// Watches follow captured resolution identities within the source inbox retention window.
+type OperationWorkflowReadinessVerificationWatch struct {
+	ID                  string                                            `json:"id"`
+	Revision            int64                                             `json:"revision"`
+	StartedAt           time.Time                                         `json:"started_at"`
+	EvaluatedAt         time.Time                                         `json:"evaluated_at"`
+	StateRevision       int64                                             `json:"state_revision"`
+	ContractVersion     int                                               `json:"contract_version"`
+	PendingCountAtStart int64                                             `json:"pending_count_at_start"`
+	CoverageIncomplete  bool                                              `json:"coverage_incomplete"`
+	Items               []OperationWorkflowReadinessVerificationWatchItem `json:"items"`
+}
+type OperationWorkflowReadinessVerificationWatchItem struct {
+	BlockerActive        bool                                    `json:"blocker_active"`
+	Key                  string                                  `json:"key"`
+	Status               string                                  `json:"status"`
+	Explanation          string                                  `json:"explanation"`
+	ReportingRevision    int64                                   `json:"reporting_revision,omitempty"`
+	ReportingOperationID string                                  `json:"reporting_operation_id,omitempty"`
+	Proof                OperationWorkflowResolutionVerification `json:"proof"`
+}
+type OperationWorkflowReadinessVerificationChange struct {
+	BeforeStatus string                                          `json:"before_status"`
+	After        OperationWorkflowReadinessVerificationWatchItem `json:"after"`
+}
+type OperationWorkflowReadinessVerificationEvent struct {
+	WatchID              string                                         `json:"watch_id"`
+	SourceNotificationID string                                         `json:"source_notification_id"`
+	SourceSequence       int64                                          `json:"source_sequence"`
+	CheckedAt            time.Time                                      `json:"checked_at"`
+	Source               OperationWorkflowReadinessSnapshotEntry        `json:"source"`
+	Changes              []OperationWorkflowReadinessVerificationChange `json:"changes"`
 }

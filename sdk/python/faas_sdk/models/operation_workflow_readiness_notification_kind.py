@@ -1,12 +1,23 @@
 from typing import Literal
 
-OperationWorkflowReadinessNotificationKind = Literal["newly_blocked", "newly_ready", "reassigned", "unavailable"]
+OperationWorkflowReadinessNotificationKind = Literal[
+    "newly_blocked",
+    "newly_ready",
+    "reassigned",
+    "unavailable",
+    "verification_invalidated",
+    "verification_unavailable",
+    "verification_verified",
+]
 
 OPERATION_WORKFLOW_READINESS_NOTIFICATION_KIND_VALUES: set[OperationWorkflowReadinessNotificationKind] = {
     "newly_blocked",
     "newly_ready",
     "reassigned",
     "unavailable",
+    "verification_invalidated",
+    "verification_unavailable",
+    "verification_verified",
 }
 
 

@@ -130,13 +130,26 @@ func (m *MemStore) claimReadinessSubscriptions(_ context.Context) ([]readinessSu
 	}
 	return out, nil
 }
-func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification) error {
+func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessVerificationUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
 	old, ok := data.readinessSubscriptions[r.Subscription.ID]
 	if !ok || old.Lease != r.Lease {
 		return nil
+	}
+	for _, u := range watchUpdates {
+		for i, n := range data.readinessInbox[r.Subscription.ID] {
+			if n.Sequence != u.Sequence {
+				continue
+			}
+			updated, published, ok := applyReadinessVerificationUpdate(&r, n, u)
+			if ok {
+				data.readinessInbox[r.Subscription.ID][i] = updated
+				notifications = append(notifications, published...)
+			}
+			break
+		}
 	}
 	r.Lease = ""
 	r.LeaseUntil = time.Time{}

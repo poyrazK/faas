@@ -11,6 +11,7 @@ from ..models.operation_workflow_readiness_completion_outcome import (
     OperationWorkflowReadinessCompletionOutcome,
     check_operation_workflow_readiness_completion_outcome,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_completion_evidence import OperationWorkflowReadinessCompletionEvidence
@@ -44,6 +45,9 @@ class OperationWorkflowReadinessCompletion:
     evidence: OperationWorkflowReadinessCompletionEvidence
     """Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
     after this observation. Explicit boundaries never imply readiness."""
+    watch_verification: bool | Unset = UNSET
+    """OperationWorkflowReadinessCompletion.watch_verification. Opt in at completion to watch up to 16 currently
+    pending saved resolutions; requires comparable current pending evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome: str = self.outcome
@@ -61,6 +65,8 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = self.evidence.to_dict()
 
+        watch_verification = self.watch_verification
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -73,6 +79,8 @@ class OperationWorkflowReadinessCompletion:
                 "evidence": evidence,
             }
         )
+        if watch_verification is not UNSET:
+            field_dict["watch_verification"] = watch_verification
 
         return field_dict
 
@@ -100,6 +108,8 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = OperationWorkflowReadinessCompletionEvidence.from_dict(d.pop("evidence"))
 
+        watch_verification = d.pop("watch_verification", UNSET)
+
         operation_workflow_readiness_completion = cls(
             outcome=outcome,
             note=note,
@@ -107,6 +117,7 @@ class OperationWorkflowReadinessCompletion:
             completed_at=completed_at,
             completed_by=completed_by,
             evidence=evidence,
+            watch_verification=watch_verification,
         )
 
         return operation_workflow_readiness_completion

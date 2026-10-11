@@ -74924,6 +74924,10 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        verification_watch:
+          $ref: '#/components/schemas/OperationWorkflowReadinessVerificationWatch'
+        verification:
+          $ref: '#/components/schemas/OperationWorkflowReadinessVerificationEvent'
         coordination:
           $ref: '#/components/schemas/OperationWorkflowReadinessCoordination'
         id:
@@ -74943,6 +74947,9 @@ components:
           - newly_blocked
           - reassigned
           - unavailable
+          - verification_verified
+          - verification_invalidated
+          - verification_unavailable
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -75113,6 +75120,9 @@ components:
         Closing does not prove business resolution.
       additionalProperties: false
       properties:
+        watch_verification:
+          type: boolean
+          description: OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16 currently pending saved resolutions; requires comparable current pending evidence.
         outcome:
           type: string
           description: OperationWorkflowReadinessCompletionRequest.outcome. Retained follow-up completion value; never changes
@@ -75146,6 +75156,9 @@ components:
         check. Retained with the original notification.
       additionalProperties: false
       properties:
+        watch_verification:
+          type: boolean
+          description: OperationWorkflowReadinessCompletion.watch_verification. Opt in at completion to watch up to 16 currently pending saved resolutions; requires comparable current pending evidence.
         outcome:
           type: string
           description: OperationWorkflowReadinessCompletion.outcome. Retained follow-up completion value; never changes application
@@ -75244,6 +75257,182 @@ components:
       - remaining_reasons
       - pending_verification_count
       - warnings
+
+    OperationWorkflowReadinessVerificationWatch:
+      type: object
+      description: Opt-in watch of captured resolution identities. Verified proofs remain observed for later loss or explicit
+        blocker reopening; partial coverage and source inbox retention remain explicit.
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatch.id. Server-managed advisory verification observation for the
+            retained source completion.
+          format: uuid
+        revision:
+          type: integer
+          description: OperationWorkflowReadinessVerificationWatch.revision. Server-managed advisory verification observation
+            for the retained source completion.
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        started_at:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatch.started_at. Server-managed advisory verification observation
+            for the retained source completion.
+          format: date-time
+        evaluated_at:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatch.evaluated_at. Server-managed advisory verification observation
+            for the retained source completion.
+          format: date-time
+        state_revision:
+          type: integer
+          description: OperationWorkflowReadinessVerificationWatch.state_revision. Server-managed advisory verification observation
+            for the retained source completion.
+          format: int64
+          minimum: 1
+        contract_version:
+          type: integer
+          description: OperationWorkflowReadinessVerificationWatch.contract_version. Server-managed advisory verification observation
+            for the retained source completion.
+          minimum: 1
+        pending_count_at_start:
+          type: integer
+          description: OperationWorkflowReadinessVerificationWatch.pending_count_at_start. Server-managed advisory verification
+            observation for the retained source completion.
+          format: int64
+          minimum: 1
+        coverage_incomplete:
+          type: boolean
+          description: OperationWorkflowReadinessVerificationWatch.coverage_incomplete. Server-managed advisory verification observation
+            for the retained source completion.
+        items:
+          type: array
+          description: OperationWorkflowReadinessVerificationWatch.items. Server-managed advisory verification observation for
+            the retained source completion.
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessVerificationWatchItem'
+      required:
+      - id
+      - revision
+      - started_at
+      - evaluated_at
+      - state_revision
+      - contract_version
+      - pending_count_at_start
+      - coverage_incomplete
+      - items
+    OperationWorkflowReadinessVerificationWatchItem:
+      type: object
+      description: Saved resolution identity and latest watch disposition. Missing proof is unavailable; invalidated means an
+        explicit later application report reopened the blocker. Proof is the last retained observation, not current readiness.
+      additionalProperties: false
+      properties:
+        blocker_active:
+          type: boolean
+          description: OperationWorkflowReadinessVerificationWatchItem.blocker_active. Whether the blocker was present at the last comparable observation; an existing active blocker is not a new reopening.
+        key:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatchItem.key. Server-managed advisory verification observation for
+            the retained source completion.
+          pattern: ^[a-f0-9]{64}$
+        status:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatchItem.status. Server-managed advisory verification observation
+            for the retained source completion.
+          enum:
+          - awaiting_verification
+          - verified
+          - invalidated
+          - unavailable
+        explanation:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatchItem.explanation. Server-managed advisory verification observation
+            for the retained source completion.
+        reporting_revision:
+          type: integer
+          format: int64
+          description: OperationWorkflowReadinessVerificationWatchItem.reporting_revision. Exact state-report revision observed for the reporting or invalidating Operation.
+        reporting_operation_id:
+          type: string
+          description: OperationWorkflowReadinessVerificationWatchItem.reporting_operation_id. Server-managed advisory verification
+            observation for the retained source completion.
+          format: uuid
+        proof:
+          $ref: '#/components/schemas/OperationWorkflowResolutionVerification'
+      required:
+      - blocker_active
+      - key
+      - status
+      - explanation
+      - proof
+    OperationWorkflowReadinessVerificationChange:
+      type: object
+      description: A changed disposition of one captured resolution, delivered once for an observed status change.
+      additionalProperties: false
+      properties:
+        before_status:
+          type: string
+          description: OperationWorkflowReadinessVerificationChange.before_status. Server-managed advisory verification observation
+            for the retained source completion.
+          enum:
+          - awaiting_verification
+          - verified
+          - invalidated
+          - unavailable
+        after:
+          $ref: '#/components/schemas/OperationWorkflowReadinessVerificationWatchItem'
+      required:
+      - before_status
+      - after
+    OperationWorkflowReadinessVerificationEvent:
+      type: object
+      description: Durable in-app notification linked to its original completion watch. Source describes the original notification
+        edge; verified does not imply workflow readiness or execution authority.
+      additionalProperties: false
+      properties:
+        watch_id:
+          type: string
+          description: OperationWorkflowReadinessVerificationEvent.watch_id. Server-managed advisory verification observation
+            for the retained source completion.
+          format: uuid
+        source_notification_id:
+          type: string
+          description: OperationWorkflowReadinessVerificationEvent.source_notification_id. Server-managed advisory verification
+            observation for the retained source completion.
+          format: uuid
+        source_sequence:
+          type: integer
+          description: OperationWorkflowReadinessVerificationEvent.source_sequence. Server-managed advisory verification observation
+            for the retained source completion.
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        checked_at:
+          type: string
+          description: OperationWorkflowReadinessVerificationEvent.checked_at. Server-managed advisory verification observation
+            for the retained source completion.
+          format: date-time
+        source:
+          $ref: '#/components/schemas/OperationWorkflowReadinessSnapshotEntry'
+        changes:
+          type: array
+          description: OperationWorkflowReadinessVerificationEvent.changes. Server-managed advisory verification observation for
+            the retained source completion.
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessVerificationChange'
+      required:
+      - watch_id
+      - source_notification_id
+      - source_sequence
+      - checked_at
+      - source
+      - changes
 
     OperationWorkflowReadinessHandoff:
       type: object

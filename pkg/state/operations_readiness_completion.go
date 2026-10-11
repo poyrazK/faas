@@ -12,6 +12,7 @@ import (
 type readinessCoordinationUpdate struct {
 	api.OperationWorkflowReadinessCoordinationRequest
 	PreparedCompletion *api.OperationWorkflowReadinessCompletion
+	PreparedWatch      *api.OperationWorkflowReadinessVerificationWatch
 }
 
 func prepareReadinessCompletion(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope, id string, sequence int64, req api.OperationWorkflowReadinessCoordinationRequest, operator bool) (readinessCoordinationUpdate, error) {
@@ -41,16 +42,17 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	if c == nil || c.Revision != req.Revision || c.FollowUpAt == nil || c.Completion != nil {
 		return out, ErrConflict
 	}
+	saved := readinessNotificationBaseline(check.Notification)
 	evidenceTenant := canonicalReadinessTenant(tenant)
-	if operator && check.Notification.Change != nil {
-		evidenceTenant = check.Notification.Change.Baseline.PlatformTenantID
+	if operator && saved != nil {
+		evidenceTenant = saved.PlatformTenantID
 	}
 	for _, evidenceID := range ids {
 		op, err := store.OperationByID(ctx, uuid.MustParse(account).String(), evidenceTenant, evidenceID)
 		if err != nil {
 			return out, err
 		}
-		if !sameOperationHistoryIdentity(op.AppID, app) || op.Scope != scope || (check.Notification.Change != nil && (!sameOperationHistoryIdentity(op.PlatformTenantID, evidenceTenant) || op.Subject == nil || *op.Subject != check.Notification.Change.Baseline.Subject)) {
+		if !sameOperationHistoryIdentity(op.AppID, app) || op.Scope != scope || (saved != nil && (!sameOperationHistoryIdentity(op.PlatformTenantID, evidenceTenant) || op.Subject == nil || *op.Subject != saved.Subject)) {
 			return out, ErrNotFound
 		}
 	}
@@ -69,6 +71,21 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	if check.Status != "ready" {
 		e.Warnings = append(e.Warnings, "Follow-up completion does not establish workflow readiness: "+check.Status+".")
 	}
-	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
+	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{WatchVerification: r.WatchVerification, Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
+	if r.WatchVerification {
+		if !check.Handoff.Comparable || check.Change == nil || check.Change.Current == nil || len(check.Change.Current.PendingVerifications) == 0 {
+			return out, ErrConflict
+		}
+		current := check.Change.Current
+		w := &api.OperationWorkflowReadinessVerificationWatch{ID: uuid.NewString(), Revision: 1, EvaluatedAt: check.CheckedAt, StateRevision: current.StateRevision, ContractVersion: current.ContractVersion, PendingCountAtStart: current.PendingVerificationCount, CoverageIncomplete: current.PendingVerificationsTruncated, Items: []api.OperationWorkflowReadinessVerificationWatchItem{}}
+		for _, proof := range current.PendingVerifications {
+			if len(w.Items) >= api.OperationWorkflowReadinessVerificationWatchItemsMax {
+				w.CoverageIncomplete = true
+				break
+			}
+			w.Items = append(w.Items, api.OperationWorkflowReadinessVerificationWatchItem{Key: readinessDigest(resolutionVerificationKey(proof.Resolution, proof.ResolutionOperationID)), BlockerActive: readinessVerificationBlockerActive(current.Blockers, proof), Status: "awaiting_verification", Explanation: "Application-reported resolution is awaiting its named proof.", Proof: proof})
+		}
+		out.PreparedWatch = w
+	}
 	return out, nil
 }

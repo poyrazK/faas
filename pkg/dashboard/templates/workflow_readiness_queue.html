@@ -239,6 +239,19 @@
   if (!id) return;
   const a = document.createElement('a'); a.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); a.textContent = label; parent.append(a,document.createElement('br'));
  };
+ window.renderReadinessVerification = (parent, notification, scope) => {
+  const link=(id,label)=>{if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
+  const item=(proof)=>{
+   text(parent,proof.proof.resolution.operation+'/'+proof.proof.resolution.code+': '+proof.status+' · '+proof.explanation);
+   text(parent,'Verification owner: '+(proof.proof.resolution.verification_owner || 'unassigned'));
+   link(proof.proof.resolution.verification_operation_id || proof.proof.resolution_operation_id,'Saved verification proof Operation');
+   link(proof.reporting_operation_id,'Current or invalidating reporting Operation');if(proof.reporting_revision)text(parent,'Observed reporting revision: '+proof.reporting_revision);
+  };
+  const watch=notification.verification_watch;
+  if(watch){text(parent,'Verification watch started '+new Date(watch.started_at).toLocaleString()+' · last checked '+new Date(watch.evaluated_at).toLocaleString());text(parent,'Watching '+watch.items.length+' saved resolutions from '+watch.pending_count_at_start+' pending at completion.'+(watch.coverage_incomplete ? ' Coverage is partial; other pending resolutions are not watched.' : ''));for(const proof of watch.items)item(proof);text(parent,'Watch ends when the source notification expires from this inbox. Refresh the inbox for its latest observations.');}
+  const event=notification.verification;
+  if(event){text(parent,'Verification changed · checked '+new Date(event.checked_at).toLocaleString()+' · source notification '+event.source_sequence);text(parent,event.source.workflow+' / '+event.source.instance_id+' · '+event.source.subject.type+': '+event.source.subject.id);for(const change of event.changes){text(parent,'Previous verification status: '+change.before_status);item(change.after);}text(parent,'These are retained application reports. Verification does not establish workflow readiness or authorize execution.');}
+ };
  window.renderReadinessCompletion = (parent, completion, scope) => {
   if(!completion)return;
   text(parent,'Follow-up completed: '+completion.outcome+' · '+new Date(completion.completed_at).toLocaleString()+' · '+completion.completed_by);
@@ -254,9 +267,9 @@
   for(const warning of evidence.warnings || [])text(parent,warning);
  };
  window.mountReadinessCompletion = (parent, c, detail, scope, onSaved) => {
-  const container=document.createElement('div');parent.append(container);
+  const container=document.createElement('div');parent.append(container);let watched;
   const render=()=>{
-   container.replaceChildren();window.renderReadinessCompletion(container,c.completion,scope);
+   container.replaceChildren();window.renderReadinessCompletion(container,c.completion,scope);if(watched)window.renderReadinessVerification(container,watched,scope);
    if(!c.follow_up_at || c.completion)return;
    const form=document.createElement('form');container.append(form);
    text(form,'Complete this follow-up with a recorded outcome. This closes coordination; it does not resolve application blockers. Evidence is checked again when saving.');
@@ -264,6 +277,7 @@
    const outcome=field('Completion outcome ',document.createElement('select'));
    for(const [value,label] of [['resolved','Resolved'],['no_longer_applicable','No longer applicable'],['handed_off','Handed off']]){const o=document.createElement('option');o.value=value;o.textContent=label;outcome.append(o);}
    const note=field('Completion note ',document.createElement('textarea'));note.required=true;note.maxLength=1024;
+   const watch=field('Watch pending verification after completion (up to 16 saved resolutions) ',document.createElement('input'));watch.type='checkbox';
    const ids=field('Evidence Operation UUIDs (up to 8, separated by spaces or commas; required for resolved) ',document.createElement('textarea'));ids.required=true;
    outcome.addEventListener('change',()=>{ids.required=outcome.value==='resolved';});
    const preview=document.createElement('button');preview.type='button';preview.textContent='Check evidence before completion';form.append(preview);
@@ -272,8 +286,8 @@
    const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
    preview.addEventListener('click',async()=>{preview.disabled=true;try{const check=await request(detail);if(container.isConnected)window.renderReadinessHandoff(handoff,check,scope);}catch(error){result.textContent=error.message;}finally{preview.disabled=false;}});
    form.addEventListener('submit',async event=>{event.preventDefault();const evidenceIDs=ids.value.trim() ? ids.value.trim().split(/[\s,]+/) : [];if(evidenceIDs.length>8){result.textContent='Use at most 8 evidence Operation UUIDs.';return;}save.disabled=true;preview.disabled=true;try{
-    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs}})});
-    Object.assign(c,updated.coordination);delete c.follow_up_at;render();await onSaved(updated);
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
+    Object.assign(c,updated.coordination);delete c.follow_up_at;watched=updated;render();await onSaved(updated);
    }catch(error){result.textContent=error.message+' Refresh before retrying a conflicting completion.';}finally{save.disabled=false;preview.disabled=false;}});
   };
   render();return render;
@@ -286,6 +300,7 @@
   if(!h){text(parent,'Handoff evidence is unavailable.');return;}
   text(parent,h.summary);
   const coordination=check.notification.coordination;
+  window.renderReadinessVerification(parent,check.notification,scope);
   if(coordination){window.renderReadinessCompletion(parent,coordination.completion,scope);text(parent,'Follow-up owner: '+(coordination.owner || 'unassigned'));if(coordination.note)text(parent,'Coordination note: '+coordination.note);if(coordination.follow_up_at)text(parent,'Follow-up deadline: '+new Date(coordination.follow_up_at).toLocaleString());}
   if(h.baseline_evaluated_at)text(parent,'Changes since saved notification observation: '+new Date(h.baseline_evaluated_at).toLocaleString());
   const change=check.change;
@@ -324,6 +339,8 @@
   ids.add(notification.id);
   const li = document.createElement('li'); li.dataset.id = notification.id;
   text(li,notification.kind + ' · ' + notification.created_at); text(li,notification.explanation);
+  window.renderReadinessVerification(li,notification,panel.dataset.scope);
+  if(notification.verification){const source=document.createElement('a');source.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+notification.verification.source_sequence;source.textContent='Open source follow-up completion';li.append(source);}
   const change = notification.change;
   if (change) {
    text(li,change.baseline.workflow + ' / ' + change.baseline.instance_id + ' · ' + change.baseline.subject.type + ': ' + change.baseline.subject.id);
@@ -421,8 +438,11 @@
  document.getElementById('readiness-inbox-refresh').addEventListener('click',() => { if(reading)return; reset(); void read(); });
  more.addEventListener('click',() => { void read(); });
  window.setInterval(() => { if (!document.hidden) void read(); },30000);
+ const openInboxReference = () => {
  const target = /^#readiness-subscriptions\/([0-9a-f-]{36})\/([0-9]+)$/.exec(window.location.hash);
  if (target && Number.isSafeInteger(Number(target[2])) && Number(target[2]) > 0) {panel.scrollIntoView();void load(target[1],Number(target[2]));}
+ };
+ window.addEventListener('hashchange',openInboxReference);openInboxReference();
 })();
 
 </script>

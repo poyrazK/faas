@@ -1177,6 +1177,10 @@ export type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflo
 export type { OperationWorkflowReadinessSubscription } from './OperationWorkflowReadinessSubscription.js';
 export type { OperationWorkflowReadinessSubscriptionRequest } from './OperationWorkflowReadinessSubscriptionRequest.js';
 export type { OperationWorkflowReadinessSubscriptionsResponse } from './OperationWorkflowReadinessSubscriptionsResponse.js';
+export type { OperationWorkflowReadinessVerificationChange } from './OperationWorkflowReadinessVerificationChange.js';
+export type { OperationWorkflowReadinessVerificationEvent } from './OperationWorkflowReadinessVerificationEvent.js';
+export type { OperationWorkflowReadinessVerificationWatch } from './OperationWorkflowReadinessVerificationWatch.js';
+export type { OperationWorkflowReadinessVerificationWatchItem } from './OperationWorkflowReadinessVerificationWatchItem.js';
 export type { OperationWorkflowReconciliation } from './OperationWorkflowReconciliation.js';
 export type { OperationWorkflowReconciliationPayload } from './OperationWorkflowReconciliationPayload.js';
 export type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';

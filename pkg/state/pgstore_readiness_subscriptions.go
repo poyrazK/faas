@@ -151,11 +151,7 @@ func (s *PgStore) claimReadinessSubscriptions(ctx context.Context) ([]readinessS
 	}
 	return out, nil
 }
-func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification) error {
-	raw, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
+func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessVerificationUpdate) error {
 	id, _ := operationUUID(r.Subscription.ID)
 	lease, _ := operationUUID(r.Lease)
 	tx, err := s.pool.Begin(ctx)
@@ -164,6 +160,42 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	_, err = q.LockReadinessSubscriptionLease(ctx, tx, sqlc.LockReadinessSubscriptionLeaseParams{ID: id, LeaseToken: lease})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	for _, u := range watchUpdates {
+		payload, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: id, Sequence: u.Sequence})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return mapErr(err)
+		}
+		var n api.OperationWorkflowReadinessNotification
+		if err = json.Unmarshal(payload, &n); err != nil {
+			return err
+		}
+		updated, published, ok := applyReadinessVerificationUpdate(&r, n, u)
+		if !ok {
+			continue
+		}
+		payload, err = json.Marshal(updated)
+		if err != nil {
+			return err
+		}
+		if _, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: id, Sequence: u.Sequence, Payload: payload}); err != nil {
+			return mapErr(err)
+		}
+		notifications = append(notifications, published...)
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
 	_, err = q.FinishReadinessSubscription(ctx, tx, sqlc.FinishReadinessSubscriptionParams{ID: id, LeaseToken: lease, Payload: raw, NextEvaluationAt: readinessPGTime(r.NextEvaluation)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil

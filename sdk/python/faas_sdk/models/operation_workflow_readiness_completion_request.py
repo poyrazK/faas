@@ -10,6 +10,7 @@ from ..models.operation_workflow_readiness_completion_request_outcome import (
     OperationWorkflowReadinessCompletionRequestOutcome,
     check_operation_workflow_readiness_completion_request_outcome,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OperationWorkflowReadinessCompletionRequest")
 
@@ -30,6 +31,9 @@ class OperationWorkflowReadinessCompletionRequest:
     evidence_operation_ids: list[UUID]
     """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
     never changes application evidence."""
+    watch_verification: bool | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16
+    currently pending saved resolutions; requires comparable current pending evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome: str = self.outcome
@@ -41,6 +45,8 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = str(evidence_operation_ids_item_data)
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        watch_verification = self.watch_verification
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -50,6 +56,8 @@ class OperationWorkflowReadinessCompletionRequest:
                 "evidence_operation_ids": evidence_operation_ids,
             }
         )
+        if watch_verification is not UNSET:
+            field_dict["watch_verification"] = watch_verification
 
         return field_dict
 
@@ -67,10 +75,13 @@ class OperationWorkflowReadinessCompletionRequest:
 
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        watch_verification = d.pop("watch_verification", UNSET)
+
         operation_workflow_readiness_completion_request = cls(
             outcome=outcome,
             note=note,
             evidence_operation_ids=evidence_operation_ids,
+            watch_verification=watch_verification,
         )
 
         return operation_workflow_readiness_completion_request

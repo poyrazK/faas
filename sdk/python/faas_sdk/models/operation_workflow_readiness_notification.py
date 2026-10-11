@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+    from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
+    from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessNotification")
@@ -37,6 +39,12 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    verification_watch: OperationWorkflowReadinessVerificationWatch | Unset = UNSET
+    """Opt-in watch of captured resolution identities. Verified proofs remain observed for later loss or explicit
+    blocker reopening; partial coverage and source inbox retention remain explicit."""
+    verification: OperationWorkflowReadinessVerificationEvent | Unset = UNSET
+    """Durable in-app notification linked to its original completion watch. Source describes the original
+    notification edge; verified does not imply workflow readiness or execution authority."""
     coordination: OperationWorkflowReadinessCoordination | Unset = UNSET
     """OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission
     of a follow-up time clears it."""
@@ -57,6 +65,14 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        verification_watch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.verification_watch, Unset):
+            verification_watch = self.verification_watch.to_dict()
+
+        verification: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.verification, Unset):
+            verification = self.verification.to_dict()
 
         coordination: dict[str, Any] | Unset = UNSET
         if not isinstance(self.coordination, Unset):
@@ -81,6 +97,10 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if verification_watch is not UNSET:
+            field_dict["verification_watch"] = verification_watch
+        if verification is not UNSET:
+            field_dict["verification"] = verification
         if coordination is not UNSET:
             field_dict["coordination"] = coordination
         if change is not UNSET:
@@ -95,6 +115,8 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_readiness_change import OperationWorkflowReadinessChange
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+        from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
+        from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -106,6 +128,20 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _verification_watch = d.pop("verification_watch", UNSET)
+        verification_watch: OperationWorkflowReadinessVerificationWatch | Unset
+        if isinstance(_verification_watch, Unset):
+            verification_watch = UNSET
+        else:
+            verification_watch = OperationWorkflowReadinessVerificationWatch.from_dict(_verification_watch)
+
+        _verification = d.pop("verification", UNSET)
+        verification: OperationWorkflowReadinessVerificationEvent | Unset
+        if isinstance(_verification, Unset):
+            verification = UNSET
+        else:
+            verification = OperationWorkflowReadinessVerificationEvent.from_dict(_verification)
 
         _coordination = d.pop("coordination", UNSET)
         coordination: OperationWorkflowReadinessCoordination | Unset
@@ -134,6 +170,8 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            verification_watch=verification_watch,
+            verification=verification,
             coordination=coordination,
             change=change,
             reminder=reminder,

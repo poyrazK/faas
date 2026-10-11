@@ -89,8 +89,7 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 }
 func readinessFollowUpProjection(s api.OperationWorkflowReadinessSubscription, tenant string, n api.OperationWorkflowReadinessNotification) api.OperationWorkflowReadinessFollowUp {
 	row := api.OperationWorkflowReadinessFollowUp{SubscriptionID: s.ID, SubscriptionName: s.Name, SubscriptionTenantID: s.TenantID, PlatformTenantID: tenant, Scope: s.Scope, NotificationID: n.ID, Sequence: n.Sequence, Kind: n.Kind, CreatedAt: n.CreatedAt, Coordination: *n.Coordination, Reminder: n.Reminder}
-	if n.Change != nil {
-		b := n.Change.Baseline
+	if b := readinessNotificationBaseline(n); b != nil {
 		row.Workflow = b.Workflow
 		row.InstanceID = b.InstanceID
 		row.Subject = &b.Subject

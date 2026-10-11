@@ -704,7 +704,7 @@ export interface OperationWorkflowReadinessSubscription extends Omit<OperationWo
  id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
 }
 export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
-export interface OperationWorkflowReadinessNotification { reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotification { verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
 export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
 function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
  if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
@@ -722,6 +722,11 @@ export interface OperationWorkflowReadinessFollowUpsResponse { due_reminder_coun
 
 export interface OperationWorkflowReadinessDueReminder { id: string; due_at: string; created_at: string }
 
-export interface OperationWorkflowReadinessCompletionRequest { outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[] }
-export interface OperationWorkflowReadinessCompletion { outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[]; completed_at: string; completed_by: string; evidence: OperationWorkflowReadinessCompletionEvidence }
+export interface OperationWorkflowReadinessCompletionRequest { watch_verification?: boolean; outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[] }
+export interface OperationWorkflowReadinessCompletion { watch_verification?: boolean; outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[]; completed_at: string; completed_by: string; evidence: OperationWorkflowReadinessCompletionEvidence }
 export interface OperationWorkflowReadinessCompletionEvidence { checked_at: string; status: string; explanation: string; reporting_operation_id?: string; state_revision?: number; evidence_complete: boolean; remaining_reasons: string[]; pending_verification_count: number; warnings: string[] }
+
+export interface OperationWorkflowReadinessVerificationWatch { id: string; revision: number; started_at: string; evaluated_at: string; state_revision: number; contract_version: number; pending_count_at_start: number; coverage_incomplete: boolean; items: OperationWorkflowReadinessVerificationWatchItem[] }
+export interface OperationWorkflowReadinessVerificationWatchItem { blocker_active: boolean; key: string; status: 'awaiting_verification' | 'verified' | 'invalidated' | 'unavailable'; explanation: string; reporting_revision?: number; reporting_operation_id?: string; proof: OperationWorkflowResolutionVerification }
+export interface OperationWorkflowReadinessVerificationChange { before_status: 'awaiting_verification' | 'verified' | 'invalidated' | 'unavailable'; after: OperationWorkflowReadinessVerificationWatchItem }
+export interface OperationWorkflowReadinessVerificationEvent { watch_id: string; source_notification_id: string; source_sequence: number; checked_at: string; source: OperationWorkflowReadinessSnapshotEntry; changes: OperationWorkflowReadinessVerificationChange[] }

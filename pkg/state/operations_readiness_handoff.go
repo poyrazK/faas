@@ -8,8 +8,8 @@ func readinessHandoff(check api.OperationWorkflowReadinessNotificationCheck) api
 		"Advisory application reports only; the application owns decisions, authorization and execution.",
 		"Comparison starts at the saved notification observation, not at follow-up scheduling. Scheduling-time evidence was not retained.",
 	}}
-	if check.Notification.Change != nil {
-		t := check.Notification.Change.Baseline.EvaluatedAt
+	if saved := readinessNotificationBaseline(check.Notification); saved != nil {
+		t := saved.EvaluatedAt
 		h.BaselineEvaluatedAt = &t
 	}
 	if check.Change == nil {

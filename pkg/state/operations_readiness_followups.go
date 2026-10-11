@@ -62,6 +62,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		completion.CompletedAt, completion.CompletedBy = now, actor
 		c.Completion = &completion
 		c.FollowUpAt = nil
+		if req.PreparedWatch != nil {
+			w := *req.PreparedWatch
+			w.StartedAt = now
+			n.VerificationWatch = &w
+		}
 	}
 	if req.Status == "acknowledged" {
 		c.AcknowledgedAt = &now
@@ -95,14 +100,15 @@ func checkReadinessNotification(ctx context.Context, store readinessSubscription
 		return out, ErrNotFound
 	}
 	out.Notification = page.Items[0]
-	if out.Notification.Change == nil {
+	saved := readinessNotificationBaseline(out.Notification)
+	if saved == nil {
 		return out, nil
 	}
 	app = uuid.MustParse(app).String()
 	opts := api.OperationWorkflowAttentionOptions{AppID: app, Scope: scope, TenantID: page.Subscription.TenantID}
 	baseline := newReadinessSnapshot(account, tenant, opts, operator)
 	baseline.CapturedAt = out.Notification.CreatedAt
-	baseline.Items = append(baseline.Items, out.Notification.Change.Baseline)
+	baseline.Items = append(baseline.Items, *saved)
 	req := api.OperationWorkflowReadinessComparisonRequest{Scope: scope, Baseline: baseline, Limit: 1}
 	if operator {
 		req.TenantID = page.Subscription.TenantID
@@ -126,4 +132,15 @@ func checkReadinessNotification(ctx context.Context, store readinessSubscription
 		}
 	}
 	return out, nil
+}
+
+// Verification deliveries carry the source workflow even without a discovery change.
+func readinessNotificationBaseline(n api.OperationWorkflowReadinessNotification) *api.OperationWorkflowReadinessSnapshotEntry {
+	if n.Change != nil {
+		return &n.Change.Baseline
+	}
+	if n.Verification != nil {
+		return &n.Verification.Source
+	}
+	return nil
 }

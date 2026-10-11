@@ -33556,12 +33556,12 @@ const listReadinessFollowUps = `-- name: ListReadinessFollowUps :many
 SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_id',s.id,'subscription_name',s.payload #>> '{subscription,name}',
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
- 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),s.tenant_id::text),
+ 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
  'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder',
- 'workflow',n.payload #>> '{change,baseline,workflow}','instance_id',n.payload #>> '{change,baseline,instance_id}',
- 'subject',n.payload #> '{change,baseline,subject}','operation',n.payload #>> '{change,baseline,operation}',
- 'from_state',n.payload #>> '{change,baseline,from_state}','to_state',n.payload #>> '{change,baseline,to_state}'
+ 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}'),
+ 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}'),
+ 'from_state',COALESCE(n.payload #>> '{change,baseline,from_state}',n.payload #>> '{verification,source,from_state}'),'to_state',COALESCE(n.payload #>> '{change,baseline,to_state}',n.payload #>> '{verification,source,to_state}')
 ))::jsonb AS item
 FROM customer_workflow_readiness_subscriptions s
 JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
@@ -38701,6 +38701,22 @@ func (q *Queries) LockReadinessSubscription(ctx context.Context, db DBTX, arg Lo
 		&i.LeaseUntil,
 	)
 	return i, err
+}
+
+const lockReadinessSubscriptionLease = `-- name: LockReadinessSubscriptionLease :one
+SELECT id FROM customer_workflow_readiness_subscriptions WHERE id = $1 AND lease_token = $2 FOR UPDATE
+`
+
+type LockReadinessSubscriptionLeaseParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
+func (q *Queries) LockReadinessSubscriptionLease(ctx context.Context, db DBTX, arg LockReadinessSubscriptionLeaseParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockReadinessSubscriptionLease, arg.ID, arg.LeaseToken)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one

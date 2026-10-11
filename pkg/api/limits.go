@@ -9695,3 +9695,7 @@ const OperationWorkflowReadinessReminderPublishTimeout = 10 * time.Second
 
 // Evidence-backed readiness completion references are bounded per retained notification.
 const OperationWorkflowReadinessCompletionEvidenceMax = 8
+
+// Each subscription pass rotates through a bounded number of retained completion watches.
+const OperationWorkflowReadinessVerificationWatchesPerPassMax = 10
+const OperationWorkflowReadinessVerificationWatchItemsMax = OperationWorkflowResolutionVerificationPreviewMax

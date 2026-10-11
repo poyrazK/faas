@@ -8,6 +8,10 @@ import type { OperationWorkflowReadinessCompletionEvidence } from './OperationWo
  */
 export type OperationWorkflowReadinessCompletion = {
   /**
+   * OperationWorkflowReadinessCompletion.watch_verification. Opt in at completion to watch up to 16 currently pending saved resolutions; requires comparable current pending evidence.
+   */
+  watch_verification?: boolean;
+  /**
    * OperationWorkflowReadinessCompletion.outcome. Retained follow-up completion value; never changes application evidence.
    */
   outcome: 'resolved' | 'no_longer_applicable' | 'handed_off';
