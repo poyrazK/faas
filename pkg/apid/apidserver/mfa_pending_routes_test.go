@@ -76,7 +76,7 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 	e := apidserver.SetupWithMFA(t, api.PlanPro, false, true)
 	// With the preview off, durable entity routes answer 404 before auth.
 	// Enable it so their MFA enforcement stays covered.
-	(*e.S()).Durable().Engine = &durableentity.Manager{}
+	(*e.Srv()).Durable().Engine = &durableentity.Manager{}
 	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
 		AccountID: (*e.Acct()).ID, Slug: "mfa-pending-app", Status: state.AppActive, RAMMB: 256,
 	}); err != nil {
