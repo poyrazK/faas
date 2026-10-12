@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -133,8 +134,12 @@ func cmdCompletionSecretKeys(words []string, contextOnly bool) int {
 	if token == "" {
 		return 0
 	}
-	identity, _ := json.Marshal([]string{apiBase(), currentProfile(), token, app, scope})
-	digest := sha256.Sum256(identity)
+	// API credentials are high-entropy MAC keys, never part of cache metadata.
+	// Domain separation keeps this fingerprint specific to completion caching.
+	identity, _ := json.Marshal([]string{"gregale/secret-key-completion-cache/v2", apiBase(), currentProfile(), app, scope})
+	fingerprint := hmac.New(sha256.New, []byte(token))
+	_, _ = fingerprint.Write(identity)
+	digest := fingerprint.Sum(nil)
 	cachePath := filepath.Join(filepath.Dir(cachePathForScripts()), fmt.Sprintf("completion-cache-secret-keys-%x.json", digest))
 	cache := secretKeyCompletionCache{}
 	now := time.Now()
