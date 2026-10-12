@@ -24,6 +24,14 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
     complete_after_seconds: int
     """OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list
     review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days."""
+    review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting
+    at prerequisite reopening; zero omits the target. Pinned independently of the original step completion deadline.
+    Inbox acknowledgment does not satisfy this target."""
+    review_fallback_owner: str | Unset = UNSET
+    """OperationWorkflowPlaybookStepAssignmentPolicy.review_fallback_owner. Optional fallback team after an
+    unresolved review deadline; requires a positive review window and a team distinct from owner. Manual assignments
+    prevent automatic takeover."""
     acknowledge_after_seconds: int | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue
     delivery; zero disables. Separate from the original step completion deadline."""
@@ -38,6 +46,10 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
 
         complete_after_seconds = self.complete_after_seconds
 
+        review_after_seconds = self.review_after_seconds
+
+        review_fallback_owner = self.review_fallback_owner
+
         acknowledge_after_seconds = self.acknowledge_after_seconds
 
         fallback_owner = self.fallback_owner
@@ -51,6 +63,10 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
                 "complete_after_seconds": complete_after_seconds,
             }
         )
+        if review_after_seconds is not UNSET:
+            field_dict["review_after_seconds"] = review_after_seconds
+        if review_fallback_owner is not UNSET:
+            field_dict["review_fallback_owner"] = review_fallback_owner
         if acknowledge_after_seconds is not UNSET:
             field_dict["acknowledge_after_seconds"] = acknowledge_after_seconds
         if fallback_owner is not UNSET:
@@ -67,6 +83,10 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
 
         complete_after_seconds = d.pop("complete_after_seconds")
 
+        review_after_seconds = d.pop("review_after_seconds", UNSET)
+
+        review_fallback_owner = d.pop("review_fallback_owner", UNSET)
+
         acknowledge_after_seconds = d.pop("acknowledge_after_seconds", UNSET)
 
         fallback_owner = d.pop("fallback_owner", UNSET)
@@ -75,6 +95,8 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
             label=label,
             owner=owner,
             complete_after_seconds=complete_after_seconds,
+            review_after_seconds=review_after_seconds,
+            review_fallback_owner=review_fallback_owner,
             acknowledge_after_seconds=acknowledge_after_seconds,
             fallback_owner=fallback_owner,
         )

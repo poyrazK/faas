@@ -37,6 +37,10 @@ class OperationWorkflowPlaybookProgressItem:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
     availability is not guaranteed."""
+    dependency_review_due_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at
+    prerequisite reopening from the pinned assignment policy. Recovery and inbox rescheduling do not reset it; an
+    explicit review clears it with the obligation."""
     dependency_review_revision: int | Unset = UNSET
     """OperationWorkflowPlaybookProgressItem.dependency_review_revision. Progress revision that reopened a
     prerequisite; persists until an explicit step review confirms completed work with evidence or requests redo by
@@ -72,6 +76,10 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        dependency_review_due_at: str | Unset = UNSET
+        if not isinstance(self.dependency_review_due_at, Unset):
+            dependency_review_due_at = self.dependency_review_due_at.isoformat()
+
         dependency_review_revision = self.dependency_review_revision
 
         readiness: dict[str, Any] | Unset = UNSET
@@ -104,6 +112,8 @@ class OperationWorkflowPlaybookProgressItem:
                 "evidence": evidence,
             }
         )
+        if dependency_review_due_at is not UNSET:
+            field_dict["dependency_review_due_at"] = dependency_review_due_at
         if dependency_review_revision is not UNSET:
             field_dict["dependency_review_revision"] = dependency_review_revision
         if readiness is not UNSET:
@@ -140,6 +150,13 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = OperationWorkflowPlaybookEvidence.from_dict(evidence_item_data)
 
             evidence.append(evidence_item)
+
+        _dependency_review_due_at = d.pop("dependency_review_due_at", UNSET)
+        dependency_review_due_at: datetime.datetime | Unset
+        if isinstance(_dependency_review_due_at, Unset):
+            dependency_review_due_at = UNSET
+        else:
+            dependency_review_due_at = datetime.datetime.fromisoformat(_dependency_review_due_at)
 
         dependency_review_revision = d.pop("dependency_review_revision", UNSET)
 
@@ -180,6 +197,7 @@ class OperationWorkflowPlaybookProgressItem:
             status=status,
             note=note,
             evidence=evidence,
+            dependency_review_due_at=dependency_review_due_at,
             dependency_review_revision=dependency_review_revision,
             readiness=readiness,
             owner=owner,

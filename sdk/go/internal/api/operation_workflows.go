@@ -129,6 +129,7 @@ type OperationWorkflowPlaybookProgressUpdateRequest struct {
 	Evidence    []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
+	DependencyReviewDueAt    *time.Time                              `json:"dependency_review_due_at,omitempty"`
 	DependencyReviewRevision int64                                   `json:"dependency_review_revision,omitempty"`
 	Readiness                *OperationWorkflowPlaybookStepReadiness `json:"readiness,omitempty"`
 	Owner                    string                                  `json:"owner,omitempty"`
@@ -366,6 +367,8 @@ type OperationWorkflowPlaybookOutcomeFollowUp struct {
 }
 
 type OperationWorkflowPlaybookStepAssignmentPolicy struct {
+	ReviewAfterSeconds      int64  `json:"review_after_seconds,omitempty" yaml:"review_after_seconds,omitempty" toml:"review_after_seconds"`
+	ReviewFallbackOwner     string `json:"review_fallback_owner,omitempty" yaml:"review_fallback_owner,omitempty" toml:"review_fallback_owner"`
 	AcknowledgeAfterSeconds int64  `json:"acknowledge_after_seconds,omitempty" yaml:"acknowledge_after_seconds,omitempty" toml:"acknowledge_after_seconds"`
 	FallbackOwner           string `json:"fallback_owner,omitempty" yaml:"fallback_owner,omitempty" toml:"fallback_owner"`
 	Label                   string `json:"label" yaml:"label" toml:"label"`

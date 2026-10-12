@@ -144,7 +144,7 @@ func syncPlaybookStepAssignment(n api.OperationWorkflowReadinessNotification, p 
 		n.Coordination = &c
 	}
 	n.PlaybookStep = &step
-	if changed {
+	if changed || (step.DependencyReview != nil && step.DependencyReviewStatus != "awaiting" && step.Response != nil) {
 		n = readinessEscalationCoordination(n, n.Coordination, n.Coordination.UpdatedBy, now)
 	}
 	return n, true
@@ -198,6 +198,20 @@ func publishPlaybookReviewAssignments(r *readinessSubscriptionRecord, index int,
 				}
 			}
 			n.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: owner, FollowUpAt: &n.CreatedAt, UpdatedAt: n.CreatedAt, UpdatedBy: "system:playbook-dependency-review"}
+			if item.DependencyReviewDueAt != nil {
+				n.PlaybookStep.DueAt = *item.DependencyReviewDueAt
+				n.Coordination.FollowUpAt = item.DependencyReviewDueAt
+				for _, guidance := range p.Playbook.OutcomeGuidance {
+					if guidance.OutcomeCode != follow.OutcomeCode {
+						continue
+					}
+					for _, policy := range guidance.FollowUpAssignments {
+						if policy.Label == item.Label && policy.ReviewAfterSeconds > 0 {
+							n.PlaybookStep.Response = &api.OperationWorkflowReadinessEscalationResponse{DeadlineAt: *item.DependencyReviewDueAt, InitialOwner: owner, FallbackOwner: policy.ReviewFallbackOwner, Status: "awaiting", History: []api.OperationWorkflowReadinessAssignmentChange{}}
+						}
+					}
+				}
+			}
 			w.ReviewAssignments = append(w.ReviewAssignments, api.OperationWorkflowPlaybookStepAssignmentReference{DependencyReviewRevision: item.DependencyReviewRevision, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Notification: api.OperationWorkflowReadinessOutcomeEscalationReference{NotificationID: n.ID, Sequence: n.Sequence, CreatedAt: n.CreatedAt}})
 			notices = append(notices, n)
 		}

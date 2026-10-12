@@ -81520,6 +81520,16 @@ components:
       description: OperationWorkflowPlaybookStepAssignmentPolicy. Pinned team and completion window for one declared outcome follow-up step; coordination only.
       required: [label, owner, complete_after_seconds]
       properties:
+        review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting at prerequisite reopening; zero omits the target. Pinned independently of the original step completion deadline. Inbox acknowledgment does not satisfy this target.
+        review_fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.review_fallback_owner. Optional fallback team after an unresolved review deadline; requires a positive review window and a team distinct from owner. Manual assignments prevent automatic takeover.
         acknowledge_after_seconds:
           type: integer
           format: int64
@@ -82015,6 +82025,10 @@ components:
       - note
       - evidence
       properties:
+        dependency_review_due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at prerequisite reopening from the pinned assignment policy. Recovery and inbox rescheduling do not reset it; an explicit review clears it with the obligation.
         dependency_review_revision:
           type: integer
           format: int64

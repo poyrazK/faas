@@ -10,6 +10,10 @@ import type { OperationWorkflowPlaybookStepReadiness } from './OperationWorkflow
  */
 export type OperationWorkflowPlaybookProgressItem = {
   /**
+   * OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at prerequisite reopening from the pinned assignment policy. Recovery and inbox rescheduling do not reset it; an explicit review clears it with the obligation.
+   */
+  dependency_review_due_at?: string;
+  /**
    * OperationWorkflowPlaybookProgressItem.dependency_review_revision. Progress revision that reopened a prerequisite; persists until an explicit step review confirms completed work with evidence or requests redo by marking it pending. Prerequisite recovery alone does not clear this obligation.
    */
   dependency_review_revision?: number;

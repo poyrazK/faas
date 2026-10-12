@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowPlaybookStepAssignmentPolicy = {
   /**
+   * OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting at prerequisite reopening; zero omits the target. Pinned independently of the original step completion deadline. Inbox acknowledgment does not satisfy this target.
+   */
+  review_after_seconds?: number;
+  /**
+   * OperationWorkflowPlaybookStepAssignmentPolicy.review_fallback_owner. Optional fallback team after an unresolved review deadline; requires a positive review window and a team distinct from owner. Manual assignments prevent automatic takeover.
+   */
+  review_fallback_owner?: string;
+  /**
    * OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue delivery; zero disables. Separate from the original step completion deadline.
    */
   acknowledge_after_seconds?: number;

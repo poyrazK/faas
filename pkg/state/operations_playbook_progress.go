@@ -238,6 +238,18 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 				step := &(*items)[i]
 				if step.Status == "completed" && playbookStepDependsOn(*p, req.OutcomeCode, step.Label, item.Label) {
 					step.DependencyReviewRevision = p.Revision
+					step.DependencyReviewDueAt = nil
+					for _, guidance := range p.Playbook.OutcomeGuidance {
+						if guidance.OutcomeCode != req.OutcomeCode {
+							continue
+						}
+						for _, policy := range guidance.FollowUpAssignments {
+							if policy.Label == step.Label && policy.ReviewAfterSeconds > 0 {
+								due := now.Add(time.Duration(policy.ReviewAfterSeconds) * time.Second)
+								step.DependencyReviewDueAt = &due
+							}
+						}
+					}
 				}
 			}
 		}

@@ -43,8 +43,9 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 		return n, nil, false
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	// An acknowledgment, completion or cleared follow-up wins even when it arrived after the read phase.
-	if n.Coordination.Status == "acknowledged" || n.Coordination.Completion != nil || n.Coordination.FollowUpAt == nil {
+	// Ordinary response targets accept acknowledgment. Dependency review targets
+	// require the refreshed source decision, independently of inbox coordination.
+	if (isPlaybookDependencyReview(n) && n.PlaybookStep.DependencyReviewStatus != "awaiting") || (!isPlaybookDependencyReview(n) && (n.Coordination.Status == "acknowledged" || n.Coordination.Completion != nil || n.Coordination.FollowUpAt == nil)) {
 		n = readinessEscalationCoordination(n, n.Coordination, n.Coordination.UpdatedBy, now)
 		return n, nil, true
 	}
@@ -55,7 +56,7 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 	copied.Status, copied.DeadlineNotifiedAt = "deadline_missed", &now
 	n = withEscalationResponse(n, &copied)
 	reassigned := false
-	if copied.FallbackOwner != "" && copied.FallbackOwner != copied.InitialOwner && n.Coordination.Owner == copied.InitialOwner && len(copied.History) == 0 && !copied.HistoryTruncated && n.Coordination.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
+	if n.Coordination.Completion == nil && copied.FallbackOwner != "" && copied.FallbackOwner != copied.InitialOwner && n.Coordination.Owner == copied.InitialOwner && len(copied.History) == 0 && !copied.HistoryTruncated && n.Coordination.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
 		c := *n.Coordination
 		c.Owner, c.UpdatedBy, c.UpdatedAt = copied.FallbackOwner, "system:escalation_response", now
 		c.Revision++
@@ -69,7 +70,11 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 		n.Coordination = &c
 		reassigned = true
 	}
-	notice := readinessSubscriptionNotify(r, "escalation_response_overdue", "The assigned escalation was not acknowledged by its response deadline. Consult coordination history; business execution remains application-owned.", nil)
+	summary := "The assigned escalation was not acknowledged by its response deadline. Consult coordination history; business execution remains application-owned."
+	if isPlaybookDependencyReview(n) {
+		summary = "The dependency validity review was not resolved by its pinned deadline. Confirm the work remains valid or request redo in the workflow case; inbox acknowledgment alone does not resolve the review."
+	}
+	notice := readinessSubscriptionNotify(r, "escalation_response_overdue", summary, nil)
 
 	if n.PlaybookEvidence != nil {
 		source := *n.PlaybookEvidence
@@ -102,7 +107,11 @@ func readinessEscalationCoordination(n api.OperationWorkflowReadinessNotificatio
 	if c.Status == "acknowledged" && response.FirstAcknowledgedAt == nil {
 		response.FirstAcknowledgedAt = &at
 	}
-	if c.Completion != nil || c.FollowUpAt == nil {
+	if isPlaybookDependencyReview(n) {
+		if n.PlaybookStep.DependencyReviewStatus != "awaiting" {
+			response.Status = "closed"
+		}
+	} else if c.Completion != nil || c.FollowUpAt == nil {
 		response.Status = "closed"
 	} else if response.FirstAcknowledgedAt != nil {
 		response.Status = "acknowledged"
@@ -143,4 +152,8 @@ func withEscalationResponse(n api.OperationWorkflowReadinessNotification, respon
 		n.OutcomeEscalation = &e
 	}
 	return n
+}
+
+func isPlaybookDependencyReview(n api.OperationWorkflowReadinessNotification) bool {
+	return n.PlaybookStep != nil && n.PlaybookStep.DependencyReview != nil
 }

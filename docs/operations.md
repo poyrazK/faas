@@ -3399,8 +3399,27 @@ Use the existing progress update endpoint with `outcome_code`, `item_index` and 
 
 ### Assigned dependency validity reviews
 
-An enabled playbook evidence watch delivers a durable inbox task for each observed `dependency_review_revision`. It routes to the checklist step owner, falling back to the watch owner, and enters the follow-up queue immediately. The task captures the prior completion note, actor and scoped evidence references; it also captures the reopened ancestor label if the corresponding progress history entry is retained. Recovery alone leaves the task open.
+An enabled playbook evidence watch delivers a durable inbox task for each observed `dependency_review_revision`. It routes to the checklist step owner, falling back to the watch owner, and enters the follow-up queue with immediate attention unless a pinned review window is declared. The task captures the prior completion note, actor and scoped evidence references; it also captures the reopened ancestor label if the corresponding progress history entry is retained. Recovery alone leaves the task open.
 
 Review the exact workflow case to confirm validity with a note and evidence, or mark the step pending for redo. On the next accepted watch poll, the task leaves the follow-up queue and records `confirmed` or `redo_requested`. A newer unresolved regression supersedes the preceding episode and delivers a new task. Resolution uses the first retained source review after the obligation; if that history is unavailable, the old episode is marked superseded without claiming a specific human decision. Stable polls, recovery, watch configuration changes and disable/re-enable do not duplicate the same episode. Manual inbox ownership overrides remain protected. Inbox acknowledgment does not validate checklist work.
 
 Delivery and source synchronization require an active watch and retained inbox rows. A regression reviewed before any poll does not create a retroactive task. A stopped watch does not auto-resolve retained tasks. Each watch retains up to 272 review delivery references; use another subscription/watch for additional episodes after that limit. Notification retention can remove older tasks without deleting the durable checklist obligation.
+
+### Dependency review deadlines and fallback ownership
+
+Applications may add `review_after_seconds` (1–604800) and optional `review_fallback_owner` to a frozen outcome `follow_up_assignments` policy. The fallback must differ from the declared step owner; it requires a positive review window. Omitted or zero windows preserve immediate review attention without automatic review escalation.
+
+```yaml
+follow_up_assignments:
+  - label: Verify downstream delivery
+    owner: fulfillment
+    complete_after_seconds: 3600
+    review_after_seconds: 1800
+    review_fallback_owner: operations
+```
+
+When a prerequisite reopens, the server stores `dependency_review_due_at` on the affected completed step in the same revision-fenced write as its obligation. This clock starts at reopening, not watch delivery; recovery, watch reconfiguration, acknowledgment and inbox rescheduling cannot extend it. Each new regression creates a new episode with its own deadline, independent of the step's original completion deadline. Existing obligations are not retroactively assigned new clocks.
+
+Active watches deliver the review task with its pinned follow-up time and deadline target. The retained-inbox response worker rechecks exact active progress before escalation, even if the delivery watch is disabled, without requiring fresh application reports. An unresolved target emits one `escalation_response_overdue` notice. It transfers the task to the fallback only if the original owner is unchanged, assignment history is complete and empty, and the task has not been manually completed. Source owner changes, manual routing and automatic fallback remain recorded and protected.
+
+Inbox acknowledgment, manual completion or clearing/rescheduling inbox attention do not validate the checklist and do not satisfy this review target. A source confirmation, redo request or superseding episode closes it. Notification retention and inactive source progress retain their existing limits; retired progress does not manufacture a review decision.
