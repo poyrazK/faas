@@ -56,10 +56,23 @@ blocks on disk, not mapped pages.
    This saves the most, but accepts the cross-tenant side channel above.
 2. **Per-account sharing.** Each account gets its own reflinked copy of each
    base on a node (no extra disk on XFS). A copy has its own page cache, so
-   pages are shared only among one account's VMs. The saving applies only
-   when an account runs several VMs of one runtime on a node; tenants stay
-   isolated.
+   pages are shared only among one account's VMs, and tenants stay isolated.
+   Every VM still stops holding the runtime in its own RAM. The cost is one
+   host page-cache copy of the touched base per account on the node, and
+   the host can reclaim it.
 3. **Keep virtio-blk.** No change.
+
+Measured on the same node: six VMs, two accounts of three, on reflinked base
+copies on XFS, two rounds each:
+
+| | host cost per VM | host page-cache growth | guest anonymous memory per VM |
+|---|---|---|---|
+| virtio-blk | 256–262 MB | ~206 MB | ~254 MB |
+| pmem, node-wide | 202–204 MB | 275–294 MB | ~205 MB |
+| pmem, per account | 201–204 MB | 380–395 MB | ~205 MB |
+
+Per-account sharing keeps the whole per-VM saving. The second account's copy
+adds about 100 MB of reclaimable page cache.
 
 Recommendation: option 2 if the density gain is wanted. Option 1 only after
 an explicit security review accepts the side channel. Until then nothing

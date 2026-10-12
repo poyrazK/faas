@@ -96,6 +96,20 @@ wall p50/p90 ms), and the raw harness above:
   capture is written only for a new deployment, a stale snapshot or a warm
   tier, and those start from a cold boot, where no base exists to diff
   against.
+- **UFFD memory backend** (a page-fault handler process instead of the File
+  backend), tested with an experimental Go handler, Node app, 1 GiB guest,
+  3 rounds. Warm restore to first byte: 62–67 ms with File, against
+  144–149 ms on demand (26,000 faults through userspace) and 120–136 ms when
+  the handler eagerly copied every non-zero page. A CPU-bound request after
+  restore took 405–412 ms against 1.73–1.81 s on demand. Every page UFFD
+  serves becomes a private copy in the VM: 101–252 MB per VM, against
+  14 MB with File, which shares the snapshot's page cache. UFFD won only
+  with a dropped page cache (1.2–1.3 s against 1.8–2.4 s), which ADR-225's
+  prefetch already addresses. It is worth revisiting only to load snapshots
+  lazily from a remote store.
+- **Guest `mitigations=off`**: boot, request latency, CPU-bound requests and
+  restore were unchanged within noise over 3 interleaved rounds, so the
+  guest keeps its default mitigations.
 
 ## Qualification
 
