@@ -37,6 +37,23 @@ func TestScenarioChaosPlanValidationAndEngineLabel(t *testing.T) {
 	}
 }
 
+func TestScenarioDNSChaosDoesNotRequireTCPListener(t *testing.T) {
+	scenario := testScenario{
+		Project:  "checkout",
+		Services: map[string]testService{"cache": {Fixture: testDeliverySinkFixture}},
+		Chaos: &testChaosSpec{Duration: "30s", Rules: []testChaosRule{{
+			From: "checkout", To: "cache", Kind: chaos.KindDNSNXDomain, Percent: 100, MinMatches: 1,
+		}}},
+	}
+	if err := validateScenarioChaos(scenario); err != nil {
+		t.Fatalf("private DNS rule rejected: %v", err)
+	}
+	plan, err := scenario.Chaos.plan()
+	if err != nil || len(plan.Rules) != 1 || plan.Rules[0].Kind != chaos.KindDNSNXDomain {
+		t.Fatalf("DNS plan = (%+v, %v)", plan, err)
+	}
+}
+
 func TestScenarioChaosManifestFieldsAndBounds(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "gregale-test.yaml")

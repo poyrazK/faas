@@ -236,13 +236,23 @@ func CheckCapForStaging(l api.Limits, stats SmallFileStats) (sizeMB int, err err
 	return sizeMB, nil
 }
 
+// BasePmemLabel is the volume label of a base that can boot as a pmem root
+// (ADR-908): it was built with this release's guest-init, which finds its
+// root on /dev/pmem0. vmmd attaches only bases with this label as pmem.
+const BasePmemLabel = "faas-base-pmem"
+
 // BaseMkfsCommand is MkfsCommand for a shared runtime base. Bases use
 // 4 KiB blocks and a size that is a multiple of 2 MiB, so a node can attach
 // them as a virtio-pmem root mounted with DAX (ADR-908): the kernel refuses
 // DAX on any other block size, and Firecracker maps pmem in 2 MiB units.
-func BaseMkfsCommand(stagingDir, outImage string, sizeMB int) []string {
+// pmemReady stamps BasePmemLabel; pass it only when the build installed
+// this release's guest-init.
+func BaseMkfsCommand(stagingDir, outImage string, sizeMB int, pmemReady bool) []string {
 	sizeMB += sizeMB % 2
 	cmd := MkfsCommand(stagingDir, outImage, sizeMB)
+	if pmemReady {
+		cmd[3] = BasePmemLabel
+	}
 	return append(cmd[:2:2], append([]string{"-b", "4096"}, cmd[2:]...)...)
 }
 

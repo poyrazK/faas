@@ -26,8 +26,8 @@ type InjectionBatch struct {
 	Count      int64
 }
 
-// RuleMatchCount is the number of requests or TCP connections that matched a
-// rule in the current plan generation.
+// RuleMatchCount stores a generation-scoped counter. RuleID identifies fault
+// matches; TCPAttemptID identifies authorized application TCP connection attempts.
 type RuleMatchCount struct {
 	RuleID string `json:"rule_id"`
 	Count  int64  `json:"count"`
@@ -37,4 +37,13 @@ type RuleMatchCount struct {
 type MatchEvidence struct {
 	Generation string           `json:"generation,omitempty"`
 	Matches    []RuleMatchCount `json:"matches"`
+}
+
+// TCPAttemptID separates authorized connection attempts from fault matches.
+// It remains generation-scoped through InjectionBatch and cannot collide with
+// a rule match identifier because it uses a distinct hash domain.
+func TCPAttemptID(rule Rule) string {
+	raw, _ := json.Marshal(rule)
+	sum := sha256.Sum256(append([]byte("gregale:tcp-attempt:v1:"), raw...))
+	return hex.EncodeToString(sum[:])
 }
