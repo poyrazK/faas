@@ -367,7 +367,7 @@ jobs:
     # and container setup. State batches keep their own 12m timeouts and
     # default runtime settings, on the separate PostgreSQL service.
     # API jobs retain the full fixture inventory with a 45m runtime budget.
-    timeout-minutes: ${{ matrix.shard >= 4 && 90 || 70 }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -535,14 +535,14 @@ jobs:
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS || status=1
           fi
           # Dedicated API jobs cover six independent name batches. State jobs
-          # retain each original third as two sequential sixths.
+          # split each state job into four smaller batches.
           # Verify every selected package's complete compiled inventory.
           for pkg in $SPLIT; do
             (
               if [[ "$pkg" == ./pkg/state ]]; then
                 export DATABASE_URL="$SPLIT_DATABASE_URL"
-                shards=6
-                batches=("$SHARD" "$((SHARD + 3))")
+                shards=12
+                batches=("$SHARD" "$((SHARD + 3))" "$((SHARD + 6))" "$((SHARD + 9))")
               else
                 # Aggressive compiler GC must not carry into fixture execution.
                 export GOMEMLIMIT=2GiB GOGC=100 GOMAXPROCS=2
