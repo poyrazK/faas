@@ -1,4 +1,4 @@
-// adr: 988 — read-only preflight applies and confirms stored release policies.
+// adr: 1029 — read-only preflight applies and confirms stored release policies.
 package main
 
 import (

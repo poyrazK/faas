@@ -112,7 +112,12 @@ func waitForOutboundRetry(ctx context.Context, delay time.Duration) error {
 }
 
 func canRetryRequest(req *http.Request) bool {
-	if req == nil || (req.Method != http.MethodGet && req.Method != http.MethodHead) {
+	if req == nil {
+		return false
+	}
+	// ADR-990: a buffered AI POST carries a replayable body (GetBody).
+	replayablePost := req.Method == http.MethodPost && req.GetBody != nil
+	if req.Method != http.MethodGet && req.Method != http.MethodHead && !replayablePost {
 		return false
 	}
 	for _, name := range []string{"X-HTTP-Method-Override", "X-Method-Override", "X-HTTP-Method"} {
@@ -123,7 +128,7 @@ func canRetryRequest(req *http.Request) bool {
 	if req.URL != nil && req.URL.Query().Has("_method") {
 		return false
 	}
-	return req.Body == nil || req.Body == http.NoBody
+	return replayablePost || req.Body == nil || req.Body == http.NoBody
 }
 
 // outboundCircuitOutcome counts one logical request after its bounded retry
@@ -156,7 +161,7 @@ func outboundCircuitOutcome(resp *http.Response, err error) CircuitBreakerOutcom
 
 func (h *Handler) doWithRetries(
 	ctx context.Context, client *http.Client, req *http.Request, integrationID, metricIntegrationID string, policyRevision int64,
-	maxRetries, retryBudgetPerMinute int,
+	maxRetries, retryBudgetPerMinute int, keys *credentialRing,
 ) (*http.Response, int, error) {
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -194,6 +199,18 @@ func (h *Handler) doWithRetries(
 			h.Metrics.ObserveUpstream(metricIntegrationID, resp.StatusCode, time.Since(started))
 			retryAfterValue := resp.Header.Get("Retry-After")
 			providerDelay, hasRetryAfter := parseRetryAfter(retryAfterValue, time.Now())
+			if resp.StatusCode == http.StatusTooManyRequests && keys != nil && canRetry {
+				// ADR-991: another key of the pool takes the call at once; it
+				// costs neither a retry nor the shared retry budget.
+				next, cloneErr := cloneForRetry(ctx, req)
+				if cloneErr == nil && keys.rotate(next, providerDelay) {
+					if resp.Body != nil {
+						_ = resp.Body.Close()
+					}
+					req = next
+					continue
+				}
+			}
 			if resp.StatusCode == http.StatusTooManyRequests && hasRetryAfter && providerDelay > 0 {
 				h.recordProviderCooldown(ctx, integrationID, metricIntegrationID, policyRevision, providerDelay)
 			}
@@ -224,9 +241,26 @@ func (h *Handler) doWithRetries(
 			}
 		}
 		retries++
-		req = req.Clone(ctx)
-		req.Body = http.NoBody
+		next, cloneErr := cloneForRetry(ctx, req)
+		if cloneErr != nil {
+			return nil, attempts, cloneErr
+		}
+		req = next
 	}
+}
+
+// cloneForRetry copies a request with a fresh body for another attempt.
+func cloneForRetry(ctx context.Context, req *http.Request) (*http.Request, error) {
+	next := req.Clone(ctx)
+	next.Body = http.NoBody
+	if next.GetBody != nil {
+		body, err := next.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		next.Body = body
+	}
+	return next, nil
 }
 
 func (h *Handler) recordProviderCooldown(ctx context.Context, integrationID, metricIntegrationID string, policyRevision int64, delay time.Duration) {

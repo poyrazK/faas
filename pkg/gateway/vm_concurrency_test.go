@@ -302,6 +302,61 @@ func TestAcquireVMTargetReturnsTypedWarmQueueTimeout(t *testing.T) {
 	}
 }
 
+// erroringFleetQueueAdmission models the shared permit store failing: block
+// until the caller's deadline, or fail immediately with err.
+type erroringFleetQueueAdmission struct {
+	block bool
+	err   error
+}
+
+func (f erroringFleetQueueAdmission) TryAcquireConcurrencyQueueLease(ctx context.Context, _ string, _ int, _ time.Duration) (string, int, bool, error) {
+	if f.block {
+		<-ctx.Done()
+		return "", 0, false, ctx.Err()
+	}
+	return "", 0, false, f.err
+}
+
+func (erroringFleetQueueAdmission) ReleaseConcurrencyQueueLease(context.Context, string, string) error {
+	return nil
+}
+
+// adr: 059 — production-us hunt #9 (H9-76): 80 overflow requests each waited
+// the whole 2 s queue budget for the shared permit and were told the queue
+// admission was unavailable. Waiting out the budget is a queue timeout; only
+// a store failure that arrives while budget remains is an admission outage.
+func TestAcquireVMTargetClassifiesFleetAdmissionFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		admission erroringFleetQueueAdmission
+		want      error
+		notWant   error
+	}{
+		{name: "budget spent waiting for the permit", admission: erroringFleetQueueAdmission{block: true}, want: ErrConcurrencyQueueWaitTimeout, notWant: ErrConcurrencyQueueAdmissionUnavailable},
+		{name: "permit store error", admission: erroringFleetQueueAdmission{err: errors.New("connection refused")}, want: ErrConcurrencyQueueAdmissionUnavailable, notWant: ErrConcurrencyQueueWaitTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &fakeBackend{app: App{ID: "app", Type: AppTypeFunction, Plan: api.PlanFree, MaxQueueDepth: 4}, targets: []Target{{NodeID: "node", InstanceID: "first"}}}
+			h := NewHandlerWith(b, NewMetrics(), nil).WithConcurrencyQueueAdmission(tc.admission)
+			held, ok := h.vmConcurrency.tryAcquire("first", "free", 1)
+			if !ok {
+				t.Fatal("failed to occupy first target")
+			}
+			defer held()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+			defer cancel()
+			_, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "", "")
+			if release != nil {
+				release()
+			}
+			if !waited || !errors.Is(err, tc.want) || errors.Is(err, tc.notWant) {
+				t.Fatalf("waited=%v err=%v, want %v", waited, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEffectiveVMConcurrencyLimitMatchesPublishedListenerLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name string

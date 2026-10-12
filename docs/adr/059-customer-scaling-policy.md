@@ -170,6 +170,17 @@ unrelated apps never share a logical lock (a hash collision can only serialize
 their attempts). Queue-depth metrics remain replica-local so Prometheus may
 aggregate them without every replica publishing the same global gauge.
 
+**Permit acquire cost (2026-10-11 amendment 3).** The reap, cap check and
+insert run in one server-side call (`gateway_try_acquire_concurrency_queue_lease`),
+so the app-scoped lock is never held across client round trips. Production-us
+hunt #9 showed the client-side transaction convoy: 80 overflow requests each
+held a gateway pool connection while queued on the lock, spent the full 2 s
+wait budget, and starved the same gateway's rate limiter. A request whose
+wait budget expires while it waits for the permit now gets
+`concurrency_queue_timeout`, like any queued request that waited out its
+budget; `capacity_unavailable` is reserved for a permit store that fails
+while budget remains, and that failure is logged.
+
 ## Failure modes
 
 | Scenario | Behaviour |

@@ -250,7 +250,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
+			"Invalid runtime", "functions require runtime "+strings.Join(api.FunctionRuntimes, ", "))
 	}
 	visibility := api.AppVisibility(req.Visibility)
 	if visibility == "" {
@@ -316,6 +316,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, prob
 	}
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
+		return state.App{}, prob
+	}
+	if prob := lifecycleObserverLinkProblem(req.Slug, lifecycle); prob != nil {
 		return state.App{}, prob
 	}
 	// Issue #1056 / ADR-074: paused warm-pool capacity is a paid-tier
@@ -799,7 +802,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
 // handleDevSourceDeploy is the developer-only delta transport. Keeping it on

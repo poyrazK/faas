@@ -1,4 +1,4 @@
-// adr: 986 — reserved write probe requests carry an exact managed permission.
+// adr: 1027 — reserved write probe requests carry an exact managed permission.
 package api
 
 import "testing"

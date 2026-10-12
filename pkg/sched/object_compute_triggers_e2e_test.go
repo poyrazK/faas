@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 995
+// adr: 1036
 // Uses the actual signed SDK/gateway and durable router, with a local provider.
 func objectComputeTriggersSDKEndToEnd(t *testing.T, st objectEventIntegrationStore, restart func() objectEventIntegrationStore, b state.ObjectBucket, c *awss3.Client) {
 	t.Helper()

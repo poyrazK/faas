@@ -9,4 +9,19 @@
 <button>Read notes</button>
 </form>
 <pre id="result" aria-live="polite"></pre>
+<h2>Create a note with tags</h2>
+<p>Use the session above to save. Ownership comes from your application token.</p>
+<form id="note-form" novalidate>
+<p><label>Note body <textarea name="body" aria-describedby="body-error"></textarea></label>
+<span id="body-error" role="alert"></span></p>
+<p><label>Tags, separated by commas <input name="tags" aria-describedby="tags-error"></label>
+<span id="tags-error" role="alert"></span></p>
+<button id="save-note">Save note</button>
+<button id="recover-note" type="button" hidden>Resolve pending save</button>
+</form>
+<p id="note-result" aria-live="polite"></p>
+<p>If a save cannot be confirmed, resolve it using the same signed-in user before
+closing or reloading this page. Recovery uses the original request and may complete
+a save that did not previously finish. It is safe only while the owner retains its
+receipt. This example keeps pending requests in memory.</p>
 <script type="module" src="./client.js"></script></html>

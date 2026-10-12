@@ -86,6 +86,29 @@ func trim(message string) string {
 EOF
 expect reject "rule2 flags a fixed-cap cut on free text" "$d"
 
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/reset.go" <<'EOF'
+package thing
+
+func reset(line []byte, message string) ([]byte, string) {
+	line = line[:0]
+	message = message[:0]
+	return line, message
+}
+EOF
+expect accept "rule2 allows empty buffer and string resets" "$d"
+
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/one.go" <<'EOF'
+package thing
+
+func first(message string) string {
+	message = message[:01]
+	return message
+}
+EOF
+expect reject "rule2 still flags a one-byte cap with a leading zero" "$d"
+
 # --- RULE 2: a *Max* constant bound is also rejected. -----------------------
 d="$(mktemp -d)"
 make_tree "$d" "pkg/thing/e.go" <<'EOF'

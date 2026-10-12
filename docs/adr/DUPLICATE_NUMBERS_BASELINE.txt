@@ -120,7 +120,5 @@
 971
 972
 
-# Existing collision inherited from main at d9357718d (2026-10-11).
-
-# Refreshed from merged main 45a0b575a0: ADR-981 independently duplicates data API, Node RNG and scenario TCP work; removed stale ADR-977.
+# Existing collision inherited from merged main at 45a0b575a (2026-10-12).
 981

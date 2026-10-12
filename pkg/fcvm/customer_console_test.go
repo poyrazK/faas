@@ -145,3 +145,19 @@ func TestCustomerConsoleDropsVcpuLogsAndPCIConfigSpaceNotice(t *testing.T) {
 		t.Fatalf("customer lines = %+v, want only the app line and the unrelated kernel error", lines)
 	}
 }
+
+// production-us hunt #9 (H9-108): the serial console's CRLF left a '\r' at
+// the end of every customer log line in the logs API and log drains.
+func TestCustomerConsoleStripsTheConsoleCarriageReturn(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	for _, chunk := range []string{"{\"msg\":\"ready\"}\r\n", "progress 50%\r\r\n", "plain\n"} {
+		if _, err := w.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := ring.Snapshot(1)
+	if len(lines) != 3 || lines[0].Line != `{"msg":"ready"}` || lines[1].Line != "progress 50%\r" || lines[2].Line != "plain" {
+		t.Fatalf("customer lines = %+v, want the console CR stripped and the app's own CR kept", lines)
+	}
+}

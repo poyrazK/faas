@@ -676,6 +676,52 @@ const (
 // below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
+// AI gateway bounds on outbound integrations (ADR-988). The token limit is a
+// structural bound on a customer-selected spend guard for the customer's own
+// provider key, not a plan allowance. Usage rows are UTC-day rollups; the
+// model cap stops a customer-chosen origin from inflating them.
+const (
+	MaxOutboundAITokensPerDay        int64 = 100_000_000_000
+	OutboundAIUsageRetentionDays           = 90
+	OutboundAIUsageModelsPerDay            = 32
+	OutboundAIModelNameMaxBytes            = 128
+	OutboundAIUsageJSONParseMaxBytes       = 1 << 20
+	OutboundAIUsageEventMaxBytes           = 256 << 10
+	// OutboundAIMaxTokensPerResponse clamps each provider-reported count so
+	// a misbehaving origin cannot overflow the daily rollup counters.
+	OutboundAIMaxTokensPerResponse int64 = 1_000_000_000
+	// OutboundAIRequestBufferMaxBytes bounds the AI POST body the gateway
+	// keeps for retries, exact-match caching and route fallback (ADR-990).
+	// Larger bodies stream unbuffered without those features.
+	OutboundAIRequestBufferMaxBytes int64 = 4 << 20
+	// Customer price lists and cost budgets (ADR-990). Prices are millicents
+	// per million tokens; cost limits are millicents per UTC day or month.
+	MaxOutboundAICostMillicents         int64 = 1_000_000_000_000
+	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
+	OutboundAIPriceEntriesMax                 = 64
+	// AI fallback routes (ADR-990).
+	OutboundAIRouteTargetsMax     = 5
+	MaxOutboundAIRoutesPerAccount = 25
+	// Admission-time reservations (ADR-991): the output reserve when a call
+	// names no output ceiling, and the bytes per estimated input token.
+	OutboundAIDefaultOutputReserveTokens int64 = 4096
+	OutboundAIReserveBytesPerToken       int64 = 4
+	// Per-app AI guardrails on a binding (ADR-991).
+	MaxOutboundAIRequestsPerMinute       = 100_000
+	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
+	MaxOutboundAIMaxOutputTokens         = 1_000_000
+	OutboundAIAllowedModelsMax           = 32
+	// Extra sealed provider keys per integration (ADR-991) and the local
+	// cooldown a key gets after a 429 without Retry-After.
+	OutboundIntegrationCredentialKeysMax        = 8
+	OutboundCredentialKeyDefaultCooldownSeconds = 30
+	OutboundAIRequestLogRetentionDays           = 7
+	OutboundAIRequestLogPageMax                 = 200
+	OutboundAIBudgetAlertsPageMax               = 100
+	OutboundAIBudgetAlertWarnPercent            = 80
+	OutboundAIBudgetAlertFullPercent            = 100
+)
+
 // Operator-only managed realtime resume preview safety bounds. These are not
 // plan entitlements or a billing allowance; product limits are decided before
 // the preview is promoted.
@@ -4378,6 +4424,19 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
+	// ADR-909 (proposed) charge: what admission by measured memory would book
+	// for a running instance. schedd only reports it (shadow mode); admission
+	// still books BillableRAMMB. See MeasuredChargeMB.
+	MeasuredChargeFloorMB         = 64
+	MeasuredChargeHeadroomPercent = 25
+	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
+	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
+	// share of the admission ceiling while measured charges stay under the
+	// ceiling itself. MeasuredAdmissionSampleMaxAgeMillis is how old a node's
+	// measurement may be before admission falls back to reservations.
+	MeasuredAdmissionMaxOvercommitPercent = 200
+	MeasuredAdmissionSampleMaxAgeMillis   = 2000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
@@ -5172,6 +5231,11 @@ const (
 	// no higher than plan default × this multiplier.
 	IdleTimeoutFloorSeconds = 10
 	IdleTimeoutMaxMultiple  = 2
+	// FunctionIdleTimeoutDefaultSeconds is the default idle timeout for
+	// type=function apps on every plan (ADR-974). Parking a function whose
+	// init snapshot already exists only destroys the VM, so functions park
+	// sooner than apps; an explicit idle_timeout_s still applies.
+	FunctionIdleTimeoutDefaultSeconds = 30
 
 	// Liveness probe (issue #554 / ADR-078). The host (cmd/vmmd) polls
 	// the guest's vsock 1028 STREAM on every Period; after N
@@ -5935,7 +5999,12 @@ const (
 
 	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
 	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
-	MaxPreparedNetworkCacheSize            = 16
+	MaxPreparedNetworkCacheSize = 16
+	// DefaultPreparedNetworkCacheSize is vmmd's cache size when neither
+	// vmmd.toml nor FAAS_PREPARED_NETWORKS sets one (ADR-149, amended
+	// 2026-10-12). It matches the vmmd_service role default, which nodes
+	// joined through node_join never received.
+	DefaultPreparedNetworkCacheSize        = 4
 	PreparedNetworkCacheTTLSeconds         = 60
 	PreparedNetworkOperationTimeoutSeconds = 2
 	// PreparedNetworkRefillDelayMillis defers the wake-triggered refill
@@ -8405,6 +8474,28 @@ func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
 	return IdleTimeoutFloorSeconds, l.IdleTimeoutS * IdleTimeoutMaxMultiple
 }
 
+// DefaultIdleTimeoutS is the idle timeout an app gets when it has not
+// configured one: the plan default for apps, and at most
+// FunctionIdleTimeoutDefaultSeconds for functions (ADR-974). The configurable
+// bounds stay those of IdleTimeoutBounds for both types.
+func (l Limits) DefaultIdleTimeoutS(appType string) int {
+	if appType == "function" {
+		return min(l.IdleTimeoutS, FunctionIdleTimeoutDefaultSeconds)
+	}
+	return l.IdleTimeoutS
+}
+
+// EffectiveIdleTimeoutS resolves an app's idle timeout: the default for its
+// type unless the app configured one, clamped to IdleTimeoutBounds (spec
+// §4.3). The reaper and every surface that explains it share this one rule.
+func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
+	if configured <= 0 {
+		return l.DefaultIdleTimeoutS(appType)
+	}
+	floor, ceiling := l.IdleTimeoutBounds()
+	return min(max(configured, floor), ceiling)
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
@@ -9734,6 +9825,11 @@ const (
 	DataAPIMaxRelations       = 1000
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
+
+	// Data API diagnostics is a bounded CLI analysis of retained request logs,
+	// not a plan quota or a change to runtime log retention.
+	DataAPIDiagnosticsMaxBytes   = 16 << 20
+	DataAPIDiagnosticsMaxRecords = 100000
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

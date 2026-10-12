@@ -26,7 +26,7 @@ func (f *fakeManifestComputeTriggers) ReconcileObjectStorageComputeTriggers(_ co
 	return api.ObjectBucketNotifications{}, f.err
 }
 
-// adr: 995
+// adr: 1036
 func TestManifestComputeTriggers(t *testing.T) {
 	previous := jsonOutput
 	jsonOutput = true

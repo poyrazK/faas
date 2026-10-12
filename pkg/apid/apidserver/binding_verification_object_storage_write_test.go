@@ -1,4 +1,4 @@
-// adr: 986 — write evidence is permission-pinned and requires successful cleanup.
+// adr: 1027 — write evidence is permission-pinned and requires successful cleanup.
 package apidserver
 
 import (

@@ -129,5 +129,5 @@ func (s *server) retryDeployment(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	// Source retries have a durable build; image retries have notified imaged.
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(newDep, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), newDep, app))
 }

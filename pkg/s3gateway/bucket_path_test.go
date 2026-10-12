@@ -2,7 +2,7 @@ package s3gateway
 
 import "testing"
 
-// adr: 993
+// adr: 1034
 func TestParsePathBucketTrailingSlash(t *testing.T) {
 	for _, tc := range []struct {
 		path, bucket, key string

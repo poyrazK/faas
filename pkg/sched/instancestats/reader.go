@@ -213,6 +213,8 @@ type InstanceStat struct {
 // once per 200 ms).
 type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
+	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
+	shadow atomic.Pointer[memoryShadowSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from

@@ -1448,6 +1448,7 @@ worker:
     metric: custom
     name: mcp_tasks_outstanding
     target: 4
+    observer_app_slug: mcp-observer
 `
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write gregale.yaml: %v", err)
@@ -1463,7 +1464,7 @@ worker:
 		t.Fatalf("Validate: %v", err)
 	}
 	got := manifest.Worker.Scale.ToAPI()
-	if got.Metric != api.ScalingMetricCustom || got.Name != "mcp_tasks_outstanding" || got.Target != 4 {
+	if got.Metric != api.ScalingMetricCustom || got.Name != "mcp_tasks_outstanding" || got.Target != 4 || got.ObserverAppSlug != "mcp-observer" {
 		t.Fatalf("worker scale API = %+v, want custom gauge target", got)
 	}
 }
@@ -1502,6 +1503,16 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 		{
 			name: "custom metric valid",
 			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4}},
+		},
+		{
+			name: "MCP task scale-to-zero requires observer app",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4}},
+			want: "observer_app_slug is required",
+		},
+		{
+			name: "observer app slug requires MCP task metric",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: "queue_lag", Target: 10, ObserverAppSlug: "mcp-observer"}},
+			want: "requires the mcp_tasks_outstanding custom metric",
 		},
 		{
 			name: "unsupported source kind",
@@ -1669,7 +1680,7 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 	}
 }
 
-// adr: 995
+// adr: 1036
 func TestValidateBucketComputeTriggers(t *testing.T) {
 	for _, decl := range []string{"", "    triggers: []\n", "    triggers:\n      - id: incoming\n        prefix: uploads/\n"} {
 		dir := t.TempDir()

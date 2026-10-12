@@ -316,7 +316,7 @@ func starterCredential(t *testing.T, st *state.MemStore, bucket state.ObjectBuck
 	return credential
 }
 
-// adr: 993
+// adr: 1034
 func TestManagedStorageNodeStarterJourney(t *testing.T) {
 	directory := os.Getenv("GREGALE_STORAGE_NODE_STARTER_FIXTURE")
 	if directory == "" {

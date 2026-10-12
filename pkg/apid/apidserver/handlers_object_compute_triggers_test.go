@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 995
+// adr: 1036
 func TestObjectComputeTriggerAPIMem(t *testing.T) {
 	_, restore := withTestIdentities(t)
 	defer restore()

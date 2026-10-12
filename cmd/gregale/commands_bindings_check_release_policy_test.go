@@ -1,4 +1,4 @@
-// adr: 988 — policy-aware CLI checks fail closed without scheduling provider work.
+// adr: 1029 — policy-aware CLI checks fail closed without scheduling provider work.
 package main
 
 import (
