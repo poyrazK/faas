@@ -7,8 +7,17 @@
 // for OpenAI and claude-opus-5 for Anthropic, both
 // overridable via env.
 //
-// Required env vars (set via `gregale secrets set --app <slug> ...`):
+// Pick ONE way to reach the provider:
 //
+//	Gregale AI gateway (recommended; no key in the app):
+//	GREGALE_AI_INTEGRATION_ID — managed outbound integration bound to this
+//	                   app, created with ai_provider set (ADR-988/981).
+//	GREGALE_AI_PROVIDER — "openai" or "anthropic", matching that integration.
+//	                   Calls go through GREGALE_OUTBOUND_URL, which Gregale
+//	                   sets inside the VM; the gateway injects the provider
+//	                   key, applies budgets and records token usage.
+//
+//	Or a provider key (set via `gregale secrets set --app <slug> ...`):
 //	OPENAI_API_KEY     — OpenAI secret. Picks OpenAI provider.
 //	ANTHROPIC_API_KEY  — Anthropic secret. Picks Anthropic provider.
 //	                   Set exactly ONE. Setting both is rejected at
@@ -41,6 +50,9 @@ import express from "express";
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+const GATEWAY_INTEGRATION = process.env.GREGALE_AI_INTEGRATION_ID || "";
+const GATEWAY_PROVIDER = process.env.GREGALE_AI_PROVIDER || "";
+const OUTBOUND_URL = process.env.GREGALE_OUTBOUND_URL || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
 
@@ -52,6 +64,18 @@ const ANTHROPIC_FALLBACK_MODELS = /^claude-(opus-5|fable-5-1)$/;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || "";
 
 function provider() {
+  if (GATEWAY_INTEGRATION) {
+    if (OPENAI_KEY || ANTHROPIC_KEY) {
+      throw new Error("GREGALE_AI_INTEGRATION_ID uses the gateway's key; unset OPENAI_API_KEY/ANTHROPIC_API_KEY");
+    }
+    if (GATEWAY_PROVIDER !== "openai" && GATEWAY_PROVIDER !== "anthropic") {
+      throw new Error("GREGALE_AI_PROVIDER must be openai or anthropic, matching the integration's ai_provider");
+    }
+    if (!OUTBOUND_URL) {
+      throw new Error("GREGALE_OUTBOUND_URL is not set; the Gregale outbound relay is unavailable on this runtime");
+    }
+    return GATEWAY_PROVIDER;
+  }
   if (OPENAI_KEY && ANTHROPIC_KEY) {
     throw new Error("both OPENAI_API_KEY and ANTHROPIC_API_KEY are set; pick one");
   }
@@ -78,6 +102,15 @@ function defaultModel() {
   return activeProvider === "openai" ? OPENAI_MODEL : ANTHROPIC_MODEL;
 }
 
+// In gateway mode requests go to the loopback relay; outboundd replaces the
+// credential headers, so none are sent from the app.
+function providerURL(direct, path) {
+  if (!GATEWAY_INTEGRATION) {
+    return direct + path;
+  }
+  return `${OUTBOUND_URL}/i/${encodeURIComponent(GATEWAY_INTEGRATION)}${path}`;
+}
+
 const app = express();
 const port = process.env.PORT || 8080;
 app.use(express.json({ limit: "64kb" }));
@@ -89,12 +122,13 @@ async function callOpenAI(messages, model) {
       ? [{ role: "system", content: SYSTEM_PROMPT }, ...messages]
       : messages,
   };
-  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+  const headers = { "content-type": "application/json" };
+  if (OPENAI_KEY) {
+    headers.authorization = `Bearer ${OPENAI_KEY}`;
+  }
+  const r = await fetch(providerURL("https://api.openai.com", "/v1/chat/completions"), {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${OPENAI_KEY}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!r.ok) {
@@ -137,14 +171,16 @@ async function callAnthropic(messages, model) {
   };
   const headers = {
     "content-type": "application/json",
-    "x-api-key": ANTHROPIC_KEY,
     "anthropic-version": "2023-06-01",
   };
+  if (ANTHROPIC_KEY) {
+    headers["x-api-key"] = ANTHROPIC_KEY;
+  }
   if (ANTHROPIC_FALLBACK_MODELS.test(model)) {
     body.fallbacks = "default";
     headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
   }
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  const r = await fetch(providerURL("https://api.anthropic.com", "/v1/messages"), {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -201,6 +237,7 @@ app.get("/healthz", (_req, res) => {
     ok: true,
     provider: activeProvider,
     model: defaultModel(),
+    gateway: Boolean(GATEWAY_INTEGRATION),
   });
 });
 

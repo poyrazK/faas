@@ -18945,7 +18945,7 @@ func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, ar
 }
 
 const getWorkflowDiagnosticsSteps = `-- name: GetWorkflowDiagnosticsSteps :many
-SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at
+SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at,error
 FROM workflow_steps WHERE run_id=$1::uuid ORDER BY step_name
 `
 
@@ -18960,6 +18960,7 @@ type GetWorkflowDiagnosticsStepsRow struct {
 	ForeachCount  pgtype.Int4
 	NextRetryAt   pgtype.Timestamptz
 	NextCheckAt   pgtype.Timestamptz
+	Error         pgtype.Text
 }
 
 func (q *Queries) GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]GetWorkflowDiagnosticsStepsRow, error) {
@@ -18982,6 +18983,7 @@ func (q *Queries) GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runI
 			&i.ForeachCount,
 			&i.NextRetryAt,
 			&i.NextCheckAt,
+			&i.Error,
 		); err != nil {
 			return nil, err
 		}

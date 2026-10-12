@@ -170,7 +170,7 @@ func TestDeploymentResponse_NormalizesEmptyRolloutState(t *testing.T) {
 	srv := newServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev", noopNotifier{})
-	resp := srv.deploymentResponse(state.Deployment{
+	resp := srv.deploymentResponse(t.Context(), state.Deployment{
 		ID: "d1", AppID: "a1", Status: state.DeployLive,
 	}, state.App{ID: "a1"})
 	if resp.RolloutState != "pending" {
@@ -200,7 +200,7 @@ func TestDeploymentResponse_BuildPlan_AppWithFramework(t *testing.T) {
 		SourcePath: tarPath, Status: state.DeployPending,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeApp}
-	resp := srv.deploymentResponse(d, app)
+	resp := srv.deploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil; want populated")
 	}
@@ -228,7 +228,7 @@ func TestDeploymentResponse_BuildPlan_FunctionImageNoSourcePath(t *testing.T) {
 		ImageDigest: "sha256:abc", Status: state.DeployLive,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeFunction, Runtime: "node22"}
-	resp := srv.deploymentResponse(d, app)
+	resp := srv.deploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan != nil {
 		t.Errorf("BuildPlan = %+v; want nil for image deploy", resp.BuildPlan)
 	}
@@ -253,7 +253,7 @@ func TestDeploymentResponse_BuildPlan_UnknownFramework(t *testing.T) {
 		SourcePath: tarPath, Status: state.DeployPending,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeApp}
-	resp := srv.deploymentResponse(d, app)
+	resp := srv.deploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil; want unknown framework block")
 	}
@@ -290,7 +290,7 @@ func TestDeploymentResponse_BuildPlan_OverridesPopulated(t *testing.T) {
 		OverridePort:       3000,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeApp}
-	resp := srv.deploymentResponse(d, app)
+	resp := srv.deploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil")
 	}
@@ -317,7 +317,7 @@ func TestDeploymentResponse_BuildPlan_UsesPersistedProfileAfterSpoolCleanup(t *t
 		ID: "d1", AppID: "a1", Kind: state.DeploymentKindTarball,
 		Status: state.DeployLive, InferredProfile: raw,
 	}
-	resp := srv.deploymentResponse(d, state.App{ID: "a1", Type: state.AppTypeApp})
+	resp := srv.deploymentResponse(t.Context(), d, state.App{ID: "a1", Type: state.AppTypeApp})
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil; want persisted profile")
 	}
@@ -334,7 +334,7 @@ func TestDeploymentResponse_HostingReceiptRoundTrips(t *testing.T) {
 		ID: "d1", AppID: "a1", Kind: state.DeploymentKindImage,
 		Status: state.DeployLive, APIHostingReceipt: []byte(`{"schema_version":1,"smoke":{"status":"verified"}}`),
 	}
-	resp := srv.deploymentResponse(d, state.App{ID: "a1"})
+	resp := srv.deploymentResponse(t.Context(), d, state.App{ID: "a1"})
 	if string(resp.APIHostingReceipt) != string(d.APIHostingReceipt) {
 		t.Fatalf("hosting receipt = %s, want %s", resp.APIHostingReceipt, d.APIHostingReceipt)
 	}

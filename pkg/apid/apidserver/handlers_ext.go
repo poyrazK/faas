@@ -183,6 +183,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if prob := lifecycleProblem(acct.Plan, manifest, maxConcurrency); prob != nil {
 			return prob
 		}
+		if prob := lifecycleObserverLinkProblem(app.Slug, manifest); prob != nil {
+			return prob
+		}
 	}
 	if req.MinInstances == nil {
 		// Lowering max_concurrency below the configured floor leaves a floor
@@ -2114,7 +2117,7 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 			"prev":          prev,
 		})
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
 }
 
 // updateDeploymentTraffic is the handler for
@@ -2248,6 +2251,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
 			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
+			api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 		default:
 			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
 				"Gregale could not update this deployment's traffic split.",
@@ -2280,7 +2285,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			s.log.Warn("apid: notify deployment_changed (traffic) failed", "err", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
 }
 
 // planMaxFor resolves the per-plan MaxMinInstances cap for the
@@ -2333,7 +2338,7 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), target, app))
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -2989,6 +2994,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
+	// A rename moves the app's public hostname and frees the old one for any
+	// tenant; it belongs in the account's audit trail, not only the daemon
+	// log (production-us hunt #9: four renames left no audit event).
+	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
 }
@@ -3000,15 +3009,13 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	limit := app.MaxConcurrency
-	if limit <= 0 {
-		if planLimits, found := api.LimitsFor(acct.Plan); found {
-			limit = planLimits.MaxConcurrency
-		}
-	}
-	if limit <= 0 {
-		limit = 1
-	}
+	// The live set is not bounded by the app's current max_concurrency: a
+	// lowered cap leaves running instances until the reaper parks them, and
+	// a rollout overlap adds RolloutConcurrencyGrant. Capping the listing at
+	// max_concurrency hid running, billed instances from `gregale ps`
+	// (production-us hunt #9, H9-79). Only live rows match, so the history
+	// bound is ample.
+	limit := api.DefaultInstanceHistoryLimit
 	var instances []state.Instance
 	var err error
 	if r.URL.Query().Get("history") == "true" {
@@ -5787,7 +5794,33 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 
 // --- response helpers ------------------------------------------------------
 
-func (s *server) deploymentResponse(d state.Deployment, app state.App) api.DeploymentResponse {
+func (s *server) deploymentResponse(parent context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
+	var workerDrain *api.DeploymentWorkerDrainStatus
+	// Live worker deployments can also drain during scale-in. The audit
+	// summary survives instance deletion and scheduler restarts.
+	if s.store != nil && (d.Status == state.DeployLive || d.Status.IsTerminal()) {
+		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+		drain, err := s.store.DeploymentWorkerDrainStatus(ctx, d.ID)
+		cancel()
+		if err != nil {
+			s.log.Warn("load worker drain status", "deployment_id", d.ID, "err", err)
+		} else if drain != nil {
+			workerDrain = &api.DeploymentWorkerDrainStatus{Active: drain.Active, Completed: drain.Completed, TimedOut: drain.TimedOut, Failed: drain.Failed, Overdue: drain.Overdue, Deadline: drain.Deadline}
+		}
+	}
+	var promotionHold *api.DeploymentPromotionHold
+	if s.store != nil && !d.Status.IsTerminal() && d.Status != state.DeployLive {
+		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+		hold, err := s.store.MCPTaskPromotionHold(ctx, d.ID)
+		cancel()
+		if err != nil {
+			s.log.Warn("load MCP task promotion hold", "deployment_id", d.ID, "err", err)
+		} else if hold != nil {
+			promotionHold = &api.DeploymentPromotionHold{Code: api.CodeMCPTaskCompatibilityGate, Detail: hold.Detail, ObservedAt: hold.ObservedAt,
+				HeldAt: hold.HeldAt, RecoveryAttempts: hold.RecoveryAttempts, NextRetryAt: hold.NextRetryAt, RecoveryInProgress: hold.RecoveryInProgress,
+				LastRecoveryOutcome: hold.LastRecoveryOutcome, LastRecoveryAt: hold.LastRecoveryAt, LastRecoveryErrorCode: hold.LastRecoveryErrorCode}
+		}
+	}
 	// Issue #460 / ADR-053: echo the override_* columns on the
 	// response. Env values are NEVER echoed (override_env_keys
 	// carries only the key set). Env-secret refs ARE echoed
@@ -5803,6 +5836,8 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		len(d.OverrideReadinessProbe) > 0 ||
 		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
+		PromotionHold:     promotionHold,
+		WorkerDrain:       workerDrain,
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
 		AppID:             d.AppID,
@@ -6049,7 +6084,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // builderd-owned cache decision. Keeping the lookup here avoids an N+1 query
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
-	resp := s.deploymentResponse(d, app)
+	resp := s.deploymentResponse(ctx, d, app)
 	resp.DurableEntityValidator = s.durable.DeploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
@@ -6296,7 +6331,7 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	}
 	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
 	for _, d := range rows {
-		resp.Items = append(resp.Items, s.deploymentResponse(d, appByID[d.AppID]))
+		resp.Items = append(resp.Items, s.deploymentResponse(r.Context(), d, appByID[d.AppID]))
 	}
 	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
 		// NextBefore = CreatedAt of the LAST row (the oldest on this

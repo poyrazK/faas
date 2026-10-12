@@ -65,8 +65,8 @@ source "hcloud" "compute" {
 //   1. install-go.sh       — Go 1.26.9 (matches CI go.mod pin)
 //   2. compile-daemons.sh  — Go daemons + gregale + gregalectl
 //   3. compile-runners.sh  — 6 function-runners (linux/amd64)
-//   4. prebuild-kernel.sh  — vmlinux-6.1.134 + sha256 pin
-//   5. bake-fc.sh          — firecracker-v1.7.0 + jailer + sha256
+//   4. prebuild-kernel.sh  — vmlinux-6.18.54 + sha256 pin
+//   5. bake-fc.sh          — firecracker-v1.17.0 + jailer + sha256
 //   6. build-base.sh       — runs the explicit image-seed inventory through
 //                            deploy/ansible/bootstrap.yml
 //   7. verify-no-secrets.sh — fail-closed if any forbidden path present

@@ -2793,6 +2793,42 @@ func TestListInstancesDefaultsToBoundedResidentState(t *testing.T) {
 	}
 }
 
+// Hunt #9 H9-79: after `gregale app <slug> scale --max-concurrency 1` the
+// second running instance kept serving traffic until the reaper parked it,
+// but the default listing was capped at max_concurrency rows, so `gregale ps`
+// hid a running, billed instance.
+func TestListInstancesShowsEveryLiveInstanceAboveLoweredCap(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "inst-lowered")
+	ctx := context.Background()
+	want := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		ins, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[ins.ID] = true
+	}
+	one := 1
+	if _, err := e.store.UpdateApp(ctx, dep.AppID, state.UpdateAppParams{MaxConcurrency: &one}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/inst-lowered/instances", nil, nil)
+	var out []api.InstanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != len(want) {
+		t.Fatalf("ps rows = %+v, want both running instances", out)
+	}
+	for _, row := range out {
+		if !want[row.ID] || !row.Resident {
+			t.Fatalf("unexpected ps row %+v", row)
+		}
+	}
+}
+
 // TestCreateDomain_HappyPath binds a domain to an app.
 func TestCreateDomain_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanHobby)
@@ -3876,7 +3912,7 @@ func TestDeploymentResponse_RoundTrip(t *testing.T) {
 		BuildID: "b1", SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
-	resp := srv.deploymentResponse(d, state.App{})
+	resp := srv.deploymentResponse(t.Context(), d, state.App{})
 	if resp.ID != "d1" || resp.Status != "live" || resp.Error != "boom" ||
 		resp.ErrorCode != "image_not_found" || resp.CreatedAt != "2026-01-02T03:04:05Z" ||
 		resp.BuildID != "b1" || resp.SourceSHA256 != d.SourceSHA256 {

@@ -88,6 +88,9 @@ class CreateDeploymentRequest:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to
     false."""
+    mcp_task_migration_override: bool | Unset = UNSET
+    """One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need
+    handler versions it does not provide."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."""
     full_rootfs_allow_auto: bool | None | Unset = UNSET
@@ -197,6 +200,8 @@ class CreateDeploymentRequest:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        mcp_task_migration_override = self.mcp_task_migration_override
+
         disable_startup_cpu_boost: bool | None | Unset
         if isinstance(self.disable_startup_cpu_boost, Unset):
             disable_startup_cpu_boost = UNSET
@@ -248,6 +253,8 @@ class CreateDeploymentRequest:
             field_dict["canary"] = canary
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if mcp_task_migration_override is not UNSET:
+            field_dict["mcp_task_migration_override"] = mcp_task_migration_override
         if disable_startup_cpu_boost is not UNSET:
             field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if full_rootfs_allow_auto is not UNSET:
@@ -441,6 +448,8 @@ class CreateDeploymentRequest:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
+
         def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -484,6 +493,7 @@ class CreateDeploymentRequest:
             pr_number=pr_number,
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
+            mcp_task_migration_override=mcp_task_migration_override,
             disable_startup_cpu_boost=disable_startup_cpu_boost,
             full_rootfs_allow_auto=full_rootfs_allow_auto,
             full_rootfs_override=full_rootfs_override,

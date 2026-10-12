@@ -68,6 +68,12 @@ export function createDataClient<Database>(options: DataClientOptions): Postgres
 }
 
 export { PostgrestError } from '@supabase/postgrest-js'
+export { classifyDataError } from './errors.js'
+export type { ClassifiedDataError, DataErrorCategory, DataErrorRecovery } from './errors.js'
+export { validatedRpc, RpcValidationError } from './rpc.js'
+export type { ValidatedRpcResult } from './rpc.js'
+export { validateRpcResponse, RpcResponseValidationError } from './response.js'
+export type { ValidatedRpcResponse } from './response.js'
 export { jsonText, jsonValue, selectJson } from './json.js'
 export type { Json, JsonPath, JsonProjection } from './json.js'
 export { validateJson, JsonValidationError } from './validation.js'

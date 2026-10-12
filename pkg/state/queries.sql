@@ -15944,7 +15944,7 @@ WHERE r.id=sqlc.arg(run_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
  AND r.operation_id IS NULL;
 
 -- name: GetWorkflowDiagnosticsSteps :many
-SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at
+SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at,error
 FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid ORDER BY step_name;
 
 -- name: GetWorkflowRecoveryTarget :one

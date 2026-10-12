@@ -212,6 +212,23 @@ func NewResponseCache() *ResponseCache {
 // tests can advance the wall clock by reassigning the field
 // directly (mutating the returned cache is safe; the mu lock
 // guards every operation).
+// ageSeconds is the RFC 9111 §5.1 current age of a stored entry, derived
+// from its fresh window (freshUntil = stored at + the rule's max age). A
+// cache that serves a stored response must send Age (RFC 9111 §4); without
+// it a downstream cache applies the origin's max-age from the moment it
+// receives an already-aged copy (production-us hunt #9, H9-90).
+func (c *ResponseCache) ageSeconds(entry *cacheEntry) int64 {
+	if c == nil || entry == nil || entry.ruleAction == nil {
+		return 0
+	}
+	storedAt := entry.freshUntil.Add(-time.Duration(entry.ruleAction.MaxAgeSeconds) * time.Second)
+	age := c.now().Sub(storedAt)
+	if age <= 0 {
+		return 0
+	}
+	return int64(age / time.Second)
+}
+
 func NewResponseCacheWithClock(maxBytes int, now func() time.Time) *ResponseCache {
 	if maxBytes < 0 {
 		maxBytes = 0

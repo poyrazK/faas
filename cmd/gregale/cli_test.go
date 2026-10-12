@@ -1283,6 +1283,17 @@ func TestMapFailureMessage_GoesThroughCatalog(t *testing.T) {
 	}
 }
 
+// Production-us hunt #9 (H9-92): a deploy that never listened on $PORT
+// printed only the hint. The customer needs the cause and the fix.
+func TestMapFailureProblemIncludesWhyAndFix(t *testing.T) {
+	got := mapFailureProblem(&api.Problem{Code: api.CodeAppNotListening, Detail: "readiness probe got ECONNREFUSED"})
+	for _, want := range []string{"isn't accepting traffic", "why: ", "no listener on $PORT", "fix:", "process.env.PORT", "0.0.0.0"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("deploy failure copy = %q, want %q", got, want)
+		}
+	}
+}
+
 // TestRenderAPIError_TTYGatedGlyph locks UX §3.2's interaction with
 // §3.3's three-line contract: the static *APIError.Error() always carries
 // "  → <URL>", but the renderer (renderAPIError) drops the leading "✗"

@@ -88,7 +88,7 @@ type CreateAppRequest struct {
 	ServiceReliability    map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	Visibility            string                              `json:"visibility,omitempty"`
 	Type                  string                              `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
+	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB                 int                                 `json:"ram_mb,omitempty"`  // 0 => plan default
 	VCPU                  int                                 `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
 	CPUMillicores         int                                 `json:"cpu_millicores,omitempty"`

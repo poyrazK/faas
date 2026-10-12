@@ -1,0 +1,127 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "AI calls by usage outcome (5m)",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "description": "Settled AI calls per second by integration and outcome (known, unknown, error). ADR-988.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (integration_id, outcome) (rate(outbound_ai_requests_total[5m]))", "legendFormat": "{{integration_id}} {{outcome}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI tokens by kind (5m)",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "description": "Provider-reported tokens per second by kind (input, cached_input, cache_write, output). ADR-988.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (kind) (rate(outbound_ai_tokens_total[5m]))", "legendFormat": "{{kind}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Customer-priced AI cost (EUR per hour)",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives euros per hour. ADR-990.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (integration_id) (rate(outbound_ai_cost_millicents_total[15m])) * 3600 / 100000", "legendFormat": "{{integration_id}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyEUR"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI time to first byte p50 / p95",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "description": "Gateway-observed time from the provider request to its first response byte. ADR-988.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.5, sum by (le) (rate(outbound_ai_time_to_first_byte_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(outbound_ai_time_to_first_byte_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI budget and guardrail rejections (5m)",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "description": "Calls refused before reaching the provider: token and cost hard caps, per-minute limits and per-app guardrails. ADR-990, ADR-991.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (reason) (rate(outbound_rejections_total{reason=~\"daily_token_limit|daily_cost_limit|monthly_cost_limit|requests_per_minute_limit|tokens_per_minute_limit|outbound_ai_.*\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI budget alerts (1h)",
+      "id": 6,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "description": "Budget thresholds (80%, 100%) reached at settlement; each also enqueues an outbound.ai_budget.threshold webhook. ADR-991.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (budget, threshold) (increase(outbound_ai_budget_alerts_total[1h]))", "legendFormat": "{{budget}} {{threshold}}%", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Route fallbacks and translations (5m)",
+      "id": 7,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "description": "AI route attempts that moved to the next target, and OpenAI-format attempts translated per target provider. ADR-990, ADR-991.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (reason) (rate(outbound_ai_route_fallbacks_total[5m]))", "legendFormat": "fallback {{reason}}", "refId": "A"},
+        {"expr": "sum by (provider, outcome) (rate(outbound_ai_translations_total[5m]))", "legendFormat": "translate {{provider}} {{outcome}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider key pool events (5m)",
+      "id": 8,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "description": "Per-key cooldowns after a 429, rotations to another key, and calls that found every key limited. ADR-991.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (event) (rate(outbound_credential_key_events_total[5m]))", "legendFormat": "{{event}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["faas", "outbound", "ai-gateway"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Gregale AI gateway",
+  "uid": "faas-ai-gateway",
+  "version": 1
+}

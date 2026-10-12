@@ -22,7 +22,7 @@
 # gate. The M1/M3 tests additionally need real base/layer rootfs images (M2).
 set -euo pipefail
 
-export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.128}"
+export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.155}"
 
 # The V6 acceptance rootfs is staged by the Lima provisioner at
 # /srv/fc/base/v6-{base,layer}.ext4. Both paths flow to TestMetal*:

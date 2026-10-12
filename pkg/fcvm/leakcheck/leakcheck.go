@@ -148,6 +148,10 @@ func listVMScopes(root string) []string {
 	for _, pattern := range patterns {
 		paths, _ := filepath.Glob(filepath.Join(root, pattern))
 		for _, path := range paths {
+			// systemd child slices (the spec §11 fence pins) are not VM scopes.
+			if strings.HasSuffix(filepath.Base(path), ".slice") {
+				continue
+			}
 			if filepath.Dir(path) == filepath.Join(root, "faas-tenant.slice") {
 				switch filepath.Base(path) {
 				case "tenant-free", "tenant-hobby", "tenant-pro", "tenant-scale":

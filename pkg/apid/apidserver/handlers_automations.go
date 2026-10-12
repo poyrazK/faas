@@ -438,6 +438,7 @@ func (s *server) applyAutomationMutation(w http.ResponseWriter, r *http.Request,
 		writeAutomationError(w, err)
 		return
 	}
+	s.auditAutomationMutation(r, account, app.ID, r.PathValue("name"), mutation, record)
 	if mutation.Action == "delete" {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -554,4 +555,28 @@ func writeAutomationError(w http.ResponseWriter, err error) {
 	default:
 		api.WriteProblem(w, api.ErrCapacity("failed to read or update automation"))
 	}
+}
+
+// auditAutomationMutation records a change to what an automation will run on
+// its own: publishing or enabling it starts unattended calls into the app.
+// Draft saves (including revision restores), publishes, enable/disable and
+// deletes wrote no audit event (production-us hunt #9).
+func (s *server) auditAutomationMutation(r *http.Request, account state.Account, appID, name string, mutation state.AutomationMutation, record state.Automation) {
+	kind := "app.automation_" + mutation.Action + "d"
+	switch mutation.Action {
+	case "save":
+		kind = "app.automation_saved"
+	case "publish":
+		kind = "app.automation_published"
+	case "enable":
+		kind = "app.automation_disabled"
+		if mutation.Enabled {
+			kind = "app.automation_enabled"
+		}
+	case "delete":
+		kind = "app.automation_deleted"
+	}
+	s.audit.Emit(r.Context(), kind, &account.ID, map[string]any{
+		"app_id": appID, "automation": name, "version": record.Version, "published_version": record.PublishedVersion,
+	})
 }

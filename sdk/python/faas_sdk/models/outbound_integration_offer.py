@@ -7,6 +7,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.outbound_integration_offer_ai_provider import (
+    OutboundIntegrationOfferAiProvider,
+    check_outbound_integration_offer_ai_provider,
+)
 from ..models.outbound_integration_offer_credential_source import (
     OutboundIntegrationOfferCredentialSource,
     check_outbound_integration_offer_credential_source,
@@ -15,6 +19,7 @@ from ..models.outbound_integration_offer_owner_kind import (
     OutboundIntegrationOfferOwnerKind,
     check_outbound_integration_offer_owner_kind,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.outbound_request_policy import OutboundRequestPolicy
@@ -45,6 +50,19 @@ class OutboundIntegrationOffer:
     """Effective per-integration UTC-day admitted-request limit; null means no configured limit."""
     request_policy: OutboundRequestPolicy
     """Effective customer-selected per-integration policy, bounded by the account plan."""
+    ai_provider: OutboundIntegrationOfferAiProvider | Unset = UNSET
+    """Present for AI gateway integrations (ADR-988, ADR-991). openai is the OpenAI-compatible wire format; the
+    provider also selects how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-
+    account token for vertex) and how token usage is read."""
+    ai_daily_token_limit: int | None | Unset = UNSET
+    """UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means
+    no limit."""
+    ai_daily_cost_limit_millicents: int | None | Unset = UNSET
+    """UTC-day cost limit priced from the integration's price list (ADR-990)."""
+    ai_monthly_cost_limit_millicents: int | None | Unset = UNSET
+    """Calendar-month cost limit priced from the integration's price list (ADR-990)."""
+    ai_request_log_enabled: bool | Unset = UNSET
+    """Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +91,30 @@ class OutboundIntegrationOffer:
 
         request_policy = self.request_policy.to_dict()
 
+        ai_provider: str | Unset = UNSET
+        if not isinstance(self.ai_provider, Unset):
+            ai_provider = self.ai_provider
+
+        ai_daily_token_limit: int | None | Unset
+        if isinstance(self.ai_daily_token_limit, Unset):
+            ai_daily_token_limit = UNSET
+        else:
+            ai_daily_token_limit = self.ai_daily_token_limit
+
+        ai_daily_cost_limit_millicents: int | None | Unset
+        if isinstance(self.ai_daily_cost_limit_millicents, Unset):
+            ai_daily_cost_limit_millicents = UNSET
+        else:
+            ai_daily_cost_limit_millicents = self.ai_daily_cost_limit_millicents
+
+        ai_monthly_cost_limit_millicents: int | None | Unset
+        if isinstance(self.ai_monthly_cost_limit_millicents, Unset):
+            ai_monthly_cost_limit_millicents = UNSET
+        else:
+            ai_monthly_cost_limit_millicents = self.ai_monthly_cost_limit_millicents
+
+        ai_request_log_enabled = self.ai_request_log_enabled
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -91,6 +133,16 @@ class OutboundIntegrationOffer:
                 "request_policy": request_policy,
             }
         )
+        if ai_provider is not UNSET:
+            field_dict["ai_provider"] = ai_provider
+        if ai_daily_token_limit is not UNSET:
+            field_dict["ai_daily_token_limit"] = ai_daily_token_limit
+        if ai_daily_cost_limit_millicents is not UNSET:
+            field_dict["ai_daily_cost_limit_millicents"] = ai_daily_cost_limit_millicents
+        if ai_monthly_cost_limit_millicents is not UNSET:
+            field_dict["ai_monthly_cost_limit_millicents"] = ai_monthly_cost_limit_millicents
+        if ai_request_log_enabled is not UNSET:
+            field_dict["ai_request_log_enabled"] = ai_request_log_enabled
 
         return field_dict
 
@@ -128,6 +180,46 @@ class OutboundIntegrationOffer:
 
         request_policy = OutboundRequestPolicy.from_dict(d.pop("request_policy"))
 
+        _ai_provider = d.pop("ai_provider", UNSET)
+        ai_provider: OutboundIntegrationOfferAiProvider | Unset
+        if isinstance(_ai_provider, Unset):
+            ai_provider = UNSET
+        else:
+            ai_provider = check_outbound_integration_offer_ai_provider(_ai_provider)
+
+        def _parse_ai_daily_token_limit(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_daily_token_limit = _parse_ai_daily_token_limit(d.pop("ai_daily_token_limit", UNSET))
+
+        def _parse_ai_daily_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_daily_cost_limit_millicents = _parse_ai_daily_cost_limit_millicents(
+            d.pop("ai_daily_cost_limit_millicents", UNSET)
+        )
+
+        def _parse_ai_monthly_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_monthly_cost_limit_millicents = _parse_ai_monthly_cost_limit_millicents(
+            d.pop("ai_monthly_cost_limit_millicents", UNSET)
+        )
+
+        ai_request_log_enabled = d.pop("ai_request_log_enabled", UNSET)
+
         outbound_integration_offer = cls(
             id=id,
             name=name,
@@ -141,6 +233,11 @@ class OutboundIntegrationOffer:
             owner_kind=owner_kind,
             daily_request_limit=daily_request_limit,
             request_policy=request_policy,
+            ai_provider=ai_provider,
+            ai_daily_token_limit=ai_daily_token_limit,
+            ai_daily_cost_limit_millicents=ai_daily_cost_limit_millicents,
+            ai_monthly_cost_limit_millicents=ai_monthly_cost_limit_millicents,
+            ai_request_log_enabled=ai_request_log_enabled,
         )
 
         outbound_integration_offer.additional_properties = d

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -105,6 +106,13 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	vmm := newMetalVMM(t, 30*time.Second).WithStorage(store)
 	stageBenchMountHelper(t, vmm)
 	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil)
+	if n := benchPreparedNetworks(t); n > 0 {
+		if err := m.EnablePreparedNetworks(context.Background(), n); err != nil {
+			t.Fatalf("enable prepared networks: %v", err)
+		}
+		t.Cleanup(func() { _ = m.ClosePreparedNetworks() })
+		t.Logf("prepared wake networks: %d", n)
+	}
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cycles+4)*time.Minute)
@@ -470,6 +478,22 @@ func stageBenchMountHelper(t *testing.T, v *JailerVMM) {
 	}
 	t.Cleanup(func() { _ = os.Remove(dst) })
 	v.mountHelperPath = dst
+}
+
+// benchPreparedNetworks reads FAAS_RESTORE_BENCH_PREPARED_NETWORKS, the
+// ADR-149 cache size vmmd uses in production. Unset or 0 restores through
+// ordinary network setup, as the harness always did.
+func benchPreparedNetworks(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("FAAS_RESTORE_BENCH_PREPARED_NETWORKS")
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 || n > api.MaxPreparedNetworkCacheSize {
+		t.Fatalf("FAAS_RESTORE_BENCH_PREPARED_NETWORKS=%q must be an integer in [0,%d]", raw, api.MaxPreparedNetworkCacheSize)
+	}
+	return n
 }
 
 // benchAPIEnvEntries synthesises N plaintext env rows. Values are padded to a

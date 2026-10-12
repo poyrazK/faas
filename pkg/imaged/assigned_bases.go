@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -71,7 +72,8 @@ func assignedBasePlan(ctx context.Context, store assignedBaseStore, nodeName str
 			minimal = true
 			continue
 		}
-		seen[app.Runtime] = struct{}{}
+		// Runtimes sharing a base (binary → go124, ADR-987) stage it once.
+		seen[api.FunctionBaseRuntime(app.Runtime)] = struct{}{}
 	}
 	runtimes := make([]string, 0, len(seen))
 	for runtime := range seen {

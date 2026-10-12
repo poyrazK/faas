@@ -118,7 +118,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	}
 	s.notifyCanaryTraffic(r, app, updated)
 	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
-		Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
+		Deployment: s.deploymentResponse(r.Context(), updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
 	})
 }
 
@@ -231,6 +231,8 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 		api.WriteProblem(w, api.ErrCanaryStepConflict(expected, observed))
 	case errors.Is(err, state.ErrCanaryStateInvalid):
 		api.WriteProblem(w, api.ErrRolloutStateInvalid("current"))
+	case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
+		api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 	case errors.Is(err, state.ErrTrafficPercentSumInvalid):
 		api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 	case errors.Is(err, state.ErrNotFound):
