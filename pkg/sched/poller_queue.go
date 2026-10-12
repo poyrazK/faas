@@ -44,6 +44,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -179,11 +180,18 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		return PollResult{Error: fmt.Errorf("poller_queue: list named candidates: %w", err)}
 	}
 	store := state.NewPgStore(q.pool)
+	// A batch for a long-timeout app may hold one record for its whole run
+	// (ADR-1151); the claims must outlast it or they would be requeued
+	// while the handler still ran.
+	leaseSeconds := 600
+	if timeout := appAsyncInvocationTimeout(ctx, store, t.AppID.String()); timeout > api.AsyncInvocationTimeoutFloor {
+		leaseSeconds = max(leaseSeconds, int((api.TriggerBatchDispatchTimeout(timeout)+api.AsyncInvocationLeaseMargin)/time.Second))
+	}
 	out := make([]SourceRecord, 0, min(pollLimit, len(ids)))
 	claimedAttempts := make(map[string]queueDeliveryClaim, min(pollLimit, len(ids)))
 	totalPayloadBytes := 0
 	for _, id := range ids {
-		claimed, err := store.ClaimQueueTriggerInvocation(ctx, id, t.ID.String(), t.AppID.String(), t.Slug, 600)
+		claimed, err := store.ClaimQueueTriggerInvocation(ctx, id, t.ID.String(), t.AppID.String(), t.Slug, leaseSeconds)
 		if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
 			continue
 		}

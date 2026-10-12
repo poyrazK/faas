@@ -1268,9 +1268,42 @@ func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, t
 	return response
 }
 
+// triggerBatchDefaultWait bounds a batch for an app at the default
+// invocation timeout: the 60 s the trigger client enforced before ADR-1151.
+const triggerBatchDefaultWait = 60 * time.Second
+
+// appAsyncInvocationTimeout is how long one invocation of appID may run
+// (ADR-1151). A failed lookup keeps the 30 s floor.
+func appAsyncInvocationTimeout(ctx context.Context, store interface {
+	state.AccountReader
+	AppByID(context.Context, string) (state.App, error)
+}, appID string) time.Duration {
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return api.AsyncInvocationTimeoutFloor
+	}
+	return state.AsyncInvocationTimeout(ctx, store, app)
+}
+
+// triggerBatchContext bounds one batch POST. The gateway may spend one whole
+// record of a long-timeout app on it (ADR-1151), so schedd waits that long;
+// other apps keep the 60 s default.
+func (l *Loop) triggerBatchContext(ctx context.Context, appID string) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	wait := triggerBatchDefaultWait
+	if timeout := appAsyncInvocationTimeout(ctx, l.engine.Store(), appID); timeout > api.AsyncInvocationTimeoutFloor {
+		wait = api.TriggerBatchDispatchTimeout(timeout) + api.AsyncInvocationLeaseMargin
+	}
+	return context.WithTimeout(ctx, wait)
+}
+
 // postBatch hits the gateway's batch endpoint via the existing
 // GatewaySynth HTTP transport.
 func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byte, error) {
+	ctx, cancel := l.triggerBatchContext(ctx, env.AppID)
+	defer cancel()
 	body, err := json.Marshal(env)
 	if err != nil {
 		return nil, fmt.Errorf("marshal envelope: %w", err)

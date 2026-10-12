@@ -177,6 +177,38 @@ func TestRequestBudgetPlanCeilings(t *testing.T) {
 	}
 }
 
+// ADR-1151: an async invocation runs for the app's request timeout, at least
+// 30 s and at most the plan's ceiling, and its lease outlasts the run.
+func TestAsyncInvocationTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		plan            Plan
+		requestTimeoutS int
+		want            time.Duration
+	}{
+		{PlanPro, 0, AsyncInvocationTimeoutFloor},
+		{PlanPro, 3, AsyncInvocationTimeoutFloor},
+		{PlanPro, 120, 2 * time.Minute},
+		{PlanPro, 900, 5 * time.Minute},
+		{PlanFree, 600, 30 * time.Second},
+		{PlanHobby, 600, time.Minute},
+		{PlanScale, 900, 15 * time.Minute},
+	} {
+		limits := MustLimitsFor(tc.plan)
+		if got := limits.AsyncInvocationTimeout(tc.requestTimeoutS); got != tc.want {
+			t.Errorf("%s request_timeout_s=%d: timeout %s, want %s", tc.plan, tc.requestTimeoutS, got, tc.want)
+		}
+		dispatch := AsyncInvocationDispatchTimeout(tc.want)
+		if dispatch != tc.want+AsyncInvocationWakeAllowance || dispatch > AsyncInvocationDispatchMax {
+			t.Errorf("%s request_timeout_s=%d: dispatch timeout %s, want %s within %s", tc.plan, tc.requestTimeoutS, dispatch, tc.want+AsyncInvocationWakeAllowance, AsyncInvocationDispatchMax)
+		}
+		// The lease outlasts the dispatch so the outcome is recorded
+		// before the invocation could be requeued.
+		if lease := AsyncInvocationLease(tc.want); lease <= dispatch {
+			t.Errorf("%s request_timeout_s=%d: lease %s does not outlast dispatch %s", tc.plan, tc.requestTimeoutS, lease, dispatch)
+		}
+	}
+}
+
 // TestPlanLimitsMatchSpec pins every value in the table to the financial-model /
 // spec §1 numbers. If the spreadsheet moves, this test must be updated in the
 // same PR — that is the point.

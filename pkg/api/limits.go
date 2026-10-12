@@ -9042,6 +9042,61 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 	return d
 }
 
+const (
+	// AsyncInvocationTimeoutFloor is the run time every async, queue, cron
+	// and replay invocation gets at least (ADR-1151). It matches the
+	// function runner's default handler timeout.
+	AsyncInvocationTimeoutFloor = 30 * time.Second
+	// AsyncInvocationWakeAllowance is the time a dispatcher allows for
+	// waking an instance before the invocation itself starts. It was the
+	// drain's whole invocation lease before ADR-1151.
+	AsyncInvocationWakeAllowance = 60 * time.Second
+	// AsyncInvocationDispatchMax bounds one dispatched invocation, wake
+	// included: the longest run any plan allows plus the wake allowance.
+	// Schedd's gateway clients use it as their outer HTTP timeout.
+	AsyncInvocationDispatchMax = RequestBudgetPlanMax + AsyncInvocationWakeAllowance
+	// AsyncInvocationLeaseMargin keeps a dispatch lease alive past the
+	// dispatch deadline, long enough to record the outcome.
+	AsyncInvocationLeaseMargin = 30 * time.Second
+	// TriggerBatchTimeout bounds one trigger batch at the gateway. A batch
+	// for an app whose invocations run longer may take one whole record
+	// instead (ADR-1151).
+	TriggerBatchTimeout = 5 * time.Minute
+)
+
+// AsyncInvocationTimeout is how long one async, queue, cron or replay
+// invocation of an app may run (ADR-1151): the app's request_timeout_s,
+// clamped to the plan's ceiling, and never less than
+// AsyncInvocationTimeoutFloor. An app without its own timeout gets the floor.
+func (l Limits) AsyncInvocationTimeout(requestTimeoutS int) time.Duration {
+	if requestTimeoutS <= 0 {
+		return AsyncInvocationTimeoutFloor
+	}
+	timeout := min(time.Duration(requestTimeoutS)*time.Second, l.RequestBudgetMaxDuration())
+	return max(timeout, AsyncInvocationTimeoutFloor)
+}
+
+// AsyncInvocationDispatchTimeout bounds one dispatch, wake included, of an
+// invocation that may run for timeout (ADR-1151).
+func AsyncInvocationDispatchTimeout(timeout time.Duration) time.Duration {
+	return AsyncInvocationWakeAllowance + timeout
+}
+
+// TriggerBatchDispatchTimeout bounds one trigger batch for an app whose
+// invocations may run for timeout: the gateway's batch bound, or one whole
+// record when that is longer (ADR-1151).
+func TriggerBatchDispatchTimeout(timeout time.Duration) time.Duration {
+	return max(TriggerBatchTimeout, AsyncInvocationDispatchTimeout(timeout))
+}
+
+// AsyncInvocationLease is the dispatch lease for an invocation that may run
+// for timeout (ADR-1151): the dispatch timeout plus a margin to record the
+// outcome. A lease that expired while the handler still ran would requeue
+// the invocation and run it twice.
+func AsyncInvocationLease(timeout time.Duration) time.Duration {
+	return AsyncInvocationDispatchTimeout(timeout) + AsyncInvocationLeaseMargin
+}
+
 // FunctionInterpreterMaxWorkers bounds active generated-adapter processes in
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
