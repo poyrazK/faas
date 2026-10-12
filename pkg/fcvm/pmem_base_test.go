@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/rootfs"
 )
 
 func TestPmemBaseSupported(t *testing.T) {
@@ -43,8 +46,8 @@ func copyClone(clones *int) func(dst, src string) error {
 }
 
 // ext4Image returns size bytes holding an ext4 superblock with the given
-// block size; daxCapable reads nothing else.
-func ext4Image(size int64, blockSize uint32) []byte {
+// block size and volume label; daxCapable reads nothing else.
+func ext4Image(size int64, blockSize uint32, label string) []byte {
 	b := make([]byte, size)
 	logBlock := uint32(0)
 	for 1024<<logBlock < blockSize {
@@ -52,18 +55,23 @@ func ext4Image(size int64, blockSize uint32) []byte {
 	}
 	binary.LittleEndian.PutUint32(b[1024+24:], logBlock)
 	binary.LittleEndian.PutUint16(b[1024+56:], 0xEF53)
+	copy(b[1024+120:1024+136], label)
 	return b
 }
 
 func pmemFixture(t *testing.T, size int64) (v *JailerVMM, base string, clones *int) {
-	return pmemFixtureBlocks(t, size, 4096)
+	return pmemFixtureImage(t, ext4Image(size, 4096, PmemBaseLabel))
 }
 
 func pmemFixtureBlocks(t *testing.T, size int64, blockSize uint32) (v *JailerVMM, base string, clones *int) {
+	return pmemFixtureImage(t, ext4Image(size, blockSize, PmemBaseLabel))
+}
+
+func pmemFixtureImage(t *testing.T, image []byte) (v *JailerVMM, base string, clones *int) {
 	t.Helper()
 	dir := t.TempDir()
 	base = filepath.Join(dir, "base.ext4")
-	if err := os.WriteFile(base, ext4Image(size, blockSize), 0o644); err != nil {
+	if err := os.WriteFile(base, image, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	clones = new(int)
@@ -108,6 +116,7 @@ func TestWithPmemBaseKeepsBlk(t *testing.T) {
 	v, base, _ := pmemFixture(t, 4<<20)
 	odd, oddBase, _ := pmemFixture(t, 3<<20)
 	small, smallBase, _ := pmemFixtureBlocks(t, 4<<20, 1024)
+	unlabelled, unlabelledBase, _ := pmemFixtureImage(t, ext4Image(4<<20, 4096, "applayer"))
 	failing, failingBase, _ := pmemFixture(t, 4<<20)
 	failing.pmemBase.clone = func(string, string) error { return errors.New("no reflink") }
 	for name, tc := range map[string]struct {
@@ -121,11 +130,106 @@ func TestWithPmemBaseKeepsBlk(t *testing.T) {
 		"networkless":       {v, Lease{AccountID: "a", Networkless: true}, base},
 		"unaligned base":    {odd, Lease{AccountID: "a"}, oddBase},
 		"1 KiB blocks":      {small, Lease{AccountID: "a"}, smallBase},
+		"no pmem label":     {unlabelled, Lease{AccountID: "a"}, unlabelledBase},
 		"clone unsupported": {failing, Lease{AccountID: "a"}, failingBase},
 	} {
 		got := tc.v.withPmemBase(tc.lease, coldBootCfg(tc.base))
 		if got.Pmem != nil || len(got.Drives) != 2 || !strings.Contains(got.BootSource.BootArgs, blkRootArgs) {
 			t.Errorf("%s: config moved to pmem: %+v", name, got)
+		}
+	}
+}
+
+func TestPmemBaseLabelMatchesRootfs(t *testing.T) {
+	if PmemBaseLabel != rootfs.BasePmemLabel {
+		t.Fatalf("fcvm label %q, rootfs stamps %q", PmemBaseLabel, rootfs.BasePmemLabel)
+	}
+}
+
+func TestMountPointOf(t *testing.T) {
+	info := filepath.Join(t.TempDir(), "mountinfo")
+	table := `22 1 8:1 / / rw - ext4 /dev/sda1 rw
+30 22 8:16 / /srv/fc rw - xfs /dev/sdb rw
+31 22 8:16 /cache /var/lib/faas/cache rw - xfs /dev/sdb rw
+32 30 0:40 / /srv/fc/jail rw - tmpfs tmpfs rw
+33 22 8:17 / /mnt/with\040space rw - xfs /dev/sdc rw
+`
+	if err := os.WriteFile(info, []byte(table), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"/var/lib/faas/cache/ab/base": "/var/lib/faas/cache", // bind mount, not /srv/fc
+		"/srv/fc/base/node22.ext4":    "/srv/fc",
+		"/srv/fc/jail/x":              "/srv/fc/jail",
+		"/srv/fcx/base":               "/",
+		"/mnt/with space/base":        "/mnt/with space",
+	} {
+		got, err := mountPointOf(info, path)
+		if err != nil || got != want {
+			t.Errorf("mountPointOf(%q) = %q, %v; want %q", path, got, err, want)
+		}
+	}
+}
+
+// adr: 908 — by default a copy lives on its base's own mount, a changed base
+// gets a new copy, and copies nobody used for a week are swept.
+func TestPmemBaseAutoDirVersionsAndSweep(t *testing.T) {
+	mount, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := filepath.Join(t.TempDir(), "mountinfo")
+	if err := os.WriteFile(info, []byte("22 1 8:1 / / rw - ext4 /dev/sda1 rw\n30 22 8:16 / "+mount+" rw - xfs /dev/sdb rw\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(mount, "cache", "ab", "base")
+	if err := os.MkdirAll(filepath.Dir(base), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base, ext4Image(4<<20, 4096, PmemBaseLabel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clones := 0
+	v := (&JailerVMM{}).WithPmemBase(PmemBaseDirAuto)
+	v.pmemBase.clone = copyClone(&clones)
+	v.pmemBase.mountinfo = info
+	first, err := v.pmemBase.accountCopy("acct", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first, filepath.Join(mount, pmemAutoDirName)+"/") {
+		t.Fatalf("copy %s is not under %s", first, filepath.Join(mount, pmemAutoDirName))
+	}
+	// A changed base gets a new copy.
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(base, later, later); err != nil {
+		t.Fatal(err)
+	}
+	second, err := v.pmemBase.accountCopy("acct", base)
+	if err != nil || second == first || clones != 2 {
+		t.Fatalf("after the base changed: copy %s (first %s), clones %d, err %v", second, first, clones, err)
+	}
+	// A week later, the first copy is swept and the one in use stays.
+	idle := time.Now().Add(-pmemCopyMaxIdle - time.Hour)
+	if err := os.Chtimes(first, idle, idle); err != nil {
+		t.Fatal(err)
+	}
+	v.pmemBase.swept = map[string]time.Time{}
+	if _, err := v.pmemBase.accountCopy("acct", base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("idle copy %s survived the sweep: %v", first, err)
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Errorf("copy in use was swept: %v", err)
+	}
+}
+
+func TestWithPmemBaseOff(t *testing.T) {
+	for _, dir := range []string{"", "off"} {
+		if (&JailerVMM{}).WithPmemBase(dir).pmemBase != nil {
+			t.Errorf("WithPmemBase(%q) enabled pmem", dir)
 		}
 	}
 }
