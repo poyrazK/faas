@@ -260,6 +260,12 @@ change. The workload receives the values through the existing secret staging
 path on its next deploy/wake; values are never returned by the binding API or
 stored in plaintext.
 
+The endpoint accepts Signature Version 4 only. boto3/botocore presigns S3 URLs
+with Signature Version 2 for a custom endpoint unless told otherwise, and those
+URLs fail with 403 `SignatureDoesNotMatch`; create the client with
+`botocore.config.Config(signature_version="s3v4", s3={"addressing_style": "path"})`
+before calling `generate_presigned_url`.
+
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
 `DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
